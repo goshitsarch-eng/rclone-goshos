@@ -39,7 +39,17 @@
     "moreActions": "Diğer İşlemler",
     "duplicate": "Çoğalt",
     "clearAll": "Tümünü Temizle",
-    "acknowledge": "Onayla"
+    "acknowledge": "Onayla",
+    "done": "Done",
+    "open": "Open",
+    "apply": "Apply",
+    "off": "off",
+    "install": "Install",
+    "use": "Use",
+    "category": "Category",
+    "other": "Other",
+    "ready": "Ready",
+    "configure": "Configure"
   },
   "cron": {
     "everyMinute": "Her dakika",
@@ -89,7 +99,8 @@
       "10": "Ekim",
       "11": "Kasım",
       "12": "Aralık"
-    }
+    },
+    "invalid": "Invalid cron"
   },
   "remoteConfig": {
     "pathStatus": {
@@ -98,7 +109,88 @@
       "colliding": "{{details}} tarafından kullanılıyor",
       "willCreate": "Klasör, uzak bağlantı oluşturulduktan sonra oluşturulacaktır.",
       "checking": "Yol kontrol ediliyor..."
-    }
+    },
+    "vfs": "VFS",
+    "vfsMetadataDirs": "Metadata dirs",
+    "vfsMetadataFiles": "Metadata files",
+    "vfsUploads": "Uploads",
+    "vfsErrors": "Errors",
+    "vfsDiskCache": "Disk cache",
+    "vfsStatsUnavailable": "VFS stats unavailable",
+    "vfsQueueEmpty": "Queue is empty",
+    "vfsQueueUnavailable": "Queue unavailable",
+    "vfsForgetFile": "Forget file / refresh dir",
+    "vfsForget": "Forget file",
+    "vfsForgot": "Forgot cached file",
+    "vfsRefreshDir": "Refresh dir",
+    "vfsRefreshed": "Refreshed directory",
+    "vfsPollUpdated": "Poll interval updated",
+    "vfsQueueExpiry": "Queue id / expiry",
+    "vfsExpiryUpdated": "Queue expiry updated",
+    "flagsApplyHelp": "Edits are sent to rclone via options/set. Categories match the Angular flag panels.",
+    "flagsWriteEngine": "Write flags to the running engine",
+    "jsonMode": "JSON",
+    "jsonPayload": "Raw options/set payload",
+    "jsonPayloadHelp": "Edit the current rclone options as JSON. Apply writes the object via options/set.",
+    "applyJson": "Apply JSON",
+    "flagsWriteJson": "Write JSON to the running engine",
+    "source": "Source",
+    "mountPoint": "Mount point",
+    "listenAddress": "Listen address",
+    "destinationFs": "Destination fs",
+    "dest": "Destination",
+    "serveType": "Serve type",
+    "mountType": "Mount type",
+    "vfsProfile": "VFS profile",
+    "filterProfile": "Filter profile",
+    "backendProfile": "Backend profile",
+    "dryRun": "Dry run",
+    "flags": "Operation flags",
+    "startFailed": "Start failed",
+    "addSource": "Add source",
+    "multipleSources": "Multiple sources",
+    "pathStatusTitle": "Path check",
+    "applyTemplate": "Apply",
+    "archiveFormat": "Format",
+    "archivePrefix": "Prefix",
+    "archiveFullPath": "Use full paths in the archive",
+    "cronParts": {
+      "daily": "Daily",
+      "weekly": "Weekly",
+      "monthly": "Monthly",
+      "interval": "Interval",
+      "hour": "Hour",
+      "minute": "Minute",
+      "dow": "Day of week",
+      "dom": "Day of month",
+      "everyHours": "Every N hours"
+    },
+    "showOnTray": "Show on tray",
+    "hideFromSidebar": "Hide from sidebar",
+    "primaryActions": "Primary actions",
+    "syncActions": "Sync actions",
+    "editProvider": "Edit provider fields…",
+    "helperJsonEditor": "Helper JSON editor…",
+    "metadata": "Remote metadata",
+    "provider": "Provider",
+    "rcloneDefinition": "Rclone remote definition",
+    "namedHelpers": "Named helper profiles",
+    "url": "URL",
+    "unusedDestination": "Unused destination",
+    "scheduledCron": "Scheduled (cron)",
+    "cronExpression": "Cron expression",
+    "runtimeProfile": "Runtime profile",
+    "automation": "Automation",
+    "cron": "Cron schedule",
+    "linkedHelpers": "Linked helper profiles",
+    "filterFlags": "Filter flags",
+    "importCliFlags": "Import rclone CLI flags",
+    "cliImport": "CLI import",
+    "jsonDocument": "JSON document",
+    "options": "Options",
+    "jsonObject": "JSON object",
+    "additionalSource": "Additional source",
+    "autoStart": "Auto-start mount / jobs"
   },
   "validators": {
     "integer": "Geçerli bir tam sayı olmalıdır",
@@ -161,7 +253,8 @@
     "toggleCopyurl": "URL Kopyalamayı Hızlı Eylem Olarak Değiştir",
     "toggleArchivecreate": "Arşivi Hızlı Eylem Olarak Değiştir",
     "successStart": "{{remote}} ({{profile}}) için {{type}} başarıyla başlatıldı",
-    "failedStart": "{{remote}} için {{type}} başlatılamadı: {{error}}"
+    "failedStart": "{{remote}} için {{type}} başlatılamadı: {{error}}",
+    "start": "Start"
   },
   "serve": {
     "noActive": "Aktif sunum yok",
@@ -238,7 +331,9 @@
       "mountStatus": "Bağlama durumu",
       "syncStatus": "Senkronizasyon operasyonları durumu",
       "serveStatus": "Sunma durumu"
-    }
+    },
+    "quickAdd": "Quick add remote",
+    "detailedConfig": "Detailed remote config"
   },
   "detailShared": {
     "jobInfo": {
@@ -386,7 +481,8 @@
       "noActionsHint": "Bir kurala atamadan önce bir uyarı eylemi oluşturmanız gerekir.",
       "filtersEmptyHint": "Tüm olaylarla eşleştirmek için boş bırakın.",
       "scopeFilters": "Kapsam Filtreleri",
-      "allEvents": "Tüm Olaylar"
+      "allEvents": "Tüm Olaylar",
+      "editorTitle": "Alert rule"
     },
     "events": {
       "job": "İşler ve Dosya İşlemleri",
@@ -457,10 +553,22 @@
       "discord": "Discord",
       "slack": "Slack",
       "headerKey": "Başlık Adı",
-      "headerValue": "Değer"
+      "headerValue": "Değer",
+      "editorTitle": "Alert action",
+      "telegramMode": "Telegram mode",
+      "envVars": "Environment variables (KEY=value)",
+      "whatsappProvider": "WhatsApp provider",
+      "smtpHost": "SMTP host",
+      "brokerUrl": "Broker URL"
     },
     "noRulesHint": "Henüz yapılandırılmış uyarı kuralı yok. Bildirim almak için bir kural oluşturun.",
-    "noActionsHint": "Henüz yapılandırılmış uyarı eylemi yok. Uyarıların nasıl iletileceğini belirlemek için bir eylem oluşturun."
+    "noActionsHint": "Henüz yapılandırılmış uyarı eylemi yok. Uyarıların nasıl iletileceğini belirlemek için bir eylem oluşturun.",
+    "search": "Search history",
+    "stats": "History stats",
+    "acknowledge": "Acknowledge",
+    "addRule": "Add rule",
+    "addAction": "Add action",
+    "templateKeys": "Insert template key"
   },
   "settings": {
     "resetAll": {
@@ -625,6 +733,9 @@
           "compact": "Kompakt",
           "detailed": "Ayrıntılı"
         }
+      },
+      "show_json_mode": {
+        "label": "Remember JSON mode"
       }
     },
     "nautilus": {
@@ -638,7 +749,14 @@
       }
     },
     "remoteSaved": "Uzak bağlantı başarıyla kaydedildi",
-    "remoteSaveFailed": "Uzak bağlantı kaydedilemedi: {{error}}"
+    "remoteSaveFailed": "Uzak bağlantı kaydedilemedi: {{error}}",
+    "rcloneFlags": {
+      "mainCategories": {
+        "network": {
+          "title": "Network"
+        }
+      }
+    }
   },
   "banners": {
     "development": {
@@ -716,8 +834,23 @@
       "shortcuts": "Klavye Kısayolları",
       "about": "RClone Yöneticisi Hakkında",
       "quickRemote": "Hızlı Uzak Bağlantı",
-      "detailedRemote": "Detaylı Uzak Bağlantı"
-    }
+      "detailedRemote": "Detaylı Uzak Bağlantı",
+      "runGc": "Run GC",
+      "installRclone": "Install",
+      "openConfig": "Config folder",
+      "openCache": "Cache folder",
+      "openLog": "Logs folder",
+      "backends": "Backends",
+      "templates": "Templates",
+      "remoteOrder": "Remote order and visibility",
+      "clearFsCache": "Clear FS cache",
+      "checkConnectivity": "Check connectivity",
+      "quickRun": "New Quick Run",
+      "add": "Add remote or quick run",
+      "developer": "Developer",
+      "trayActions": "Tray actions"
+    },
+    "detach": "Detach the current workspace into a new window"
   },
   "onboarding": {
     "loadingTitle": "RClone Yöneticisi Başlatılıyor",
@@ -1258,7 +1391,8 @@
           "label": "Çıktı Yok",
           "description": "RC yapılandırma çağrısından gelen herhangi bir standart çıktıyı bastır"
         }
-      }
+      },
+      "togglePassword": "Toggle password visibility"
     },
     "appOperation": {
       "multiSourceOneWayInfo": "Birden fazla kaynak yol algılandı. Rclone'un her bir kaynağı hedefle doğrulamasını sağlamak için tek yönlü kontrol otomatik olarak etkinleştirildi.",
@@ -1422,6 +1556,9 @@
     "presets": {
       "applied": "Default presets applied successfully",
       "noRemoteSelected": "Please select a remote first"
+    },
+    "quickAdd": {
+      "title": "Quick Add Remote"
     }
   },
   "backup": {
@@ -1540,7 +1677,10 @@
       "metadata": {
         "system": "Sistem Meta Verileri",
         "standard": "Standart Meta Veriler"
-      }
+      },
+      "usageUnavailable": "Unable to query disk usage",
+      "objects": "Objects",
+      "root": "Root"
     },
     "properties": {
       "title": "Özellikler",
@@ -1585,7 +1725,11 @@
       "generatedChecksums": "Oluşturulan Sağlama Toplamları",
       "calculateAnother": "Başka Bir Tane Hesapla",
       "bulkHashInstruction": "Bu dizindeki tüm dosyalar için sağlama toplamı hesaplamak üzere bir karma türü seçin.",
-      "noHashesFound": "Hiçbir karma döndürülmedi"
+      "noHashesFound": "Hiçbir karma döndürülmedi",
+      "kind": "Kind",
+      "localDisk": "Local disk",
+      "noPublicLink": "Remote did not return a public link",
+      "linkRemoved": "Link removed"
     },
     "operations": {
       "title": "İşlemler",
@@ -1652,6 +1796,15 @@
       "largeRemotePreview": "Bu uzak dosya {{size}}. Önizleme için dosyanın tamamını indirmek zaman alabilir.",
       "downloadPreview": "Önizlemeyi indir",
       "downloadedPreview": "Önizleme {{path}} konumuna indirildi"
+    },
+    "pathKind": {
+      "title": "Path type",
+      "local": "Local",
+      "currentRemote": "Current remote",
+      "otherRemote": "Other remote"
+    },
+    "errors": {
+      "connectionFailed": "Connection Failed"
     }
   },
   "dashboard": {
@@ -1735,7 +1888,10 @@
       "dryRunActive": "Simülasyon etkin — hiçbir değişiklik yapılmayacak",
       "resync": "Yeniden Senkronize Et",
       "resyncActive": "Yeniden senkronizasyon etkin — tam yeniden senkronizasyon gerçekleştiriliyor",
-      "remoteSettings": "Uzak Bağlantı Ayarları"
+      "remoteSettings": "Uzak Bağlantı Ayarları",
+      "settings": "Settings",
+      "configureActions": "Configure primary actions",
+      "mountDiskUsage": "Mount point usage"
     },
     "generalDetail": {
       "automations": "Otomasyonlar",
@@ -1761,6 +1917,28 @@
       "remoteConfiguration": "Uzak Bağlantı Yapılandırması",
       "editConfiguration": "Yapılandırmayı Düzenle",
       "remoteActionQuickSelection": "Uzak bağlantı hızlı eylem seçimi"
+    },
+    "statusOverview": {
+      "title": "Status overview",
+      "active": "active"
+    },
+    "bandwidth": {
+      "savedLimit": "Saved limit",
+      "unlimited": "Unlimited",
+      "liveLimit": "Live limit",
+      "customLimit": "Custom limit (e.g. 2M or 1M:10M)"
+    },
+    "system": {
+      "pid": "rclone PID",
+      "groups": "Job groups",
+      "memory": "Memory",
+      "activity": "Activity"
+    },
+    "quickRuns": {
+      "empty": "No quick runs"
+    },
+    "settings": {
+      "empty": "No saved profile settings"
     }
   },
   "shortcuts": {
@@ -1858,7 +2036,12 @@
         "fatalError": "Ölümcül Hata",
         "speedAvg": "Ortalama Hız",
         "transferred": "Aktarılan"
-      }
+      },
+      "filterTransfers": "Filter transfers",
+      "stopGroup": "Stop group",
+      "resetStats": "Reset stats",
+      "openSource": "Open source in Files",
+      "openDestination": "Open destination in Files"
     },
     "about": {
       "title": "Hakkında",
@@ -2031,7 +2214,9 @@
         "folderPathFor": "{{name}} için klasör yolu",
         "scrollToPending": "Bekleyen değişiklikler bölümüne kaydır"
       },
-      "pendingChangesTooltip": "Motorun yeniden başlatılmasını gerektiren {{count}} kaydedilmemiş değişikliğiniz var. Onlara kaydırmak için tıklayın."
+      "pendingChangesTooltip": "Motorun yeniden başlatılmasını gerektiren {{count}} kaydedilmemiş değişikliğiniz var. Onlara kaydırmak için tıklayın.",
+      "pendingRestart": "Pending engine restart",
+      "onePendingChange": "1 setting waiting for Save & Restart"
     },
     "export": {
       "title": "Ayarları Dışa Aktar",
@@ -2082,7 +2267,8 @@
           "label": "Alarmlar",
           "description": "Alarm kuralları ve eylemleri yapılandırması"
         }
-      }
+      },
+      "backend": "Rclone backend"
     },
     "backend": {
       "title": "Arka Uç Yönetimi",
@@ -2193,7 +2379,8 @@
         "passwordStoredInKeyring": "Parola sistem anahtarlığında saklanıyor",
         "passwordRemoved": "Parola anahtarlıktan kaldırıldı",
         "passwordsMismatch": "Parolalar eşleşmiyor"
-      }
+      },
+      "addTitle": "Remote RC backend"
     },
     "quickAdd": {
       "title": "Hızlı Uzak Sunucu Ekle",
@@ -2265,7 +2452,9 @@
         "filter": "Filtreleme",
         "vfs": "VFS",
         "backend": "Arka Uç",
-        "runtimeRemote": "Çalışma Zamanı"
+        "runtimeRemote": "Çalışma Zamanı",
+        "remote": "Remote",
+        "profiles": "Per-operation profiles"
       },
       "advancedProfiles": {
         "title": "Gelişmiş Profiller",
@@ -2313,7 +2502,17 @@
       "profileSaveFailed": "Profil kaydedilemedi",
       "warnings": {
         "selectRemoteToSave": "Lütfen profili kaydetmek için bir uzak bağlantı seçin"
-      }
+      },
+      "pollInterval": "Poll interval",
+      "cancelOauth": "Cancel OAuth",
+      "newName": "New name",
+      "saveStep": "Save step",
+      "oauthCancelled": "OAuth cancelled",
+      "addProfile": "Add profile",
+      "cloneProfile": "Clone profile",
+      "renameProfile": "Rename profile",
+      "deleteProfile": "Delete profile",
+      "profiles": "Profiles"
     },
     "rcloneFlags": {
       "search": {
@@ -2387,6 +2586,12 @@
         "MetricsAuth": "Metrik kimlik doğrulaması",
         "MetricsHTTP": "Metrik HTTP ayarları"
       }
+    },
+    "updates": {
+      "title": "Updates"
+    },
+    "flags": {
+      "emptyCategory": "No flags in this category"
     }
   },
   "nautilus": {
@@ -2408,7 +2613,8 @@
       "cloud": "Bulut",
       "fileSystem": "Dosya Sistemi",
       "bookmarks": "Yer İmleri",
-      "localDisk": "Yerel Disk"
+      "localDisk": "Yerel Disk",
+      "pathPlaceholder": "remote:path or /local/path"
     },
     "bookmarks": {
       "emptyHint": "Yer imi yok"
@@ -2437,7 +2643,8 @@
     },
     "empty": {
       "noStarred": "Yıldızlı Dosya Yok",
-      "folderEmpty": "Klasör Boş"
+      "folderEmpty": "Klasör Boş",
+      "noFiles": "Archive is empty"
     },
     "selection": {
       "selected": "seçildi",
@@ -2503,7 +2710,9 @@
         "counter": "Sayaç",
         "date": "Tarih",
         "extension": "Uzantı",
-        "duplicateOrInvalid": "Yinelenen veya geçersiz ad"
+        "duplicateOrInvalid": "Yinelenen veya geçersiz ad",
+        "originalName": "Original name",
+        "insertPlaceholder": "Insert placeholder"
       }
     },
     "errors": {
@@ -2570,13 +2779,25 @@
       "switchPane": "Panele Geç",
       "copyPublicLink": "Ortak Bağlantıyı Kopyala",
       "createFolderWithItems": "Seçilenlerle Yeni Klasör...",
-      "renameMultiple": "Çoklu Yeniden Adlandır..."
+      "renameMultiple": "Çoklu Yeniden Adlandır...",
+      "pathOptions": "Path options",
+      "move": "Move",
+      "openNative": "Open native",
+      "copyUrl": "Copy URL into folder…",
+      "download": "Download…",
+      "browseArchive": "Browse archive contents",
+      "extract": "Extract archive…",
+      "undo": "Undo",
+      "redo": "Redo",
+      "pasteSystem": "Paste from system clipboard"
     },
     "view": {
       "iconSize": "Simge Boyutu",
       "showHidden": "Gizli Dosyaları Göster",
       "toggleLayout": "Düzeni Değiştir",
-      "viewOptions": "Görünüm Seçenekleri"
+      "viewOptions": "Görünüm Seçenekleri",
+      "smaller": "Smaller",
+      "larger": "Larger"
     },
     "notifications": {
       "mkdirFailed": "Klasör oluşturulamadı: {{path}}",
@@ -2600,7 +2821,10 @@
     "androidShare": {
       "uploadHere": "{{count}} paylaşılan dosyayı bu klasöre yükle",
       "confirm": "Buraya yükle"
-    }
+    },
+    "splitOn": "Split view — two listings",
+    "splitOff": "Split view off",
+    "noFileOperations": "No file operations"
   },
   "home": {
     "emptyState": {
@@ -2698,7 +2922,8 @@
       "uptime": "Çalışma Süresi:",
       "active": "Aktif",
       "inactive": "İnaktif",
-      "error": "Hata"
+      "error": "Hata",
+      "unknown": "unknown"
     },
     "jobs": {
       "activeCount": "{{count}} aktif iş",
@@ -2727,13 +2952,23 @@
       "activeCount": "{{active}} aktif / {{total}} toplam",
       "noScheduled": "Otomasyon yok",
       "noConfigured": "Otomasyon yapılandırılmamış. Otomasyon oluşturmak için cron zamanlamaları veya gerçek zamanlı dosya izlemeyi yapılandırın.",
-      "nextRun": "Sonraki Çalışma:"
+      "nextRun": "Sonraki Çalışma:",
+      "title": "Automations"
     },
     "serves": {
       "activeCount": "{{count}} aktif sunum",
       "noActive": "Aktif sunum yok",
       "noRunning": "Aktif çalışan sunum yok. Bir uzak bağlantıyı ağ protokolleri (HTTP, WebDAV, FTP veya SFTP) üzerinden erişilebilir kılmak için sunumu başlatın."
-    }
+    },
+    "editLayout": "Edit layout",
+    "reorderRemotes": "Reorder remotes…",
+    "resetPanels": "Reset panels",
+    "hidePanel": "Hide or show this panel",
+    "moveUp": "Move panel up",
+    "moveDown": "Move panel down",
+    "showRemote": "Show on overview",
+    "hideRemote": "Hide from overview",
+    "activity": "Activity"
   },
   "appOverview": {
     "labels": {
@@ -3219,7 +3454,13 @@
     "clearCache": "Önbelleği Temizle",
     "openDevTools": "Geliştirici Araçlarını Aç",
     "openDevToolsError": "Geliştirici Araçları açılamadı",
-    "cleared": "Veriler Temizlendi"
+    "cleared": "Veriler Temizlendi",
+    "debugInfo": "Debug Info",
+    "mode": "Mode",
+    "folders": "Folders",
+    "maintenance": "Maintenance",
+    "relaunch": "Relaunch",
+    "gcStarted": "Garbage collection started"
   },
   "flow": {
     "title": "Flow",
@@ -3238,10 +3479,12 @@
         "scheduled": "Scheduled Task",
         "watcher": "Folder Watcher Active",
         "watcherChangedOnly": "Folder Watcher Active (Subdirectories only)",
-        "autostart": "Auto-Start Enabled"
+        "autostart": "Auto-Start Enabled",
+        "cron": "cron"
       },
       "status": {
-        "running": "Running"
+        "running": "Running",
+        "paused": "paused"
       },
       "detail": {
         "configuration": "Configuration"
@@ -3259,7 +3502,11 @@
         "tabVfs": "VFS",
         "tabFilter": "Filter",
         "tabBackend": "Backend",
-        "tabRuntimeRemote": "Çalışma Zamanı Remote"
+        "tabRuntimeRemote": "Çalışma Zamanı Remote",
+        "cron": "Cron expression",
+        "showOnTray": "Show on tray",
+        "runtimeRemoteJson": "Runtime remote JSON",
+        "flags": "Operation flags"
       },
       "actions": {
         "start": "Start",
@@ -3273,7 +3520,8 @@
         "createFirst": "Create your first Quick Run to get started with fast, un-profiled operations.",
         "noRunsForRemote": "{{remote}} için yapılandırılmış hızlı işlem yok.",
         "createForRemote": "{{remote}} için Hızlı İşlem Oluştur"
-      }
+      },
+      "showInTray": "Show in tray"
     },
     "tabs": {
       "quickRun": "Hızlı Çalıştırma",
@@ -3333,5 +3581,68 @@
       "cancelled": "İşlem iptal edildi",
       "error": "Hata"
     }
+  },
+  "remote": {
+    "mountToggle": "Mount / Unmount",
+    "actionInProgress": "Action already in progress",
+    "stopProfile": "Stop this profile",
+    "startProfile": "Start this profile",
+    "showInTray": "Show in tray",
+    "resetSettings": "Reset remote settings?",
+    "resetSettingsBody": "Profiles, helpers, and automations for this remote will be removed. The rclone remote stays.",
+    "resetSettingsConfirm": "Reset",
+    "vfs": "VFS",
+    "vfsPanel": "VFS panel",
+    "vfsActionFinished": "VFS action finished",
+    "profiles": "Profiles",
+    "noProfiles": "No saved profiles — configure the remote to add them",
+    "addProfile": "Add profile",
+    "editHelpers": "Edit helper profiles",
+    "quickRuns": "Quick Runs for this remote",
+    "diskUsage": "Disk usage"
+  },
+  "bandwidth": {
+    "currentTransfer": "Current transfer"
+  },
+  "general": {
+    "remoteConfig": {
+      "title": {
+        "add": "Remote Configuration"
+      },
+      "advancedProfiles": {
+        "title": "Helper profiles"
+      },
+      "steps": {
+        "backend": "Backend / main",
+        "filter": "Filter",
+        "vfs": "VFS",
+        "mount": "Mount",
+        "copy": "Copy",
+        "sync": "Sync",
+        "check": "Check"
+      }
+    }
+  },
+  "operation": {
+    "serve": {
+      "type": "Serve type"
+    }
+  },
+  "repair": {
+    "passwordPrompt": "Enter the rclone.conf password to unlock the engine.",
+    "unlock": "Unlock",
+    "passwordEmpty": "Password is empty",
+    "passwordUnlocked": "Config unlocked",
+    "title": "Repair rclone",
+    "noIssues": "No issues detected",
+    "healthy": "rclone, FUSE, config, and the RC engine look healthy.",
+    "chooseConfig": "Choose rclone.conf…",
+    "engineRestarted": "Engine restart requested",
+    "installRclone": "Install rclone",
+    "chooseBinary": "Choose binary…",
+    "restartEngine": "Restart engine"
+  },
+  "logs": {
+    "title": "View logs"
   }
 }

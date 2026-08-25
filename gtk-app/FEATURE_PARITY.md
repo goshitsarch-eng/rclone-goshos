@@ -378,6 +378,8 @@ This client is the GTK 4 + libadwaita rewrite of the Angular/Tauri desktop UI. I
 - Interactive config step: required badge, default value, exclusive vs custom examples, password peek, Yes/No, validation hint
 - Dashboard layout toolbar toggles compact/detailed cards (`generalOverview.layout.showDetailed` / `showCompact`)
 - Files launch from `--browse` / `--browse-path` and Angular nautilus URLs (`?browse=`, `#/nautilus/`, `/nautilus/`)
+- Files folder context menu uses an Open submenu (Open / New Tab / New Window), matching Angular `slide-menu`
+- 259 GTK `t_or` strings added to all `resources/i18n/*/main.json` locales
 
 ## Still deepening toward pixel-level Angular parity
 

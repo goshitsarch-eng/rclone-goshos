@@ -39,7 +39,17 @@
     "moreActions": "その他の操作",
     "duplicate": "複製",
     "clearAll": "すべてクリア",
-    "acknowledge": "確認"
+    "acknowledge": "確認",
+    "done": "Done",
+    "open": "Open",
+    "apply": "Apply",
+    "off": "off",
+    "install": "Install",
+    "use": "Use",
+    "category": "Category",
+    "other": "Other",
+    "ready": "Ready",
+    "configure": "Configure"
   },
   "cron": {
     "everyMinute": "毎分",
@@ -89,7 +99,8 @@
       "10": "10月",
       "11": "11月",
       "12": "12月"
-    }
+    },
+    "invalid": "Invalid cron"
   },
   "remoteConfig": {
     "pathStatus": {
@@ -98,7 +109,88 @@
       "colliding": "{{details}} で使用中",
       "willCreate": "リモート作成後にフォルダが作成されます",
       "checking": "パスを確認中..."
-    }
+    },
+    "vfs": "VFS",
+    "vfsMetadataDirs": "Metadata dirs",
+    "vfsMetadataFiles": "Metadata files",
+    "vfsUploads": "Uploads",
+    "vfsErrors": "Errors",
+    "vfsDiskCache": "Disk cache",
+    "vfsStatsUnavailable": "VFS stats unavailable",
+    "vfsQueueEmpty": "Queue is empty",
+    "vfsQueueUnavailable": "Queue unavailable",
+    "vfsForgetFile": "Forget file / refresh dir",
+    "vfsForget": "Forget file",
+    "vfsForgot": "Forgot cached file",
+    "vfsRefreshDir": "Refresh dir",
+    "vfsRefreshed": "Refreshed directory",
+    "vfsPollUpdated": "Poll interval updated",
+    "vfsQueueExpiry": "Queue id / expiry",
+    "vfsExpiryUpdated": "Queue expiry updated",
+    "flagsApplyHelp": "Edits are sent to rclone via options/set. Categories match the Angular flag panels.",
+    "flagsWriteEngine": "Write flags to the running engine",
+    "jsonMode": "JSON",
+    "jsonPayload": "Raw options/set payload",
+    "jsonPayloadHelp": "Edit the current rclone options as JSON. Apply writes the object via options/set.",
+    "applyJson": "Apply JSON",
+    "flagsWriteJson": "Write JSON to the running engine",
+    "source": "Source",
+    "mountPoint": "Mount point",
+    "listenAddress": "Listen address",
+    "destinationFs": "Destination fs",
+    "dest": "Destination",
+    "serveType": "Serve type",
+    "mountType": "Mount type",
+    "vfsProfile": "VFS profile",
+    "filterProfile": "Filter profile",
+    "backendProfile": "Backend profile",
+    "dryRun": "Dry run",
+    "flags": "Operation flags",
+    "startFailed": "Start failed",
+    "addSource": "Add source",
+    "multipleSources": "Multiple sources",
+    "pathStatusTitle": "Path check",
+    "applyTemplate": "Apply",
+    "archiveFormat": "Format",
+    "archivePrefix": "Prefix",
+    "archiveFullPath": "Use full paths in the archive",
+    "cronParts": {
+      "daily": "Daily",
+      "weekly": "Weekly",
+      "monthly": "Monthly",
+      "interval": "Interval",
+      "hour": "Hour",
+      "minute": "Minute",
+      "dow": "Day of week",
+      "dom": "Day of month",
+      "everyHours": "Every N hours"
+    },
+    "showOnTray": "Show on tray",
+    "hideFromSidebar": "Hide from sidebar",
+    "primaryActions": "Primary actions",
+    "syncActions": "Sync actions",
+    "editProvider": "Edit provider fields…",
+    "helperJsonEditor": "Helper JSON editor…",
+    "metadata": "Remote metadata",
+    "provider": "Provider",
+    "rcloneDefinition": "Rclone remote definition",
+    "namedHelpers": "Named helper profiles",
+    "url": "URL",
+    "unusedDestination": "Unused destination",
+    "scheduledCron": "Scheduled (cron)",
+    "cronExpression": "Cron expression",
+    "runtimeProfile": "Runtime profile",
+    "automation": "Automation",
+    "cron": "Cron schedule",
+    "linkedHelpers": "Linked helper profiles",
+    "filterFlags": "Filter flags",
+    "importCliFlags": "Import rclone CLI flags",
+    "cliImport": "CLI import",
+    "jsonDocument": "JSON document",
+    "options": "Options",
+    "jsonObject": "JSON object",
+    "additionalSource": "Additional source",
+    "autoStart": "Auto-start mount / jobs"
   },
   "validators": {
     "integer": "有効な整数を入力してください",
@@ -161,7 +253,8 @@
     "toggleCopyurl": "クイックアクションとしてURLコピーを切り替え",
     "toggleArchivecreate": "クイックアクションとして圧縮を切り替え",
     "successStart": "{{remote}} ({{profile}}) の {{type}} を正常に開始しました",
-    "failedStart": "{{remote}} の {{type}} の開始に失敗しました: {{error}}"
+    "failedStart": "{{remote}} の {{type}} の開始に失敗しました: {{error}}",
+    "start": "Start"
   },
   "serve": {
     "noActive": "実行中の公開サーバーはありません",
@@ -238,7 +331,9 @@
       "mountStatus": "マウント状態",
       "syncStatus": "同期操作状態",
       "serveStatus": "公開状態"
-    }
+    },
+    "quickAdd": "Quick add remote",
+    "detailedConfig": "Detailed remote config"
   },
   "detailShared": {
     "jobInfo": {
@@ -386,7 +481,8 @@
       "noActionsHint": "ルールに割り当てる前に、まずアラートアクションを作成する必要があります。",
       "filtersEmptyHint": "全てのイベントに一致させるには空欄にします。",
       "scopeFilters": "スコープフィルタ",
-      "allEvents": "すべてのイベント"
+      "allEvents": "すべてのイベント",
+      "editorTitle": "Alert rule"
     },
     "events": {
       "job": "ジョブ＆ファイル操作",
@@ -457,10 +553,22 @@
       "discord": "Discord",
       "slack": "Slack",
       "headerKey": "ヘッダー名",
-      "headerValue": "値"
+      "headerValue": "値",
+      "editorTitle": "Alert action",
+      "telegramMode": "Telegram mode",
+      "envVars": "Environment variables (KEY=value)",
+      "whatsappProvider": "WhatsApp provider",
+      "smtpHost": "SMTP host",
+      "brokerUrl": "Broker URL"
     },
     "noRulesHint": "アラートルールがまだ設定されていません。通知を受け取るためのルールを作成してください。",
-    "noActionsHint": "アラートアクションがまだ設定されていません。アクションを作成してください。"
+    "noActionsHint": "アラートアクションがまだ設定されていません。アクションを作成してください。",
+    "search": "Search history",
+    "stats": "History stats",
+    "acknowledge": "Acknowledge",
+    "addRule": "Add rule",
+    "addAction": "Add action",
+    "templateKeys": "Insert template key"
   },
   "settings": {
     "resetAll": {
@@ -627,6 +735,9 @@
           "compact": "コンパクト",
           "detailed": "詳細"
         }
+      },
+      "show_json_mode": {
+        "label": "Remember JSON mode"
       }
     },
     "nautilus": {
@@ -637,6 +748,13 @@
       "bookmarks": {
         "label": "ブックマーク",
         "description": "素早くアクセスするためのブックマーク場所のリスト。"
+      }
+    },
+    "rcloneFlags": {
+      "mainCategories": {
+        "network": {
+          "title": "Network"
+        }
       }
     }
   },
@@ -716,8 +834,23 @@
       "shortcuts": "キーボードショートカット",
       "about": "RClone Manager について",
       "quickRemote": "クイックリモート作成",
-      "detailedRemote": "詳細リモート作成"
-    }
+      "detailedRemote": "詳細リモート作成",
+      "runGc": "Run GC",
+      "installRclone": "Install",
+      "openConfig": "Config folder",
+      "openCache": "Cache folder",
+      "openLog": "Logs folder",
+      "backends": "Backends",
+      "templates": "Templates",
+      "remoteOrder": "Remote order and visibility",
+      "clearFsCache": "Clear FS cache",
+      "checkConnectivity": "Check connectivity",
+      "quickRun": "New Quick Run",
+      "add": "Add remote or quick run",
+      "developer": "Developer",
+      "trayActions": "Tray actions"
+    },
+    "detach": "Detach the current workspace into a new window"
   },
   "onboarding": {
     "loadingTitle": "RClone Manager を初期化中",
@@ -1258,7 +1391,8 @@
           "label": "出力なし (No Output)",
           "description": "RC設定呼び出しからの標準出力を抑制します"
         }
-      }
+      },
+      "togglePassword": "Toggle password visibility"
     },
     "appOperation": {
       "multiSourceOneWayInfo": "複数の転送元パスが検出されました。rcloneが各転送元を転送先に対して確実に検証できるように、片方向の検証（ワンウェイチェック）が自動的に有効になりました。",
@@ -1422,6 +1556,9 @@
     "presets": {
       "applied": "Default presets applied successfully",
       "noRemoteSelected": "Please select a remote first"
+    },
+    "quickAdd": {
+      "title": "Quick Add Remote"
     }
   },
   "backup": {
@@ -1540,7 +1677,10 @@
       "metadata": {
         "system": "システムメタデータ",
         "standard": "標準メタデータ"
-      }
+      },
+      "usageUnavailable": "Unable to query disk usage",
+      "objects": "Objects",
+      "root": "Root"
     },
     "properties": {
       "title": "プロパティ",
@@ -1585,7 +1725,11 @@
       "generatedChecksums": "生成されたチェックサム",
       "calculateAnother": "別のハッシュを計算",
       "bulkHashInstruction": "ハッシュタイプを選択して、このディレクトリ内の全ファイルのチェックサムを計算します。",
-      "noHashesFound": "ハッシュが返されませんでした"
+      "noHashesFound": "ハッシュが返されませんでした",
+      "kind": "Kind",
+      "localDisk": "Local disk",
+      "noPublicLink": "Remote did not return a public link",
+      "linkRemoved": "Link removed"
     },
     "operations": {
       "title": "操作履歴",
@@ -1652,6 +1796,15 @@
       "largeRemotePreview": "このリモートファイルは {{size}} です。プレビューのためにファイル全体をダウンロードすると時間がかかることがあります。",
       "downloadPreview": "プレビューをダウンロード",
       "downloadedPreview": "{{path}} にプレビューをダウンロードしました"
+    },
+    "pathKind": {
+      "title": "Path type",
+      "local": "Local",
+      "currentRemote": "Current remote",
+      "otherRemote": "Other remote"
+    },
+    "errors": {
+      "connectionFailed": "Connection Failed"
     }
   },
   "dashboard": {
@@ -1735,7 +1888,10 @@
       "dryRunActive": "テスト実行が有効です — 変更は一切行われません",
       "resync": "再同期",
       "resyncActive": "再同期が有効です — 完全な再同期を実行しています",
-      "remoteSettings": "リモート設定"
+      "remoteSettings": "リモート設定",
+      "settings": "Settings",
+      "configureActions": "Configure primary actions",
+      "mountDiskUsage": "Mount point usage"
     },
     "generalDetail": {
       "automations": "自動化",
@@ -1761,6 +1917,28 @@
       "remoteConfiguration": "リモート設定",
       "editConfiguration": "設定を編集",
       "remoteActionQuickSelection": "リモートアクションクイック選択"
+    },
+    "statusOverview": {
+      "title": "Status overview",
+      "active": "active"
+    },
+    "bandwidth": {
+      "savedLimit": "Saved limit",
+      "unlimited": "Unlimited",
+      "liveLimit": "Live limit",
+      "customLimit": "Custom limit (e.g. 2M or 1M:10M)"
+    },
+    "system": {
+      "pid": "rclone PID",
+      "groups": "Job groups",
+      "memory": "Memory",
+      "activity": "Activity"
+    },
+    "quickRuns": {
+      "empty": "No quick runs"
+    },
+    "settings": {
+      "empty": "No saved profile settings"
     }
   },
   "shortcuts": {
@@ -1858,7 +2036,12 @@
         "fatalError": "致命的エラー",
         "speedAvg": "平均速度",
         "transferred": "転送量"
-      }
+      },
+      "filterTransfers": "Filter transfers",
+      "stopGroup": "Stop group",
+      "resetStats": "Reset stats",
+      "openSource": "Open source in Files",
+      "openDestination": "Open destination in Files"
     },
     "about": {
       "title": "このアプリについて",
@@ -2031,7 +2214,9 @@
         "folderPathFor": "{{name}} のフォルダパス",
         "scrollToPending": "変更保留中セクションへスクロール"
       },
-      "pendingChangesTooltip": "エンジンの再起動が必要な未保存の変更が {{count}} 件あります。クリックして移動します。"
+      "pendingChangesTooltip": "エンジンの再起動が必要な未保存の変更が {{count}} 件あります。クリックして移動します。",
+      "pendingRestart": "Pending engine restart",
+      "onePendingChange": "1 setting waiting for Save & Restart"
     },
     "export": {
       "title": "設定のエクスポート",
@@ -2082,7 +2267,8 @@
           "label": "アラート",
           "description": "アラートルールおよびアクションの設定"
         }
-      }
+      },
+      "backend": "Rclone backend"
     },
     "backend": {
       "title": "バックエンド管理",
@@ -2193,7 +2379,8 @@
         "passwordStoredInKeyring": "パスワードをシステムキーリングに保存しました",
         "passwordRemoved": "キーチェーンからパスワードを削除しました",
         "passwordsMismatch": "パスワードが一致しません"
-      }
+      },
+      "addTitle": "Remote RC backend"
     },
     "quickAdd": {
       "title": "リモートのクイック追加",
@@ -2265,7 +2452,9 @@
         "filter": "フィルタ",
         "vfs": "VFS",
         "backend": "バックエンド",
-        "runtimeRemote": "実行時リモート"
+        "runtimeRemote": "実行時リモート",
+        "remote": "Remote",
+        "profiles": "Per-operation profiles"
       },
       "advancedProfiles": {
         "title": "高度なプロファイル",
@@ -2313,7 +2502,17 @@
       "profileSaveFailed": "プロファイルの保存に失敗しました",
       "warnings": {
         "selectRemoteToSave": "プロファイルを保存するリモートを選択してください"
-      }
+      },
+      "pollInterval": "Poll interval",
+      "cancelOauth": "Cancel OAuth",
+      "newName": "New name",
+      "saveStep": "Save step",
+      "oauthCancelled": "OAuth cancelled",
+      "addProfile": "Add profile",
+      "cloneProfile": "Clone profile",
+      "renameProfile": "Rename profile",
+      "deleteProfile": "Delete profile",
+      "profiles": "Profiles"
     },
     "rcloneFlags": {
       "search": {
@@ -2387,6 +2586,12 @@
         "MetricsAuth": "メトリクス認証",
         "MetricsHTTP": "メトリクスHTTP設定"
       }
+    },
+    "updates": {
+      "title": "Updates"
+    },
+    "flags": {
+      "emptyCategory": "No flags in this category"
     }
   },
   "nautilus": {
@@ -2408,7 +2613,8 @@
       "cloud": "クラウド",
       "fileSystem": "ファイルシステム",
       "bookmarks": "ブックマーク",
-      "localDisk": "ローカルディスク"
+      "localDisk": "ローカルディスク",
+      "pathPlaceholder": "remote:path or /local/path"
     },
     "bookmarks": {
       "emptyHint": "ブックマークはありません"
@@ -2437,7 +2643,8 @@
     },
     "empty": {
       "noStarred": "スター付きファイルはありません",
-      "folderEmpty": "フォルダは空です"
+      "folderEmpty": "フォルダは空です",
+      "noFiles": "Archive is empty"
     },
     "selection": {
       "selected": "選択済み",
@@ -2503,7 +2710,9 @@
         "counter": "連番",
         "date": "日付",
         "extension": "拡張子",
-        "duplicateOrInvalid": "重複しているか無効な名前です"
+        "duplicateOrInvalid": "重複しているか無効な名前です",
+        "originalName": "Original name",
+        "insertPlaceholder": "Insert placeholder"
       }
     },
     "errors": {
@@ -2570,13 +2779,25 @@
       "switchPane": "ペインを切り替え",
       "copyPublicLink": "公開リンクをコピー",
       "createFolderWithItems": "選択項目から新しいフォルダを作成...",
-      "renameMultiple": "一括名前変更..."
+      "renameMultiple": "一括名前変更...",
+      "pathOptions": "Path options",
+      "move": "Move",
+      "openNative": "Open native",
+      "copyUrl": "Copy URL into folder…",
+      "download": "Download…",
+      "browseArchive": "Browse archive contents",
+      "extract": "Extract archive…",
+      "undo": "Undo",
+      "redo": "Redo",
+      "pasteSystem": "Paste from system clipboard"
     },
     "view": {
       "iconSize": "アイコンサイズ",
       "showHidden": "隠しファイルを表示",
       "toggleLayout": "レイアウトの切り替え",
-      "viewOptions": "表示オプション"
+      "viewOptions": "表示オプション",
+      "smaller": "Smaller",
+      "larger": "Larger"
     },
     "notifications": {
       "mkdirFailed": "ディレクトリの作成に失敗しました: {{path}}",
@@ -2600,7 +2821,10 @@
     "androidShare": {
       "uploadHere": "{{count}} 個の共有ファイルをこのフォルダにアップロード",
       "confirm": "ここにアップロード"
-    }
+    },
+    "splitOn": "Split view — two listings",
+    "splitOff": "Split view off",
+    "noFileOperations": "No file operations"
   },
   "home": {
     "emptyState": {
@@ -2698,7 +2922,8 @@
       "uptime": "稼働時間:",
       "active": "アクティブ",
       "inactive": "非アクティブ",
-      "error": "エラー"
+      "error": "エラー",
+      "unknown": "unknown"
     },
     "jobs": {
       "activeCount": "{{count}} 個の実行中のジョブ",
@@ -2727,13 +2952,23 @@
       "activeCount": "{{active}} 有効 / 全 {{total}} 件",
       "noScheduled": "自動化はありません",
       "noConfigured": "自動化が設定されていません。Cronスケジュールやリアルタイムファイル監視を伴う操作を設定して自動化を作成してください。",
-      "nextRun": "次回実行:"
+      "nextRun": "次回実行:",
+      "title": "Automations"
     },
     "serves": {
       "activeCount": "{{count}} 件の実行中の公開サーバー",
       "noActive": "実行中の公開サーバーはありません",
       "noRunning": "実行中の公開サーバーはありません。リモートの公開を開始すると、HTTP, WebDAV, FTP, SFTP などのネットワークプロトコル経由でアクセス可能になります。"
-    }
+    },
+    "editLayout": "Edit layout",
+    "reorderRemotes": "Reorder remotes…",
+    "resetPanels": "Reset panels",
+    "hidePanel": "Hide or show this panel",
+    "moveUp": "Move panel up",
+    "moveDown": "Move panel down",
+    "showRemote": "Show on overview",
+    "hideRemote": "Hide from overview",
+    "activity": "Activity"
   },
   "appOverview": {
     "labels": {
@@ -3219,7 +3454,13 @@
     "clearCache": "キャッシュを消去",
     "openDevTools": "開発者ツールを開く",
     "openDevToolsError": "開発者モードを開けませんでした",
-    "cleared": "データを消去しました"
+    "cleared": "データを消去しました",
+    "debugInfo": "Debug Info",
+    "mode": "Mode",
+    "folders": "Folders",
+    "maintenance": "Maintenance",
+    "relaunch": "Relaunch",
+    "gcStarted": "Garbage collection started"
   },
   "flow": {
     "title": "Flow",
@@ -3238,10 +3479,12 @@
         "scheduled": "Scheduled Task",
         "watcher": "Folder Watcher Active",
         "watcherChangedOnly": "Folder Watcher Active (Subdirectories only)",
-        "autostart": "Auto-Start Enabled"
+        "autostart": "Auto-Start Enabled",
+        "cron": "cron"
       },
       "status": {
-        "running": "Running"
+        "running": "Running",
+        "paused": "paused"
       },
       "detail": {
         "configuration": "Configuration"
@@ -3259,7 +3502,11 @@
         "tabVfs": "VFS",
         "tabFilter": "Filter",
         "tabBackend": "Backend",
-        "tabRuntimeRemote": "Runtime Remote"
+        "tabRuntimeRemote": "Runtime Remote",
+        "cron": "Cron expression",
+        "showOnTray": "Show on tray",
+        "runtimeRemoteJson": "Runtime remote JSON",
+        "flags": "Operation flags"
       },
       "actions": {
         "start": "Start",
@@ -3273,7 +3520,8 @@
         "createFirst": "Create your first Quick Run to get started with fast, un-profiled operations.",
         "noRunsForRemote": "{{remote}} 用のクイック実行は設定されていません。",
         "createForRemote": "{{remote}} のクイック実行を作成"
-      }
+      },
+      "showInTray": "Show in tray"
     },
     "tabs": {
       "quickRun": "クイック実行",
@@ -3333,5 +3581,68 @@
       "cancelled": "操作がキャンセルされました",
       "error": "エラー"
     }
+  },
+  "remote": {
+    "mountToggle": "Mount / Unmount",
+    "actionInProgress": "Action already in progress",
+    "stopProfile": "Stop this profile",
+    "startProfile": "Start this profile",
+    "showInTray": "Show in tray",
+    "resetSettings": "Reset remote settings?",
+    "resetSettingsBody": "Profiles, helpers, and automations for this remote will be removed. The rclone remote stays.",
+    "resetSettingsConfirm": "Reset",
+    "vfs": "VFS",
+    "vfsPanel": "VFS panel",
+    "vfsActionFinished": "VFS action finished",
+    "profiles": "Profiles",
+    "noProfiles": "No saved profiles — configure the remote to add them",
+    "addProfile": "Add profile",
+    "editHelpers": "Edit helper profiles",
+    "quickRuns": "Quick Runs for this remote",
+    "diskUsage": "Disk usage"
+  },
+  "bandwidth": {
+    "currentTransfer": "Current transfer"
+  },
+  "general": {
+    "remoteConfig": {
+      "title": {
+        "add": "Remote Configuration"
+      },
+      "advancedProfiles": {
+        "title": "Helper profiles"
+      },
+      "steps": {
+        "backend": "Backend / main",
+        "filter": "Filter",
+        "vfs": "VFS",
+        "mount": "Mount",
+        "copy": "Copy",
+        "sync": "Sync",
+        "check": "Check"
+      }
+    }
+  },
+  "operation": {
+    "serve": {
+      "type": "Serve type"
+    }
+  },
+  "repair": {
+    "passwordPrompt": "Enter the rclone.conf password to unlock the engine.",
+    "unlock": "Unlock",
+    "passwordEmpty": "Password is empty",
+    "passwordUnlocked": "Config unlocked",
+    "title": "Repair rclone",
+    "noIssues": "No issues detected",
+    "healthy": "rclone, FUSE, config, and the RC engine look healthy.",
+    "chooseConfig": "Choose rclone.conf…",
+    "engineRestarted": "Engine restart requested",
+    "installRclone": "Install rclone",
+    "chooseBinary": "Choose binary…",
+    "restartEngine": "Restart engine"
+  },
+  "logs": {
+    "title": "View logs"
   }
 }

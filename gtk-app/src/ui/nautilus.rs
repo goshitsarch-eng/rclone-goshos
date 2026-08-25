@@ -3562,6 +3562,7 @@ impl NautilusView {
                 FileTypeCategory::Archive
             )
         });
+        let folder_open = selected.len() == 1 && self.selected_is_dir();
         let rename_label = if selected.len() > 1 {
             self.ctx
                 .t_or("nautilus.contextMenu.renameMultiple", "Rename Multiple...")
@@ -3583,23 +3584,28 @@ impl NautilusView {
                 )
             }
         };
-        let mut items: Vec<(String, &str)> = vec![
-            (self.ctx.t_or("nautilus.contextMenu.open", "Open"), "open"),
-            (
-                self.ctx
-                    .t_or("nautilus.contextMenu.openNative", "Open native"),
-                "native",
-            ),
-            (
-                self.ctx
-                    .t_or("nautilus.contextMenu.openNewTab", "Open in New Tab"),
-                "tab",
-            ),
-            (
-                self.ctx
-                    .t_or("nautilus.contextMenu.openNewWindow", "Open in New Window"),
-                "window",
-            ),
+        let mut items: Vec<(String, &str)> = Vec::new();
+        if !folder_open {
+            items.extend([
+                (self.ctx.t_or("nautilus.contextMenu.open", "Open"), "open"),
+                (
+                    self.ctx
+                        .t_or("nautilus.contextMenu.openNative", "Open native"),
+                    "native",
+                ),
+                (
+                    self.ctx
+                        .t_or("nautilus.contextMenu.openNewTab", "Open in New Tab"),
+                    "tab",
+                ),
+                (
+                    self.ctx
+                        .t_or("nautilus.contextMenu.openNewWindow", "Open in New Window"),
+                    "window",
+                ),
+            ]);
+        }
+        items.extend([
             (
                 self.ctx.t_or("nautilus.contextMenu.refresh", "Refresh"),
                 "reload",
@@ -3614,7 +3620,7 @@ impl NautilusView {
                 self.ctx.t_or("nautilus.contextMenu.copyPath", "Copy Path"),
                 "copypath",
             ),
-        ];
+        ]);
         if public_ok {
             items.push((
                 self.ctx
@@ -3725,77 +3731,144 @@ impl NautilusView {
                 "detach",
             ),
         ]);
+        let stack = gtk::Stack::new();
+        if folder_open {
+            let open_btn = gtk::Button::with_label(&format!(
+                "{}  ▸",
+                self.ctx.t_or("nautilus.contextMenu.open", "Open")
+            ));
+            let stack_open = stack.clone();
+            open_btn.connect_clicked(move |_| {
+                stack_open.set_visible_child_name("open");
+            });
+            box_.append(&open_btn);
+        }
         for (label, action) in items {
             let btn = gtk::Button::with_label(&label);
             let view = self.clone();
-            btn.connect_clicked(move |_| match action {
-                "open" => {
-                    if let Some(name) = view.selected_name() {
-                        view.open_name(&name);
-                    }
-                }
-                "native" => view.open_native_selected(),
-                "tab" => view.open_selected_in_new_tab(),
-                "window" => view.open_selected_in_new_window(),
-                "reload" => view.reload(),
-                "copy" => view.cut_or_copy(false),
-                "cut" => view.cut_or_copy(true),
-                "paste" => view.paste(),
-                "copypath" => view.copy_selected_path(),
-                "public" => view.copy_public_link(),
-                "copyurl" => view.copy_url_prompt(),
-                "rename" => view.rename_selected(),
-                "delete" => view.delete_selected(),
-                "props" => view.properties_selected(),
-                "mkdir" => view.mkdir_prompt(),
-                "mkdirsel" => view.mkdir_with_selected(),
-                "download" => view.download_selected(),
-                "archivelist" => {
-                    if let Some(name) = view.selected_name() {
-                        view.open_name(&name);
-                    }
-                }
-                "uploaddir" => view.upload_folder_prompt(),
-                "togglestar" => view.toggle_star_selected(),
-                "star" => view.add_bookmark(),
-                "extract" => view.extract_selected(),
-                "rmdirs" => view.remove_empty_dirs(),
-                "cleanup" => view.cleanup_remote(),
-                "archive" => {
-                    if let Some(win) = view.root.root().and_downcast::<gtk::Window>() {
-                        let current = view.current.borrow().clone();
-                        let names = view.selected_names();
-                        if names.is_empty() {
-                            view.toast.add_toast(adw::Toast::new(
-                                &view.ctx.t_or(
-                                    "nautilus.errors.minSelection",
-                                    "Select items to archive",
-                                ),
-                            ));
-                        } else {
-                            dialogs::archive_create(
-                                &win,
-                                view.ctx.clone(),
-                                &current.remote,
-                                &current.path,
-                                &names,
-                            );
+            let popover = popover.clone();
+            btn.connect_clicked(move |_| {
+                popover.popdown();
+                match action {
+                    "open" => {
+                        if let Some(name) = view.selected_name() {
+                            view.open_name(&name);
                         }
                     }
+                    "native" => view.open_native_selected(),
+                    "tab" => view.open_selected_in_new_tab(),
+                    "window" => view.open_selected_in_new_window(),
+                    "reload" => view.reload(),
+                    "copy" => view.cut_or_copy(false),
+                    "cut" => view.cut_or_copy(true),
+                    "paste" => view.paste(),
+                    "copypath" => view.copy_selected_path(),
+                    "public" => view.copy_public_link(),
+                    "copyurl" => view.copy_url_prompt(),
+                    "rename" => view.rename_selected(),
+                    "delete" => view.delete_selected(),
+                    "props" => view.properties_selected(),
+                    "mkdir" => view.mkdir_prompt(),
+                    "mkdirsel" => view.mkdir_with_selected(),
+                    "download" => view.download_selected(),
+                    "archivelist" => {
+                        if let Some(name) = view.selected_name() {
+                            view.open_name(&name);
+                        }
+                    }
+                    "uploaddir" => view.upload_folder_prompt(),
+                    "togglestar" => view.toggle_star_selected(),
+                    "star" => view.add_bookmark(),
+                    "extract" => view.extract_selected(),
+                    "rmdirs" => view.remove_empty_dirs(),
+                    "cleanup" => view.cleanup_remote(),
+                    "archive" => {
+                        if let Some(win) = view.root.root().and_downcast::<gtk::Window>() {
+                            let current = view.current.borrow().clone();
+                            let names = view.selected_names();
+                            if names.is_empty() {
+                                view.toast.add_toast(adw::Toast::new(&view.ctx.t_or(
+                                    "nautilus.errors.minSelection",
+                                    "Select items to archive",
+                                )));
+                            } else {
+                                dialogs::archive_create(
+                                    &win,
+                                    view.ctx.clone(),
+                                    &current.remote,
+                                    &current.path,
+                                    &names,
+                                );
+                            }
+                        }
+                    }
+                    "share" => view.share_selected(),
+                    "sendto" => view.toggle_send_to(),
+                    "undo" => view.undo_last(),
+                    "redo" => view.redo_last(),
+                    "syspaste" => view.paste_system_clipboard(),
+                    "detach" => view.detach_current_tab(),
+                    _ => {}
                 }
-                "share" => view.share_selected(),
-                "sendto" => view.toggle_send_to(),
-                "undo" => view.undo_last(),
-                "redo" => view.redo_last(),
-                "syspaste" => view.paste_system_clipboard(),
-                "detach" => view.detach_current_tab(),
-                _ => {}
             });
             box_.append(&btn);
         }
-        popover.set_child(Some(&box_));
+        stack.add_named(&box_, Some("main"));
+        if folder_open {
+            let open_page = gtk::Box::new(gtk::Orientation::Vertical, 4);
+            let back = gtk::Button::with_label(&self.ctx.t("common.back"));
+            let stack_back = stack.clone();
+            back.connect_clicked(move |_| {
+                stack_back.set_visible_child_name("main");
+            });
+            open_page.append(&back);
+            for (label, action) in [
+                (self.ctx.t_or("nautilus.contextMenu.open", "Open"), "open"),
+                (
+                    self.ctx
+                        .t_or("nautilus.contextMenu.openNewTab", "Open in New Tab"),
+                    "tab",
+                ),
+                (
+                    self.ctx
+                        .t_or("nautilus.contextMenu.openNewWindow", "Open in New Window"),
+                    "window",
+                ),
+            ] {
+                let btn = gtk::Button::with_label(&label);
+                let view = self.clone();
+                let popover = popover.clone();
+                btn.connect_clicked(move |_| {
+                    popover.popdown();
+                    match action {
+                        "open" => {
+                            if let Some(name) = view.selected_name() {
+                                view.open_name(&name);
+                            }
+                        }
+                        "tab" => view.open_selected_in_new_tab(),
+                        "window" => view.open_selected_in_new_window(),
+                        _ => {}
+                    }
+                });
+                open_page.append(&btn);
+            }
+            stack.add_named(&open_page, Some("open"));
+        }
+        stack.set_visible_child_name("main");
+        popover.set_child(Some(&stack));
         popover.set_parent(&win);
         popover.popup();
+    }
+
+    fn selected_is_dir(&self) -> bool {
+        let Some(name) = self.selected_name() else {
+            return false;
+        };
+        self.last_listing
+            .borrow()
+            .iter()
+            .any(|entry| entry.name == name && entry.is_dir)
     }
 
     fn formatted_path(&self, name: Option<&str>) -> String {

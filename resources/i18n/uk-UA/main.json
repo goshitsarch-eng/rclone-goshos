@@ -39,7 +39,17 @@
     "moreActions": "Інші дії",
     "duplicate": "Дублювати",
     "clearAll": "Очистити все",
-    "acknowledge": "Підтвердити"
+    "acknowledge": "Підтвердити",
+    "done": "Done",
+    "open": "Open",
+    "apply": "Apply",
+    "off": "off",
+    "install": "Install",
+    "use": "Use",
+    "category": "Category",
+    "other": "Other",
+    "ready": "Ready",
+    "configure": "Configure"
   },
   "cron": {
     "everyMinute": "Щохвилини",
@@ -89,7 +99,8 @@
       "10": "жовтня",
       "11": "листопада",
       "12": "грудня"
-    }
+    },
+    "invalid": "Invalid cron"
   },
   "remoteConfig": {
     "pathStatus": {
@@ -98,7 +109,88 @@
       "colliding": "Використовується {{details}}",
       "willCreate": "Папку буде створено після створення сховища.",
       "checking": "Перевірка шляху..."
-    }
+    },
+    "vfs": "VFS",
+    "vfsMetadataDirs": "Metadata dirs",
+    "vfsMetadataFiles": "Metadata files",
+    "vfsUploads": "Uploads",
+    "vfsErrors": "Errors",
+    "vfsDiskCache": "Disk cache",
+    "vfsStatsUnavailable": "VFS stats unavailable",
+    "vfsQueueEmpty": "Queue is empty",
+    "vfsQueueUnavailable": "Queue unavailable",
+    "vfsForgetFile": "Forget file / refresh dir",
+    "vfsForget": "Forget file",
+    "vfsForgot": "Forgot cached file",
+    "vfsRefreshDir": "Refresh dir",
+    "vfsRefreshed": "Refreshed directory",
+    "vfsPollUpdated": "Poll interval updated",
+    "vfsQueueExpiry": "Queue id / expiry",
+    "vfsExpiryUpdated": "Queue expiry updated",
+    "flagsApplyHelp": "Edits are sent to rclone via options/set. Categories match the Angular flag panels.",
+    "flagsWriteEngine": "Write flags to the running engine",
+    "jsonMode": "JSON",
+    "jsonPayload": "Raw options/set payload",
+    "jsonPayloadHelp": "Edit the current rclone options as JSON. Apply writes the object via options/set.",
+    "applyJson": "Apply JSON",
+    "flagsWriteJson": "Write JSON to the running engine",
+    "source": "Source",
+    "mountPoint": "Mount point",
+    "listenAddress": "Listen address",
+    "destinationFs": "Destination fs",
+    "dest": "Destination",
+    "serveType": "Serve type",
+    "mountType": "Mount type",
+    "vfsProfile": "VFS profile",
+    "filterProfile": "Filter profile",
+    "backendProfile": "Backend profile",
+    "dryRun": "Dry run",
+    "flags": "Operation flags",
+    "startFailed": "Start failed",
+    "addSource": "Add source",
+    "multipleSources": "Multiple sources",
+    "pathStatusTitle": "Path check",
+    "applyTemplate": "Apply",
+    "archiveFormat": "Format",
+    "archivePrefix": "Prefix",
+    "archiveFullPath": "Use full paths in the archive",
+    "cronParts": {
+      "daily": "Daily",
+      "weekly": "Weekly",
+      "monthly": "Monthly",
+      "interval": "Interval",
+      "hour": "Hour",
+      "minute": "Minute",
+      "dow": "Day of week",
+      "dom": "Day of month",
+      "everyHours": "Every N hours"
+    },
+    "showOnTray": "Show on tray",
+    "hideFromSidebar": "Hide from sidebar",
+    "primaryActions": "Primary actions",
+    "syncActions": "Sync actions",
+    "editProvider": "Edit provider fields…",
+    "helperJsonEditor": "Helper JSON editor…",
+    "metadata": "Remote metadata",
+    "provider": "Provider",
+    "rcloneDefinition": "Rclone remote definition",
+    "namedHelpers": "Named helper profiles",
+    "url": "URL",
+    "unusedDestination": "Unused destination",
+    "scheduledCron": "Scheduled (cron)",
+    "cronExpression": "Cron expression",
+    "runtimeProfile": "Runtime profile",
+    "automation": "Automation",
+    "cron": "Cron schedule",
+    "linkedHelpers": "Linked helper profiles",
+    "filterFlags": "Filter flags",
+    "importCliFlags": "Import rclone CLI flags",
+    "cliImport": "CLI import",
+    "jsonDocument": "JSON document",
+    "options": "Options",
+    "jsonObject": "JSON object",
+    "additionalSource": "Additional source",
+    "autoStart": "Auto-start mount / jobs"
   },
   "validators": {
     "integer": "Має бути коректне ціле число",
@@ -161,7 +253,8 @@
     "toggleCopyurl": "Перемкнути Копіювання URL як швидку дію",
     "toggleArchivecreate": "Перемкнути Архівування як швидку дію",
     "successStart": "Успішно запущено {{type}} для {{remote}} ({{profile}})",
-    "failedStart": "Не вдалося запустити {{type}} для {{remote}}: {{error}}"
+    "failedStart": "Не вдалося запустити {{type}} для {{remote}}: {{error}}",
+    "start": "Start"
   },
   "serve": {
     "noActive": "Немає активних роздач",
@@ -238,7 +331,9 @@
       "mountStatus": "Стан монтування",
       "syncStatus": "Стан операцій синхронізації",
       "serveStatus": "Стан надання доступу"
-    }
+    },
+    "quickAdd": "Quick add remote",
+    "detailedConfig": "Detailed remote config"
   },
   "detailShared": {
     "jobInfo": {
@@ -386,7 +481,8 @@
       "noActionsHint": "Спочатку потрібно створити дію сповіщення, перш ніж призначати її правилу.",
       "filtersEmptyHint": "Залиште порожнім, щоб відповідати всім подіям.",
       "scopeFilters": "Фільтри області",
-      "allEvents": "Усі події"
+      "allEvents": "Усі події",
+      "editorTitle": "Alert rule"
     },
     "events": {
       "job": "Завдання та операції з файлами",
@@ -457,10 +553,22 @@
       "discord": "Discord",
       "slack": "Slack",
       "headerKey": "Назва заголовка",
-      "headerValue": "Значення"
+      "headerValue": "Значення",
+      "editorTitle": "Alert action",
+      "telegramMode": "Telegram mode",
+      "envVars": "Environment variables (KEY=value)",
+      "whatsappProvider": "WhatsApp provider",
+      "smtpHost": "SMTP host",
+      "brokerUrl": "Broker URL"
     },
     "noRulesHint": "Правила сповіщень ще не налаштовані. Створіть правило для отримання сповіщень.",
-    "noActionsHint": "Дії сповіщень ще не налаштовані. Створіть дію для доставки сповіщень."
+    "noActionsHint": "Дії сповіщень ще не налаштовані. Створіть дію для доставки сповіщень.",
+    "search": "Search history",
+    "stats": "History stats",
+    "acknowledge": "Acknowledge",
+    "addRule": "Add rule",
+    "addAction": "Add action",
+    "templateKeys": "Insert template key"
   },
   "settings": {
     "resetAll": {
@@ -625,6 +733,9 @@
           "compact": "Компактний",
           "detailed": "Детальний"
         }
+      },
+      "show_json_mode": {
+        "label": "Remember JSON mode"
       }
     },
     "nautilus": {
@@ -638,7 +749,14 @@
       }
     },
     "remoteSaved": "Віддалене сховище успішно збережено",
-    "remoteSaveFailed": "Не вдалося зберегти віддалене сховище: {{error}}"
+    "remoteSaveFailed": "Не вдалося зберегти віддалене сховище: {{error}}",
+    "rcloneFlags": {
+      "mainCategories": {
+        "network": {
+          "title": "Network"
+        }
+      }
+    }
   },
   "banners": {
     "development": {
@@ -716,8 +834,23 @@
       "shortcuts": "Комбінації клавіш",
       "about": "Про RClone Manager",
       "quickRemote": "Швидке сховище",
-      "detailedRemote": "Сховище з деталями"
-    }
+      "detailedRemote": "Сховище з деталями",
+      "runGc": "Run GC",
+      "installRclone": "Install",
+      "openConfig": "Config folder",
+      "openCache": "Cache folder",
+      "openLog": "Logs folder",
+      "backends": "Backends",
+      "templates": "Templates",
+      "remoteOrder": "Remote order and visibility",
+      "clearFsCache": "Clear FS cache",
+      "checkConnectivity": "Check connectivity",
+      "quickRun": "New Quick Run",
+      "add": "Add remote or quick run",
+      "developer": "Developer",
+      "trayActions": "Tray actions"
+    },
+    "detach": "Detach the current workspace into a new window"
   },
   "onboarding": {
     "loadingTitle": "Ініціалізація RClone Manager",
@@ -1258,7 +1391,8 @@
           "label": "No Output",
           "description": "Придушити будь-який вивід stdout від виклику RC config"
         }
-      }
+      },
+      "togglePassword": "Toggle password visibility"
     },
     "appOperation": {
       "multiSourceOneWayInfo": "Виявлено кілька джерельних шляхів. Односторонню перевірку було ввімкнено автоматично, щоб переконатися, що rclone перевіряє кожне джерело відносно призначення.",
@@ -1422,6 +1556,9 @@
     "presets": {
       "applied": "Default presets applied successfully",
       "noRemoteSelected": "Please select a remote first"
+    },
+    "quickAdd": {
+      "title": "Quick Add Remote"
     }
   },
   "backup": {
@@ -1540,7 +1677,10 @@
       "metadata": {
         "system": "Системні метадані",
         "standard": "Стандартні метадані"
-      }
+      },
+      "usageUnavailable": "Unable to query disk usage",
+      "objects": "Objects",
+      "root": "Root"
     },
     "properties": {
       "title": "Властивості",
@@ -1585,7 +1725,11 @@
       "generatedChecksums": "Згенеровані контрольні суми",
       "calculateAnother": "Обчислити іншу",
       "bulkHashInstruction": "Виберіть тип хешу, щоб обчислити контрольні суми для всіх файлів у цьому каталозі.",
-      "noHashesFound": "Хешів не повернуто"
+      "noHashesFound": "Хешів не повернуто",
+      "kind": "Kind",
+      "localDisk": "Local disk",
+      "noPublicLink": "Remote did not return a public link",
+      "linkRemoved": "Link removed"
     },
     "operations": {
       "title": "Операції",
@@ -1652,6 +1796,15 @@
       "largeRemotePreview": "Цей віддалений файл має розмір {{size}}. Завантаження всього файлу для перегляду може зайняти час.",
       "downloadPreview": "Завантажити попередній перегляд",
       "downloadedPreview": "Попередній перегляд збережено в {{path}}"
+    },
+    "pathKind": {
+      "title": "Path type",
+      "local": "Local",
+      "currentRemote": "Current remote",
+      "otherRemote": "Other remote"
+    },
+    "errors": {
+      "connectionFailed": "Connection Failed"
     }
   },
   "dashboard": {
@@ -1735,7 +1888,10 @@
       "dryRunActive": "Пробний запуск активний — жодних змін не буде внесено",
       "resync": "Повторна синхронізація",
       "resyncActive": "Повторна синхронізація активна — виконується повна ресинхронізація",
-      "remoteSettings": "Налаштування сховища"
+      "remoteSettings": "Налаштування сховища",
+      "settings": "Settings",
+      "configureActions": "Configure primary actions",
+      "mountDiskUsage": "Mount point usage"
     },
     "generalDetail": {
       "automations": "Автоматизації",
@@ -1761,6 +1917,28 @@
       "remoteConfiguration": "Конфігурація сховища",
       "editConfiguration": "Редагувати конфігурацію",
       "remoteActionQuickSelection": "Швидкий вибір дії сховища"
+    },
+    "statusOverview": {
+      "title": "Status overview",
+      "active": "active"
+    },
+    "bandwidth": {
+      "savedLimit": "Saved limit",
+      "unlimited": "Unlimited",
+      "liveLimit": "Live limit",
+      "customLimit": "Custom limit (e.g. 2M or 1M:10M)"
+    },
+    "system": {
+      "pid": "rclone PID",
+      "groups": "Job groups",
+      "memory": "Memory",
+      "activity": "Activity"
+    },
+    "quickRuns": {
+      "empty": "No quick runs"
+    },
+    "settings": {
+      "empty": "No saved profile settings"
     }
   },
   "shortcuts": {
@@ -1858,7 +2036,12 @@
         "fatalError": "Фатальна помилка",
         "speedAvg": "Середня швидкість",
         "transferred": "Передано"
-      }
+      },
+      "filterTransfers": "Filter transfers",
+      "stopGroup": "Stop group",
+      "resetStats": "Reset stats",
+      "openSource": "Open source in Files",
+      "openDestination": "Open destination in Files"
     },
     "about": {
       "title": "Про програму",
@@ -2031,7 +2214,9 @@
         "folderPathFor": "Шлях до теки для {{name}}",
         "scrollToPending": "Прокрутити до розділу незбережених змін"
       },
-      "pendingChangesTooltip": "У вас є незбережені зміни ({{count}}), що потребують перезапуску рушія. Натисніть, щоб прокрутити до них."
+      "pendingChangesTooltip": "У вас є незбережені зміни ({{count}}), що потребують перезапуску рушія. Натисніть, щоб прокрутити до них.",
+      "pendingRestart": "Pending engine restart",
+      "onePendingChange": "1 setting waiting for Save & Restart"
     },
     "export": {
       "title": "Експорт налаштувань",
@@ -2082,7 +2267,8 @@
           "label": "Сповіщення",
           "description": "Конфігурація правил і дій сповіщень"
         }
-      }
+      },
+      "backend": "Rclone backend"
     },
     "backend": {
       "title": "Керування бекендами",
@@ -2193,7 +2379,8 @@
         "passwordStoredInKeyring": "Пароль збережено у системному сховищі ключів",
         "passwordRemoved": "Пароль вилучено зі сховища ключів",
         "passwordsMismatch": "Паролі не збігаються"
-      }
+      },
+      "addTitle": "Remote RC backend"
     },
     "quickAdd": {
       "title": "Швидке додавання сховища",
@@ -2265,7 +2452,9 @@
         "filter": "Фільтр",
         "vfs": "VFS",
         "backend": "Бекенд",
-        "runtimeRemote": "Runtime Remote"
+        "runtimeRemote": "Runtime Remote",
+        "remote": "Remote",
+        "profiles": "Per-operation profiles"
       },
       "advancedProfiles": {
         "title": "Розширені профілі",
@@ -2313,7 +2502,17 @@
       "profileSaveFailed": "Не вдалося зберегти профіль",
       "warnings": {
         "selectRemoteToSave": "Будь ласка, виберіть сховище для збереження профілю"
-      }
+      },
+      "pollInterval": "Poll interval",
+      "cancelOauth": "Cancel OAuth",
+      "newName": "New name",
+      "saveStep": "Save step",
+      "oauthCancelled": "OAuth cancelled",
+      "addProfile": "Add profile",
+      "cloneProfile": "Clone profile",
+      "renameProfile": "Rename profile",
+      "deleteProfile": "Delete profile",
+      "profiles": "Profiles"
     },
     "rcloneFlags": {
       "search": {
@@ -2387,6 +2586,12 @@
         "MetricsAuth": "Автентифікація метрик",
         "MetricsHTTP": "Налаштування HTTP метрик"
       }
+    },
+    "updates": {
+      "title": "Updates"
+    },
+    "flags": {
+      "emptyCategory": "No flags in this category"
     }
   },
   "nautilus": {
@@ -2408,7 +2613,8 @@
       "cloud": "Хмара",
       "fileSystem": "Файлова система",
       "bookmarks": "Закладки",
-      "localDisk": "Локальний диск"
+      "localDisk": "Локальний диск",
+      "pathPlaceholder": "remote:path or /local/path"
     },
     "bookmarks": {
       "emptyHint": "Немає закладок"
@@ -2437,7 +2643,8 @@
     },
     "empty": {
       "noStarred": "Немає позначених файлів",
-      "folderEmpty": "Тека порожня"
+      "folderEmpty": "Тека порожня",
+      "noFiles": "Archive is empty"
     },
     "selection": {
       "selected": "вибрано",
@@ -2503,7 +2710,9 @@
         "counter": "Лічильник",
         "date": "Дата",
         "extension": "Розширення",
-        "duplicateOrInvalid": "Дубльоване або недійсне ім'я"
+        "duplicateOrInvalid": "Дубльоване або недійсне ім'я",
+        "originalName": "Original name",
+        "insertPlaceholder": "Insert placeholder"
       }
     },
     "errors": {
@@ -2570,13 +2779,25 @@
       "switchPane": "Перемкнути панель",
       "copyPublicLink": "Копіювати публічне посилання",
       "createFolderWithItems": "Нова папка з виділеним...",
-      "renameMultiple": "Перейменувати декілька..."
+      "renameMultiple": "Перейменувати декілька...",
+      "pathOptions": "Path options",
+      "move": "Move",
+      "openNative": "Open native",
+      "copyUrl": "Copy URL into folder…",
+      "download": "Download…",
+      "browseArchive": "Browse archive contents",
+      "extract": "Extract archive…",
+      "undo": "Undo",
+      "redo": "Redo",
+      "pasteSystem": "Paste from system clipboard"
     },
     "view": {
       "iconSize": "Розмір значків",
       "showHidden": "Показувати приховані файли",
       "toggleLayout": "Перемкнути макет",
-      "viewOptions": "Параметри перегляду"
+      "viewOptions": "Параметри перегляду",
+      "smaller": "Smaller",
+      "larger": "Larger"
     },
     "notifications": {
       "mkdirFailed": "Не вдалося створити каталог: {{path}}",
@@ -2600,7 +2821,10 @@
     "androidShare": {
       "uploadHere": "Завантажити {{count}} спільних файл(ів) до цієї папки",
       "confirm": "Завантажити сюди"
-    }
+    },
+    "splitOn": "Split view — two listings",
+    "splitOff": "Split view off",
+    "noFileOperations": "No file operations"
   },
   "home": {
     "emptyState": {
@@ -2698,7 +2922,8 @@
       "uptime": "Час роботи:",
       "active": "Активно",
       "inactive": "Неактивно",
-      "error": "Помилка"
+      "error": "Помилка",
+      "unknown": "unknown"
     },
     "jobs": {
       "activeCount": "Активних завдань: {{count}}{{s}}",
@@ -2727,13 +2952,23 @@
       "activeCount": "{{active}} активних / {{total}} усього",
       "noScheduled": "Немає автоматизацій",
       "noConfigured": "Автоматизації не налаштовано. Налаштуйте операції з cron-розкладами або моніторингом файлів у реальному часі, щоб створити автоматизації.",
-      "nextRun": "Наступний запуск:"
+      "nextRun": "Наступний запуск:",
+      "title": "Automations"
     },
     "serves": {
       "activeCount": "Активних роздач: {{count}}{{s}}",
       "noActive": "Немає активних роздач",
       "noRunning": "Немає активних роздач. Почніть роздавати сховище, щоб зробити його доступним через мережеві протоколи, як-от HTTP, WebDAV, FTP або SFTP."
-    }
+    },
+    "editLayout": "Edit layout",
+    "reorderRemotes": "Reorder remotes…",
+    "resetPanels": "Reset panels",
+    "hidePanel": "Hide or show this panel",
+    "moveUp": "Move panel up",
+    "moveDown": "Move panel down",
+    "showRemote": "Show on overview",
+    "hideRemote": "Hide from overview",
+    "activity": "Activity"
   },
   "appOverview": {
     "labels": {
@@ -3219,7 +3454,13 @@
     "clearCache": "Очистити кеш",
     "openDevTools": "Відкрити інструменти розробника",
     "openDevToolsError": "Не вдалося відкрити DevTools",
-    "cleared": "Дані очищено"
+    "cleared": "Дані очищено",
+    "debugInfo": "Debug Info",
+    "mode": "Mode",
+    "folders": "Folders",
+    "maintenance": "Maintenance",
+    "relaunch": "Relaunch",
+    "gcStarted": "Garbage collection started"
   },
   "flow": {
     "title": "Flow",
@@ -3238,10 +3479,12 @@
         "scheduled": "Scheduled Task",
         "watcher": "Folder Watcher Active",
         "watcherChangedOnly": "Folder Watcher Active (Subdirectories only)",
-        "autostart": "Auto-Start Enabled"
+        "autostart": "Auto-Start Enabled",
+        "cron": "cron"
       },
       "status": {
-        "running": "Running"
+        "running": "Running",
+        "paused": "paused"
       },
       "detail": {
         "configuration": "Configuration"
@@ -3259,7 +3502,11 @@
         "tabVfs": "VFS",
         "tabFilter": "Filter",
         "tabBackend": "Backend",
-        "tabRuntimeRemote": "Runtime Remote"
+        "tabRuntimeRemote": "Runtime Remote",
+        "cron": "Cron expression",
+        "showOnTray": "Show on tray",
+        "runtimeRemoteJson": "Runtime remote JSON",
+        "flags": "Operation flags"
       },
       "actions": {
         "start": "Start",
@@ -3273,7 +3520,8 @@
         "createFirst": "Create your first Quick Run to get started with fast, un-profiled operations.",
         "noRunsForRemote": "Для {{remote}} не налаштовано швидких запусків.",
         "createForRemote": "Створити швидкий запуск для {{remote}}"
-      }
+      },
+      "showInTray": "Show in tray"
     },
     "tabs": {
       "quickRun": "Швидкий запуск",
@@ -3333,5 +3581,68 @@
       "cancelled": "Операцію скасовано",
       "error": "Помилка"
     }
+  },
+  "remote": {
+    "mountToggle": "Mount / Unmount",
+    "actionInProgress": "Action already in progress",
+    "stopProfile": "Stop this profile",
+    "startProfile": "Start this profile",
+    "showInTray": "Show in tray",
+    "resetSettings": "Reset remote settings?",
+    "resetSettingsBody": "Profiles, helpers, and automations for this remote will be removed. The rclone remote stays.",
+    "resetSettingsConfirm": "Reset",
+    "vfs": "VFS",
+    "vfsPanel": "VFS panel",
+    "vfsActionFinished": "VFS action finished",
+    "profiles": "Profiles",
+    "noProfiles": "No saved profiles — configure the remote to add them",
+    "addProfile": "Add profile",
+    "editHelpers": "Edit helper profiles",
+    "quickRuns": "Quick Runs for this remote",
+    "diskUsage": "Disk usage"
+  },
+  "bandwidth": {
+    "currentTransfer": "Current transfer"
+  },
+  "general": {
+    "remoteConfig": {
+      "title": {
+        "add": "Remote Configuration"
+      },
+      "advancedProfiles": {
+        "title": "Helper profiles"
+      },
+      "steps": {
+        "backend": "Backend / main",
+        "filter": "Filter",
+        "vfs": "VFS",
+        "mount": "Mount",
+        "copy": "Copy",
+        "sync": "Sync",
+        "check": "Check"
+      }
+    }
+  },
+  "operation": {
+    "serve": {
+      "type": "Serve type"
+    }
+  },
+  "repair": {
+    "passwordPrompt": "Enter the rclone.conf password to unlock the engine.",
+    "unlock": "Unlock",
+    "passwordEmpty": "Password is empty",
+    "passwordUnlocked": "Config unlocked",
+    "title": "Repair rclone",
+    "noIssues": "No issues detected",
+    "healthy": "rclone, FUSE, config, and the RC engine look healthy.",
+    "chooseConfig": "Choose rclone.conf…",
+    "engineRestarted": "Engine restart requested",
+    "installRclone": "Install rclone",
+    "chooseBinary": "Choose binary…",
+    "restartEngine": "Restart engine"
+  },
+  "logs": {
+    "title": "View logs"
   }
 }

@@ -405,6 +405,12 @@ mod tests {
             "modals.oauth.manualOpenPrompt",
             "modals.oauth.copyLink",
             "modals.remoteConfig.errors.interactiveProcessingFailed",
+            "generalOverview.editLayout",
+            "dashboard.statusOverview.title",
+            "nautilus.contextMenu.openNative",
+            "nautilus.contextMenu.openNewTab",
+            "developerTools.debugInfo",
+            "wizards.remoteConfig.togglePassword",
         ] {
             assert!(i18n.has(key), "missing i18n key {key}");
         }
