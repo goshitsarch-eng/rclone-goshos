@@ -101,13 +101,47 @@ fn localize_plan(ctx: &AppCtx, items: &mut [TrayMenuItem]) {
         if let Some(action) = &item.action {
             item.label = match action {
                 TrayAction::ShowWindow => ctx.t_or("tray.showApp", "Show Window"),
-                TrayAction::OpenFiles => ctx.t_or("tray.openFiles", "Open Files"),
+                TrayAction::OpenFiles => ctx.t_or("tray.openFileBrowser", "Open Files"),
                 TrayAction::Quit => ctx.t_or("tray.quit", "Quit"),
                 TrayAction::UnmountAll => ctx.t_or("tray.unmountAll", "Unmount All"),
                 TrayAction::StopJobs => ctx.t_or("tray.stopAllJobs", "Stop All Jobs"),
                 TrayAction::StopServes => ctx.t_or("tray.stopAllServes", "Stop All Serves"),
-                _ => item.label.clone(),
+                TrayAction::MountRemote { remote, .. } => {
+                    format!("{} {remote}", ctx.t_or("tray.mount", "Mount"))
+                }
+                TrayAction::UnmountRemote { remote } => {
+                    format!("{} {remote}", ctx.t_or("tray.unmount", "Unmount"))
+                }
+                TrayAction::BrowseRemote(_) => ctx.t_or("tray.browse", "Browse"),
+                TrayAction::BrowseInApp(_) => ctx.t_or("tray.browseInApp", "Browse (In App)"),
+                TrayAction::StartProfile { op, profile, .. } => {
+                    format!("{} {op} · {profile}", ctx.t_or("tray.start", "Start"))
+                }
+                TrayAction::StopProfile { op, profile, .. } => {
+                    format!("{} {op} · {profile}", ctx.t_or("tray.stop", "Stop"))
+                }
+                TrayAction::StartQuickRun(_) => {
+                    if let Some(name) = item.label.strip_prefix("Run ") {
+                        format!("{} {name}", ctx.t_or("tray.start", "Start"))
+                    } else {
+                        item.label.clone()
+                    }
+                }
+                TrayAction::StopQuickRun(_) => {
+                    if let Some(name) = item.label.strip_prefix("Stop ") {
+                        format!("{} {name}", ctx.t_or("tray.stop", "Stop"))
+                    } else {
+                        item.label.clone()
+                    }
+                }
             };
+        } else if item.children.iter().any(|child| {
+            matches!(
+                child.action,
+                Some(TrayAction::StartQuickRun(_)) | Some(TrayAction::StopQuickRun(_))
+            )
+        }) {
+            item.label = ctx.t_or("flow.quickRun.title", "Quick Runs");
         }
         localize_plan(ctx, &mut item.children);
     }
@@ -133,7 +167,15 @@ pub fn start(ctx: &AppCtx) -> Option<TrayBus> {
     localize_plan(ctx, &mut items);
     let remotes = items
         .iter()
-        .filter(|i| !i.children.is_empty() && i.label != "Quick Runs")
+        .filter(|i| {
+            !i.children.is_empty()
+                && !i.children.iter().any(|child| {
+                    matches!(
+                        child.action,
+                        Some(TrayAction::StartQuickRun(_)) | Some(TrayAction::StopQuickRun(_))
+                    )
+                })
+        })
         .count();
     let bus = TrayBus {
         tx: tx.clone(),

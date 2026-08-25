@@ -204,4 +204,23 @@ mod tests {
         );
         assert_eq!(from_stats[0]["name"], "b.bin");
     }
+
+    #[test]
+    fn check_result_builds_src_dst_paths() {
+        let item = CheckResult {
+            name: "Photos/a.jpg".into(),
+            status: "missing_dst".into(),
+            src_fs: "drive:".into(),
+            dst_fs: "/tmp/out".into(),
+        };
+        assert_eq!(
+            crate::transfers::join_fs_name(&item.src_fs, &item.name),
+            "drive:Photos/a.jpg"
+        );
+        assert_eq!(
+            crate::transfers::join_fs_name(&item.dst_fs, &item.name),
+            "/tmp/out/Photos/a.jpg"
+        );
+        assert_eq!(item.resolve_kind(), Some("copy_src_to_dst"));
+    }
 }

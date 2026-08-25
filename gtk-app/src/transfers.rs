@@ -46,7 +46,7 @@ fn first_str(item: &Value, keys: &[&str]) -> Option<String> {
         .map(|s| s.to_string())
 }
 
-fn join_fs_name(fs: &str, name: &str) -> String {
+pub fn join_fs_name(fs: &str, name: &str) -> String {
     if name.is_empty() {
         return fs.to_string();
     }

@@ -3666,6 +3666,8 @@ pub fn quick_run_editor(
     let group = adw::PreferencesGroup::new();
     let name = adw::EntryRow::new();
     name.set_title(&ctx.t_or("flow.quickRun.editor.name", "Name"));
+    let description = adw::EntryRow::new();
+    description.set_title(&ctx.t_or("flow.quickRun.editor.description", "Description"));
     let remote = adw::EntryRow::new();
     remote.set_title(&ctx.t_or("flow.quickRun.editor.remote", "Remote"));
     let src = adw::EntryRow::new();
@@ -3706,6 +3708,13 @@ pub fn quick_run_editor(
     auto.set_title(&ctx.t_or("flow.quickRun.badges.autostart", "Auto start"));
     let watch = adw::SwitchRow::new();
     watch.set_title(&ctx.t_or("flow.quickRun.badges.watcher", "Watch enabled"));
+    let watch_delay = adw::EntryRow::new();
+    watch_delay.set_title(&ctx.t_or("wizards.appOperation.watchDelay", "Watch delay (seconds)"));
+    let watch_changed = adw::SwitchRow::new();
+    watch_changed.set_title(&ctx.t_or(
+        "automation.monitoring.changedOnlyShort",
+        "Changed files only",
+    ));
     let tray = adw::SwitchRow::new();
     tray.set_title(&ctx.t_or("flow.quickRun.editor.showOnTray", "Show on tray"));
     let vfs_profile = adw::EntryRow::new();
@@ -3726,6 +3735,7 @@ pub fn quick_run_editor(
     ));
     if let Some(qr) = &existing {
         name.set_text(&qr.name);
+        description.set_text(&qr.description);
         remote.set_text(&qr.remote_name);
         let (s, d) = qr.paths();
         src.set_text(&s.unwrap_or_default());
@@ -3733,6 +3743,10 @@ pub fn quick_run_editor(
         cron.set_text(&qr.config.app.cron_expression);
         auto.set_active(qr.config.app.auto_start);
         watch.set_active(qr.config.app.watch_enabled);
+        if qr.config.app.watch_delay > 0 {
+            watch_delay.set_text(&qr.config.app.watch_delay.to_string());
+        }
+        watch_changed.set_active(qr.config.app.watch_changed_only);
         tray.set_active(qr.show_on_tray);
         vfs_profile.set_text(&qr.config.app.vfs_profile);
         filter_profile.set_text(&qr.config.app.filter_profile);
@@ -3749,6 +3763,7 @@ pub fn quick_run_editor(
         }
     }
     group.add(&name);
+    group.add(&description);
     group.add(&remote);
     group.add(&op_row);
     group.add(&src);
@@ -3760,6 +3775,8 @@ pub fn quick_run_editor(
     group.add(&cron_preset_row);
     group.add(&auto);
     group.add(&watch);
+    group.add(&watch_delay);
+    group.add(&watch_changed);
     group.add(&tray);
     group.add(&vfs_profile);
     group.add(&filter_profile);
@@ -3774,16 +3791,29 @@ pub fn quick_run_editor(
             .is_some_and(|qr| crate::jobs::is_dry_run(&qr.config.rclone)),
     );
     group.add(&dry);
+    let initial_op = existing
+        .as_ref()
+        .map(|qr| qr.operation_type)
+        .unwrap_or(OperationType::Sync);
+    let resync = adw::SwitchRow::new();
+    resync.set_title(&ctx.t_or("dashboard.appDetail.resync", "Resync"));
+    resync.set_subtitle(&ctx.t_or(
+        "dashboard.appDetail.resyncActive",
+        "Force a bisync resync on the next start",
+    ));
+    resync.set_active(
+        existing
+            .as_ref()
+            .is_some_and(|qr| crate::jobs::is_resync(&qr.config.rclone)),
+    );
+    resync.set_visible(initial_op == OperationType::Bisync);
+    group.add(&resync);
     let flags_group = adw::PreferencesGroup::new();
     flags_group.set_title(&ctx.t_or("flow.quickRun.editor.flags", "Operation flags"));
     let flag_rows: Rc<RefCell<Vec<(String, adw::EntryRow, String)>>> =
         Rc::new(RefCell::new(Vec::new()));
     let serve_flag_rows: Rc<RefCell<Vec<(String, String, adw::EntryRow, String)>>> =
         Rc::new(RefCell::new(Vec::new()));
-    let initial_op = existing
-        .as_ref()
-        .map(|qr| qr.operation_type)
-        .unwrap_or(OperationType::Sync);
     let initial_rclone = existing
         .as_ref()
         .map(|qr| qr.config.rclone.clone())
@@ -3840,6 +3870,7 @@ pub fn quick_run_editor(
         let serve = serve.clone();
         let serve_types = serve_types.clone();
         let mount_type = mount_type.clone();
+        let resync = resync.clone();
         let rclone = initial_rclone.clone();
         let blocks = live_blocks.clone();
         op_row.connect_selected_notify(move |row| {
@@ -3849,6 +3880,7 @@ pub fn quick_run_editor(
                 .unwrap_or(OperationType::Sync);
             serve.set_visible(op == OperationType::Serve);
             mount_type.set_visible(op == OperationType::Mount);
+            resync.set_visible(op == OperationType::Bisync);
             clear_flag_rows(&flags_group, &flag_rows);
             clear_serve_flag_rows(&flags_group, &serve_flag_rows);
             populate_flag_rows(&flags_group, &flag_rows, op, &rclone, &blocks);
@@ -3882,6 +3914,10 @@ pub fn quick_run_editor(
         let mount_types = mount_types.clone();
         let mount_type = mount_type.clone();
         let dry = dry.clone();
+        let resync = resync.clone();
+        let description = description.clone();
+        let watch_delay = watch_delay.clone();
+        let watch_changed = watch_changed.clone();
         save.connect_clicked(move |_| {
             let expr = cron.text().to_string();
             if !expr.is_empty() {
@@ -3910,10 +3946,13 @@ pub fn quick_run_editor(
                     QuickRun::new(name.text().to_string(), op, remote.text().to_string())
                 });
             qr.name = name.text().to_string();
+            qr.description = description.text().to_string();
             qr.remote_name = remote.text().to_string();
             qr.operation_type = op;
             qr.config.app.auto_start = auto.is_active();
             qr.config.app.watch_enabled = watch.is_active();
+            qr.config.app.watch_delay = watch_delay.text().parse().unwrap_or(0);
+            qr.config.app.watch_changed_only = watch_changed.is_active();
             qr.config.app.cron_enabled = !expr.is_empty();
             qr.config.app.cron_expression = expr;
             qr.config.app.vfs_profile = vfs_profile.text().to_string();
@@ -3929,6 +3968,9 @@ pub fn quick_run_editor(
             });
             if dry.is_active() {
                 rclone["dryRun"] = serde_json::json!(true);
+            }
+            if op == OperationType::Bisync && resync.is_active() {
+                rclone["Resync"] = serde_json::json!(true);
             }
             if op == OperationType::Serve {
                 rclone["type"] = serde_json::json!(crate::operations::selected_or(
@@ -7310,7 +7352,8 @@ pub(super) fn check_result_row(
     ctx: &AppCtx,
     item: &crate::checks::CheckResult,
     parent: &impl IsA<gtk::Widget>,
-) -> adw::ActionRow {
+) -> gtk::Box {
+    let wrap = gtk::Box::new(gtk::Orientation::Vertical, 4);
     let row = adw::ActionRow::new();
     row.set_title(&item.name);
     row.set_subtitle(&item.status);
@@ -7371,37 +7414,45 @@ pub(super) fn check_result_row(
         });
         row.add_suffix(&resolve);
     }
-    let del_src = gtk::Button::from_icon_name("edit-delete-symbolic");
-    let del_src_tip = ctx.t_or(
-        "shared.transferActivity.actions.deleteSource",
-        "Delete source",
-    );
-    del_src.set_tooltip_text(Some(&del_src_tip));
-    del_src.set_valign(gtk::Align::Center);
-    {
-        let ctx = ctx.clone();
-        let item = item.clone();
-        del_src.connect_clicked(move |_| {
-            delete_check_side(&ctx, &item.src_fs, &item.name);
-        });
+    let parsed = crate::transfers::TransferRow {
+        name: item.name.clone(),
+        src: crate::transfers::join_fs_name(&item.src_fs, &item.name),
+        dst: crate::transfers::join_fs_name(&item.dst_fs, &item.name),
+        percentage: 0,
+        size: 0,
+    };
+    row.add_suffix(&transfer_row_actions(ctx, parent, &parsed, "copy", true));
+    wrap.append(&row);
+    let resolve_job = {
+        let snap = ctx.snapshot.borrow();
+        let meta = ctx.store.borrow();
+        crate::jobs::find_resolve_job(&snap.jobs, &meta.job_meta, &item.name)
+            .or_else(|| {
+                crate::jobs::find_resolve_job(&meta.job_history, &meta.job_meta, &item.name)
+            })
+            .cloned()
+    };
+    if let Some(job) = resolve_job {
+        if crate::jobs::job_is_running(&job) {
+            let bar = gtk::ProgressBar::new();
+            bar.set_fraction(job.progress.clamp(0.0, 1.0));
+            bar.set_show_text(true);
+            let speed = crate::jobs::stats_f64(&job.stats, &["speed"]);
+            bar.set_text(Some(&format!(
+                "{:.0}% · {}/s",
+                job.progress * 100.0,
+                crate::rclone::format_bytes(speed as i64)
+            )));
+            wrap.append(&bar);
+        } else if job.status == "failed" || job.error.is_some() {
+            let err = gtk::Label::new(Some(&job.error.unwrap_or_else(|| job.status.clone())));
+            err.add_css_class("error");
+            err.set_xalign(0.0);
+            err.set_wrap(true);
+            wrap.append(&err);
+        }
     }
-    let del_dst = gtk::Button::from_icon_name("user-trash-symbolic");
-    let del_dst_tip = ctx.t_or(
-        "shared.transferActivity.actions.deleteDestination",
-        "Delete destination",
-    );
-    del_dst.set_tooltip_text(Some(&del_dst_tip));
-    del_dst.set_valign(gtk::Align::Center);
-    {
-        let ctx = ctx.clone();
-        let item = item.clone();
-        del_dst.connect_clicked(move |_| {
-            delete_check_side(&ctx, &item.dst_fs, &item.name);
-        });
-    }
-    row.add_suffix(&del_src);
-    row.add_suffix(&del_dst);
-    row
+    wrap
 }
 
 fn resolve_check_item(ctx: &AppCtx, item: &crate::checks::CheckResult, kind: &str) {
@@ -7433,6 +7484,7 @@ fn resolve_check_item(ctx: &AppCtx, item: &crate::checks::CheckResult, kind: &st
                     quick_run_id: String::new(),
                     execute_id: uuid::Uuid::new_v4().to_string(),
                     parent_job_id: None,
+                    target: item.name.clone(),
                 },
             );
             ctx.persist();
@@ -7445,17 +7497,6 @@ fn resolve_check_item(ctx: &AppCtx, item: &crate::checks::CheckResult, kind: &st
                 ctx.refresh_runtime();
             }
         }
-    }
-}
-
-fn delete_check_side(ctx: &AppCtx, fs: &str, path: &str) {
-    let Some(client) = ctx.client() else {
-        return;
-    };
-    if let Err(e) = client.delete_file(fs, path) {
-        log::warn!("check delete failed: {e}");
-    } else {
-        ctx.refresh_runtime();
     }
 }
 

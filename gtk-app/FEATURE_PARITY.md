@@ -326,6 +326,14 @@ This client is the GTK 4 + libadwaita rewrite of the Angular/Tauri desktop UI. I
 - Alert history filters by rule id and origin
 - Remote-config sidebar includes the Obscure tool
 - System panel shows rclone PID and job-group count (`core/pid`, `core/group-list`)
+- Check resolve shows live progress/speed (or failure) on the result row
+- Check-result rows reuse source/destination Open / Copy / URL / Download / Delete
+- Dashboard and Flow overview panels persist expand/collapse (`runtime.panel_open_states`)
+- Remote-detail status chips follow `primary_actions` (fallback Mount / Sync / Serve)
+- Remote detail shows selected-profile cron and filesystem-watch banners
+- Remote detail operation-control lists source/destination with Open in Files
+- Quick Run editor persists description, watch delay, changed-only, and bisync resync
+- Tray submenu labels (Mount/Unmount/Browse/Start/Stop/Quick Runs) use i18n keys
 
 ## Still deepening toward pixel-level Angular parity
 

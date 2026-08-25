@@ -219,15 +219,14 @@ impl FlowView {
                 row.add_suffix(&start);
                 list.append(&row);
             }
-            self.content.append(&list);
+            self.append_expandable(
+                "quickRuns",
+                &self.ctx.t_or("flow.quickRun.title", "Quick Runs"),
+                &list,
+            );
         }
 
         if visible("jobs") {
-            self.content.append(&heading(
-                &self
-                    .ctx
-                    .t_or("generalOverview.panels.jobs", "Job Information"),
-            ));
             let jobs = gtk::ListBox::new();
             jobs.add_css_class("boxed-list");
             if snap.jobs.is_empty() {
@@ -251,15 +250,16 @@ impl FlowView {
                     jobs.append(&row);
                 }
             }
-            self.content.append(&jobs);
+            self.append_expandable(
+                "jobs",
+                &self
+                    .ctx
+                    .t_or("generalOverview.panels.jobs", "Job Information"),
+                &jobs,
+            );
         }
 
         if visible("serves") {
-            self.content.append(&heading(
-                &self
-                    .ctx
-                    .t_or("generalOverview.panels.serves", "Running Serves"),
-            ));
             let serves = gtk::ListBox::new();
             serves.add_css_class("boxed-list");
             if snap.serves.is_empty() {
@@ -285,15 +285,16 @@ impl FlowView {
                     serves.append(&row);
                 }
             }
-            self.content.append(&serves);
+            self.append_expandable(
+                "serves",
+                &self
+                    .ctx
+                    .t_or("generalOverview.panels.serves", "Running Serves"),
+                &serves,
+            );
         }
 
         if visible("automations") {
-            self.content.append(&heading(
-                &self
-                    .ctx
-                    .t_or("generalOverview.panels.automations", "Automations"),
-            ));
             let autos = gtk::ListBox::new();
             autos.add_css_class("boxed-list");
             let records = crate::automation::collect(&self.ctx.store.borrow());
@@ -325,8 +326,39 @@ impl FlowView {
                     autos.append(&row);
                 }
             }
-            self.content.append(&autos);
+            self.append_expandable(
+                "automations",
+                &self
+                    .ctx
+                    .t_or("generalOverview.panels.automations", "Automations"),
+                &autos,
+            );
         }
+    }
+
+    fn append_expandable(&self, id: &str, title: &str, child: &impl IsA<gtk::Widget>) {
+        let expander = gtk::Expander::new(Some(title));
+        expander.set_expanded(crate::settings::panel_is_open(
+            &self.ctx.settings.borrow().runtime.panel_open_states,
+            "flow",
+            id,
+        ));
+        expander.set_child(Some(child));
+        {
+            let ctx = self.ctx.clone();
+            let id = id.to_string();
+            expander.connect_expanded_notify(move |exp| {
+                if crate::settings::set_panel_open(
+                    &mut ctx.settings.borrow_mut().runtime.panel_open_states,
+                    "flow",
+                    &id,
+                    exp.is_expanded(),
+                ) {
+                    ctx.persist();
+                }
+            });
+        }
+        self.content.append(&expander);
     }
 
     fn fill_detail(&self, qr: &QuickRun) {
@@ -334,6 +366,13 @@ impl FlowView {
         title.add_css_class("title-1");
         title.set_xalign(0.0);
         self.content.append(&title);
+        if !qr.description.is_empty() {
+            let desc = gtk::Label::new(Some(&qr.description));
+            desc.add_css_class("dim-label");
+            desc.set_xalign(0.0);
+            desc.set_wrap(true);
+            self.content.append(&desc);
+        }
         let sub = gtk::Label::new(Some(&format!(
             "{} · {} · {}",
             qr.operation_type.api_label(),
@@ -643,14 +682,6 @@ impl FlowView {
         self.ctx.persist();
         self.refresh();
     }
-}
-
-fn heading(text: &str) -> gtk::Label {
-    let label = gtk::Label::new(Some(text));
-    label.add_css_class("title-4");
-    label.set_xalign(0.0);
-    label.set_margin_top(8);
-    label
 }
 
 fn scrolled(child: &impl IsA<gtk::Widget>) -> gtk::ScrolledWindow {

@@ -130,6 +130,32 @@ pub struct RuntimeSettings {
     pub selected_sync_ops: HashMap<String, String>,
     #[serde(default)]
     pub selected_profiles: HashMap<String, String>,
+    #[serde(default)]
+    pub panel_open_states: HashMap<String, bool>,
+}
+
+pub fn panel_state_key(scope: &str, id: &str) -> String {
+    format!("{scope}.{id}")
+}
+
+pub fn panel_is_open(states: &HashMap<String, bool>, scope: &str, id: &str) -> bool {
+    states
+        .get(&panel_state_key(scope, id))
+        .copied()
+        .unwrap_or(true)
+}
+
+pub fn set_panel_open(
+    states: &mut HashMap<String, bool>,
+    scope: &str,
+    id: &str,
+    open: bool,
+) -> bool {
+    if panel_is_open(states, scope, id) == open {
+        return false;
+    }
+    states.insert(panel_state_key(scope, id), open);
+    true
 }
 
 fn default_true() -> bool {
@@ -154,6 +180,7 @@ impl Default for RuntimeSettings {
             flatpak_warn: true,
             selected_sync_ops: HashMap::new(),
             selected_profiles: HashMap::new(),
+            panel_open_states: HashMap::new(),
         }
     }
 }
@@ -457,6 +484,18 @@ mod tests {
         assert!(loaded.nautilus.file_type_filter.is_empty());
         assert!(loaded.runtime.selected_sync_ops.is_empty());
         assert!(loaded.runtime.selected_profiles.is_empty());
+        assert!(loaded.runtime.panel_open_states.is_empty());
+        assert!(panel_is_open(
+            &loaded.runtime.panel_open_states,
+            "dashboard",
+            "remotes"
+        ));
+        let mut states = HashMap::new();
+        assert!(set_panel_open(&mut states, "dashboard", "jobs", false));
+        assert!(!panel_is_open(&states, "dashboard", "jobs"));
+        assert!(!set_panel_open(&mut states, "dashboard", "jobs", false));
+        assert!(set_panel_open(&mut states, "flow", "quickRuns", false));
+        assert_eq!(states.get("flow.quickRuns"), Some(&false));
         assert_eq!(loaded.nautilus.grid_icon_size, 0);
         assert_eq!(loaded.nautilus.split_divider_pos, 0);
     }

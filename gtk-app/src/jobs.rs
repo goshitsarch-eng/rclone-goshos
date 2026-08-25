@@ -79,6 +79,15 @@ pub fn is_dry_run(rclone: &Value) -> bool {
     false
 }
 
+pub fn is_resync(rclone: &Value) -> bool {
+    for key in ["Resync", "resync"] {
+        if rclone.get(key).and_then(|v| v.as_bool()).unwrap_or(false) {
+            return true;
+        }
+    }
+    false
+}
+
 pub fn extra_flags(rclone: &Value) -> Map<String, Value> {
     let skip = [
         "source",
@@ -695,7 +704,41 @@ pub fn job_meta_for(
         quick_run_id: quick_run_id.to_string(),
         execute_id: uuid::Uuid::new_v4().to_string(),
         parent_job_id: None,
+        target: String::new(),
     }
+}
+
+pub fn path_has_leaf(path: &str, name: &str) -> bool {
+    !name.is_empty() && crate::checks::leaf_name(path) == name
+}
+
+pub fn find_resolve_job<'a>(
+    jobs: &'a [JobInfo],
+    meta: &HashMap<u64, JobMeta>,
+    name: &str,
+) -> Option<&'a JobInfo> {
+    let mut best = None;
+    for job in jobs {
+        let item = meta.get(&job.id);
+        let is_resolve = job.origin == "check-resolve"
+            || item.map(|m| m.origin == "check-resolve").unwrap_or(false);
+        if !is_resolve {
+            continue;
+        }
+        let matches_name = item
+            .map(|m| !m.target.is_empty() && m.target == name)
+            .unwrap_or(false)
+            || path_has_leaf(&job.src, name)
+            || path_has_leaf(&job.dst, name);
+        if !matches_name {
+            continue;
+        }
+        if job_is_running(job) {
+            return Some(job);
+        }
+        best = Some(job);
+    }
+    best
 }
 
 pub fn stats_i64(stats: &Value, keys: &[&str]) -> i64 {
@@ -1707,6 +1750,9 @@ mod tests {
     fn dry_run_and_flatten() {
         assert!(is_dry_run(&json!({ "dryRun": true })));
         assert!(!is_dry_run(&json!({})));
+        assert!(is_resync(&json!({ "Resync": true })));
+        assert!(is_resync(&json!({ "resync": true })));
+        assert!(!is_resync(&json!({})));
         let nested = json!({ "sync": { "srcFs": "a:", "dstFs": "b:" } });
         assert_eq!(flatten_rclone(&nested)["srcFs"], "a:");
     }
@@ -1786,6 +1832,7 @@ mod tests {
                 quick_run_id: "qr-1".into(),
                 execute_id: "exec-9".into(),
                 parent_job_id: None,
+                target: String::new(),
             },
         );
         let mut job = running_job(9, "", "sync", "default");
@@ -1806,6 +1853,22 @@ mod tests {
         assert!(!is_overview_job(&child));
         assert_eq!(job.profile, "photos");
         assert_eq!(job.remote, "drive");
+        map.insert(
+            21,
+            JobMeta {
+                origin: "check-resolve".into(),
+                target: "photo.jpg".into(),
+                ..Default::default()
+            },
+        );
+        let mut resolve = running_job(21, "drive", "copy", "default");
+        resolve.origin = "check-resolve".into();
+        resolve.src = "drive:album/photo.jpg".into();
+        let jobs = vec![resolve];
+        assert!(find_resolve_job(&jobs, &map, "photo.jpg").is_some());
+        assert!(find_resolve_job(&jobs, &map, "other.jpg").is_none());
+        assert!(path_has_leaf("drive:album/photo.jpg", "photo.jpg"));
+        assert!(!path_has_leaf("drive:album/photo.jpg", "album"));
     }
 
     #[test]
