@@ -5406,11 +5406,23 @@ pub fn restore_preview(
             }
             match backup::restore_backup_scoped(&path, pw, profile, restore_as) {
                 Ok((settings, store, rclone)) => {
+                    let export_type = analysis
+                        .as_ref()
+                        .map(|item| item.manifest.export_type.clone())
+                        .or_else(|| {
+                            backup::analyze_backup_with_password(&path, pw)
+                                .ok()
+                                .map(|item| item.manifest.export_type)
+                        })
+                        .unwrap_or_else(|| "FullBackup".into());
                     if let Some(settings) = settings {
-                        *ctx.settings.borrow_mut() = settings;
+                        let merged =
+                            backup::merge_settings(&ctx.settings.borrow(), &settings, &export_type);
+                        *ctx.settings.borrow_mut() = merged;
                     }
                     if let Some(store) = store {
-                        *ctx.store.borrow_mut() = store;
+                        let merged = backup::merge_store(&ctx.store.borrow(), &store, &export_type);
+                        *ctx.store.borrow_mut() = merged;
                     }
                     if let (Some(dump), Some(client)) = (rclone, ctx.client()) {
                         if let Some(obj) = dump.as_object() {
@@ -10847,7 +10859,7 @@ fn alert_action_editor(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, existing_id:
     let dialog = adw::Dialog::new();
     dialog.set_title(&ctx.t_or("alerts.action.editorTitle", "Alert action"));
     dialog.set_content_width(520);
-    dialog.set_content_height(620);
+    dialog.set_content_height(680);
     let existing = existing_id.as_ref().and_then(|id| {
         ctx.store
             .borrow()
@@ -11031,8 +11043,22 @@ fn alert_action_editor(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, existing_id:
     {
         wa_provider.set_selected(1);
     }
-    let body = adw::EntryRow::new();
-    body.set_title(&ctx.t_or("alerts.action.bodyTemplate", "Body template"));
+    let body_group = adw::PreferencesGroup::new();
+    body_group.set_title(&ctx.t_or("alerts.action.bodyTemplate", "Body template"));
+    let body = gtk::TextView::new();
+    body.set_wrap_mode(gtk::WrapMode::WordChar);
+    body.set_hexpand(true);
+    body.set_monospace(true);
+    body.set_top_margin(8);
+    body.set_bottom_margin(8);
+    body.set_left_margin(8);
+    body.set_right_margin(8);
+    let body_scroll = gtk::ScrolledWindow::new();
+    body_scroll.set_min_content_height(128);
+    body_scroll.set_propagate_natural_height(true);
+    body_scroll.set_child(Some(&body));
+    body_scroll.add_css_class("card");
+    body_group.add(&body_scroll);
     if let Some(action) = &existing {
         url.set_text(&action_cfg(action, &["url", "broker_url", "smtp_server"]));
         method.set_text(&action_cfg(action, &["method", "topic", "smtp_port"]));
@@ -11052,7 +11078,8 @@ fn alert_action_editor(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, existing_id:
         }
         headers.set_text(&crate::store::headers_to_text(&action.config));
         env_vars.set_text(&crate::store::env_vars_to_text(&action.config));
-        body.set_text(
+        text_view_set(
+            &body,
             action
                 .config
                 .get("body_template")
@@ -11060,7 +11087,7 @@ fn alert_action_editor(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, existing_id:
                 .unwrap_or("{{title}}: {{body}}"),
         );
     } else {
-        body.set_text("{{title}}: {{body}}");
+        text_view_set(&body, "{{title}}: {{body}}");
     }
     let retries = adw::SpinRow::with_range(0.0, 5.0, 1.0);
     retries.set_title(&ctx.t_or("alerts.action.retryCount", "Retry count"));
@@ -11088,12 +11115,12 @@ fn alert_action_editor(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, existing_id:
                 return;
             }
             if let Some(key) = crate::store::ALERT_TEMPLATE_KEYS.get(row.selected() as usize) {
-                let current = body.text().to_string();
+                let current = text_view_get(&body);
                 if !current.contains(key) {
                     if current.is_empty() {
-                        body.set_text(key);
+                        text_view_set(&body, key);
                     } else {
-                        body.set_text(&format!("{current} {key}"));
+                        text_view_set(&body, &format!("{current} {key}"));
                     }
                 }
             }
@@ -11158,7 +11185,7 @@ fn alert_action_editor(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, existing_id:
                     extra: extra.text().to_string(),
                     extra2: extra2.text().to_string(),
                     headers: headers.text().to_string(),
-                    body: body.text().to_string(),
+                    body: text_view_get(&body),
                     retry_count: retries.value() as u32,
                     timeout_secs: timeout.value() as u32,
                     tls_verify: tls_verify.is_active(),
@@ -11255,7 +11282,7 @@ fn alert_action_editor(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, existing_id:
         let headers = headers.clone();
         discord_btn.connect_clicked(move |_| {
             method.set_text("POST");
-            body.set_text(&crate::store::webhook_preset_body("discord"));
+            text_view_set(&body, &crate::store::webhook_preset_body("discord"));
             headers.set_text(&crate::store::ensure_content_type_json(&headers.text()));
         });
     }
@@ -11265,7 +11292,7 @@ fn alert_action_editor(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, existing_id:
         let headers = headers.clone();
         slack_btn.connect_clicked(move |_| {
             method.set_text("POST");
-            body.set_text(&crate::store::webhook_preset_body("slack"));
+            text_view_set(&body, &crate::store::webhook_preset_body("slack"));
             headers.set_text(&crate::store::ensure_content_type_json(&headers.text()));
         });
     }
@@ -11288,7 +11315,7 @@ fn alert_action_editor(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, existing_id:
         let browse = browse.clone();
         let presets = presets.clone();
         let telegram_mode = telegram_mode.clone();
-        let body = body.clone();
+        let body_group = body_group.clone();
         let wa_provider = wa_provider.clone();
         let ctx = ctx.clone();
         move |selected: &str| {
@@ -11313,8 +11340,8 @@ fn alert_action_editor(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, existing_id:
                     headers.set_visible(false);
                     timeout.set_visible(false);
                     tls_verify.set_visible(false);
-                    body.set_visible(true);
-                    body.set_title(
+                    body_group.set_visible(true);
+                    body_group.set_title(
                         &ctx.t_or("alerts.action.messageTemplate", "Toast body template"),
                     );
                 }
@@ -11331,8 +11358,9 @@ fn alert_action_editor(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, existing_id:
                     headers.set_visible(true);
                     timeout.set_visible(true);
                     tls_verify.set_visible(true);
-                    body.set_visible(true);
-                    body.set_title(&ctx.t_or("alerts.action.bodyTemplate", "JSON / body template"));
+                    body_group.set_visible(true);
+                    body_group
+                        .set_title(&ctx.t_or("alerts.action.bodyTemplate", "JSON / body template"));
                 }
                 "telegram" => {
                     wa_provider.set_visible(false);
@@ -11348,8 +11376,9 @@ fn alert_action_editor(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, existing_id:
                     headers.set_visible(false);
                     timeout.set_visible(true);
                     tls_verify.set_visible(false);
-                    body.set_visible(true);
-                    body.set_title(&ctx.t_or("alerts.action.messageTemplate", "Message template"));
+                    body_group.set_visible(true);
+                    body_group
+                        .set_title(&ctx.t_or("alerts.action.messageTemplate", "Message template"));
                 }
                 "whatsapp" => {
                     wa_provider.set_visible(true);
@@ -11366,8 +11395,9 @@ fn alert_action_editor(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, existing_id:
                     headers.set_visible(false);
                     timeout.set_visible(true);
                     tls_verify.set_visible(false);
-                    body.set_visible(true);
-                    body.set_title(&ctx.t_or("alerts.action.messageTemplate", "Message template"));
+                    body_group.set_visible(true);
+                    body_group
+                        .set_title(&ctx.t_or("alerts.action.messageTemplate", "Message template"));
                 }
                 "script" => {
                     wa_provider.set_visible(false);
@@ -11382,8 +11412,8 @@ fn alert_action_editor(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, existing_id:
                     headers.set_visible(false);
                     timeout.set_visible(true);
                     tls_verify.set_visible(false);
-                    body.set_visible(true);
-                    body.set_title(&ctx.t_or("alerts.action.bodyTemplate", "Stdin template"));
+                    body_group.set_visible(true);
+                    body_group.set_title(&ctx.t_or("alerts.action.bodyTemplate", "Stdin template"));
                 }
                 "email" => {
                     wa_provider.set_visible(false);
@@ -11401,8 +11431,8 @@ fn alert_action_editor(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, existing_id:
                     headers.set_visible(false);
                     timeout.set_visible(true);
                     tls_verify.set_visible(false);
-                    body.set_visible(true);
-                    body.set_title(&ctx.t_or("alerts.action.bodyTemplate", "Body template"));
+                    body_group.set_visible(true);
+                    body_group.set_title(&ctx.t_or("alerts.action.bodyTemplate", "Body template"));
                 }
                 "mqtt" => {
                     wa_provider.set_visible(false);
@@ -11418,8 +11448,9 @@ fn alert_action_editor(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, existing_id:
                     headers.set_visible(false);
                     timeout.set_visible(true);
                     tls_verify.set_visible(false);
-                    body.set_visible(true);
-                    body.set_title(&ctx.t_or("alerts.action.bodyTemplate", "Payload template"));
+                    body_group.set_visible(true);
+                    body_group
+                        .set_title(&ctx.t_or("alerts.action.bodyTemplate", "Payload template"));
                 }
                 _ => {}
             }
@@ -11483,7 +11514,6 @@ fn alert_action_editor(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, existing_id:
     group.add(&mqtt_tls);
     group.add(&retain);
     group.add(&env_vars);
-    group.add(&body);
     group.add(&retries);
     group.add(&keys);
     let buttons = gtk::Box::new(gtk::Orientation::Horizontal, 8);
@@ -11492,11 +11522,29 @@ fn alert_action_editor(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, existing_id:
     buttons.append(&delete);
     let box_ = gtk::Box::new(gtk::Orientation::Vertical, 8);
     box_.set_margin_top(12);
-    box_.append(&presets);
-    box_.append(&group);
+    let inner = gtk::Box::new(gtk::Orientation::Vertical, 8);
+    inner.append(&presets);
+    inner.append(&group);
+    inner.append(&body_group);
+    let scroll = gtk::ScrolledWindow::new();
+    scroll.set_vexpand(true);
+    scroll.set_propagate_natural_height(true);
+    scroll.set_child(Some(&inner));
+    box_.append(&scroll);
     box_.append(&buttons);
     dialog.set_child(Some(&box_));
     dialog.present(Some(parent));
+}
+
+fn text_view_get(view: &gtk::TextView) -> String {
+    let buffer = view.buffer();
+    buffer
+        .text(&buffer.start_iter(), &buffer.end_iter(), false)
+        .to_string()
+}
+
+fn text_view_set(view: &gtk::TextView, text: &str) {
+    view.buffer().set_text(text);
 }
 
 fn action_cfg(action: &AlertAction, keys: &[&str]) -> String {

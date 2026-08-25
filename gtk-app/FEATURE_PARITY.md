@@ -494,9 +494,13 @@ This client is the GTK 4 + libadwaita rewrite of the Angular/Tauri desktop UI. I
 - Preferences search matches title and help text, shows suggestion chips (API port / startup / debug / bandwidth), and jumps to the setting page
 - Preference rows use `.description` as subtitle so Adw search finds help text
 - Full backup export can subset remotes with per-remote switches (store + rclone dump)
+- Category export scopes the zip: Alerts writes only rules/actions/history, Connections writes extra backends, Settings/Remotes stay file-scoped
+- Restoring an Alerts or Connections backup merges that slice instead of replacing the whole store/settings
+- Alert action body templates use a multi-line editor so Discord/Slack JSON presets can be viewed and edited
 
 ## Still deepening toward pixel-level Angular parity
 
 - Workflow builder (stub in both apps)
+- Template manager edit/rename and per-key capture
 - Remaining dialogs/Files English labels (core chrome now localized)
 - Pixel-level Angular layouts and leftover English `t_or` fallbacks

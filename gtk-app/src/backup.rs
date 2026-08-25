@@ -33,9 +33,9 @@ pub fn export_categories() -> Vec<(&'static str, &'static str)> {
     vec![
         ("FullBackup", "Full backup"),
         ("settings", "App settings"),
-        ("store", "Quick runs, alerts, templates"),
+        ("alerts", "Alert rules and actions"),
         ("rclone", "Rclone remotes"),
-        ("nautilus", "Bookmarks and starred items"),
+        ("connections", "Saved remote connections"),
     ]
 }
 
@@ -46,9 +46,11 @@ pub fn export_category_label(id: &str, i18n: &crate::i18n::I18n) -> String {
             "modals.export.categories.settings.label",
             "Application Settings",
         ),
-        "store" => i18n.t_or("modals.export.categories.alerts.label", "Alerts"),
+        "alerts" | "store" => i18n.t_or("modals.export.categories.alerts.label", "Alerts"),
         "rclone" => i18n.t_or("modals.export.categories.remotes.label", "Remotes"),
-        "nautilus" => i18n.t_or("modals.export.categories.connections.label", "Connections"),
+        "connections" | "nautilus" => {
+            i18n.t_or("modals.export.categories.connections.label", "Connections")
+        }
         _ => id.to_string(),
     }
 }
@@ -57,10 +59,18 @@ impl BackupAnalysis {
     pub fn content_rows(&self) -> Vec<(&'static str, &'static str)> {
         let mut rows = Vec::new();
         if self.has_settings {
-            rows.push(("backup.restore.settings.title", "Application Settings"));
+            rows.push(match self.manifest.export_type.as_str() {
+                "connections" | "nautilus" => {
+                    ("modals.export.categories.connections.label", "Connections")
+                }
+                _ => ("backup.restore.settings.title", "Application Settings"),
+            });
         }
         if self.has_store {
-            rows.push(("backup.restore.profiles.title", "Profiles"));
+            rows.push(match self.manifest.export_type.as_str() {
+                "alerts" | "store" => ("modals.export.categories.alerts.label", "Alerts"),
+                _ => ("backup.restore.profiles.title", "Profiles"),
+            });
         }
         if self.has_rclone_config {
             rows.push(("backup.restore.rcloneConfig.title", "Rclone Configuration"));
@@ -75,11 +85,78 @@ pub fn includes_file(export_type: &str, file: &str) -> bool {
     }
     match export_type {
         "" | "FullBackup" | "All" | "full" => true,
-        "settings" | "Settings" => file == "settings.json",
-        "store" | "alerts" | "connections" | "nautilus" => file == "store.json",
+        "settings" | "Settings" | "connections" | "nautilus" => file == "settings.json",
+        "store" | "alerts" => file == "store.json",
         "rclone" | "remotes" => file == "rclone.json",
         other if other.starts_with("remote:") => file == "rclone.json",
         _ => true,
+    }
+}
+
+pub fn filter_store_category(store: &AppStore, export_type: &str) -> AppStore {
+    match export_type {
+        "alerts" | "store" => {
+            let mut scoped = AppStore::default();
+            scoped.alert_rules = store.alert_rules.clone();
+            scoped.alert_actions = store.alert_actions.clone();
+            scoped.alert_history = store.alert_history.clone();
+            scoped
+        }
+        _ => store.clone(),
+    }
+}
+
+pub fn filter_settings_category(settings: &AppSettings, export_type: &str) -> AppSettings {
+    match export_type {
+        "connections" => {
+            let mut scoped = AppSettings::default();
+            scoped.core.extra_backends = settings.core.extra_backends.clone();
+            scoped
+        }
+        "nautilus" => {
+            let mut scoped = AppSettings::default();
+            scoped.nautilus = settings.nautilus.clone();
+            scoped
+        }
+        _ => settings.clone(),
+    }
+}
+
+pub fn merge_store(current: &AppStore, incoming: &AppStore, export_type: &str) -> AppStore {
+    match export_type {
+        "alerts" => merge_store_alerts(current, incoming),
+        "store" if incoming.remotes.is_empty() => merge_store_alerts(current, incoming),
+        "settings" | "connections" | "nautilus" | "rclone" | "remotes" => current.clone(),
+        _ => incoming.clone(),
+    }
+}
+
+fn merge_store_alerts(current: &AppStore, incoming: &AppStore) -> AppStore {
+    let mut out = current.clone();
+    out.alert_rules = incoming.alert_rules.clone();
+    out.alert_actions = incoming.alert_actions.clone();
+    out.alert_history = incoming.alert_history.clone();
+    out
+}
+
+pub fn merge_settings(
+    current: &AppSettings,
+    incoming: &AppSettings,
+    export_type: &str,
+) -> AppSettings {
+    match export_type {
+        "connections" => {
+            let mut out = current.clone();
+            out.core.extra_backends = incoming.core.extra_backends.clone();
+            out
+        }
+        "nautilus" => {
+            let mut out = current.clone();
+            out.nautilus = incoming.nautilus.clone();
+            out
+        }
+        "alerts" | "store" | "rclone" | "remotes" => current.clone(),
+        _ => incoming.clone(),
     }
 }
 
@@ -150,6 +227,8 @@ pub fn create_backup(
         }
     }
 
+    let settings = filter_settings_category(settings, export_type);
+    let store = filter_store_category(store, export_type);
     let remotes = rclone_dump
         .as_object()
         .map(|o| o.keys().cloned().collect())
@@ -172,14 +251,14 @@ pub fn create_backup(
     if includes_file(export_type, "settings.json") {
         zip.start_file("settings.json", options)
             .map_err(|e| e.to_string())?;
-        zip.write_all(serde_json::to_string_pretty(settings).unwrap().as_bytes())
+        zip.write_all(serde_json::to_string_pretty(&settings).unwrap().as_bytes())
             .map_err(|e| e.to_string())?;
     }
 
     if includes_file(export_type, "store.json") {
         zip.start_file("store.json", options)
             .map_err(|e| e.to_string())?;
-        zip.write_all(serde_json::to_string_pretty(store).unwrap().as_bytes())
+        zip.write_all(serde_json::to_string_pretty(&store).unwrap().as_bytes())
             .map_err(|e| e.to_string())?;
     }
 
@@ -437,6 +516,10 @@ mod tests {
         assert!(includes_file("settings", "settings.json"));
         assert!(!includes_file("settings", "store.json"));
         assert!(includes_file("store", "store.json"));
+        assert!(includes_file("alerts", "store.json"));
+        assert!(!includes_file("alerts", "settings.json"));
+        assert!(includes_file("connections", "settings.json"));
+        assert!(!includes_file("connections", "store.json"));
         assert!(!includes_file("rclone", "settings.json"));
         assert!(includes_file("remote:demo", "rclone.json"));
         let dump = serde_json::json!({ "demo": { "type": "local" }, "other": { "type": "drive" } });
@@ -480,6 +563,97 @@ mod tests {
             filter_store_remotes(&store, &[]).remotes.len(),
             store.remotes.len()
         );
+    }
+
+    #[test]
+    fn scopes_alerts_and_connections_categories() {
+        let mut store = AppStore::default();
+        store
+            .remotes
+            .insert("drive".into(), crate::store::RemoteMeta::default());
+        store.quick_runs.push(crate::store::QuickRun::new(
+            "Nightly".into(),
+            crate::operations::OperationType::Sync,
+            "drive".into(),
+        ));
+        let mut rule = crate::store::AlertRule::new("Nightly".into());
+        rule.id = "rule-1".into();
+        store.alert_rules.push(rule);
+        store.alert_actions.push(crate::store::AlertAction::new(
+            "Toast".into(),
+            "os_toast".into(),
+        ));
+        let alerts = filter_store_category(&store, "alerts");
+        assert!(alerts.remotes.is_empty());
+        assert!(alerts.quick_runs.is_empty());
+        assert_eq!(alerts.alert_rules.len(), 1);
+        assert_eq!(alerts.alert_actions.len(), 1);
+
+        let mut settings = AppSettings::default();
+        settings.general.language = "tr-TR".into();
+        settings
+            .core
+            .extra_backends
+            .push(crate::settings::BackendEntry {
+                name: "nas".into(),
+                host: "192.168.1.8".into(),
+                port: 5572,
+                ..crate::settings::BackendEntry::default()
+            });
+        settings.nautilus.bookmarks = vec![serde_json::json!({"path": "testdrive:photos"})];
+        let connections = filter_settings_category(&settings, "connections");
+        assert_eq!(connections.core.extra_backends.len(), 1);
+        assert_eq!(connections.core.extra_backends[0].name, "nas");
+        assert_ne!(connections.general.language, "tr-TR");
+        assert!(connections.nautilus.bookmarks.is_empty());
+        let nautilus = filter_settings_category(&settings, "nautilus");
+        assert_eq!(nautilus.nautilus.bookmarks.len(), 1);
+        assert!(nautilus.core.extra_backends.is_empty());
+
+        let merged_store = merge_store(&store, &alerts, "alerts");
+        assert!(merged_store.remotes.contains_key("drive"));
+        assert_eq!(merged_store.alert_rules[0].id, "rule-1");
+        let merged_settings = merge_settings(&settings, &connections, "connections");
+        assert_eq!(merged_settings.general.language, "tr-TR");
+        assert_eq!(merged_settings.core.extra_backends[0].name, "nas");
+        assert_eq!(merged_settings.nautilus.bookmarks.len(), 1);
+    }
+
+    #[test]
+    fn alerts_backup_omits_settings_and_remotes() {
+        let dir = tempfile::tempdir().unwrap();
+        let dest = dir.path().join("alerts.zip");
+        let mut store = AppStore::default();
+        store
+            .remotes
+            .insert("drive".into(), crate::store::RemoteMeta::default());
+        store.alert_actions.push(crate::store::AlertAction::new(
+            "Toast".into(),
+            "os_toast".into(),
+        ));
+        create_backup(
+            &dest,
+            &AppSettings::default(),
+            &store,
+            &serde_json::json!({ "drive": { "type": "drive" } }),
+            "alerts",
+            "alerts only",
+            None,
+        )
+        .unwrap();
+        let analysis = analyze_backup(&dest).unwrap();
+        assert!(!analysis.has_settings);
+        assert!(analysis.has_store);
+        assert!(!analysis.has_rclone_config);
+        assert_eq!(analysis.manifest.export_type, "alerts");
+        assert!(analysis
+            .content_rows()
+            .iter()
+            .any(|(key, _)| *key == "modals.export.categories.alerts.label"));
+        let (_, restored, _) = restore_backup(&dest).unwrap();
+        let restored = restored.expect("store");
+        assert!(restored.remotes.is_empty());
+        assert_eq!(restored.alert_actions.len(), 1);
     }
 
     #[test]
