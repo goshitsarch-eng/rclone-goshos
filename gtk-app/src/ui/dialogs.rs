@@ -5834,6 +5834,73 @@ fn attach_text_preview(
     }
 }
 
+fn attach_local_media_preview(
+    parent: &gtk::Box,
+    local: &std::path::Path,
+    category: crate::operations::FileTypeCategory,
+    name: &str,
+) {
+    let local_s = local.to_string_lossy();
+    if matches!(category, crate::operations::FileTypeCategory::Image) {
+        let picture = gtk::Picture::for_filename(local);
+        picture.set_vexpand(true);
+        parent.append(&picture);
+    }
+    if matches!(
+        category,
+        crate::operations::FileTypeCategory::Video | crate::operations::FileTypeCategory::Audio
+    ) {
+        let video = gtk::Video::for_filename(Some(local_s.as_ref()));
+        video.set_vexpand(true);
+        video.set_autoplay(true);
+        parent.append(&video);
+        if matches!(category, crate::operations::FileTypeCategory::Audio) {
+            attach_audio_cover(parent, Some(local), None);
+        }
+    }
+    if matches!(category, crate::operations::FileTypeCategory::Pdf) {
+        parent.append(&pdf_panel(Some(local.to_path_buf()), name));
+    }
+}
+
+fn attach_audio_cover(
+    parent: &gtk::Box,
+    local: Option<&std::path::Path>,
+    remote: Option<(&AppCtx, &str, &str, &str)>,
+) {
+    let cover = local
+        .and_then(|path| crate::media::best_audio_cover(path))
+        .or_else(|| {
+            let (ctx, remote, path, name) = remote?;
+            let src = format!("{remote}:{path}");
+            let settings = ctx.settings.borrow();
+            let binary = crate::rclone::engine::resolve_rclone_binary(&settings.core.rclone_binary);
+            let extra = settings.core.rclone_additional_flags.clone();
+            let config = crate::repair::config_path_from_flags(&extra);
+            drop(settings);
+            let bytes = crate::media::read_remote_prefix(
+                &binary,
+                &extra,
+                config.as_deref(),
+                &src,
+                crate::media::COVER_PROBE_BYTES,
+            )?;
+            let ext = std::path::Path::new(name)
+                .extension()
+                .and_then(|e| e.to_str());
+            crate::media::extract_picture_from_bytes(&bytes, ext)
+                .and_then(|pic| crate::media::write_temp_picture(&pic))
+        });
+    let Some(cover) = cover else {
+        return;
+    };
+    let picture = gtk::Picture::for_filename(&cover);
+    picture.set_can_shrink(true);
+    picture.set_content_fit(gtk::ContentFit::Contain);
+    picture.set_size_request(-1, 180);
+    parent.append(&picture);
+}
+
 pub fn file_viewer(
     parent: &impl IsA<gtk::Widget>,
     ctx: AppCtx,
@@ -5860,7 +5927,7 @@ pub fn file_viewer(
     next.set_tooltip_text(Some(
         &ctx.t_or("fileBrowser.fileViewer.nextFile", "Next file"),
     ));
-    let size_hint = if remote == "local" {
+    let remote_size = if remote == "local" {
         std::fs::metadata(path).ok().map(|m| m.len() as i64)
     } else {
         ctx.client().and_then(|c| {
@@ -5872,8 +5939,8 @@ pub fn file_viewer(
             c.stat(&fs, path).ok().flatten().map(|s| s.size)
         })
     }
-    .filter(|n| *n > 0)
-    .map(crate::rclone::format_bytes);
+    .filter(|n| *n > 0);
+    let size_hint = remote_size.map(crate::rclone::format_bytes);
     let pos = gtk::Label::new(Some(&{
         let base = match index {
             Some(i) if !siblings.is_empty() => format!("{} / {}", i + 1, siblings.len()),
@@ -6168,6 +6235,47 @@ pub fn file_viewer(
                         Some((ctx.clone(), fs, path.to_string())),
                     );
                 }
+            } else if crate::media::should_warn_remote_preview(remote_size) {
+                let size_label = remote_size
+                    .map(crate::rclone::format_bytes)
+                    .unwrap_or_else(|| "?".into());
+                info.set_text(&ctx.tf(
+                    "fileBrowser.fileViewer.largeRemotePreview",
+                    &[("size", &size_label)],
+                ));
+                if info.text().contains("{{") {
+                    info.set_text(&format!(
+                        "This remote file is {size_label}. Downloading the whole file for preview may take a while."
+                    ));
+                }
+                if matches!(category, crate::operations::FileTypeCategory::Audio) {
+                    attach_audio_cover(&box_, None, Some((&ctx, remote, path, name)));
+                }
+                let fetch = gtk::Button::with_label(
+                    &ctx.t_or("fileBrowser.fileViewer.downloadPreview", "Download preview"),
+                );
+                fetch.add_css_class("suggested-action");
+                {
+                    let ctx = ctx.clone();
+                    let box_ = box_.clone();
+                    let dest = std::env::temp_dir().join(name);
+                    let fs = fs.clone();
+                    let path = path.to_string();
+                    let name = name.to_string();
+                    fetch.connect_clicked(move |btn| {
+                        let Some(client) = ctx.client() else {
+                            return;
+                        };
+                        if client
+                            .copy_file(&fs, &path, "/", &dest.to_string_lossy())
+                            .is_ok()
+                        {
+                            attach_local_media_preview(&box_, &dest, category, &name);
+                            btn.set_sensitive(false);
+                        }
+                    });
+                }
+                actions.append(&fetch);
             } else {
                 let dest = std::env::temp_dir().join(name);
                 if client
@@ -6187,37 +6295,20 @@ pub fn file_viewer(
         }
     }
     if let Some(local) = preview_path.as_ref() {
-        let local_s = local.to_string_lossy();
-        if matches!(category, crate::operations::FileTypeCategory::Image) {
-            let picture = gtk::Picture::for_filename(local);
-            picture.set_vexpand(true);
-            box_.append(&picture);
-        }
-        if matches!(
-            category,
-            crate::operations::FileTypeCategory::Video | crate::operations::FileTypeCategory::Audio
-        ) {
-            let video = gtk::Video::for_filename(Some(local_s.as_ref()));
-            video.set_vexpand(true);
-            video.set_autoplay(true);
-            box_.append(&video);
-            if matches!(category, crate::operations::FileTypeCategory::Audio) {
-                if let Some(cover) = crate::media::sibling_cover(local) {
-                    let picture = gtk::Picture::for_filename(&cover);
-                    picture.set_can_shrink(true);
-                    picture.set_content_fit(gtk::ContentFit::Contain);
-                    picture.set_size_request(-1, 180);
-                    box_.append(&picture);
-                }
-            }
-        }
-        if matches!(category, crate::operations::FileTypeCategory::Pdf) {
-            box_.append(&pdf_panel(Some(local.clone()), name));
-        }
+        attach_local_media_preview(&box_, local, category, name);
         if remote == "local" && matches!(category, crate::operations::FileTypeCategory::Text) {
             let text = std::fs::read_to_string(local).unwrap_or_default();
-            attach_text_preview(&box_, name, &text, true, Some(&local_s), None);
+            attach_text_preview(
+                &box_,
+                name,
+                &text,
+                true,
+                Some(&local.to_string_lossy()),
+                None,
+            );
         }
+    } else if remote == "local" && matches!(category, crate::operations::FileTypeCategory::Audio) {
+        attach_audio_cover(&box_, Some(std::path::Path::new(path)), None);
     }
     let previewed = is_dir
         || matches!(

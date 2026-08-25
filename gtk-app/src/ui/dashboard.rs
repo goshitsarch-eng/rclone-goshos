@@ -386,7 +386,10 @@ impl Dashboard {
                 .ctx
                 .t_or("generalOverview.reorderRemotes", "Reorder remotes…"),
         );
-        order_btn.set_tooltip_text(Some("Open the remote order and visibility editor"));
+        order_btn.set_tooltip_text(Some(&self.ctx.t_or(
+            "generalOverview.reorderRemotes",
+            "Open the remote order and visibility editor",
+        )));
         {
             let dash = self.clone();
             order_btn.connect_clicked(move |_| {
@@ -400,7 +403,10 @@ impl Dashboard {
         }
         let reset =
             gtk::Button::with_label(&self.ctx.t_or("generalOverview.resetPanels", "Reset panels"));
-        reset.set_tooltip_text(Some("Restore the default overview panel order"));
+        reset.set_tooltip_text(Some(&self.ctx.t_or(
+            "generalOverview.resetPanels",
+            "Restore the default overview panel order",
+        )));
         {
             let dash = self.clone();
             reset.connect_clicked(move |_| {
@@ -666,17 +672,21 @@ impl Dashboard {
                     "view-conceal-symbolic"
                 });
                 hide.set_valign(gtk::Align::Center);
-                hide.set_tooltip_text(Some(if remote.hidden {
-                    "Show on overview"
+                hide.set_tooltip_text(Some(&if remote.hidden {
+                    self.ctx
+                        .t_or("generalOverview.showRemote", "Show on overview")
                 } else {
-                    "Hide from overview"
+                    self.ctx
+                        .t_or("generalOverview.hideRemote", "Hide from overview")
                 }));
                 let up = gtk::Button::from_icon_name("go-up-symbolic");
                 up.set_valign(gtk::Align::Center);
-                up.set_tooltip_text(Some("Move up"));
+                up.set_tooltip_text(Some(&self.ctx.t_or("generalOverview.moveUp", "Move up")));
                 let down = gtk::Button::from_icon_name("go-down-symbolic");
                 down.set_valign(gtk::Align::Center);
-                down.set_tooltip_text(Some("Move down"));
+                down.set_tooltip_text(Some(
+                    &self.ctx.t_or("generalOverview.moveDown", "Move down"),
+                ));
                 {
                     let dash = self.clone();
                     let name = remote.name.clone();
@@ -1674,14 +1684,19 @@ impl Dashboard {
             });
         }
         vfs.append(&open_vfs);
-        for (label, action) in [("Refresh", "refresh"), ("Forget cache", "forget")] {
-            let btn = gtk::Button::with_label(label);
+        for (key, fallback, action) in [
+            ("common.refresh", "Refresh", "refresh"),
+            ("remote.forgetCache", "Forget cache", "forget"),
+        ] {
+            let btn = gtk::Button::with_label(&self.ctx.t_or(key, fallback));
             let ctx = self.ctx.clone();
             let name = name.clone();
             let toast = self.toast.clone();
             btn.connect_clicked(move |_| {
                 let Some(client) = ctx.client() else {
-                    toast.add_toast(adw::Toast::new("Engine offline"));
+                    toast.add_toast(adw::Toast::new(
+                        &ctx.t_or("home.errors.engineOffline", "Engine offline"),
+                    ));
                     return;
                 };
                 let fs = remote_fs(&name, "");
@@ -1690,7 +1705,9 @@ impl Dashboard {
                     _ => client.vfs_forget(&fs),
                 };
                 match result {
-                    Ok(_) => toast.add_toast(adw::Toast::new(&format!("{action} finished"))),
+                    Ok(_) => toast.add_toast(adw::Toast::new(
+                        &ctx.t_or("remote.vfsActionFinished", "VFS action finished"),
+                    )),
                     Err(e) => toast.add_toast(adw::Toast::new(&e.to_string())),
                 }
             });

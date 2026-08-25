@@ -334,9 +334,14 @@ This client is the GTK 4 + libadwaita rewrite of the Angular/Tauri desktop UI. I
 - Remote detail operation-control lists source/destination with Open in Files
 - Quick Run editor persists description, watch delay, changed-only, and bisync resync
 - Tray submenu labels (Mount/Unmount/Browse/Start/Stop/Quick Runs) use i18n keys
+- File viewer extracts embedded audio covers (ID3 APIC, FLAC picture, MP4 covr) and falls back to folder artwork
+- Remote audio cover probe reads the first 10 MiB via `rclone cat --count`
+- Large remote media previews warn and require an explicit download
+- Flow overview includes Bandwidth and System panels (same catalog as Angular)
 
 ## Still deepening toward pixel-level Angular parity
 
 - Workflow builder (stub in both apps)
 - Live GUI session against rclone rcd (no display in this environment)
 - Remaining dialogs/Files English labels (core chrome now localized)
+- Remote media still materializes a local temp file for gtk::Video (no rclone:// stream protocol)

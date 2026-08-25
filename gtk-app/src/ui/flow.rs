@@ -334,6 +334,148 @@ impl FlowView {
                 &autos,
             );
         }
+
+        if visible("bandwidth") {
+            self.append_bandwidth_panel();
+        }
+        if visible("system") {
+            self.append_system_panel(&snap);
+        }
+    }
+
+    fn append_bandwidth_panel(&self) {
+        let group = gtk::Box::new(gtk::Orientation::Vertical, 8);
+        let limit = self.ctx.settings.borrow().core.bandwidth_limit.clone();
+        let current = adw::ActionRow::new();
+        current.set_title(
+            &self
+                .ctx
+                .t_or("dashboard.bandwidth.savedLimit", "Saved limit"),
+        );
+        current.set_subtitle(&if limit.is_empty() || limit == "off" {
+            self.ctx.t_or("dashboard.bandwidth.unlimited", "Unlimited")
+        } else {
+            limit.clone()
+        });
+        let list = gtk::ListBox::new();
+        list.add_css_class("boxed-list");
+        list.append(&current);
+        if let Some(live) = self
+            .ctx
+            .client()
+            .and_then(|c| c.bwlimit(None).ok())
+            .map(|v| crate::jobs::parse_bwlimit(&v))
+        {
+            let live_row = adw::ActionRow::new();
+            live_row.set_title(&self.ctx.t_or("dashboard.bandwidth.liveLimit", "Live limit"));
+            live_row.set_subtitle(&format!(
+                "{} · tx {}/s · rx {}/s",
+                if live.rate == "off" {
+                    self.ctx.t_or("dashboard.bandwidth.unlimited", "Unlimited")
+                } else {
+                    live.rate.clone()
+                },
+                crate::rclone::format_bytes(live.bytes_per_sec_tx),
+                crate::rclone::format_bytes(live.bytes_per_sec_rx)
+            ));
+            list.append(&live_row);
+        }
+        group.append(&list);
+        let presets = gtk::Box::new(gtk::Orientation::Horizontal, 6);
+        presets.add_css_class("linked");
+        for (value, label) in crate::jobs::BANDWIDTH_PRESETS {
+            let btn = gtk::Button::with_label(label);
+            let ctx = self.ctx.clone();
+            let view = self.clone();
+            let value = (*value).to_string();
+            btn.connect_clicked(move |_| {
+                apply_bandwidth(&ctx, &value);
+                view.refresh();
+            });
+            presets.append(&btn);
+        }
+        group.append(&presets);
+        let custom = adw::EntryRow::new();
+        custom.set_title(&self.ctx.t_or(
+            "dashboard.bandwidth.customLimit",
+            "Custom limit (e.g. 2M or 1M:10M)",
+        ));
+        custom.set_text(&limit);
+        let apply = gtk::Button::with_label(&self.ctx.t_or("common.apply", "Apply"));
+        apply.set_valign(gtk::Align::Center);
+        {
+            let ctx = self.ctx.clone();
+            let view = self.clone();
+            let custom = custom.clone();
+            apply.connect_clicked(move |_| {
+                apply_bandwidth(&ctx, &custom.text());
+                view.refresh();
+            });
+        }
+        custom.add_suffix(&apply);
+        group.append(&custom);
+        self.append_expandable(
+            "bandwidth",
+            &self
+                .ctx
+                .t_or("generalOverview.panels.bandwidth", "Bandwidth"),
+            &group,
+        );
+    }
+
+    fn append_system_panel(&self, snap: &crate::store::RuntimeSnapshot) {
+        let sys = gtk::ListBox::new();
+        sys.add_css_class("boxed-list");
+        let version = self
+            .ctx
+            .engine
+            .borrow()
+            .as_ref()
+            .map(|e| e.version.clone())
+            .filter(|s| !s.is_empty())
+            .or_else(|| self.ctx.client().and_then(|c| c.version().ok()))
+            .unwrap_or_else(|| self.ctx.t_or("generalOverview.system.unknown", "unknown"));
+        let ver_row = adw::ActionRow::new();
+        ver_row.set_title(&self.ctx.t_or("generalOverview.system.version", "rclone"));
+        ver_row.set_subtitle(&version);
+        sys.append(&ver_row);
+        if let Some(client) = self.ctx.client() {
+            if let Ok(pid) = client.pid() {
+                let row = adw::ActionRow::new();
+                row.set_title(&self.ctx.t_or("dashboard.system.pid", "rclone PID"));
+                row.set_subtitle(&pid.to_string());
+                sys.append(&row);
+            }
+            if let Ok(mem) = client.memstats() {
+                let alloc = mem.get("Alloc").and_then(|x| x.as_i64()).unwrap_or(0);
+                let sys_bytes = mem.get("Sys").and_then(|x| x.as_i64()).unwrap_or(0);
+                let row = adw::ActionRow::new();
+                row.set_title(&self.ctx.t_or("dashboard.system.memory", "Memory"));
+                row.set_subtitle(&format!(
+                    "{} alloc · {} sys",
+                    crate::rclone::format_bytes(alloc),
+                    crate::rclone::format_bytes(sys_bytes)
+                ));
+                sys.append(&row);
+            }
+        }
+        let activity = adw::ActionRow::new();
+        activity.set_title(&self.ctx.t_or("dashboard.system.activity", "Activity"));
+        activity.set_subtitle(&format!(
+            "{} running jobs · {} mounts · {} serves",
+            snap.jobs
+                .iter()
+                .filter(|j| crate::jobs::is_overview_job(j) && j.status == "running")
+                .count(),
+            snap.mounts.len(),
+            snap.serves.len()
+        ));
+        sys.append(&activity);
+        self.append_expandable(
+            "system",
+            &self.ctx.t_or("generalOverview.panels.system", "System"),
+            &sys,
+        );
     }
 
     fn append_expandable(&self, id: &str, title: &str, child: &impl IsA<gtk::Widget>) {
@@ -682,6 +824,17 @@ impl FlowView {
         self.ctx.persist();
         self.refresh();
     }
+}
+
+fn apply_bandwidth(ctx: &AppCtx, value: &str) {
+    let rate = crate::jobs::normalize_bandwidth(value);
+    ctx.settings.borrow_mut().core.bandwidth_limit = if rate == "off" {
+        String::new()
+    } else {
+        rate.clone()
+    };
+    ctx.persist();
+    ctx.apply_effective_bandwidth();
 }
 
 fn scrolled(child: &impl IsA<gtk::Widget>) -> gtk::ScrolledWindow {

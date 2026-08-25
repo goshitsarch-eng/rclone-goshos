@@ -12,7 +12,14 @@ pub const DASHBOARD_PANELS: &[&str] = &[
     "automations",
 ];
 
-pub const QUICK_RUN_PANELS: &[&str] = &["quickRuns", "jobs", "serves", "automations", "bandwidth"];
+pub const QUICK_RUN_PANELS: &[&str] = &[
+    "quickRuns",
+    "jobs",
+    "serves",
+    "automations",
+    "bandwidth",
+    "system",
+];
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PanelLayout {
@@ -193,5 +200,7 @@ mod tests {
         assert_eq!(loaded.hidden, ["a"]);
         assert_eq!(backend_key(""), "local");
         assert_eq!(backend_key("drive-rc"), "drive-rc");
+        assert!(QUICK_RUN_PANELS.contains(&"bandwidth"));
+        assert!(QUICK_RUN_PANELS.contains(&"system"));
     }
 }
