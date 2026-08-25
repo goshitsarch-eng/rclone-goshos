@@ -458,6 +458,7 @@ This client is the GTK 4 + libadwaita rewrite of the Angular/Tauri desktop UI. I
 - Files local-disk sidebar uses Angular `LocalDrive` labels: Home / File System i18n, lsblk volume names, removable icons, space/fstype tooltips, Windows/`/sdcard` path normalization
 - Wizard OAuth continuation and save-failed alerts use `wizards.remoteConfig.*` / `settings.remoteSaveFailed`; remote-config helper steps, presets, JSON help, and profile-in-use warnings use i18n keys
 - Grouped file-manager jobs hydrate `transferring` / `completed` rows from the start snapshot and child job status so Job detail and transfer activity stay populated on rclone 1.60
+- Job detail reapplies that snapshot after live `job/status` (rclone 1.60 copyfile stats omit per-file rows)
 - Send-to uses the same grouped `collect_local_upload_items` path as Files uploads
 - Dashboard / Flow remote activity lists only overview jobs (hides grouped children)
 - Transfer-activity empty states use `shared.transferActivity.empty.*` hints
