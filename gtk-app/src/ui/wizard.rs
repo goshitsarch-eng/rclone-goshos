@@ -781,7 +781,7 @@ pub fn present(
     pgroup.add(&cron);
     let cron_row = adw::ActionRow::new();
     cron_row.set_title(&ctx.t_or("remoteConfig.cron", "Cron schedule"));
-    cron_row.add_suffix(&super::dialogs::attach_cron_builder(&cron));
+    cron_row.add_suffix(&super::dialogs::attach_cron_builder(&cron, &ctx));
     pgroup.add(&cron_row);
     pgroup.add(&tray);
     pgroup.add(&autostart);

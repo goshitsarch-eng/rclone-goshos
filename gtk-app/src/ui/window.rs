@@ -192,7 +192,7 @@ pub fn present_main(app: &adw::Application, ctx: AppCtx) {
     header.pack_end(&notice_btn);
 
     let banner = adw::Banner::new("");
-    banner.set_button_label(Some("Repair"));
+    banner.set_button_label(Some(&ctx.t_or("repairSheet.actions.repair", "Repair")));
     let banner_kind = Rc::new(std::cell::RefCell::new(BannerKind::None));
     {
         let ctx = ctx.clone();
@@ -829,7 +829,9 @@ fn install_actions(
         action.connect_activate(move |_, _| {
             ctx.refresh_runtime();
             dash.refresh();
-            toast.add_toast(adw::Toast::new("Mounts refreshed"));
+            toast.add_toast(adw::Toast::new(
+                &ctx.t_or("shortcuts.mountsRefreshSuccess", "Mounts refreshed"),
+            ));
         });
         window.add_action(&action);
     }
@@ -841,7 +843,9 @@ fn install_actions(
         action.connect_activate(move |_, _| {
             ctx.refresh_runtime();
             dash.refresh();
-            toast.add_toast(adw::Toast::new("Serves refreshed"));
+            toast.add_toast(adw::Toast::new(
+                &ctx.t_or("shortcuts.servesRefreshSuccess", "Serves refreshed"),
+            ));
         });
         window.add_action(&action);
     }
@@ -884,7 +888,9 @@ fn install_actions(
             Box::new(move || {
                 if let Some(client) = ctx.client() {
                     match client.gc() {
-                        Ok(_) => toast.add_toast(adw::Toast::new("Garbage collection started")),
+                        Ok(_) => toast.add_toast(adw::Toast::new(
+                            &ctx.t_or("developerTools.gcStarted", "Garbage collection started"),
+                        )),
                         Err(e) => toast.add_toast(adw::Toast::new(&e.to_string())),
                     }
                 }

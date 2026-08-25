@@ -39,6 +39,36 @@ pub fn export_categories() -> Vec<(&'static str, &'static str)> {
     ]
 }
 
+pub fn export_category_label(id: &str, i18n: &crate::i18n::I18n) -> String {
+    match id {
+        "FullBackup" => i18n.t_or("modals.export.fullBackup", "Full Backup"),
+        "settings" => i18n.t_or(
+            "modals.export.categories.settings.label",
+            "Application Settings",
+        ),
+        "store" => i18n.t_or("modals.export.categories.alerts.label", "Alerts"),
+        "rclone" => i18n.t_or("modals.export.categories.remotes.label", "Remotes"),
+        "nautilus" => i18n.t_or("modals.export.categories.connections.label", "Connections"),
+        _ => id.to_string(),
+    }
+}
+
+impl BackupAnalysis {
+    pub fn content_rows(&self) -> Vec<(&'static str, &'static str)> {
+        let mut rows = Vec::new();
+        if self.has_settings {
+            rows.push(("backup.restore.settings.title", "Application Settings"));
+        }
+        if self.has_store {
+            rows.push(("backup.restore.profiles.title", "Profiles"));
+        }
+        if self.has_rclone_config {
+            rows.push(("backup.restore.rcloneConfig.title", "Rclone Configuration"));
+        }
+        rows
+    }
+}
+
 pub fn includes_file(export_type: &str, file: &str) -> bool {
     if file == "manifest.json" {
         return true;
@@ -329,6 +359,10 @@ mod tests {
         let analysis = analyze_backup(&dest).unwrap();
         assert!(analysis.valid);
         assert!(analysis.has_settings);
+        assert!(analysis
+            .content_rows()
+            .iter()
+            .any(|(key, _)| *key == "backup.restore.settings.title"));
         assert_eq!(analysis.manifest.note, "test");
         let (s, st, r) = restore_backup(&dest).unwrap();
         assert!(s.is_some());

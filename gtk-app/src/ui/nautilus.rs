@@ -2216,8 +2216,11 @@ impl NautilusView {
         let view = self.clone();
         dialogs::prompt(
             &win,
-            "New folder with selected",
-            "Folder name",
+            &self.ctx,
+            &self
+                .ctx
+                .t_or("nautilus.contextMenu.newFolder", "New folder with selected"),
+            &self.ctx.t_or("common.name", "Folder name"),
             "",
             move |name| {
                 if name.is_empty() {
@@ -2296,34 +2299,43 @@ impl NautilusView {
     fn mkdir_prompt(&self) {
         if let Some(win) = self.root.root().and_downcast::<gtk::Window>() {
             let view = self.clone();
-            dialogs::prompt(&win, "New folder", "Folder name", "", move |name| {
-                if name.is_empty() {
-                    return;
-                }
-                if let Some(client) = view.ctx.client() {
-                    let current = view.current.borrow().clone();
-                    let fs = if current.remote == "local" {
-                        "/".into()
-                    } else {
-                        remote_fs(&current.remote, "")
-                    };
-                    let path = join_remote_path(&current.path, &name);
-                    let remote = if current.remote == "local" {
-                        path.trim_start_matches('/').to_string()
-                    } else {
-                        path
-                    };
-                    match client.mkdir(&fs, &remote) {
-                        Ok(_) => {
-                            view.push_undo(
-                                crate::fileops::FileOp::Mkdir { fs, path: remote }.encode(),
-                            );
-                            view.reload();
-                        }
-                        Err(e) => view.toast.add_toast(adw::Toast::new(&e.to_string())),
+            dialogs::prompt(
+                &win,
+                &self.ctx,
+                &self
+                    .ctx
+                    .t_or("nautilus.contextMenu.newFolder", "New folder"),
+                &self.ctx.t_or("common.name", "Folder name"),
+                "",
+                move |name| {
+                    if name.is_empty() {
+                        return;
                     }
-                }
-            });
+                    if let Some(client) = view.ctx.client() {
+                        let current = view.current.borrow().clone();
+                        let fs = if current.remote == "local" {
+                            "/".into()
+                        } else {
+                            remote_fs(&current.remote, "")
+                        };
+                        let path = join_remote_path(&current.path, &name);
+                        let remote = if current.remote == "local" {
+                            path.trim_start_matches('/').to_string()
+                        } else {
+                            path
+                        };
+                        match client.mkdir(&fs, &remote) {
+                            Ok(_) => {
+                                view.push_undo(
+                                    crate::fileops::FileOp::Mkdir { fs, path: remote }.encode(),
+                                );
+                                view.reload();
+                            }
+                            Err(e) => view.toast.add_toast(adw::Toast::new(&e.to_string())),
+                        }
+                    }
+                },
+            );
         }
     }
 
@@ -2620,45 +2632,52 @@ impl NautilusView {
         }
         let old = names[0].clone();
         let view = self.clone();
-        dialogs::prompt(&win, "Rename", "New name", &old.clone(), move |new_name| {
-            if new_name.is_empty() || new_name == old {
-                return;
-            }
-            if let Some(client) = view.ctx.client() {
-                let current = view.current.borrow().clone();
-                let fs = if current.remote == "local" {
-                    "/".into()
-                } else {
-                    remote_fs(&current.remote, "")
-                };
-                let src = join_remote_path(&current.path, &old);
-                let dst = join_remote_path(&current.path, &new_name);
-                let src = if current.remote == "local" {
-                    src.trim_start_matches('/').to_string()
-                } else {
-                    src
-                };
-                let dst = if current.remote == "local" {
-                    dst.trim_start_matches('/').to_string()
-                } else {
-                    dst
-                };
-                match client.move_file(&fs, &src, &fs, &dst) {
-                    Ok(_) => {
-                        view.push_undo(
-                            crate::fileops::FileOp::Rename {
-                                fs,
-                                from: src,
-                                to: dst,
-                            }
-                            .encode(),
-                        );
-                        view.reload();
-                    }
-                    Err(e) => view.toast.add_toast(adw::Toast::new(&e.to_string())),
+        dialogs::prompt(
+            &win,
+            &self.ctx,
+            &self.ctx.t_or("nautilus.contextMenu.rename", "Rename"),
+            &self.ctx.t_or("modals.remoteConfig.newName", "New name"),
+            &old.clone(),
+            move |new_name| {
+                if new_name.is_empty() || new_name == old {
+                    return;
                 }
-            }
-        });
+                if let Some(client) = view.ctx.client() {
+                    let current = view.current.borrow().clone();
+                    let fs = if current.remote == "local" {
+                        "/".into()
+                    } else {
+                        remote_fs(&current.remote, "")
+                    };
+                    let src = join_remote_path(&current.path, &old);
+                    let dst = join_remote_path(&current.path, &new_name);
+                    let src = if current.remote == "local" {
+                        src.trim_start_matches('/').to_string()
+                    } else {
+                        src
+                    };
+                    let dst = if current.remote == "local" {
+                        dst.trim_start_matches('/').to_string()
+                    } else {
+                        dst
+                    };
+                    match client.move_file(&fs, &src, &fs, &dst) {
+                        Ok(_) => {
+                            view.push_undo(
+                                crate::fileops::FileOp::Rename {
+                                    fs,
+                                    from: src,
+                                    to: dst,
+                                }
+                                .encode(),
+                            );
+                            view.reload();
+                        }
+                        Err(e) => view.toast.add_toast(adw::Toast::new(&e.to_string())),
+                    }
+                }
+            },
+        );
     }
 
     fn delete_selected(&self) {
@@ -3521,8 +3540,14 @@ impl NautilusView {
         let view = self.clone();
         dialogs::prompt(
             &win,
-            "Extract archive",
-            "Destination path",
+            &self.ctx,
+            &self
+                .ctx
+                .t_or("fileBrowser.fileViewer.extract", "Extract archive"),
+            &self.ctx.t_or(
+                "fileBrowser.operations.details.destination",
+                "Destination path",
+            ),
             &default_dst,
             move |dst| {
                 let Some(client) = view.ctx.client() else {

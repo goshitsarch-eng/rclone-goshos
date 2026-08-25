@@ -246,6 +246,13 @@ This client is the GTK 4 + libadwaita rewrite of the Angular/Tauri desktop UI. I
 - Reset remote settings (keep the rclone remote), show-in-tray toggle, and export prefilled for that remote
 - Detach Main Menu / Flow / Files into a standalone window (Ctrl+Shift+D, titlebar button)
 - WhatsApp alerts: CallMeBot vs custom gateway provider, matching Angular dispatch
+- Cron descriptions cover weekdays/weekends/monthly/hourly and use i18n in quick-run + remote-config
+- Cron preset chips and simple builder labels use `flow.cronPresets.*` / fallbacks
+- Restore preview shows created/type/security/contents/note plus scoped restore (all vs profile)
+- Export categories, password, secrets, and backend rows use i18n keys
+- Keyboard shortcuts dialog is categorized and searchable
+- File viewer: extract archive, Edit/Cancel/Save for text, i18n chrome
+- Shared prompts use translated OK/Cancel
 
 ## Still deepening toward pixel-level Angular parity
 
@@ -253,4 +260,4 @@ This client is the GTK 4 + libadwaita rewrite of the Angular/Tauri desktop UI. I
 - Live GUI session against rclone rcd (no display in this environment)
 - Native share portal / Android share intent (Linux uses `--share-intake` + Files banner)
 - Remaining dialogs/Files English labels
-- Localized cronstrue-quality cron descriptions
+- Full cronstrue locale packs (GTK uses an expanded pattern matcher)

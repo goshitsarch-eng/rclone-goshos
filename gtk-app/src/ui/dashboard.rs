@@ -357,7 +357,10 @@ impl Dashboard {
             self.ctx.t_or("generalOverview.editLayout", "Edit layout")
         };
         let edit_btn = gtk::Button::with_label(&edit_label);
-        edit_btn.set_tooltip_text(Some("Hide or reorder remotes and overview panels"));
+        edit_btn.set_tooltip_text(Some(&self.ctx.t_or(
+            "generalOverview.editLayout",
+            "Hide or reorder remotes and overview panels",
+        )));
         {
             let dash = self.clone();
             edit_btn.connect_clicked(move |_| {
@@ -521,7 +524,7 @@ impl Dashboard {
             }
             let browse = gtk::Button::from_icon_name("folder-symbolic");
             browse.set_valign(gtk::Align::Center);
-            browse.set_tooltip_text(Some("Browse"));
+            browse.set_tooltip_text(Some(&self.ctx.t_or("common.browse", "Browse")));
             let mount = gtk::Button::from_icon_name("drive-harddisk-symbolic");
             mount.set_valign(gtk::Align::Center);
             mount.set_tooltip_text(Some("Mount / Unmount"));
@@ -995,7 +998,7 @@ impl Dashboard {
         let tab = *self.tab.borrow();
         let header = gtk::Box::new(gtk::Orientation::Horizontal, 8);
         let back = gtk::Button::from_icon_name("go-previous-symbolic");
-        back.set_tooltip_text(Some("Back to overview"));
+        back.set_tooltip_text(Some(&self.ctx.t_or("common.back", "Back to overview")));
         {
             let ctx = self.ctx.clone();
             let dash = self.clone();

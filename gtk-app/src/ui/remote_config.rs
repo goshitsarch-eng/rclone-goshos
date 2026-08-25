@@ -854,7 +854,7 @@ fn operation_page(
     let cron_preset_row = adw::ActionRow::new();
     cron_preset_row.set_title(&ctx.t_or("remoteConfig.cron", "Cron schedule"));
     cron_preset_row.set_visible(op.is_automatable());
-    cron_preset_row.add_suffix(&dialogs::attach_cron_builder(&cron));
+    cron_preset_row.add_suffix(&dialogs::attach_cron_builder(&cron, &ctx));
     automation.add(&cron_preset_row);
     automation.add(&watch_enabled);
     automation.add(&watch_delay);
@@ -1408,30 +1408,38 @@ fn prompt_create_profile(
 ) {
     let title = ctx.t_or("modals.remoteConfig.addProfile", "Add profile");
     let label = ctx.t_or("common.name", "Name");
-    dialogs::prompt(parent, &title, &label, "default", move |name| {
-        if name.is_empty() {
-            return;
-        }
-        mutate_profiles(&ctx, &remote, op, helper, |meta| {
-            if let Some(op) = op {
-                meta.upsert_profile(
-                    op,
-                    ProfileConfig {
-                        name: name.clone(),
-                        ..Default::default()
-                    },
-                );
-            } else if let Some(kind) = helper {
-                meta.upsert_helper(kind, &name, json!({}));
+    let ctx_for_prompt = ctx.clone();
+    dialogs::prompt(
+        parent,
+        &ctx_for_prompt,
+        &title,
+        &label,
+        "default",
+        move |name| {
+            if name.is_empty() {
+                return;
             }
-        });
-        names.borrow_mut().push(name.clone());
-        refresh_combo(&combo, &names.borrow());
-        if let Some(idx) = names.borrow().iter().position(|n| n == &name) {
-            combo.set_selected(idx as u32);
-        }
-        *selected.borrow_mut() = name;
-    });
+            mutate_profiles(&ctx, &remote, op, helper, |meta| {
+                if let Some(op) = op {
+                    meta.upsert_profile(
+                        op,
+                        ProfileConfig {
+                            name: name.clone(),
+                            ..Default::default()
+                        },
+                    );
+                } else if let Some(kind) = helper {
+                    meta.upsert_helper(kind, &name, json!({}));
+                }
+            });
+            names.borrow_mut().push(name.clone());
+            refresh_combo(&combo, &names.borrow());
+            if let Some(idx) = names.borrow().iter().position(|n| n == &name) {
+                combo.set_selected(idx as u32);
+            }
+            *selected.borrow_mut() = name;
+        },
+    );
 }
 
 fn wire_profile_actions(
@@ -1469,8 +1477,9 @@ fn wire_profile_actions(
                 ),
                 "clone" => dialogs::prompt(
                     &parent,
-                    "Clone profile",
-                    "New name",
+                    &ctx,
+                    &ctx.t_or("modals.remoteConfig.cloneProfile", "Clone profile"),
+                    &ctx.t_or("modals.remoteConfig.newName", "New name"),
                     &format!("{current}-copy"),
                     {
                         let ctx = ctx.clone();
@@ -1503,6 +1512,7 @@ fn wire_profile_actions(
                 ),
                 "rename" => dialogs::prompt(
                     &parent,
+                    &ctx,
                     &ctx.t_or("modals.remoteConfig.renameProfile", "Rename profile"),
                     &ctx.t_or("modals.remoteConfig.newName", "New name"),
                     &current,

@@ -6,7 +6,8 @@ use crate::jobs::{
 };
 use crate::operations::OperationType;
 use crate::rclone::{
-    browse_target, describe_cron, nanoseconds_to_duration, parse_hashsum, remote_fs, validate_cron,
+    browse_target, describe_cron_i18n, nanoseconds_to_duration, parse_hashsum, remote_fs,
+    validate_cron,
 };
 use crate::rename::{preview as rename_preview, RenameMode, RenamePlan};
 use crate::store::{
@@ -155,6 +156,7 @@ pub fn present_standalone(
 
 pub fn prompt(
     parent: &impl IsA<gtk::Widget>,
+    ctx: &AppCtx,
     title: &str,
     label: &str,
     initial: &str,
@@ -164,8 +166,8 @@ pub fn prompt(
     let entry = gtk::Entry::new();
     entry.set_text(initial);
     dialog.set_extra_child(Some(&entry));
-    dialog.add_response("cancel", "Cancel");
-    dialog.add_response("ok", "OK");
+    dialog.add_response("cancel", &ctx.t("common.cancel"));
+    dialog.add_response("ok", &ctx.t_or("common.ok", "OK"));
     dialog.set_response_appearance("ok", adw::ResponseAppearance::Suggested);
     dialog.set_default_response(Some("ok"));
     dialog.set_close_response("cancel");
@@ -780,46 +782,162 @@ fn run_download_job<F, OnOk>(
 
 pub fn shortcuts(parent: &impl IsA<gtk::Widget>, ctx: &AppCtx) {
     let dialog = adw::Dialog::new();
-    dialog.set_title(&ctx.t_or("titlebar.menu.shortcuts", "Keyboard Shortcuts"));
+    dialog.set_title(&ctx.t_or("shortcuts.title", "Keyboard Shortcuts"));
     dialog.set_content_width(560);
-    dialog.set_content_height(520);
+    dialog.set_content_height(560);
+    let search = gtk::SearchEntry::new();
+    search.set_placeholder_text(Some(&ctx.t_or(
+        "shortcuts.searchPlaceholder",
+        "Search shortcuts or descriptions...",
+    )));
     let list = gtk::ListBox::new();
     list.add_css_class("boxed-list");
-    for (keys, desc) in [
-        ("Ctrl+Q", "Quit"),
-        ("Ctrl+B", "File browser"),
-        ("Ctrl+N", "Detailed remote"),
-        ("Ctrl+R", "Quick add remote"),
-        ("Ctrl+I", "Import settings"),
-        ("Ctrl+E", "Export settings"),
-        ("Ctrl+,", "Preferences"),
-        ("Ctrl+.", "Rclone flags"),
-        ("Ctrl+Alt+A", "Alerts"),
-        ("Ctrl+Alt+F", "Flow"),
-        ("Ctrl+Shift+?", "Shortcuts"),
-        ("Ctrl+Shift+M", "Refresh mounts"),
-        ("Ctrl+Shift+S", "Refresh serves"),
-        ("Ctrl+T / Ctrl+W", "New / close file tab"),
-        ("Ctrl+Shift+D", "Detach current file tab"),
-        ("Ctrl+Z / Ctrl+Shift+Z", "Undo / redo file action"),
-        ("Ctrl+/", "Toggle split view"),
-        ("Ctrl+L / Ctrl+F", "Focus path / search (Files)"),
-        ("F5", "Reload listing"),
-        ("F2", "Rename"),
-        ("Delete", "Delete"),
-        ("Ctrl+C / X / V", "Copy / Cut / Paste"),
-        ("Ctrl+Shift+N", "New folder"),
-        ("Ctrl+H", "Toggle hidden files"),
-        ("Backspace", "Parent folder"),
-    ] {
-        let row = adw::ActionRow::new();
-        row.set_title(desc);
-        row.set_subtitle(keys);
-        list.append(&row);
+    let entries = [
+        (
+            "global",
+            "shortcuts.categories.global",
+            "Global",
+            &[
+                ("Ctrl+Q", "shortcuts.actions.quit", "Quit Application"),
+                (
+                    "Ctrl+Shift+?",
+                    "shortcuts.actions.showShortcuts",
+                    "Show Keyboard Shortcuts",
+                ),
+                (
+                    "Ctrl+,",
+                    "shortcuts.actions.openPreferences",
+                    "Open Preferences",
+                ),
+                ("Ctrl+.", "shortcuts.actions.openFlags", "Open Rclone Flags"),
+            ][..],
+        ),
+        (
+            "remote",
+            "shortcuts.categories.remoteManagement",
+            "Remote Management",
+            &[
+                (
+                    "Ctrl+N",
+                    "shortcuts.actions.newRemoteDetailed",
+                    "Create New Remote (Detailed)",
+                ),
+                (
+                    "Ctrl+R",
+                    "shortcuts.actions.newRemoteQuick",
+                    "Create New Remote (Quick)",
+                ),
+                (
+                    "Ctrl+I",
+                    "shortcuts.actions.loadConfig",
+                    "Load Configuration",
+                ),
+                (
+                    "Ctrl+E",
+                    "shortcuts.actions.exportConfig",
+                    "Export Configuration",
+                ),
+                (
+                    "Ctrl+Shift+M",
+                    "shortcuts.actions.forceCheck",
+                    "Force Check Mounts",
+                ),
+                (
+                    "Ctrl+Shift+S",
+                    "shortcuts.actions.forceCheckServes",
+                    "Force Check Served Remotes",
+                ),
+            ][..],
+        ),
+        (
+            "files",
+            "shortcuts.categories.fileBrowser",
+            "File Browser",
+            &[
+                (
+                    "Ctrl+B",
+                    "shortcuts.actions.toggleBrowser",
+                    "Toggle File Browser",
+                ),
+                (
+                    "Ctrl+Alt+F",
+                    "shortcuts.actions.openFlowOverlay",
+                    "Toggle Flow Workspace",
+                ),
+                (
+                    "Ctrl+T / Ctrl+W",
+                    "nautilus.tabs.newClose",
+                    "New / close file tab",
+                ),
+                (
+                    "Ctrl+Shift+D",
+                    "titlebar.detach",
+                    "Detach current workspace",
+                ),
+                ("F5", "nautilus.actions.reload", "Reload listing"),
+                ("F2", "nautilus.contextMenu.rename", "Rename"),
+                ("Delete", "nautilus.contextMenu.delete", "Delete"),
+                (
+                    "Ctrl+C / X / V",
+                    "nautilus.actions.clipboard",
+                    "Copy / Cut / Paste",
+                ),
+                (
+                    "Ctrl+Shift+N",
+                    "nautilus.contextMenu.newFolder",
+                    "New folder",
+                ),
+                ("Ctrl+H", "nautilus.view.hidden", "Toggle hidden files"),
+                ("Backspace", "nautilus.actions.parent", "Parent folder"),
+            ][..],
+        ),
+    ];
+    for (_, cat_key, cat_fallback, items) in entries {
+        let header = adw::ActionRow::new();
+        header.set_title(&ctx.t_or(cat_key, cat_fallback));
+        header.set_sensitive(false);
+        list.append(&header);
+        for (keys, desc_key, desc_fallback) in items {
+            let row = adw::ActionRow::new();
+            row.set_title(&ctx.t_or(desc_key, desc_fallback));
+            row.set_subtitle(keys);
+            row.set_widget_name(&format!("{keys} {desc_fallback}"));
+            list.append(&row);
+        }
     }
+    {
+        let list = list.clone();
+        search.connect_search_changed(move |entry| {
+            let query = entry.text().to_lowercase();
+            let mut child = list.first_child();
+            while let Some(widget) = child {
+                let next = widget.next_sibling();
+                if let Ok(row) = widget.downcast::<adw::ActionRow>() {
+                    if row.is_sensitive() {
+                        let hay = format!(
+                            "{} {} {}",
+                            row.title(),
+                            row.subtitle().unwrap_or_default(),
+                            row.widget_name()
+                        )
+                        .to_lowercase();
+                        row.set_visible(query.is_empty() || hay.contains(&query));
+                    }
+                }
+                child = next;
+            }
+        });
+    }
+    let box_ = gtk::Box::new(gtk::Orientation::Vertical, 8);
+    box_.set_margin_start(12);
+    box_.set_margin_end(12);
+    box_.set_margin_top(8);
+    box_.append(&search);
     let scroll = gtk::ScrolledWindow::new();
+    scroll.set_vexpand(true);
     scroll.set_child(Some(&list));
-    dialog.set_child(Some(&scroll));
+    box_.append(&scroll);
+    dialog.set_child(Some(&box_));
     dialog.present(Some(parent));
 }
 
@@ -3338,6 +3456,7 @@ pub fn quick_run_editor(
     cron_hint.set_wrap(true);
     {
         let cron_hint = cron_hint.clone();
+        let ctx = ctx.clone();
         cron.connect_changed(move |row| {
             let text = row.text().to_string();
             if text.is_empty() {
@@ -3345,11 +3464,11 @@ pub fn quick_run_editor(
             } else if let Err(e) = validate_cron(&text) {
                 cron_hint.set_text(&e);
             } else {
-                cron_hint.set_text(&describe_cron(&text));
+                cron_hint.set_text(&describe_cron_i18n(&text, &ctx.i18n.borrow()));
             }
         });
     }
-    let cron_presets = attach_cron_builder(&cron);
+    let cron_presets = attach_cron_builder(&cron, &ctx);
     let op_row = adw::ComboRow::new();
     op_row.set_title(&ctx.t_or("wizards.cliImport.operation", "Operation"));
     let labels: Vec<&str> = OperationType::ALL.iter().map(|o| o.as_str()).collect();
@@ -3639,10 +3758,14 @@ pub fn export_backup(
     dialog.set_title(&ctx.t_or("modals.export.title", "Export backup"));
     dialog.set_content_width(480);
     let categories = backup::export_categories();
-    let labels: Vec<&str> = categories.iter().map(|(_, label)| *label).collect();
+    let labels: Vec<String> = categories
+        .iter()
+        .map(|(id, _)| backup::export_category_label(id, &ctx.i18n.borrow()))
+        .collect();
+    let label_refs: Vec<&str> = labels.iter().map(|s| s.as_str()).collect();
     let type_row = adw::ComboRow::new();
     type_row.set_title(&ctx.t_or("modals.export.selectType", "What to export"));
-    type_row.set_model(Some(&gtk::StringList::new(&labels)));
+    type_row.set_model(Some(&gtk::StringList::new(&label_refs)));
     let remotes: Vec<String> = ctx
         .snapshot
         .borrow()
@@ -3670,9 +3793,15 @@ pub fn export_backup(
     let note = adw::EntryRow::new();
     note.set_title(&ctx.t_or("modals.export.noteLabel", "Note"));
     let password = adw::PasswordEntryRow::new();
-    password.set_title("Zip password (optional, 4+ chars)");
+    password.set_title(&ctx.t_or(
+        "modals.export.passwordLabel",
+        "Zip password (optional, 4+ chars)",
+    ));
     let secrets = adw::SwitchRow::new();
-    secrets.set_title("Include secrets in rclone dump");
+    secrets.set_title(&ctx.t_or(
+        "modals.export.includeSecrets",
+        "Include secrets in rclone dump",
+    ));
     secrets.set_active(true);
     let extra_backends = ctx.settings.borrow().core.extra_backends.clone();
     let mut backend_labels = vec!["local".to_string()];
@@ -3684,9 +3813,12 @@ pub fn export_backup(
     let backend_refs: Vec<&str> = backend_labels.iter().map(|s| s.as_str()).collect();
     let backend_row = adw::ComboRow::new();
     backend_row.set_title(&ctx.t_or("modals.export.backend", "Rclone backend"));
-    backend_row.set_subtitle("Dump remotes from this RC instance");
+    backend_row.set_subtitle(&ctx.t_or(
+        "modals.export.categories.backend.description",
+        "Dump remotes from this RC instance",
+    ));
     backend_row.set_model(Some(&gtk::StringList::new(&backend_refs)));
-    let save = gtk::Button::with_label("Choose file…");
+    let save = gtk::Button::with_label(&ctx.t_or("modals.export.exportNow", "Choose file…"));
     save.add_css_class("suggested-action");
     {
         let ctx = ctx.clone();
@@ -3781,7 +3913,12 @@ pub fn export_backup(
                                 &note_text,
                                 pw,
                             ) {
-                                Ok(_) => toast.add_toast(adw::Toast::new("Backup exported")),
+                                Ok(_) => {
+                                    toast.add_toast(adw::Toast::new(&ctx.t_or(
+                                        "backup.backupSuccess",
+                                        "Backup created successfully",
+                                    )))
+                                }
                                 Err(e) => toast.add_toast(adw::Toast::new(&e)),
                             }
                         }
@@ -3836,89 +3973,186 @@ pub fn restore_preview(
     on_done: Rc<dyn Fn()>,
 ) {
     let analysis = backup::analyze_backup(&path).ok();
-    let summary = analysis
-        .as_ref()
-        .map(|a| {
-            format!(
-                "Version {} · {} · remotes: {}\nsettings={} store={} rclone={} encrypted={}",
-                a.manifest.version,
-                a.manifest.export_type,
-                a.manifest.remotes.join(", "),
-                a.has_settings,
-                a.has_store,
-                a.has_rclone_config,
-                a.manifest.encrypted
-            )
-        })
-        .unwrap_or_else(|| {
-            "Could not read the zip without a password. Enter it below to restore.".into()
+    let dialog = adw::Dialog::new();
+    dialog.set_title(&ctx.t_or("backup.restore.title", "Restore Backup"));
+    dialog.set_content_width(520);
+    dialog.set_content_height(640);
+    let page = adw::PreferencesPage::new();
+    let info = adw::PreferencesGroup::new();
+    info.set_title(&ctx.t_or("backup.restore.info", "Backup Information"));
+    if let Some(analysis) = &analysis {
+        let created = adw::ActionRow::new();
+        created.set_title(&ctx.t_or("backup.restore.created", "Created"));
+        let created_text = if analysis.manifest.created_at.is_empty() {
+            ctx.t_or("backup.restore.unknown", "Unknown")
+        } else {
+            analysis.manifest.created_at.clone()
+        };
+        created.set_subtitle(&created_text);
+        let kind = adw::ActionRow::new();
+        kind.set_title(&ctx.t_or("backup.restore.type", "Type"));
+        kind.set_subtitle(&analysis.manifest.export_type);
+        let security = adw::ActionRow::new();
+        security.set_title(&ctx.t_or("backup.restore.security", "Security"));
+        security.set_subtitle(&if analysis.manifest.encrypted {
+            ctx.t_or("backup.restore.encrypted", "Encrypted")
+        } else {
+            ctx.t_or("backup.restore.notEncrypted", "Not Encrypted")
         });
-    let dialog = adw::AlertDialog::new(Some("Restore backup"), Some(&summary));
-    let password = gtk::PasswordEntry::new();
-    password.set_show_peek_icon(true);
-    password.set_placeholder_text(Some("Zip password (if encrypted)"));
-    let mut scope_labels = vec!["All remotes".to_string()];
+        let remotes = adw::ActionRow::new();
+        remotes.set_title(&ctx.t_or(
+            "backup.restore.remoteConfigs.title",
+            "Remote Configurations",
+        ));
+        remotes.set_subtitle(&if analysis.manifest.remotes.is_empty() {
+            ctx.t_or("backup.restore.unknown", "Unknown")
+        } else {
+            analysis.manifest.remotes.join(", ")
+        });
+        info.add(&created);
+        info.add(&kind);
+        info.add(&security);
+        info.add(&remotes);
+    } else {
+        let missing = adw::ActionRow::new();
+        missing.set_title(&ctx.t_or("backup.analyzeFailed", "Failed to analyze backup file"));
+        missing.set_subtitle(&ctx.t_or(
+            "backup.restore.errors.requiresPassword",
+            "This backup requires a password to decrypt.",
+        ));
+        info.add(&missing);
+    }
+    page.add(&info);
+    if let Some(analysis) = &analysis {
+        let contents = adw::PreferencesGroup::new();
+        contents.set_title(&ctx.t_or("backup.restore.contents", "Backup Contents"));
+        for (key, fallback) in analysis.content_rows() {
+            let row = adw::ActionRow::new();
+            row.set_title(&ctx.t_or(key, fallback));
+            row.add_suffix(&gtk::Image::from_icon_name("object-select-symbolic"));
+            contents.add(&row);
+        }
+        if !analysis.manifest.note.is_empty() {
+            let note = adw::ActionRow::new();
+            note.set_title(&ctx.t_or("backup.restore.note", "Backup Note"));
+            note.set_subtitle(&analysis.manifest.note);
+            contents.add(&note);
+        }
+        page.add(&contents);
+    }
+    let options = adw::PreferencesGroup::new();
+    options.set_title(&ctx.t_or("backup.restore.options", "Restore Options"));
+    let password = adw::PasswordEntryRow::new();
+    password.set_title(&ctx.t_or(
+        "backup.restore.passwordPlaceholder",
+        "Enter your backup password",
+    ));
+    let mut scope_labels = vec![ctx.t_or("backup.restore.scope.all", "Restore Everything")];
     if let Some(analysis) = &analysis {
         scope_labels.extend(analysis.manifest.remotes.iter().cloned());
     }
     let scope_refs: Vec<&str> = scope_labels.iter().map(|s| s.as_str()).collect();
-    let scope = gtk::DropDown::from_strings(&scope_refs);
+    let scope = adw::ComboRow::new();
+    scope.set_title(&ctx.t_or("backup.restore.scope.profile", "Restore Specific Profile"));
+    scope.set_model(Some(&gtk::StringList::new(&scope_refs)));
     let as_name = adw::EntryRow::new();
-    as_name.set_title("Restore as (optional rename)");
-    let extra = gtk::Box::new(gtk::Orientation::Vertical, 8);
-    extra.append(&password);
-    extra.append(&scope);
-    extra.append(&as_name);
-    dialog.set_extra_child(Some(&extra));
-    dialog.add_response("cancel", "Cancel");
-    dialog.add_response("restore", "Restore");
-    dialog.set_response_appearance("restore", adw::ResponseAppearance::Destructive);
-    dialog.connect_response(None, move |_, response| {
-        if response != "restore" {
-            return;
-        }
-        let pw = password.text().to_string();
-        let pw = if pw.is_empty() {
-            None
-        } else {
-            Some(pw.as_str())
-        };
-        let selected = scope.selected() as usize;
-        let profile = if selected == 0 {
-            None
-        } else {
-            scope_labels.get(selected).map(|s| s.as_str())
-        };
-        let restore_as = as_name.text().to_string();
-        let restore_as = if restore_as.trim().is_empty() {
-            None
-        } else {
-            Some(restore_as.as_str())
-        };
-        match backup::restore_backup_scoped(&path, pw, profile, restore_as) {
-            Ok((settings, store, rclone)) => {
-                if let Some(settings) = settings {
-                    *ctx.settings.borrow_mut() = settings;
+    as_name.set_title(&ctx.t_or(
+        "backup.restore.selectProfile",
+        "Restore as (optional rename)",
+    ));
+    options.add(&password);
+    options.add(&scope);
+    options.add(&as_name);
+    page.add(&options);
+    let restore =
+        gtk::Button::with_label(&ctx.t_or("backup.restore.restoreAction", "Restore Backup"));
+    restore.add_css_class("destructive-action");
+    let cancel = gtk::Button::with_label(&ctx.t("common.cancel"));
+    let buttons = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+    buttons.set_halign(gtk::Align::End);
+    buttons.set_margin_top(8);
+    buttons.set_margin_end(12);
+    buttons.set_margin_bottom(12);
+    buttons.append(&cancel);
+    buttons.append(&restore);
+    {
+        let dialog = dialog.clone();
+        cancel.connect_clicked(move |_| {
+            dialog.close();
+        });
+    }
+    {
+        let ctx = ctx.clone();
+        let toast = toast.clone();
+        let dialog = dialog.clone();
+        let path = path.clone();
+        let on_done = on_done.clone();
+        let scope_labels = scope_labels.clone();
+        restore.connect_clicked(move |_| {
+            let pw = password.text().to_string();
+            let pw = if pw.is_empty() {
+                None
+            } else {
+                Some(pw.as_str())
+            };
+            let selected = scope.selected() as usize;
+            let profile = if selected == 0 {
+                None
+            } else {
+                scope_labels.get(selected).map(|s| s.as_str())
+            };
+            let restore_as = as_name.text().to_string();
+            let restore_as = if restore_as.trim().is_empty() {
+                None
+            } else {
+                Some(restore_as.as_str())
+            };
+            if analysis.is_none() && pw.is_some() {
+                if backup::analyze_backup_with_password(&path, pw).is_err() {
+                    toast.add_toast(adw::Toast::new(&ctx.t_or(
+                        "backup.restore.errors.wrongPassword",
+                        "Incorrect password. Please try again.",
+                    )));
+                    return;
                 }
-                if let Some(store) = store {
-                    *ctx.store.borrow_mut() = store;
-                }
-                if let (Some(dump), Some(client)) = (rclone, ctx.client()) {
-                    if let Some(obj) = dump.as_object() {
-                        for (name, cfg) in obj {
-                            if let Some(t) = cfg.get("type").and_then(|x| x.as_str()) {
-                                let _ = client.create_remote(name, t, cfg.clone(), None);
+            }
+            match backup::restore_backup_scoped(&path, pw, profile, restore_as) {
+                Ok((settings, store, rclone)) => {
+                    if let Some(settings) = settings {
+                        *ctx.settings.borrow_mut() = settings;
+                    }
+                    if let Some(store) = store {
+                        *ctx.store.borrow_mut() = store;
+                    }
+                    if let (Some(dump), Some(client)) = (rclone, ctx.client()) {
+                        if let Some(obj) = dump.as_object() {
+                            for (name, cfg) in obj {
+                                if let Some(t) = cfg.get("type").and_then(|x| x.as_str()) {
+                                    let _ = client.create_remote(name, t, cfg.clone(), None);
+                                }
                             }
                         }
                     }
+                    ctx.persist();
+                    toast.add_toast(adw::Toast::new(
+                        &ctx.t_or("backup.restoreSuccess", "Backup restored successfully"),
+                    ));
+                    dialog.close();
+                    on_done();
                 }
-                ctx.persist();
-                toast.add_toast(adw::Toast::new("Backup restored"));
-                on_done();
+                Err(e) => toast.add_toast(adw::Toast::new(
+                    &ctx.tf("backup.restoreFailed", &[("error", &e)]),
+                )),
             }
-            Err(e) => toast.add_toast(adw::Toast::new(&e)),
-        }
-    });
+        });
+    }
+    let box_ = gtk::Box::new(gtk::Orientation::Vertical, 0);
+    let scroll = gtk::ScrolledWindow::new();
+    scroll.set_vexpand(true);
+    scroll.set_child(Some(&page));
+    box_.append(&scroll);
+    box_.append(&buttons);
+    dialog.set_child(Some(&box_));
     let parent = parent.clone().upcast::<gtk::Window>();
     dialog.present(Some(&parent));
 }
@@ -4865,6 +5099,7 @@ fn attach_text_preview(
         stack.add_named(&source_scroll, Some("source"));
         stack.add_named(&preview_scroll, Some("preview"));
         let toggle = gtk::ToggleButton::with_label("Preview");
+        // Label is set by caller context; keep short so the toggle fits the toolbar.
         {
             let stack = stack.clone();
             toggle.connect_toggled(move |btn| {
@@ -4877,16 +5112,60 @@ fn attach_text_preview(
         parent.append(&source_scroll);
     }
     if editable && (save_path.is_some() || remote_save.is_some()) {
-        let save = gtk::Button::with_label("Save");
+        view.set_editable(false);
+        let edit = gtk::Button::with_label(
+            &remote_save
+                .as_ref()
+                .map(|(ctx, _, _)| ctx.t_or("fileBrowser.fileViewer.edit", "Edit"))
+                .unwrap_or_else(|| "Edit".into()),
+        );
+        let save = gtk::Button::with_label(
+            &remote_save
+                .as_ref()
+                .map(|(ctx, _, _)| ctx.t_or("fileBrowser.fileViewer.save", "Save"))
+                .unwrap_or_else(|| "Save".into()),
+        );
         save.add_css_class("suggested-action");
+        save.set_sensitive(false);
+        let cancel = gtk::Button::with_label(
+            &remote_save
+                .as_ref()
+                .map(|(ctx, _, _)| ctx.t_or("fileBrowser.fileViewer.cancel", "Cancel"))
+                .unwrap_or_else(|| "Cancel".into()),
+        );
+        cancel.set_sensitive(false);
+        {
+            let view = view.clone();
+            let save = save.clone();
+            let cancel = cancel.clone();
+            edit.connect_clicked(move |_| {
+                view.set_editable(true);
+                save.set_sensitive(true);
+                cancel.set_sensitive(true);
+            });
+        }
+        {
+            let view = view.clone();
+            let save = save.clone();
+            let cancel_btn = cancel.clone();
+            let original = shown.clone();
+            cancel.connect_clicked(move |_| {
+                view.buffer().set_text(&original);
+                view.set_editable(false);
+                save.set_sensitive(false);
+                cancel_btn.set_sensitive(false);
+            });
+        }
         let view = view.clone();
         let local = save_path.map(|p| p.to_string());
-        save.connect_clicked(move |_| {
+        save.connect_clicked(move |btn| {
             let buffer = view.buffer();
             let text = buffer.text(&buffer.start_iter(), &buffer.end_iter(), false);
+            let mut ok = true;
             if let Some(path) = &local {
                 if let Err(e) = std::fs::write(path, text.as_str()) {
                     log::warn!("failed to save {path}: {e}");
+                    ok = false;
                 }
             }
             if let Some((ctx, fs, remote)) = remote_save.clone() {
@@ -4901,10 +5180,20 @@ fn attach_text_preview(
                     .unwrap_or(remote.as_str());
                 if let Err(e) = client.upload_file(&fs, &dir, name, text.as_bytes()) {
                     log::warn!("remote save failed: {e}");
+                    ok = false;
                 }
             }
+            view.set_editable(false);
+            btn.set_sensitive(false);
+            if ok {
+                btn.set_label("OK");
+            }
         });
-        parent.append(&save);
+        let bar = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+        bar.append(&edit);
+        bar.append(&cancel);
+        bar.append(&save);
+        parent.append(&bar);
     }
 }
 
@@ -4926,9 +5215,13 @@ pub fn file_viewer(
     nav.set_margin_top(8);
     let index = siblings.iter().position(|n| n == name);
     let prev = gtk::Button::from_icon_name("go-previous-symbolic");
-    prev.set_tooltip_text(Some("Previous file"));
+    prev.set_tooltip_text(Some(
+        &ctx.t_or("fileBrowser.fileViewer.previousFile", "Previous file"),
+    ));
     let next = gtk::Button::from_icon_name("go-next-symbolic");
-    next.set_tooltip_text(Some("Next file"));
+    next.set_tooltip_text(Some(
+        &ctx.t_or("fileBrowser.fileViewer.nextFile", "Next file"),
+    ));
     let pos = gtk::Label::new(Some(&match index {
         Some(i) if !siblings.is_empty() => format!("{} / {}", i + 1, siblings.len()),
         _ => name.to_string(),
@@ -4999,15 +5292,14 @@ pub fn file_viewer(
     nav.append(&pos);
     nav.append(&next);
     let category = crate::operations::FileTypeCategory::from_name(name, false);
-    let info = gtk::Label::new(Some(&format!(
-        "{remote}:{path}\nType: {:?}\nUse Download to open with a system app when needed.",
-        category
-    )));
+    let info = gtk::Label::new(Some(&format!("{remote}:{path}")));
     info.set_wrap(true);
     info.set_margin_top(16);
     info.set_margin_start(16);
     info.set_margin_end(16);
-    let open = gtk::Button::with_label("Open native");
+    let open = gtk::Button::with_label(
+        &ctx.t_or("fileBrowser.fileViewer.openNative", "Open in External App"),
+    );
     {
         let path = if remote == "local" {
             path.to_string()
@@ -5018,7 +5310,8 @@ pub fn file_viewer(
             let _ = open::that(&path);
         });
     }
-    let download = gtk::Button::with_label("Download…");
+    let download =
+        gtk::Button::with_label(&ctx.t_or("fileBrowser.fileViewer.download", "Download"));
     {
         let parent = parent.clone();
         let ctx = ctx.clone();
@@ -5037,7 +5330,9 @@ pub fn file_viewer(
     actions.append(&download);
     box_.append(&actions);
     if matches!(category, crate::operations::FileTypeCategory::Archive) {
-        let heading = gtk::Label::new(Some("Archive contents"));
+        let heading = gtk::Label::new(Some(
+            &ctx.t_or("fileBrowser.fileViewer.archiveContents", "Archive Contents"),
+        ));
         heading.add_css_class("heading");
         heading.set_xalign(0.0);
         box_.append(&heading);
@@ -5064,13 +5359,15 @@ pub fn file_viewer(
             }
             Some(_) => {
                 let row = adw::ActionRow::new();
-                row.set_title("Archive is empty");
+                row.set_title(&ctx.t_or("nautilus.empty.noFiles", "Archive is empty"));
                 archive_list.append(&row);
             }
             None => {
                 let row = adw::ActionRow::new();
-                row.set_title("Unable to list archive contents");
-                row.set_subtitle("rclone operations/archive list failed for this file.");
+                row.set_title(&ctx.t_or(
+                    "fileBrowser.fileViewer.errorListArchive",
+                    "Failed to list archive contents",
+                ));
                 archive_list.append(&row);
             }
         }
@@ -5079,6 +5376,49 @@ pub fn file_viewer(
         scroll.set_min_content_height(220);
         scroll.set_child(Some(&archive_list));
         box_.append(&scroll);
+        let extract =
+            gtk::Button::with_label(&ctx.t_or("fileBrowser.fileViewer.extract", "Extract"));
+        extract.add_css_class("suggested-action");
+        {
+            let ctx = ctx.clone();
+            let parent = parent.clone();
+            let src = src.clone();
+            let dest = crate::rclone::parent_remote_path(path);
+            let dest = if remote == "local" {
+                dest
+            } else if dest.is_empty() {
+                format!("{remote}:")
+            } else {
+                format!("{remote}:{dest}")
+            };
+            extract.connect_clicked(move |_| {
+                let Some(client) = ctx.client() else {
+                    return;
+                };
+                match client.archive_extract(&src, &dest) {
+                    Ok(_) => {
+                        let toast = adw::AlertDialog::new(
+                            Some(&ctx.t_or("fileBrowser.fileViewer.extract", "Extract")),
+                            Some(&ctx.t_or("common.ok", "Extract started")),
+                        );
+                        toast.add_response("ok", &ctx.t("common.ok"));
+                        toast.present(Some(&parent));
+                    }
+                    Err(e) => {
+                        let toast = adw::AlertDialog::new(
+                            Some(&ctx.t_or(
+                                "fileBrowser.fileViewer.errorExtract",
+                                "Failed to extract archive",
+                            )),
+                            Some(&e.to_string()),
+                        );
+                        toast.add_response("ok", &ctx.t("common.ok"));
+                        toast.present(Some(&parent));
+                    }
+                }
+            });
+        }
+        actions.append(&extract);
     }
     let mut preview_path = if remote == "local" {
         Some(std::path::PathBuf::from(path))
@@ -6395,12 +6735,14 @@ pub(crate) fn attach_path_kind(row: &adw::EntryRow, current_remote: &str) -> adw
     combo
 }
 
-pub(crate) fn attach_cron_presets(cron: &adw::EntryRow) -> gtk::Box {
+pub(crate) fn attach_cron_presets(cron: &adw::EntryRow, ctx: &AppCtx) -> gtk::Box {
     let box_ = gtk::Box::new(gtk::Orientation::Horizontal, 4);
     box_.add_css_class("linked");
     box_.set_hexpand(true);
     for preset in crate::cron::PRESETS {
-        let btn = gtk::Button::with_label(preset.label);
+        let key = format!("flow.cronPresets.{}.title", preset.key);
+        let label = ctx.t_or(&key, preset.label);
+        let btn = gtk::Button::with_label(&label);
         btn.set_tooltip_text(Some(preset.cron));
         let cron = cron.clone();
         btn.connect_clicked(move |_| {
@@ -6411,27 +6753,41 @@ pub(crate) fn attach_cron_presets(cron: &adw::EntryRow) -> gtk::Box {
     box_
 }
 
-pub(crate) fn attach_cron_builder(cron: &adw::EntryRow) -> gtk::Box {
+pub(crate) fn attach_cron_builder(cron: &adw::EntryRow, ctx: &AppCtx) -> gtk::Box {
     let outer = gtk::Box::new(gtk::Orientation::Vertical, 8);
-    outer.append(&attach_cron_presets(cron));
+    outer.append(&attach_cron_presets(cron, ctx));
 
     let simple = gtk::Box::new(gtk::Orientation::Horizontal, 6);
-    let freq = gtk::DropDown::from_strings(&["Daily", "Weekly", "Monthly", "Interval"]);
+    let daily = ctx.t_or("remoteConfig.cronParts.daily", "Daily");
+    let weekly = ctx.t_or("remoteConfig.cronParts.weekly", "Weekly");
+    let monthly = ctx.t_or("remoteConfig.cronParts.monthly", "Monthly");
+    let interval_l = ctx.t_or("remoteConfig.cronParts.interval", "Interval");
+    let freq_labels = [
+        daily.as_str(),
+        weekly.as_str(),
+        monthly.as_str(),
+        interval_l.as_str(),
+    ];
+    let freq = gtk::DropDown::from_strings(&freq_labels);
     let hour = gtk::SpinButton::with_range(0.0, 23.0, 1.0);
     hour.set_value(9.0);
-    hour.set_tooltip_text(Some("Hour"));
+    hour.set_tooltip_text(Some(&ctx.t_or("remoteConfig.cronParts.hour", "Hour")));
     let minute = gtk::SpinButton::with_range(0.0, 59.0, 1.0);
-    minute.set_tooltip_text(Some("Minute"));
+    minute.set_tooltip_text(Some(&ctx.t_or("remoteConfig.cronParts.minute", "Minute")));
     let dow = gtk::Entry::new();
     dow.set_placeholder_text(Some("1-5"));
     dow.set_text("1");
     dow.set_width_chars(5);
-    dow.set_tooltip_text(Some("Day of week"));
+    dow.set_tooltip_text(Some(&ctx.t_or("remoteConfig.cronParts.dow", "Day of week")));
     let dom = gtk::SpinButton::with_range(1.0, 31.0, 1.0);
-    dom.set_tooltip_text(Some("Day of month"));
+    dom.set_tooltip_text(Some(
+        &ctx.t_or("remoteConfig.cronParts.dom", "Day of month"),
+    ));
     let interval = gtk::SpinButton::with_range(1.0, 24.0, 1.0);
     interval.set_value(6.0);
-    interval.set_tooltip_text(Some("Every N hours"));
+    interval.set_tooltip_text(Some(
+        &ctx.t_or("remoteConfig.cronParts.everyHours", "Every N hours"),
+    ));
     if let Some(parsed) = crate::cron::parse_simple(&cron.text()) {
         freq.set_selected(match parsed.frequency {
             crate::cron::SimpleFrequency::Weekly => 1,
