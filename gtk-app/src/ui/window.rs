@@ -1101,7 +1101,7 @@ fn install_actions(
                     Some(&crate::connection::summarize(&results)),
                     Some(&body),
                 );
-                alert.add_response("ok", "OK");
+                alert.add_response("ok", &ctx.t_or("common.ok", "OK"));
                 alert.present(Some(&window));
             }),
         );

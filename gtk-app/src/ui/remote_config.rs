@@ -339,7 +339,7 @@ fn preset_bar(
                 Some(&ctx.t_or("templates.applySuccess", "Presets applied")),
                 Some("Default provider / OS presets were merged into this remote."),
             );
-            toast.add_response("ok", "OK");
+            toast.add_response("ok", &ctx.t_or("common.ok", "OK"));
             toast.present(Some(&parent));
         });
     }
@@ -391,7 +391,7 @@ fn preset_bar(
             rebuild();
             let msg = ctx.tf("templates.applySuccess", &[("name", &template.name)]);
             let toast = adw::AlertDialog::new(Some(&msg), None::<&str>);
-            toast.add_response("ok", "OK");
+            toast.add_response("ok", &ctx.t_or("common.ok", "OK"));
             toast.present(Some(&parent));
         });
     }
@@ -1772,7 +1772,7 @@ fn wire_profile_actions(
                             Some("Profile is in use"),
                             Some(&usage.summary()),
                         );
-                        alert.add_response("ok", "OK");
+                        alert.add_response("ok", &ctx.t_or("common.ok", "OK"));
                         alert.present(Some(&parent));
                         return;
                     }

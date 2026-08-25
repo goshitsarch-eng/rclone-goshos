@@ -18,6 +18,7 @@ pub struct FlowView {
     editing_layout: Rc<RefCell<bool>>,
     remote_filter: Rc<RefCell<Option<String>>>,
     selected_flow_remote: Rc<RefCell<Option<String>>>,
+    detail_page: Rc<RefCell<String>>,
 }
 
 impl FlowView {
@@ -94,6 +95,7 @@ impl FlowView {
             editing_layout: Rc::new(RefCell::new(false)),
             remote_filter: Rc::new(RefCell::new(None)),
             selected_flow_remote: Rc::new(RefCell::new(None)),
+            detail_page: Rc::new(RefCell::new("monitoring".into())),
         };
 
         {
@@ -1709,6 +1711,20 @@ impl FlowView {
                 .ctx
                 .t_or("dashboard.appDetail.configuration", "Configuration"),
         );
+        if stack
+            .child_by_name(self.detail_page.borrow().as_str())
+            .is_some()
+        {
+            stack.set_visible_child_name(self.detail_page.borrow().as_str());
+        }
+        {
+            let page = self.detail_page.clone();
+            stack.connect_visible_child_notify(move |stack| {
+                if let Some(name) = stack.visible_child_name() {
+                    *page.borrow_mut() = name.to_string();
+                }
+            });
+        }
         let switcher = adw::ViewSwitcher::new();
         switcher.set_stack(Some(&stack));
         switcher.set_policy(adw::ViewSwitcherPolicy::Wide);

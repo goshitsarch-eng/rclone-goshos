@@ -813,7 +813,7 @@ fn present_ex(
                     )),
                     Some(&e),
                 );
-                err.add_response("ok", "OK");
+                err.add_response("ok", &ctx.t_or("common.ok", "OK"));
                 err.present(Some(row));
                 return;
             } else {
@@ -1058,7 +1058,7 @@ fn present_ex(
                         )),
                         Some(&e),
                     );
-                    err.add_response("ok", "OK");
+                    err.add_response("ok", &ctx.t_or("common.ok", "OK"));
                     err.present(Some(&dialog));
                     return;
                 }
@@ -1140,7 +1140,7 @@ fn present_ex(
                         )),
                         Some(&e.to_string()),
                     );
-                    err.add_response("ok", "OK");
+                    err.add_response("ok", &ctx.t_or("common.ok", "OK"));
                     err.present(Some(&dialog));
                 }
             }
@@ -1185,7 +1185,7 @@ fn present_ex(
                     )),
                     Some(&e),
                 );
-                err.add_response("ok", "OK");
+                err.add_response("ok", &ctx.t_or("common.ok", "OK"));
                 err.present(Some(&dialog));
                 return;
             }
@@ -1200,7 +1200,7 @@ fn present_ex(
                         )),
                         Some(&e),
                     );
-                    err.add_response("ok", "OK");
+                    err.add_response("ok", &ctx.t_or("common.ok", "OK"));
                     err.present(Some(&dialog));
                     return;
                 }
@@ -1236,7 +1236,7 @@ fn present_ex(
                             )),
                             Some(&e),
                         );
-                        err.add_response("ok", "OK");
+                        err.add_response("ok", &ctx.t_or("common.ok", "OK"));
                         err.present(Some(&dialog));
                         return;
                     }
@@ -1255,7 +1255,7 @@ fn present_ex(
                     )),
                     Some(&e),
                 );
-                err.add_response("ok", "OK");
+                err.add_response("ok", &ctx.t_or("common.ok", "OK"));
                 err.present(Some(&dialog));
                 return;
             }
@@ -1326,7 +1326,7 @@ fn present_ex(
                             Some(&ctx.t_or("common.error", "Could not save remote")),
                             Some(&e.to_string()),
                         );
-                        err.add_response("ok", "OK");
+                        err.add_response("ok", &ctx.t_or("common.ok", "OK"));
                         err.present(Some(&dialog));
                     }
                 }

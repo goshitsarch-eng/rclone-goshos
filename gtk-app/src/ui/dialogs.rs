@@ -2860,7 +2860,7 @@ fn backend_editor(
                                 )),
                                 Some(&e.to_string()),
                             );
-                        alert.add_response("ok", "OK");
+                        alert.add_response("ok", &ctx.t_or("common.ok", "OK"));
                         alert.present(Some(&parent));
                     }
                 }
@@ -3406,7 +3406,7 @@ fn remote_editor(
                     }
                     Err(e) => {
                         let toast = adw::AlertDialog::new(Some("Error"), Some(&e.to_string()));
-                        toast.add_response("ok", "OK");
+                        toast.add_response("ok", &ctx.t_or("common.ok", "OK"));
                         toast.present(Some(&dialog));
                     }
                 }
@@ -3806,7 +3806,7 @@ pub fn start_operation(
                     Some(&ctx.t_or("remoteConfig.startFailed", "Start failed")),
                     Some(&e),
                 );
-                err.add_response("ok", "OK");
+                err.add_response("ok", &ctx.t_or("common.ok", "OK"));
                 err.present(Some(&dialog));
             } else {
                 ctx.store
@@ -3936,14 +3936,14 @@ pub fn clone_remote(
             Some("Clone failed"),
             Some("No saved settings were found for this remote."),
         );
-        toast.add_response("ok", "OK");
+        toast.add_response("ok", &ctx.t_or("common.ok", "OK"));
         toast.present(Some(parent));
         return;
     };
     if let Some(client) = ctx.client() {
         if let Err(e) = client.clone_remote_config(name, &new_name) {
             let toast = adw::AlertDialog::new(Some("Clone failed"), Some(&e.to_string()));
-            toast.add_response("ok", "OK");
+            toast.add_response("ok", &ctx.t_or("common.ok", "OK"));
             toast.present(Some(parent));
             return;
         }
@@ -6619,7 +6619,11 @@ fn attach_text_preview(
             view.set_editable(false);
             btn.set_sensitive(false);
             if ok {
-                btn.set_label("OK");
+                let label = remote_save
+                    .as_ref()
+                    .map(|(ctx, _, _)| ctx.t_or("common.ok", "OK"))
+                    .unwrap_or_else(|| "OK".into());
+                btn.set_label(&label);
             }
         });
         let bar = gtk::Box::new(gtk::Orientation::Horizontal, 8);
@@ -7911,7 +7915,7 @@ pub fn archive_create(
                         Some(&ctx.t_or("nautilus.errors.archiveCreateFailed", "Archive failed")),
                         Some(&e.to_string()),
                     );
-                    err.add_response("ok", "OK");
+                    err.add_response("ok", &ctx.t_or("common.ok", "OK"));
                     err.present(Some(&dialog));
                 }
             }
@@ -8007,7 +8011,7 @@ pub fn copy_url_into(
                         Some(&ctx.t_or("nautilus.errors.copyUrlFailed", "Copy URL failed")),
                         Some(&e.to_string()),
                     );
-                    err.add_response("ok", "OK");
+                    err.add_response("ok", &ctx.t_or("common.ok", "OK"));
                     err.present(Some(&dialog));
                 }
             }
@@ -9949,7 +9953,7 @@ fn alert_action_editor(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, existing_id:
                 Some("Test sent"),
                 Some("The action was invoked with a sample event."),
             );
-            toast.add_response("ok", "OK");
+            toast.add_response("ok", &ctx.t_or("common.ok", "OK"));
             toast.present(Some(&parent));
         });
     }
@@ -10767,7 +10771,7 @@ pub fn multi_rename(
                 };
                 if let Err(e) = client.move_file(&fs, &src, &fs, &dst) {
                     let err = adw::AlertDialog::new(Some("Rename failed"), Some(&e.to_string()));
-                    err.add_response("ok", "OK");
+                    err.add_response("ok", &ctx.t_or("common.ok", "OK"));
                     err.present(Some(&dialog));
                     return;
                 }

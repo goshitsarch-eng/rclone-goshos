@@ -417,6 +417,10 @@ This client is the GTK 4 + libadwaita rewrite of the Angular/Tauri desktop UI. I
 - Remaining GTK `t_or` keys (`createForRemote`, `openRemote`, `serving`, `guidance`, `copyUrlFilename`, backend `failed`) are in all `main.json` locales
 - Dashboard remote settings include rclone dump keys plus saved profile flags
 - Quick Run editor uses helper profile combos plus VFS/filter/backend/runtime flag tabs (`adw::ViewStack`)
+- Dashboard mount/ops/serve remote detail matches Angular `app-app-detail`: Monitoring / Configuration tabs, persisted tab selection, operation + shared settings panels
+- Dashboard remote overflow menu uses `home.options.*` (Show in Tray, View Logs, Clone, Export, Reset, Delete)
+- Flow Quick Run Monitoring/Configuration tab selection survives runtime refresh
+- Remaining dialog OK buttons use `common.ok`
 
 ## Still deepening toward pixel-level Angular parity
 
