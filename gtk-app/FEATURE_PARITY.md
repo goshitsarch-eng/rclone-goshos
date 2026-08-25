@@ -282,6 +282,10 @@ This client is the GTK 4 + libadwaita rewrite of the Angular/Tauri desktop UI. I
 - Cron descriptions: Quartz `L-n` offset and last weekday of month (`LW`)
 - Logs extract nested rclone/bisync `status.output.output` and pretty-print JSON context
 - Alert email subject template plus MQTT QoS 0/1 and retain
+- Alert webhook Discord/Slack presets, email encryption (none/tls/starttls), script env_vars
+- Alert templates include `{{timestamp}}` and `{{rule_id}}`; webhooks send the rendered body
+- Alert history filters: event kind, acknowledged, rule id, and origins
+- Cron descriptions: hour lists (`0 9,17 * * *`) and minute lists (`0,30 * * * *`)
 
 ## Still deepening toward pixel-level Angular parity
 
@@ -289,4 +293,4 @@ This client is the GTK 4 + libadwaita rewrite of the Angular/Tauri desktop UI. I
 - Live GUI session against rclone rcd (no display in this environment)
 - Native share portal / Android share intent (Linux uses `--share-intake` + Files banner)
 - Remaining dialogs/Files English labels (core chrome now localized)
-- Remaining cronstrue forms (complex lists, Quartz `L-n` offsets)
+- Remaining cronstrue forms (step lists mixed with ranges)

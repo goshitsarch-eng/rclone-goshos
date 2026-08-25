@@ -66,6 +66,8 @@
     "nthWeekdayAt": "{{nth}} {{day}} at {{time}}",
     "inMonthsAt": "In {{months}} at {{time}}",
     "inMonthsOnDayAt": "In {{months}} on day {{dom}} at {{time}}",
+    "atTimes": "At {{times}}",
+    "hourlyAtMinutes": "Hourly at minutes {{mins}}",
     "days": {
       "0": "Sunday",
       "1": "Monday",

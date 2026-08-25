@@ -498,6 +498,8 @@ pub struct AlertActionDraft {
     pub subject: String,
     pub qos: u32,
     pub retain: bool,
+    pub encryption: String,
+    pub env_vars: String,
 }
 
 impl Default for AlertActionDraft {
@@ -518,6 +520,8 @@ impl Default for AlertActionDraft {
             subject: String::new(),
             qos: 0,
             retain: false,
+            encryption: "starttls".into(),
+            env_vars: String::new(),
         }
     }
 }
@@ -555,6 +559,73 @@ pub fn script_args(text: &str) -> Vec<String> {
         .filter(|s| !s.is_empty())
         .map(|s| s.to_string())
         .collect()
+}
+
+pub fn parse_env_lines(text: &str) -> serde_json::Map<String, Value> {
+    let mut map = serde_json::Map::new();
+    for line in text.lines() {
+        let Some((key, value)) = line.split_once('=').or_else(|| line.split_once(':')) else {
+            continue;
+        };
+        let key = key.trim();
+        if key.is_empty() {
+            continue;
+        }
+        map.insert(key.to_string(), json!(value.trim()));
+    }
+    map
+}
+
+pub fn env_vars_to_text(config: &Value) -> String {
+    config
+        .get("env_vars")
+        .and_then(|h| h.as_object())
+        .map(|map| {
+            map.iter()
+                .map(|(k, v)| format!("{}={}", k, v.as_str().unwrap_or("")))
+                .collect::<Vec<_>>()
+                .join("\n")
+        })
+        .unwrap_or_default()
+}
+
+pub fn webhook_preset_body(preset: &str) -> String {
+    match preset {
+        "discord" => serde_json::to_string_pretty(&json!({
+            "content": "@everyone",
+            "embeds": [{
+                "title": "{{title}}",
+                "description": "{{body}}",
+                "color": 5814783,
+                "fields": [
+                    { "name": "Severity", "value": "{{severity}}", "inline": true },
+                    { "name": "Time", "value": "{{timestamp}}", "inline": true }
+                ]
+            }]
+        }))
+        .unwrap_or_default(),
+        "slack" => serde_json::to_string_pretty(&json!({
+            "text": "*{{title}}*\n{{body}}\n_Severity: {{severity}}_"
+        }))
+        .unwrap_or_default(),
+        _ => String::new(),
+    }
+}
+
+pub fn ensure_content_type_json(headers: &str) -> String {
+    let existing = parse_header_lines(headers);
+    if existing
+        .keys()
+        .any(|k| k.eq_ignore_ascii_case("content-type"))
+    {
+        return headers.to_string();
+    }
+    let extra = "Content-Type: application/json";
+    if headers.trim().is_empty() {
+        extra.into()
+    } else {
+        format!("{}\n{extra}", headers.trim_end())
+    }
 }
 
 pub fn telegram_botless_url(chat_id: &str, body: &str) -> String {
@@ -617,6 +688,7 @@ pub fn alert_action_config(kind: &str, draft: &AlertActionDraft) -> Value {
         "script" => json!({
             "command": draft.extra,
             "args": script_args(&draft.extra2),
+            "env_vars": parse_env_lines(&draft.env_vars),
             "body_template": body,
             "retry_count": retry,
             "timeout_secs": timeout,
@@ -629,6 +701,10 @@ pub fn alert_action_config(kind: &str, draft: &AlertActionDraft) -> Value {
             "to": draft.extra,
             "subject_template": if draft.subject.is_empty() { "{{title}}".into() } else { draft.subject.clone() },
             "body_template": body,
+            "encryption": match draft.encryption.as_str() {
+                "none" | "tls" => draft.encryption.as_str(),
+                _ => "starttls",
+            },
             "retry_count": retry,
             "timeout_secs": timeout,
         }),
@@ -709,6 +785,8 @@ pub struct AlertEvent {
     pub backend: String,
     #[serde(default)]
     pub profile: String,
+    #[serde(default)]
+    pub rule_id: String,
     pub created_at: DateTime<Utc>,
     pub acknowledged: bool,
 }
@@ -725,6 +803,7 @@ impl AlertEvent {
             origin: "dashboard".into(),
             backend: String::new(),
             profile: String::new(),
+            rule_id: String::new(),
             created_at: Utc::now(),
             acknowledged: false,
         }
@@ -1078,6 +1157,16 @@ impl AppStore {
             .as_deref()
             .map(str::trim)
             .filter(|s| !s.is_empty() && !s.eq_ignore_ascii_case("all"));
+        let event_kind = filter
+            .event_kind
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty() && !s.eq_ignore_ascii_case("all"));
+        let rule_id = filter
+            .rule_id
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty());
         self.alert_history
             .iter()
             .filter(|event| {
@@ -1085,6 +1174,29 @@ impl AppStore {
                     if !event.severity.as_str().eq_ignore_ascii_case(wanted) {
                         return false;
                     }
+                }
+                if let Some(wanted) = event_kind {
+                    if !event.kind.as_str().eq_ignore_ascii_case(wanted) {
+                        return false;
+                    }
+                }
+                if let Some(wanted) = filter.acknowledged {
+                    if event.acknowledged != wanted {
+                        return false;
+                    }
+                }
+                if let Some(wanted) = rule_id {
+                    if !event.rule_id.eq_ignore_ascii_case(wanted) {
+                        return false;
+                    }
+                }
+                if !filter.origins.is_empty()
+                    && !filter
+                        .origins
+                        .iter()
+                        .any(|o| event.origin.eq_ignore_ascii_case(o))
+                {
+                    return false;
                 }
                 if let Some(wanted) = remote {
                     if !event.remote.eq_ignore_ascii_case(wanted) {
@@ -1146,6 +1258,9 @@ impl AppStore {
             .map(|rule| rule.id.clone())
             .collect();
         for id in matching {
+            if event.rule_id.is_empty() {
+                event.rule_id = id.clone();
+            }
             if let Some(rule) = self.alert_rules.iter_mut().find(|r| r.id == id) {
                 rule.last_fired = Some(Utc::now());
                 rule.fire_count += 1;
@@ -1209,14 +1324,6 @@ fn dispatch_action_once(action: &AlertAction, event: &AlertEvent) -> bool {
                 .and_then(|x| x.as_u64())
                 .unwrap_or(8)
                 .max(1);
-            let payload = json!({
-                "title": event.title,
-                "body": body,
-                "severity": event.severity.as_str(),
-                "kind": event.kind.as_str(),
-                "remote": event.remote,
-                "profile": event.profile,
-            });
             let mut req = if method.eq_ignore_ascii_case("GET") {
                 ureq::get(url)
             } else {
@@ -1230,7 +1337,7 @@ fn dispatch_action_once(action: &AlertAction, event: &AlertEvent) -> bool {
                     }
                 }
             }
-            req.send_json(payload).is_ok()
+            req.send_string(&body).is_ok()
         }
         "telegram" => {
             let chat = action
@@ -1282,10 +1389,24 @@ fn dispatch_action_once(action: &AlertAction, event: &AlertEvent) -> bool {
                     }
                 }
             }
+            if let Some(vars) = action.config.get("env_vars").and_then(|x| x.as_object()) {
+                for (key, value) in vars {
+                    if let Some(value) = value.as_str() {
+                        process.env(key, value);
+                    }
+                }
+            }
             process
                 .env("ALERT_TITLE", &event.title)
                 .env("ALERT_BODY", &event.body)
                 .env("ALERT_SEVERITY", event.severity.as_str())
+                .env("ALERT_EVENT_KIND", event.kind.as_str())
+                .env("ALERT_REMOTE", &event.remote)
+                .env("ALERT_PROFILE", &event.profile)
+                .env("ALERT_BACKEND", &event.backend)
+                .env("ALERT_ORIGIN", &event.origin)
+                .env("ALERT_TIMESTAMP", event.created_at.to_rfc3339())
+                .env("ALERT_RULE_ID", &event.rule_id)
                 .spawn()
                 .is_ok()
         }
@@ -1308,19 +1429,25 @@ pub const ALERT_TEMPLATE_KEYS: &[&str] = &[
     "{{body}}",
     "{{severity}}",
     "{{kind}}",
+    "{{timestamp}}",
     "{{remote}}",
     "{{origin}}",
     "{{backend}}",
     "{{profile}}",
+    "{{rule_id}}",
 ];
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct AlertHistoryFilter {
     pub query: String,
     pub severity: Option<String>,
+    pub event_kind: Option<String>,
     pub remote: Option<String>,
     pub profile: Option<String>,
     pub backend: Option<String>,
+    pub acknowledged: Option<bool>,
+    pub rule_id: Option<String>,
+    pub origins: Vec<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1338,10 +1465,13 @@ pub fn render_template(template: &str, event: &AlertEvent) -> String {
         .replace("{{body}}", &event.body)
         .replace("{{severity}}", event.severity.as_str())
         .replace("{{kind}}", event.kind.as_str())
+        .replace("{{event_kind}}", event.kind.as_str())
+        .replace("{{timestamp}}", &event.created_at.to_rfc3339())
         .replace("{{remote}}", &event.remote)
         .replace("{{origin}}", &event.origin)
         .replace("{{backend}}", &event.backend)
         .replace("{{profile}}", &event.profile)
+        .replace("{{rule_id}}", &event.rule_id)
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -1708,13 +1838,19 @@ mod tests {
 
     #[test]
     fn render_alert_template() {
-        let event = AlertEvent::new(
+        let mut event = AlertEvent::new(
             AlertEventKind::System,
             AlertSeverity::Info,
             "Hello".into(),
             "World".into(),
         );
         assert_eq!(render_template("{{title}} {{body}}", &event), "Hello World");
+        assert!(render_template("{{timestamp}}", &event).contains('T'));
+        event.rule_id = "rule-1".into();
+        assert_eq!(
+            render_template("{{rule_id}} {{kind}}", &event),
+            "rule-1 system"
+        );
     }
 
     #[test]
@@ -1917,7 +2053,46 @@ mod tests {
                 ..AlertHistoryFilter::default()
             })
             .is_empty());
+        assert_eq!(
+            store
+                .filter_alerts(&AlertHistoryFilter {
+                    event_kind: Some("job".into()),
+                    ..AlertHistoryFilter::default()
+                })
+                .len(),
+            1
+        );
+        assert_eq!(
+            store
+                .filter_alerts(&AlertHistoryFilter {
+                    acknowledged: Some(false),
+                    ..AlertHistoryFilter::default()
+                })
+                .len(),
+            2
+        );
+        store.alert_history[0].rule_id = "rule-high".into();
+        store.alert_history[0].origin = "dashboard".into();
+        assert_eq!(
+            store
+                .filter_alerts(&AlertHistoryFilter {
+                    rule_id: Some("rule-high".into()),
+                    origins: vec!["dashboard".into()],
+                    ..AlertHistoryFilter::default()
+                })
+                .len(),
+            1
+        );
         assert!(store.acknowledge_alert(&high_id));
+        assert_eq!(
+            store
+                .filter_alerts(&AlertHistoryFilter {
+                    acknowledged: Some(true),
+                    ..AlertHistoryFilter::default()
+                })
+                .len(),
+            1
+        );
         assert!(!store.acknowledge_alert("missing"));
         assert!(store
             .alert_history
@@ -1978,6 +2153,16 @@ mod tests {
         assert_eq!(email["to"], "ops@example.com");
         assert_eq!(email["from"], "alerts@example.com");
         assert_eq!(email["subject_template"], "{{title}}");
+        assert_eq!(email["encryption"], "starttls");
+        let email_tls = alert_action_config(
+            "email",
+            &AlertActionDraft {
+                encryption: "tls".into(),
+                extra: "ops@example.com".into(),
+                ..Default::default()
+            },
+        );
+        assert_eq!(email_tls["encryption"], "tls");
         let mqtt = alert_action_config(
             "mqtt",
             &AlertActionDraft {
@@ -2000,6 +2185,38 @@ mod tests {
         );
         assert_eq!(script["command"], "/usr/local/bin/notify");
         assert_eq!(script["args"], json!(["--once", "--quiet"]));
+        let script_env = alert_action_config(
+            "script",
+            &AlertActionDraft {
+                extra: "/bin/true".into(),
+                env_vars: "TEAM=ops\nCHANNEL=alerts".into(),
+                ..Default::default()
+            },
+        );
+        assert_eq!(script_env["env_vars"]["TEAM"], "ops");
+        assert_eq!(script_env["env_vars"]["CHANNEL"], "alerts");
+        assert_eq!(
+            env_vars_to_text(&json!({"env_vars": {"TEAM": "ops"}})),
+            "TEAM=ops"
+        );
+        let discord = webhook_preset_body("discord");
+        assert!(discord.contains("{{title}}"));
+        assert!(discord.contains("{{timestamp}}"));
+        let slack = webhook_preset_body("slack");
+        assert!(slack.contains("*{{title}}*"));
+        assert!(webhook_preset_body("unknown").is_empty());
+        assert_eq!(
+            ensure_content_type_json(""),
+            "Content-Type: application/json"
+        );
+        assert_eq!(
+            ensure_content_type_json("X-Token: abc"),
+            "X-Token: abc\nContent-Type: application/json"
+        );
+        assert_eq!(
+            ensure_content_type_json("Content-Type: text/plain"),
+            "Content-Type: text/plain"
+        );
         let wa = alert_action_config(
             "whatsapp",
             &AlertActionDraft {

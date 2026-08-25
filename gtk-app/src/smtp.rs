@@ -44,6 +44,14 @@ pub enum SmtpTls {
 }
 
 pub fn tls_mode(config: &Value, port: u16) -> SmtpTls {
+    if let Some(enc) = config.get("encryption").and_then(|x| x.as_str()) {
+        match enc {
+            "none" => return SmtpTls::None,
+            "tls" => return SmtpTls::Implicit,
+            "starttls" => return SmtpTls::StartTls,
+            _ => {}
+        }
+    }
     if config
         .get("use_tls")
         .and_then(|x| x.as_bool())
@@ -220,6 +228,18 @@ mod tests {
         );
         assert_eq!(
             tls_mode(&serde_json::json!({ "starttls": true }), 25),
+            SmtpTls::StartTls
+        );
+        assert_eq!(
+            tls_mode(&serde_json::json!({ "encryption": "none" }), 465),
+            SmtpTls::None
+        );
+        assert_eq!(
+            tls_mode(&serde_json::json!({ "encryption": "tls" }), 25),
+            SmtpTls::Implicit
+        );
+        assert_eq!(
+            tls_mode(&serde_json::json!({ "encryption": "starttls" }), 25),
             SmtpTls::StartTls
         );
     }

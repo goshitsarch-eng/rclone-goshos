@@ -191,6 +191,22 @@ fn cron_is_int(value: &str) -> bool {
     !value.is_empty() && value.chars().all(|c| c.is_ascii_digit())
 }
 
+fn cron_is_int_list(value: &str) -> bool {
+    !value.is_empty() && value.split(',').all(|part| cron_is_int(part.trim()))
+}
+
+fn cron_join_and(items: &[String]) -> String {
+    match items {
+        [] => String::new(),
+        [one] => one.clone(),
+        [a, b] => format!("{a} and {b}"),
+        _ => {
+            let last = items[items.len() - 1].clone();
+            format!("{} and {last}", items[..items.len() - 1].join(", "))
+        }
+    }
+}
+
 fn cron_is_weekend(dow: &str) -> bool {
     matches!(dow, "0,6" | "6,0" | "0,6,7" | "6,0,7")
 }
@@ -364,12 +380,32 @@ pub fn describe_cron_i18n(expression: &str, i18n: &crate::i18n::I18n) -> String 
             format!("Hourly at minute {min}")
         };
     }
+    if cron_is_int_list(min) && hour == "*" && dom == "*" && mon == "*" && dow == "*" {
+        return if i18n.has("cron.hourlyAtMinutes") {
+            i18n.tf("cron.hourlyAtMinutes", &[("mins", min)])
+        } else {
+            format!("Hourly at minutes {min}")
+        };
+    }
     if cron_is_int(min) && cron_is_int(hour) && dom == "*" && mon == "*" && dow == "*" {
         let time = cron_time(hour, min);
         return if i18n.has("cron.dailyAt") {
             i18n.tf("cron.dailyAt", &[("time", &time)])
         } else {
             format!("Daily at {time}")
+        };
+    }
+    if cron_is_int(min) && cron_is_int_list(hour) && dom == "*" && mon == "*" && dow == "*" {
+        let times = cron_join_and(
+            &hour
+                .split(',')
+                .map(|h| cron_time(h.trim(), min))
+                .collect::<Vec<_>>(),
+        );
+        return if i18n.has("cron.atTimes") {
+            i18n.tf("cron.atTimes", &[("times", &times)])
+        } else {
+            format!("At {times}")
         };
     }
     if cron_is_int(min) && cron_is_int(hour) && dom == "*" && mon == "*" && dow == "1-5" {
@@ -585,6 +621,9 @@ mod tests {
         assert_eq!(describe_cron("0 9 * * 0,6"), "Weekends at 9:00");
         assert_eq!(describe_cron("0 0 1 * *"), "Monthly on day 1 at 0:00");
         assert_eq!(describe_cron("30 * * * *"), "Hourly at minute 30");
+        assert_eq!(describe_cron("0,30 * * * *"), "Hourly at minutes 0,30");
+        assert_eq!(describe_cron("0 9,17 * * *"), "At 9:00 and 17:00");
+        assert_eq!(describe_cron("0 9,12,17 * * *"), "At 9:00, 12:00 and 17:00");
         assert_eq!(
             describe_cron("0 9 * * 1,3,5"),
             "Weekly on Monday, Wednesday, Friday at 9:00"

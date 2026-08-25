@@ -2609,6 +2609,17 @@ pub fn alerts(parent: &impl IsA<gtk::Widget>, ctx: AppCtx) {
     search.set_placeholder_text(Some(&ctx.t_or("alerts.search", "Search history")));
     let severity =
         gtk::DropDown::from_strings(&["All", "Critical", "High", "Average", "Warning", "Info"]);
+    let event_kind = gtk::DropDown::from_strings(&[
+        "All kinds",
+        "Job",
+        "Serve",
+        "Mount",
+        "Engine",
+        "Update",
+        "Automation",
+        "System",
+    ]);
+    let ack_state = gtk::DropDown::from_strings(&["All", "Open", "Acknowledged"]);
     let (remote_vals, profile_vals, backend_vals) = ctx.store.borrow().alert_filter_values();
     let mut remote_labels = vec!["All remotes".to_string()];
     remote_labels.extend(remote_vals);
@@ -2627,6 +2638,8 @@ pub fn alerts(parent: &impl IsA<gtk::Widget>, ctx: AppCtx) {
         let history = history.clone();
         let search = search.clone();
         let severity = severity.clone();
+        let event_kind = event_kind.clone();
+        let ack_state = ack_state.clone();
         let remote_dd = remote_dd.clone();
         let profile_dd = profile_dd.clone();
         let backend_dd = backend_dd.clone();
@@ -2659,6 +2672,21 @@ pub fn alerts(parent: &impl IsA<gtk::Widget>, ctx: AppCtx) {
                 5 => Some("info"),
                 _ => None,
             };
+            let kind = match event_kind.selected() {
+                1 => Some("job"),
+                2 => Some("serve"),
+                3 => Some("mount"),
+                4 => Some("engine"),
+                5 => Some("update"),
+                6 => Some("automation"),
+                7 => Some("system"),
+                _ => None,
+            };
+            let ack = match ack_state.selected() {
+                1 => Some(false),
+                2 => Some(true),
+                _ => None,
+            };
             let pick = |dd: &gtk::DropDown, labels: &[String]| {
                 let idx = dd.selected() as usize;
                 if idx == 0 {
@@ -2673,9 +2701,12 @@ pub fn alerts(parent: &impl IsA<gtk::Widget>, ctx: AppCtx) {
                 .filter_alerts(&crate::store::AlertHistoryFilter {
                     query: search.text().to_string(),
                     severity: sev.map(|s| s.to_string()),
+                    event_kind: kind.map(|s| s.to_string()),
                     remote: pick(&remote_dd, &remote_labels),
                     profile: pick(&profile_dd, &profile_labels),
                     backend: pick(&backend_dd, &backend_labels),
+                    acknowledged: ack,
+                    ..crate::store::AlertHistoryFilter::default()
                 });
             let mut shown = 0;
             for event in events.into_iter().take(80) {
@@ -2724,6 +2755,14 @@ pub fn alerts(parent: &impl IsA<gtk::Widget>, ctx: AppCtx) {
     }
     {
         let fill = fill.clone();
+        event_kind.connect_selected_notify(move |_| fill());
+    }
+    {
+        let fill = fill.clone();
+        ack_state.connect_selected_notify(move |_| fill());
+    }
+    {
+        let fill = fill.clone();
         remote_dd.connect_selected_notify(move |_| fill());
     }
     {
@@ -2755,13 +2794,19 @@ pub fn alerts(parent: &impl IsA<gtk::Widget>, ctx: AppCtx) {
             fill();
         });
     }
-    let filters = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+    let filters = gtk::Box::new(gtk::Orientation::Vertical, 8);
+    let filter_row = gtk::Box::new(gtk::Orientation::Horizontal, 8);
     search.set_hexpand(true);
-    filters.append(&search);
-    filters.append(&severity);
-    filters.append(&remote_dd);
-    filters.append(&profile_dd);
-    filters.append(&backend_dd);
+    filter_row.append(&search);
+    filter_row.append(&severity);
+    filter_row.append(&event_kind);
+    filter_row.append(&ack_state);
+    let scope_row = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+    scope_row.append(&remote_dd);
+    scope_row.append(&profile_dd);
+    scope_row.append(&backend_dd);
+    filters.append(&filter_row);
+    filters.append(&scope_row);
     let buttons = gtk::Box::new(gtk::Orientation::Horizontal, 8);
     buttons.append(&ack);
     buttons.append(&clear);
@@ -8123,6 +8168,37 @@ fn alert_action_editor(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, existing_id:
             .and_then(|x| x.as_bool())
             .unwrap_or(false),
     );
+    let encryption = adw::ComboRow::new();
+    encryption.set_title(&ctx.t_or("alerts.action.encryption", "Encryption"));
+    encryption.set_model(Some(&gtk::StringList::new(&[
+        "None",
+        "TLS (Port 465)",
+        "StartTLS (Port 587)",
+    ])));
+    encryption.set_selected(
+        match existing
+            .as_ref()
+            .and_then(|a| a.config.get("encryption"))
+            .and_then(|x| x.as_str())
+        {
+            Some("none") => 0,
+            Some("tls") => 1,
+            _ => 2,
+        },
+    );
+    let env_vars = adw::EntryRow::new();
+    env_vars.set_title(&ctx.t_or("alerts.action.envVars", "Environment variables (KEY=value)"));
+    let discord_lbl = ctx.t_or("alerts.action.discord", "Discord");
+    let slack_lbl = ctx.t_or("alerts.action.slack", "Slack");
+    let discord_btn = gtk::Button::with_label(&discord_lbl);
+    let slack_btn = gtk::Button::with_label(&slack_lbl);
+    let presets_label = gtk::Label::new(Some(&ctx.t_or("alerts.action.presets", "Presets")));
+    presets_label.add_css_class("dim-label");
+    presets_label.set_xalign(0.0);
+    let presets = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+    presets.append(&presets_label);
+    presets.append(&discord_btn);
+    presets.append(&slack_btn);
     let wa_provider = adw::ComboRow::new();
     wa_provider.set_title(&ctx.t_or("alerts.action.whatsappProvider", "WhatsApp provider"));
     wa_provider.set_model(Some(&gtk::StringList::new(&[
@@ -8159,6 +8235,7 @@ fn alert_action_editor(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, existing_id:
             }
         }
         headers.set_text(&crate::store::headers_to_text(&action.config));
+        env_vars.set_text(&crate::store::env_vars_to_text(&action.config));
         body.set_text(
             action
                 .config
@@ -8229,6 +8306,8 @@ fn alert_action_editor(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, existing_id:
         let subject = subject.clone();
         let qos = qos.clone();
         let retain = retain.clone();
+        let encryption = encryption.clone();
+        let env_vars = env_vars.clone();
         let telegram_mode = telegram_mode.clone();
         let wa_provider = wa_provider.clone();
         let existing_id = existing_id.clone();
@@ -8268,6 +8347,12 @@ fn alert_action_editor(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, existing_id:
                     subject: subject.text().to_string(),
                     qos: qos.value() as u32,
                     retain: retain.is_active(),
+                    encryption: match encryption.selected() {
+                        0 => "none".into(),
+                        1 => "tls".into(),
+                        _ => "starttls".into(),
+                    },
+                    env_vars: env_vars.text().to_string(),
                     telegram_mode: if telegram_mode.selected() == 1 {
                         "botless".into()
                     } else {
@@ -8344,6 +8429,26 @@ fn alert_action_editor(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, existing_id:
             alerts(&parent, ctx.clone());
         });
     }
+    {
+        let method = method.clone();
+        let body = body.clone();
+        let headers = headers.clone();
+        discord_btn.connect_clicked(move |_| {
+            method.set_text("POST");
+            body.set_text(&crate::store::webhook_preset_body("discord"));
+            headers.set_text(&crate::store::ensure_content_type_json(&headers.text()));
+        });
+    }
+    {
+        let method = method.clone();
+        let body = body.clone();
+        let headers = headers.clone();
+        slack_btn.connect_clicked(move |_| {
+            method.set_text("POST");
+            body.set_text(&crate::store::webhook_preset_body("slack"));
+            headers.set_text(&crate::store::ensure_content_type_json(&headers.text()));
+        });
+    }
     let sync_fields = {
         let url = url.clone();
         let method = method.clone();
@@ -8356,6 +8461,9 @@ fn alert_action_editor(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, existing_id:
         let subject = subject.clone();
         let qos = qos.clone();
         let retain = retain.clone();
+        let encryption = encryption.clone();
+        let env_vars = env_vars.clone();
+        let presets = presets.clone();
         let telegram_mode = telegram_mode.clone();
         let body = body.clone();
         let wa_provider = wa_provider.clone();
@@ -8364,6 +8472,9 @@ fn alert_action_editor(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, existing_id:
             subject.set_visible(selected == "email");
             qos.set_visible(selected == "mqtt");
             retain.set_visible(selected == "mqtt");
+            encryption.set_visible(selected == "email");
+            env_vars.set_visible(selected == "script");
+            presets.set_visible(selected == "webhook");
             match selected {
                 "os_toast" => {
                     wa_provider.set_visible(false);
@@ -8540,8 +8651,10 @@ fn alert_action_editor(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, existing_id:
     group.add(&timeout);
     group.add(&tls_verify);
     group.add(&subject);
+    group.add(&encryption);
     group.add(&qos);
     group.add(&retain);
+    group.add(&env_vars);
     group.add(&body);
     group.add(&retries);
     group.add(&keys);
@@ -8551,6 +8664,7 @@ fn alert_action_editor(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, existing_id:
     buttons.append(&delete);
     let box_ = gtk::Box::new(gtk::Orientation::Vertical, 8);
     box_.set_margin_top(12);
+    box_.append(&presets);
     box_.append(&group);
     box_.append(&buttons);
     dialog.set_child(Some(&box_));
