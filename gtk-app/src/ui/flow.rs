@@ -872,12 +872,12 @@ impl FlowView {
     }
 
     fn append_transfer_activity(&self, name: &str, snap: &crate::store::RuntimeSnapshot) {
-        let jobs: Vec<_> = snap
-            .jobs
-            .iter()
-            .filter(|job| crate::jobs::is_overview_job(job) && job.remote == name)
-            .cloned()
-            .collect();
+        let jobs = crate::jobs::merge_overview_jobs(
+            &snap.jobs,
+            &self.ctx.store.borrow().job_history,
+            name,
+            None,
+        );
         self.append_transfers(&self.content, &jobs);
     }
 
@@ -914,9 +914,11 @@ impl FlowView {
         for job in jobs {
             if crate::checks::is_check_operation(&job.operation) {
                 let source = crate::checks::check_source_from_job(&job.stats, &job.output);
-                check_items.extend(crate::checks::parse_check_items(
-                    &source, &job.src, &job.dst,
-                ));
+                check_items.extend(
+                    crate::checks::parse_check_items(&source, &job.src, &job.dst)
+                        .into_iter()
+                        .map(|item| crate::checks::with_job_id(item, job.id)),
+                );
             }
         }
         check_items.truncate(40);
@@ -935,12 +937,20 @@ impl FlowView {
         };
         host.append(&self.heading(&title));
         if !check_items.is_empty() {
-            let list = gtk::ListBox::new();
-            list.add_css_class("boxed-list");
-            for item in check_items {
-                list.append(&dialogs::check_result_row(&self.ctx, &item, &self.root));
+            let check_items = crate::checks::visible_check_items(
+                check_items,
+                &self.ctx.hidden_check_ids.borrow(),
+                &self.ctx.check_status_overrides.borrow(),
+                "",
+            );
+            if !check_items.is_empty() {
+                let list = gtk::ListBox::new();
+                list.add_css_class("boxed-list");
+                for item in check_items {
+                    list.append(&dialogs::check_result_row(&self.ctx, &item, &self.root));
+                }
+                host.append(&list);
             }
-            host.append(&list);
         }
         if rows.is_empty() {
             return;
@@ -973,6 +983,7 @@ impl FlowView {
                 &row,
                 &operation,
                 completed,
+                None,
             ));
             list.append(&item);
         }

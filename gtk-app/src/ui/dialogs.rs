@@ -5871,14 +5871,14 @@ pub fn job_detail(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, job_id: u64) {
         let ctx = ctx.clone();
         stop_group.connect_clicked(move |_| {
             if let Some(client) = ctx.client() {
-                let group = ctx
-                    .snapshot
-                    .borrow()
-                    .jobs
-                    .iter()
-                    .find(|j| j.id == job_id)
-                    .map(|j| j.group.clone())
-                    .unwrap_or_else(|| format!("job/{job_id}"));
+                let group = crate::jobs::find_job_by_id(
+                    &ctx.snapshot.borrow().jobs,
+                    &ctx.store.borrow().job_history,
+                    job_id,
+                )
+                .map(|job| job.group)
+                .filter(|group| !group.is_empty())
+                .unwrap_or_else(|| format!("job/{job_id}"));
                 let _ = client.job_stop_group(&group);
                 ctx.refresh_runtime();
             }
@@ -6000,21 +6000,35 @@ pub fn job_detail(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, job_id: u64) {
             while let Some(child) = completed.first_child() {
                 completed.remove(&child);
             }
-            let Some(client) = ctx.client() else {
-                return;
+            let live_status = ctx
+                .client()
+                .and_then(|client| client.job_status(job_id).ok());
+            let (mut job, status) = if let Some(status) = live_status {
+                let group = status
+                    .get("group")
+                    .and_then(|x| x.as_str())
+                    .map(|s| s.to_string())
+                    .unwrap_or_else(|| format!("job/{job_id}"));
+                let stats = ctx
+                    .client()
+                    .and_then(|client| client.stats(Some(&group)).ok());
+                (job_from_status(job_id, &status, stats.as_ref()), status)
+            } else {
+                let Some(stored) = crate::jobs::find_job_by_id(
+                    &ctx.snapshot.borrow().jobs,
+                    &ctx.store.borrow().job_history,
+                    job_id,
+                ) else {
+                    return;
+                };
+                let status = crate::jobs::job_status_value(&stored);
+                (stored, status)
             };
-            let Ok(status) = client.job_status(job_id) else {
-                return;
-            };
-            let group = status
-                .get("group")
-                .and_then(|x| x.as_str())
-                .map(|s| s.to_string())
-                .unwrap_or_else(|| format!("job/{job_id}"));
-            let stats = client.stats(Some(&group)).ok();
-            let mut job = job_from_status(job_id, &status, stats.as_ref());
             let registry = ctx.store.borrow().job_meta.clone();
-            let siblings = ctx.snapshot.borrow().jobs.clone();
+            let siblings = crate::jobs::merge_job_lists(
+                &ctx.snapshot.borrow().jobs,
+                &ctx.store.borrow().job_history,
+            );
             crate::jobs::decorate_job_transfers(&mut job, &registry, &siblings);
             populate_opens(&job.src, &job.dst);
             progress.set_fraction(job.progress);
@@ -6244,13 +6258,25 @@ pub fn job_detail(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, job_id: u64) {
                 &job.operation,
             );
             let check_source = crate::checks::check_source_from_job(&job.stats, &job.output);
-            let results = crate::checks::parse_check_items(&check_source, &job.src, &job.dst);
+            let results = crate::checks::visible_check_items(
+                crate::checks::parse_check_items(&check_source, &job.src, &job.dst)
+                    .into_iter()
+                    .map(|item| crate::checks::with_job_id(item, job.id)),
+                &ctx.hidden_check_ids.borrow(),
+                &ctx.check_status_overrides.borrow(),
+                &query,
+            );
             if !results.is_empty() {
                 let heading = adw::ActionRow::new();
-                heading.set_title(&format!("{} check results", results.len()));
-                heading.set_subtitle(
-                    "Resolve copies the missing/changed file; delete uses rclone deletefile",
-                );
+                heading.set_title(&format!(
+                    "{} · {}",
+                    ctx.t_or("shared.transferActivity.titleCheck", "Check Activity"),
+                    results.len()
+                ));
+                heading.set_subtitle(&ctx.t_or(
+                    "shared.transferActivity.empty.recentHintCheck",
+                    "Checked files will appear here when the job completes",
+                ));
                 completed.append(&heading);
                 for item in results.into_iter().take(40) {
                     completed.append(&check_result_row(&ctx, &item, &dialog));
@@ -6361,7 +6387,7 @@ pub(crate) fn transfer_activity_row(
         row.set_tooltip_text(Some(&parsed.error));
     }
     row.add_suffix(&transfer_row_actions(
-        ctx, parent, parsed, job_type, completed,
+        ctx, parent, parsed, job_type, completed, None,
     ));
     wrap.append(&row);
     if !completed {
@@ -6438,6 +6464,7 @@ pub(crate) fn transfer_row_actions(
     parsed: &crate::transfers::TransferRow,
     job_type: &str,
     completed: bool,
+    on_deleted: Option<Rc<dyn Fn(bool)>>,
 ) -> gtk::Box {
     let actions = gtk::Box::new(gtk::Orientation::Horizontal, 8);
     actions.set_valign(gtk::Align::Center);
@@ -6449,6 +6476,7 @@ pub(crate) fn transfer_row_actions(
             job_type,
             true,
             true,
+            on_deleted.clone(),
         ));
     }
     if !parsed.dst.is_empty() {
@@ -6459,6 +6487,7 @@ pub(crate) fn transfer_row_actions(
             job_type,
             completed,
             false,
+            on_deleted,
         ));
     }
     actions
@@ -6471,6 +6500,7 @@ fn transfer_side_actions(
     job_type: &str,
     allow_dest_ops: bool,
     is_source: bool,
+    on_deleted: Option<Rc<dyn Fn(bool)>>,
 ) -> gtk::Box {
     let side = gtk::Box::new(gtk::Orientation::Horizontal, 2);
     side.add_css_class("linked");
@@ -6581,7 +6611,16 @@ fn transfer_side_actions(
             ctx.t_or("nautilus.modals.delete.title", "Delete destination file?")
         };
         del.connect_clicked(move |_| {
-            confirm_delete_path(&parent, ctx.clone(), &path, &title);
+            confirm_delete_path(
+                &parent,
+                ctx.clone(),
+                &path,
+                &title,
+                on_deleted.clone().map(|cb| {
+                    let is_source = is_source;
+                    Rc::new(move || cb(is_source)) as Rc<dyn Fn()>
+                }),
+            );
         });
         side.append(&del);
     }
@@ -6597,10 +6636,11 @@ pub(crate) fn confirm_delete_path(
     ctx: AppCtx,
     path: &str,
     title: &str,
+    on_done: Option<Rc<dyn Fn()>>,
 ) {
     let alert = adw::AlertDialog::new(Some(title), Some(path));
-    alert.add_response("cancel", "Cancel");
-    alert.add_response("delete", "Delete");
+    alert.add_response("cancel", &ctx.t_or("common.cancel", "Cancel"));
+    alert.add_response("delete", &ctx.t_or("common.delete", "Delete"));
     alert.set_response_appearance("delete", adw::ResponseAppearance::Destructive);
     let path = path.to_string();
     alert.connect_response(None, move |_, response| {
@@ -6611,9 +6651,15 @@ pub(crate) fn confirm_delete_path(
             return;
         };
         let (fs, remote) = crate::transfers::fs_and_remote(&path);
-        let _ = client
+        let ok = client
             .purge(&fs, &remote)
-            .or_else(|_| client.delete_file(&fs, &remote));
+            .or_else(|_| client.delete_file(&fs, &remote))
+            .is_ok();
+        if ok {
+            if let Some(cb) = &on_done {
+                cb();
+            }
+        }
         ctx.refresh_runtime();
     });
     alert.present(Some(parent));
@@ -9371,6 +9417,26 @@ fn populate_serve_flag_rows(
     });
 }
 
+fn check_status_label(ctx: &AppCtx, status: &str) -> String {
+    match status {
+        "missing_dst" => ctx.t_or(
+            "shared.transferActivity.status.missingDst",
+            "Missing on Destination",
+        ),
+        "missing_src" => ctx.t_or(
+            "shared.transferActivity.status.missingSrc",
+            "Missing on Source",
+        ),
+        "differ" | "partial" => ctx.t_or(
+            "shared.transferActivity.status.differ",
+            "File contents differ",
+        ),
+        "checked" => ctx.t_or("shared.transferActivity.status.checked", "Checked"),
+        "failed" | "error" => ctx.t_or("shared.transferActivity.status.error", "Error"),
+        other => other.to_string(),
+    }
+}
+
 pub(super) fn check_result_row(
     ctx: &AppCtx,
     item: &crate::checks::CheckResult,
@@ -9379,7 +9445,7 @@ pub(super) fn check_result_row(
     let wrap = gtk::Box::new(gtk::Orientation::Vertical, 4);
     let row = adw::ActionRow::new();
     row.set_title(&item.name);
-    row.set_subtitle(&item.status);
+    row.set_subtitle(&check_status_label(ctx, &item.status));
     if let Some(kind) = item.resolve_kind() {
         let resolve_label = if item.needs_overwrite_confirm() {
             ctx.t_or(
@@ -9443,7 +9509,36 @@ pub(super) fn check_result_row(
         dst: crate::transfers::join_fs_name(&item.dst_fs, &item.name),
         ..crate::transfers::TransferRow::default()
     };
-    row.add_suffix(&transfer_row_actions(ctx, parent, &parsed, "copy", true));
+    let unique_id = crate::checks::check_unique_id(item.job_id, &item.name);
+    let on_deleted = {
+        let ctx = ctx.clone();
+        let item = item.clone();
+        let unique_id = unique_id.clone();
+        let row = row.clone();
+        let wrap = wrap.clone();
+        Rc::new(move |deleted_source: bool| {
+            match crate::checks::check_delete_outcome(&item.status, deleted_source) {
+                crate::checks::CheckDeleteOutcome::Hide => {
+                    ctx.hidden_check_ids.borrow_mut().insert(unique_id.clone());
+                    wrap.set_visible(false);
+                }
+                crate::checks::CheckDeleteOutcome::Override(status) => {
+                    ctx.check_status_overrides
+                        .borrow_mut()
+                        .insert(unique_id.clone(), status.to_string());
+                    row.set_subtitle(&check_status_label(&ctx, status));
+                }
+            }
+        }) as Rc<dyn Fn(bool)>
+    };
+    row.add_suffix(&transfer_row_actions(
+        ctx,
+        parent,
+        &parsed,
+        "copy",
+        true,
+        Some(on_deleted),
+    ));
     wrap.append(&row);
     let resolve_job = {
         let snap = ctx.snapshot.borrow();
@@ -9505,7 +9600,7 @@ fn resolve_check_item(ctx: &AppCtx, item: &crate::checks::CheckResult, kind: &st
                     backend: ctx.backend_key(),
                     quick_run_id: String::new(),
                     execute_id: uuid::Uuid::new_v4().to_string(),
-                    parent_job_id: None,
+                    parent_job_id: item.job_id,
                     target: item.name.clone(),
                     ..Default::default()
                 },

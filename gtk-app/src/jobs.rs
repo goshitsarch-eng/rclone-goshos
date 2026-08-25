@@ -6,7 +6,7 @@ use crate::rclone::{format_bytes, remote_fs, MountedRemote, RcClient, RcError, S
 use crate::store::{quick_run_paths, JobInfo, JobMeta, ProfileConfig, QuickRun, RemoteMeta};
 use chrono::{DateTime, Utc};
 use serde_json::{json, Map, Value};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 pub const SOURCE_KEYS: &[&str] = &["source", "srcFs", "path1", "fs"];
 pub const DEST_KEYS: &[&str] = &["dest", "dstFs", "path2", "mountPoint"];
@@ -842,6 +842,61 @@ pub fn apply_job_meta(job: &mut JobInfo, meta: Option<&JobMeta>) {
 
 pub fn is_overview_job(job: &JobInfo) -> bool {
     job.parent_job_id.is_none()
+}
+
+pub fn find_job_by_id(live: &[JobInfo], history: &[JobInfo], id: u64) -> Option<JobInfo> {
+    live.iter()
+        .find(|job| job.id == id)
+        .or_else(|| history.iter().find(|job| job.id == id))
+        .cloned()
+}
+
+pub fn merge_job_lists(live: &[JobInfo], history: &[JobInfo]) -> Vec<JobInfo> {
+    let mut out = live.to_vec();
+    let ids: HashSet<u64> = out.iter().map(|job| job.id).collect();
+    for job in history {
+        if !ids.contains(&job.id) {
+            out.push(job.clone());
+        }
+    }
+    out
+}
+
+pub fn merge_overview_jobs(
+    live: &[JobInfo],
+    history: &[JobInfo],
+    remote: &str,
+    profile: Option<&str>,
+) -> Vec<JobInfo> {
+    let matches = |job: &JobInfo| {
+        is_overview_job(job)
+            && job.remote == remote
+            && profile.is_none_or(|wanted| {
+                job.profile == wanted || job.profile.is_empty() || job.profile == "default"
+            })
+    };
+    let mut out: Vec<JobInfo> = live.iter().filter(|job| matches(job)).cloned().collect();
+    let ids: HashSet<u64> = out.iter().map(|job| job.id).collect();
+    for job in history
+        .iter()
+        .filter(|job| matches(job) && !ids.contains(&job.id))
+    {
+        out.push(job.clone());
+    }
+    out.sort_by(|a, b| b.start_time.cmp(&a.start_time).then(b.id.cmp(&a.id)));
+    out
+}
+
+pub fn job_status_value(job: &JobInfo) -> Value {
+    json!({
+        "group": job.group,
+        "duration": job.duration,
+        "startTime": job.start_time.to_rfc3339(),
+        "output": job.output,
+        "finished": !job_is_running(job) && !job_is_pending(job),
+        "success": job.status == "completed",
+        "error": job.error,
+    })
 }
 
 pub fn remember_grouped(map: &mut HashMap<u64, JobMeta>, ids: &[u64], meta: JobMeta) {
@@ -3205,5 +3260,53 @@ mod tests {
         let caption = job_transfer_caption(&job);
         assert!(caption.contains("KiB"));
         assert!(caption.contains("/s"));
+    }
+
+    #[test]
+    fn finds_jobs_and_merges_history() {
+        let mut live = running_job(1, "drive", "sync", "nightly");
+        live.start_time = DateTime::parse_from_rfc3339("2026-08-25T12:00:00Z")
+            .unwrap()
+            .with_timezone(&Utc);
+        let mut finished = running_job(2, "drive", "copy", "default");
+        finished.status = "completed".into();
+        finished.start_time = DateTime::parse_from_rfc3339("2026-08-25T11:00:00Z")
+            .unwrap()
+            .with_timezone(&Utc);
+        let other = running_job(3, "box", "sync", "default");
+        let child = JobInfo {
+            parent_job_id: Some(1),
+            ..running_job(4, "drive", "copy", "nightly")
+        };
+        let history = vec![finished.clone(), other.clone(), child.clone()];
+        assert_eq!(find_job_by_id(&[live.clone()], &history, 1).unwrap().id, 1);
+        assert_eq!(
+            find_job_by_id(&[], &history, 2).unwrap().status,
+            "completed"
+        );
+        assert!(find_job_by_id(&[], &history, 99).is_none());
+        let merged = merge_overview_jobs(&[live.clone()], &history, "drive", None);
+        assert_eq!(
+            merged.iter().map(|job| job.id).collect::<Vec<_>>(),
+            vec![1, 2]
+        );
+        let mut weekly = running_job(5, "drive", "sync", "weekly");
+        weekly.status = "completed".into();
+        weekly.start_time = DateTime::parse_from_rfc3339("2026-08-25T10:00:00Z")
+            .unwrap()
+            .with_timezone(&Utc);
+        let history = vec![finished.clone(), other, child, weekly];
+        let nightly = merge_overview_jobs(&[live.clone()], &history, "drive", Some("nightly"));
+        assert_eq!(
+            nightly.iter().map(|job| job.id).collect::<Vec<_>>(),
+            vec![1, 2]
+        );
+        let siblings = merge_job_lists(&[live.clone()], &history);
+        assert_eq!(siblings.len(), 5);
+        assert!(!nightly.iter().any(|job| job.id == 5));
+        let status = job_status_value(&finished);
+        assert_eq!(status["finished"], true);
+        assert_eq!(status["success"], true);
+        assert_eq!(status["group"], "job/2");
     }
 }

@@ -48,6 +48,8 @@ pub struct AppCtx {
     pub updates: Rc<RefCell<crate::updater::PendingUpdates>>,
     pub last_update_check: Rc<RefCell<Option<std::time::Instant>>>,
     pub action_busy: Rc<RefCell<HashSet<String>>>,
+    pub check_status_overrides: Rc<RefCell<HashMap<String, String>>>,
+    pub hidden_check_ids: Rc<RefCell<HashSet<String>>>,
     dump_cache: Rc<RefCell<Option<(std::time::Instant, serde_json::Value)>>>,
 }
 
@@ -88,6 +90,8 @@ impl AppCtx {
             updates: Rc::new(RefCell::new(crate::updater::PendingUpdates::default())),
             last_update_check: Rc::new(RefCell::new(Some(std::time::Instant::now()))),
             action_busy: Rc::new(RefCell::new(HashSet::new())),
+            check_status_overrides: Rc::new(RefCell::new(HashMap::new())),
+            hidden_check_ids: Rc::new(RefCell::new(HashSet::new())),
             dump_cache: Rc::new(RefCell::new(None)),
         };
         ctx.apply_remote_layout();

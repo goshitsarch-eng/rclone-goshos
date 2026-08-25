@@ -1726,12 +1726,12 @@ impl Dashboard {
         ));
         let activity = gtk::ListBox::new();
         activity.add_css_class("boxed-list");
-        let remote_jobs: Vec<_> = snap
-            .jobs
-            .iter()
-            .filter(|j| j.remote == name && crate::jobs::is_overview_job(j))
-            .cloned()
-            .collect();
+        let remote_jobs = crate::jobs::merge_overview_jobs(
+            &snap.jobs,
+            &self.ctx.store.borrow().job_history,
+            &name,
+            None,
+        );
         if remote_jobs.is_empty() {
             let row = adw::ActionRow::new();
             row.set_title(&self.ctx.t_or(
@@ -3292,18 +3292,12 @@ impl Dashboard {
         snap: &crate::store::RuntimeSnapshot,
         profile: Option<&str>,
     ) {
-        let jobs: Vec<_> = snap
-            .jobs
-            .iter()
-            .filter(|job| {
-                crate::jobs::is_overview_job(job)
-                    && job.remote == name
-                    && profile.is_none_or(|wanted| {
-                        job.profile == wanted || job.profile.is_empty() || job.profile == "default"
-                    })
-            })
-            .cloned()
-            .collect();
+        let jobs = crate::jobs::merge_overview_jobs(
+            &snap.jobs,
+            &self.ctx.store.borrow().job_history,
+            name,
+            profile,
+        );
         let mut rows = Vec::new();
         for job in &jobs {
             if let Some(arr) = job.transferring.as_array() {
@@ -3336,9 +3330,11 @@ impl Dashboard {
         for job in &jobs {
             if crate::checks::is_check_operation(&job.operation) {
                 let source = crate::checks::check_source_from_job(&job.stats, &job.output);
-                check_items.extend(crate::checks::parse_check_items(
-                    &source, &job.src, &job.dst,
-                ));
+                check_items.extend(
+                    crate::checks::parse_check_items(&source, &job.src, &job.dst)
+                        .into_iter()
+                        .map(|item| crate::checks::with_job_id(item, job.id)),
+                );
             }
         }
         check_items.truncate(40);
@@ -3460,12 +3456,21 @@ impl Dashboard {
             self.detail_box().append(&toolbar);
         }
         if !check_items.is_empty() {
-            let list = gtk::ListBox::new();
-            list.add_css_class("boxed-list");
-            for item in check_items {
-                list.append(&dialogs::check_result_row(&self.ctx, &item, &self.root));
+            let query = self.transfer_query.borrow().clone();
+            let check_items = crate::checks::visible_check_items(
+                check_items,
+                &self.ctx.hidden_check_ids.borrow(),
+                &self.ctx.check_status_overrides.borrow(),
+                &query,
+            );
+            if !check_items.is_empty() {
+                let list = gtk::ListBox::new();
+                list.add_css_class("boxed-list");
+                for item in check_items {
+                    list.append(&dialogs::check_result_row(&self.ctx, &item, &self.root));
+                }
+                self.detail_box().append(&list);
             }
-            self.detail_box().append(&list);
         }
         if rows.is_empty() {
             return;
