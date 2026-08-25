@@ -499,7 +499,7 @@ pub fn about(parent: &impl IsA<gtk::Widget>, ctx: AppCtx) {
     details.set_margin_top(16);
     details.set_margin_start(16);
     details.set_margin_end(16);
-    let title = gtk::Label::new(Some("Rclone Manager"));
+    let title = gtk::Label::new(Some(&ctx.t_or("modals.about.appName", "Rclone Manager")));
     title.add_css_class("title-1");
     let comments = gtk::Label::new(Some(&format!(
         "GTK 4 + libadwaita · {} · rclone {version}\n{app_update}\n{rclone_update}",
@@ -6117,6 +6117,43 @@ pub fn job_detail(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, job_id: u64) {
                     ctx.t_or(crate::jobs::job_status_key(&job.status), &job.status),
                 ),
                 (
+                    ctx.t_or("modals.jobDetail.fields.origin", "Origin"),
+                    ctx.t_or(crate::jobs::job_origin_key(&job.origin), &job.origin),
+                ),
+                (
+                    ctx.t_or("modals.jobDetail.fields.profile", "Profile"),
+                    job.profile.clone(),
+                ),
+                (ctx.t_or("modals.jobDetail.fields.backend", "Backend"), {
+                    ctx.store
+                        .borrow()
+                        .job_meta
+                        .get(&job.id)
+                        .map(|m| m.backend.clone())
+                        .filter(|s| !s.is_empty())
+                        .unwrap_or_else(|| {
+                            let backend = ctx.settings.borrow().core.active_backend.clone();
+                            if backend.is_empty() {
+                                "local".into()
+                            } else {
+                                backend
+                            }
+                        })
+                }),
+                (
+                    ctx.t_or("modals.jobDetail.fields.group", "Group"),
+                    job.group.clone(),
+                ),
+                (ctx.t_or("sidebar.remotes", "Remote"), job.remote.clone()),
+                (
+                    ctx.t_or("fileBrowser.operations.details.source", "Source"),
+                    job.src.clone(),
+                ),
+                (
+                    ctx.t_or("fileBrowser.operations.details.destination", "Destination"),
+                    job.dst.clone(),
+                ),
+                (
                     ctx.t_or("modals.jobDetail.fields.started", "Started"),
                     if crate::jobs::has_known_start_time(&job) {
                         job.start_time.format("%Y-%m-%d %H:%M:%S UTC").to_string()
@@ -6136,43 +6173,6 @@ pub fn job_detail(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, job_id: u64) {
                     ctx.t_or("modals.jobDetail.fields.executeId", "Execute ID"),
                     execute_id,
                 ),
-                (ctx.t_or("sidebar.remotes", "Remote"), job.remote.clone()),
-                (
-                    ctx.t_or("modals.jobDetail.fields.profile", "Profile"),
-                    job.profile.clone(),
-                ),
-                (
-                    ctx.t_or("modals.jobDetail.fields.origin", "Origin"),
-                    ctx.t_or(crate::jobs::job_origin_key(&job.origin), &job.origin),
-                ),
-                (ctx.t_or("modals.jobDetail.fields.backend", "Backend"), {
-                    ctx.store
-                        .borrow()
-                        .job_meta
-                        .get(&job.id)
-                        .map(|m| m.backend.clone())
-                        .filter(|s| !s.is_empty())
-                        .unwrap_or_else(|| {
-                            let backend = ctx.settings.borrow().core.active_backend.clone();
-                            if backend.is_empty() {
-                                "local".into()
-                            } else {
-                                backend
-                            }
-                        })
-                }),
-                (
-                    ctx.t_or("fileBrowser.operations.details.source", "Source"),
-                    job.src.clone(),
-                ),
-                (
-                    ctx.t_or("fileBrowser.operations.details.destination", "Destination"),
-                    job.dst.clone(),
-                ),
-                (
-                    ctx.t_or("modals.jobDetail.fields.group", "Group"),
-                    job.group.clone(),
-                ),
                 (
                     ctx.t_or("modals.jobDetail.fields.transferred", "Transferred"),
                     format!(
@@ -6183,11 +6183,11 @@ pub fn job_detail(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, job_id: u64) {
                 ),
                 (
                     ctx.t_or("modals.jobDetail.fields.speed", "Speed"),
-                    format!("{:.1} KiB/s", speed / 1024.0),
+                    crate::jobs::format_job_speed(speed),
                 ),
                 (
                     ctx.t_or("modals.jobDetail.fields.speedAvg", "Average speed"),
-                    format!("{:.1} KiB/s", speed_avg / 1024.0),
+                    crate::jobs::format_job_speed(speed_avg),
                 ),
                 (
                     ctx.t_or("modals.jobDetail.fields.eta", "ETA"),
@@ -6476,7 +6476,11 @@ fn append_transfer_rows(
     };
     let mut shown = 0;
     for item in arr {
-        let parsed = crate::transfers::parse_transfer_row(item);
+        let parsed = if active {
+            crate::transfers::parse_transfer_row(item)
+        } else {
+            crate::transfers::parse_completed_transfer_row(item)
+        };
         if !query.is_empty() && !parsed.name.to_lowercase().contains(query) {
             continue;
         }

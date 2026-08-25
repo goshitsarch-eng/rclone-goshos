@@ -480,6 +480,8 @@ This client is the GTK 4 + libadwaita rewrite of the Angular/Tauri desktop UI. I
 - rclone 1.60 `job/list` noise is not written to history; leftover noise is dropped on store load
 - Job detail ignores unidentifiable RC `job/status` stubs and keeps reconstructed type/progress/origin from `job_meta`
 - Check results show localized status badges plus relative time when a parent job timestamp is known
+- Reconstructed completed transfers fill `bytes` from snapshot `size` (no more `0 B / 3 B` after restart)
+- Job detail shows Origin / Profile / Backend / Group with Type / Status, and `—` for unknown speed
 
 ## Still deepening toward pixel-level Angular parity
 

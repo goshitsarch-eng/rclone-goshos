@@ -910,13 +910,13 @@ pub fn job_from_meta(id: u64, meta: &JobMeta) -> JobInfo {
             "totalBytes": total,
             "transfers": count,
             "totalTransfers": count,
-            "completed": snapshot,
+            "completed": finalize_completed_list(&snapshot),
         }),
         transferring: json!([]),
         duration: 0.0,
         progress: 1.0,
         output: json!({ "operation": operation, "origin": meta.origin }),
-        completed: snapshot,
+        completed: finalize_completed_list(&snapshot),
         parent_job_id: meta.parent_job_id,
     };
     apply_job_meta(&mut job, Some(meta));
@@ -957,7 +957,9 @@ fn merge_rc_with_stored(mut rc: JobInfo, stored: JobInfo) -> JobInfo {
     if rc.duration <= 0.0 && stored.duration > 0.0 {
         rc.duration = stored.duration;
     }
-    if transfer_list_empty(&rc.completed) && !transfer_list_empty(&stored.completed) {
+    if (transfer_list_empty(&rc.completed) || completed_needs_sizes(&rc.completed))
+        && !transfer_list_empty(&stored.completed)
+    {
         rc.completed = stored.completed;
     }
     rc
@@ -967,6 +969,9 @@ pub fn finalize_history_job(job: &mut JobInfo) {
     if matches!(job.status.as_str(), "completed" | "failed" | "stopped") && job.progress <= 0.0 {
         job.progress = 1.0;
     }
+    if completed_needs_sizes(&job.completed) {
+        job.completed = finalize_completed_list(&job.completed);
+    }
     let completed = job.completed.as_array().map(|rows| rows.len()).unwrap_or(0);
     if completed == 0 {
         return;
@@ -975,8 +980,19 @@ pub fn finalize_history_job(job: &mut JobInfo) {
         obj.entry("transfers").or_insert(json!(completed as i64));
         obj.entry("totalTransfers")
             .or_insert(json!(completed as i64));
-        obj.entry("completed")
-            .or_insert_with(|| job.completed.clone());
+        if completed_needs_sizes(obj.get("completed").unwrap_or(&Value::Null))
+            || !obj.contains_key("completed")
+        {
+            obj.insert("completed".into(), job.completed.clone());
+        }
+    }
+}
+
+pub fn format_job_speed(bytes_per_sec: f64) -> String {
+    if bytes_per_sec <= 0.0 {
+        "—".into()
+    } else {
+        format!("{}/s", format_bytes(bytes_per_sec.round() as i64))
     }
 }
 
@@ -1114,6 +1130,56 @@ fn transfer_list_empty(value: &Value) -> bool {
     value.as_array().map(|arr| arr.is_empty()).unwrap_or(true)
 }
 
+fn transfer_row_size(item: &Value) -> u64 {
+    item.get("size")
+        .and_then(|value| value.as_u64())
+        .unwrap_or(0)
+}
+
+fn transfer_row_bytes(item: &Value) -> u64 {
+    item.get("bytes")
+        .or_else(|| item.get("bytesSoFar"))
+        .and_then(|value| value.as_u64())
+        .unwrap_or(0)
+}
+
+fn completed_needs_sizes(value: &Value) -> bool {
+    value.as_array().is_some_and(|arr| {
+        arr.iter()
+            .any(|item| transfer_row_size(item) > 0 && transfer_row_bytes(item) == 0)
+    })
+}
+
+fn finalize_completed_item(item: &Value) -> Value {
+    let size = transfer_row_size(item);
+    let bytes = transfer_row_bytes(item);
+    let mut item = item.clone();
+    if let Some(obj) = item.as_object_mut() {
+        if size > 0 && bytes == 0 {
+            obj.insert("bytes".into(), json!(size));
+            obj.insert("percentage".into(), json!(100));
+        } else if size > 0 && bytes >= size {
+            obj.insert("percentage".into(), json!(100));
+        }
+    }
+    item
+}
+
+fn finalize_completed_list(value: &Value) -> Value {
+    match value {
+        Value::Array(arr) => Value::Array(arr.iter().map(finalize_completed_item).collect()),
+        other => finalize_completed_item(other),
+    }
+}
+
+fn child_bytes(job: &JobInfo, size: u64, done: bool) -> u64 {
+    job.stats
+        .get("bytes")
+        .and_then(|value| value.as_u64())
+        .filter(|&bytes| bytes > 0)
+        .unwrap_or(if done { size } else { 0 })
+}
+
 fn child_finished(status: &str) -> bool {
     matches!(status, "completed" | "failed")
 }
@@ -1138,7 +1204,8 @@ pub fn hydrate_grouped_transfers(jobs: &mut [JobInfo], meta: &HashMap<u64, JobMe
         let parent_id = jobs[parent_idx].id;
         let empty_active = transfer_list_empty(&jobs[parent_idx].transferring);
         let empty_done = transfer_list_empty(&jobs[parent_idx].completed);
-        if !empty_active && !empty_done {
+        let needs_sizes = completed_needs_sizes(&jobs[parent_idx].completed);
+        if !empty_active && !empty_done && !needs_sizes {
             continue;
         }
         let snapshot = meta
@@ -1171,12 +1238,7 @@ pub fn hydrate_grouped_transfers(jobs: &mut [JobInfo], meta: &HashMap<u64, JobMe
                     let size = item.get("size").and_then(|v| v.as_u64()).unwrap_or(0);
                     let (done, bytes) = if let Some(idx) = matching {
                         let done = child_finished(&jobs[idx].status);
-                        let bytes = jobs[idx]
-                            .stats
-                            .get("bytes")
-                            .and_then(|v| v.as_u64())
-                            .unwrap_or(if done { size } else { 0 });
-                        (done, bytes)
+                        (done, child_bytes(&jobs[idx], size, done))
                     } else {
                         (all_done, if all_done { size } else { 0 })
                     };
@@ -1195,6 +1257,7 @@ pub fn hydrate_grouped_transfers(jobs: &mut [JobInfo], meta: &HashMap<u64, JobMe
                     &mut jobs[parent_idx],
                     empty_active,
                     empty_done,
+                    needs_sizes,
                     transferring,
                     completed,
                 );
@@ -1213,18 +1276,15 @@ pub fn hydrate_grouped_transfers(jobs: &mut [JobInfo], meta: &HashMap<u64, JobMe
                 .or_else(|| jobs[idx].stats.get("size"))
                 .and_then(|v| v.as_u64())
                 .unwrap_or(0);
-            let bytes = jobs[idx]
-                .stats
-                .get("bytes")
-                .and_then(|v| v.as_u64())
-                .unwrap_or(0);
+            let done = child_finished(&jobs[idx].status);
+            let bytes = child_bytes(&jobs[idx], size, done);
             let row = json!({
                 "name": jobs[idx].src,
                 "src": jobs[idx].src,
                 "dst": jobs[idx].dst,
                 "size": size,
                 "bytes": bytes,
-                "percentage": if child_finished(&jobs[idx].status) { 100 } else { 0 }
+                "percentage": if done { 100 } else { 0 }
             });
             if child_finished(&jobs[idx].status) {
                 completed.push(row);
@@ -1236,6 +1296,7 @@ pub fn hydrate_grouped_transfers(jobs: &mut [JobInfo], meta: &HashMap<u64, JobMe
             &mut jobs[parent_idx],
             empty_active,
             empty_done,
+            needs_sizes,
             transferring,
             completed,
         );
@@ -1266,20 +1327,21 @@ fn apply_hydrated_rows(
     job: &mut JobInfo,
     empty_active: bool,
     empty_done: bool,
+    needs_sizes: bool,
     transferring: Vec<Value>,
     completed: Vec<Value>,
 ) {
     if empty_active {
         job.transferring = Value::Array(transferring);
     }
-    if empty_done {
-        job.completed = Value::Array(completed);
+    if empty_done || needs_sizes {
+        job.completed = finalize_completed_list(&Value::Array(completed));
     }
     if let Some(obj) = job.stats.as_object_mut() {
         if empty_active {
             obj.insert("transferring".into(), job.transferring.clone());
         }
-        if empty_done {
+        if empty_done || needs_sizes {
             obj.insert("completed".into(), job.completed.clone());
         }
     }
@@ -3156,6 +3218,17 @@ mod tests {
         decorate_job_transfers(&mut finished, &map, &[]);
         assert_eq!(finished.completed.as_array().unwrap().len(), 2);
         assert!(finished.transferring.as_array().unwrap().is_empty());
+        assert_eq!(finished.completed[0]["bytes"], 4);
+        assert_eq!(finished.completed[1]["bytes"], 4);
+        let mut stale = finished.clone();
+        stale.completed = json!([
+            { "name": "a.txt", "src": "/tmp/a.txt", "dst": "Inbox/a.txt", "size": 4, "bytes": 0 },
+            { "name": "b.txt", "src": "/tmp/b.txt", "dst": "Inbox/b.txt", "size": 4, "bytes": 0 }
+        ]);
+        hydrate_grouped_transfers(&mut [stale.clone()], &map);
+        decorate_job_transfers(&mut stale, &map, &[]);
+        assert_eq!(stale.completed[0]["bytes"], 4);
+        assert_eq!(stale.completed[1]["percentage"], 100);
     }
 
     #[test]
@@ -3490,7 +3563,9 @@ mod tests {
                     {
                         "name": "k.txt",
                         "src": "/tmp/gtk-upload-test/k.txt",
-                        "dst": "testdrive:k.txt"
+                        "dst": "testdrive:k.txt",
+                        "size": 3,
+                        "bytes": 0
                     }
                 ]),
                 ..Default::default()
@@ -3501,6 +3576,10 @@ mod tests {
         assert_eq!(restored.origin, "filemanager");
         assert_eq!(restored.src, "/tmp/gtk-upload-test/k.txt");
         assert_eq!(restored.operation, "copy");
+        assert_eq!(restored.completed[0]["bytes"], 3);
+        assert_eq!(restored.completed[0]["percentage"], 100);
+        assert_eq!(format_job_speed(0.0), "—");
+        assert!(format_job_speed(1024.0).contains("KiB"));
         assert!((restored.progress - 1.0).abs() < f64::EPSILON);
         assert!(!has_known_start_time(&restored));
         let combined = history_with_meta(&history, &meta);

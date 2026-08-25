@@ -906,7 +906,7 @@ impl FlowView {
                 for item in source {
                     rows.push((
                         job.operation.clone(),
-                        crate::transfers::parse_transfer_row(item),
+                        crate::transfers::parse_completed_transfer_row(item),
                         true,
                     ));
                 }

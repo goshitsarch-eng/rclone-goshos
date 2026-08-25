@@ -2051,6 +2051,7 @@
     },
     "about": {
       "title": "Hakkında",
+      "appName": "Rclone Manager",
       "aboutApp": "Uygulama Hakkında",
       "details": "Detaylar",
       "aboutRclone": "Rclone Hakkında",

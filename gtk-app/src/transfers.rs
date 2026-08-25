@@ -26,6 +26,14 @@ pub enum TransferStatus {
 }
 
 pub fn parse_transfer_row(item: &Value) -> TransferRow {
+    parse_transfer_row_with(item, false)
+}
+
+pub fn parse_completed_transfer_row(item: &Value) -> TransferRow {
+    parse_transfer_row_with(item, true)
+}
+
+fn parse_transfer_row_with(item: &Value, completed: bool) -> TransferRow {
     let name = item
         .get("name")
         .and_then(|x| x.as_str())
@@ -52,7 +60,7 @@ pub fn parse_transfer_row(item: &Value) -> TransferRow {
         .and_then(|x| x.as_str())
         .unwrap_or_default()
         .to_string();
-    TransferRow {
+    let mut row = TransferRow {
         name,
         src,
         dst,
@@ -62,6 +70,19 @@ pub fn parse_transfer_row(item: &Value) -> TransferRow {
         speed,
         eta,
         error,
+    };
+    if completed {
+        finalize_completed_row(&mut row);
+    }
+    row
+}
+
+pub fn finalize_completed_row(row: &mut TransferRow) {
+    if row.size > 0 && row.bytes == 0 {
+        row.bytes = row.size;
+        row.percentage = 100;
+    } else if row.size > 0 && row.bytes >= row.size && row.percentage < 100 {
+        row.percentage = 100;
     }
 }
 
@@ -421,5 +442,30 @@ mod tests {
             "percentage": 10
         }));
         assert_eq!(transfer_status(false, &failed), TransferStatus::Error);
+        let reconstructed = parse_completed_transfer_row(&json!({
+            "name": "k.txt",
+            "src": "/tmp/k.txt",
+            "dst": "testdrive:k.txt",
+            "size": 3,
+            "bytes": 0,
+            "percentage": 0
+        }));
+        assert_eq!(reconstructed.bytes, 3);
+        assert_eq!(reconstructed.percentage, 100);
+        assert_eq!(
+            transfer_meta_caption(&reconstructed),
+            format!(
+                "{} / {}",
+                crate::rclone::format_bytes(3),
+                crate::rclone::format_bytes(3)
+            )
+        );
+        let active = parse_transfer_row(&json!({
+            "name": "k.txt",
+            "size": 3,
+            "bytes": 0
+        }));
+        assert_eq!(active.bytes, 0);
+        assert_eq!(active.percentage, 0);
     }
 }

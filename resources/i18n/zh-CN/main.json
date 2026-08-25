@@ -2051,6 +2051,7 @@
     },
     "about": {
       "title": "关于",
+      "appName": "Rclone Manager",
       "aboutApp": "关于应用",
       "details": "详情",
       "aboutRclone": "关于 Rclone",
