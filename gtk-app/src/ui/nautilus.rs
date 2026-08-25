@@ -1884,6 +1884,17 @@ impl NautilusView {
             }),
         ) {
             Ok(id) => {
+                let bytes = std::fs::metadata(path).map(|m| m.len()).unwrap_or(0);
+                let preparing = crate::jobs::preparing_job(
+                    id,
+                    &current.remote,
+                    &path.to_string_lossy(),
+                    &dst_remote,
+                    1,
+                    bytes,
+                );
+                self.ctx.store.borrow_mut().remember_job(preparing.clone());
+                self.ctx.snapshot.borrow_mut().jobs.insert(0, preparing);
                 self.push_undo(
                     crate::fileops::FileOp::Upload {
                         fs: dst_fs,
@@ -2892,6 +2903,22 @@ impl NautilusView {
         }
         let (_, ids) =
             crate::fileops::start_grouped_transfers(&client, &items, "filemanager-upload")?;
+        if let Some(id) = ids.first().copied() {
+            let bytes: u64 = items
+                .iter()
+                .map(|item| std::fs::metadata(&item.src).map(|m| m.len()).unwrap_or(0))
+                .sum();
+            let preparing = crate::jobs::preparing_job(
+                id,
+                &current.remote,
+                &local.to_string_lossy(),
+                dest_dir,
+                items.len() as u64,
+                bytes,
+            );
+            self.ctx.store.borrow_mut().remember_job(preparing.clone());
+            self.ctx.snapshot.borrow_mut().jobs.insert(0, preparing);
+        }
         self.ctx.refresh_runtime();
         Ok(ids.len())
     }

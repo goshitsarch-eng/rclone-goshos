@@ -74,6 +74,9 @@ impl RcloneEngine {
                     if engine.client.ping() {
                         engine.available = true;
                         engine.version = engine.client.version().unwrap_or_default();
+                        if !password.is_empty() {
+                            let _ = engine.client.config_unlock(&password);
+                        }
                         break;
                     }
                     std::thread::sleep(Duration::from_millis(150));

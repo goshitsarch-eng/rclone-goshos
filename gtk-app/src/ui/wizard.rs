@@ -59,6 +59,23 @@ pub fn present(
         name.set_text(existing);
         name.set_sensitive(false);
     }
+    {
+        let ctx = ctx.clone();
+        let editing = existing.clone();
+        name.connect_changed(move |row| {
+            let names = ctx.store.borrow().remote_names();
+            match crate::validators::validate_remote_name(&row.text(), &names, editing.as_deref()) {
+                Ok(()) => {
+                    row.remove_css_class("error");
+                    row.set_tooltip_text(None);
+                }
+                Err(msg) => {
+                    row.add_css_class("error");
+                    row.set_tooltip_text(Some(&msg));
+                }
+            }
+        });
+    }
 
     let type_row = adw::ComboRow::new();
     type_row.set_title("Provider");
@@ -293,6 +310,10 @@ pub fn present(
     pgroup.add(&serve);
     pgroup.add(&mount_type);
     pgroup.add(&cron);
+    let cron_row = adw::ActionRow::new();
+    cron_row.set_title("Cron schedule");
+    cron_row.add_suffix(&super::dialogs::attach_cron_builder(&cron));
+    pgroup.add(&cron_row);
     pgroup.add(&tray);
     pgroup.add(&autostart);
     pgroup.add(&cli);
@@ -420,10 +441,39 @@ pub fn present(
         let cli = cli.clone();
         save.connect_clicked(move |_| {
             let remote_name = name.text().to_string();
-            if remote_name.is_empty() {
+            let existing_names = ctx.store.borrow().remote_names();
+            if let Err(e) = crate::validators::validate_remote_name(
+                &remote_name,
+                &existing_names,
+                existing.as_deref(),
+            ) {
+                let err = adw::AlertDialog::new(Some("Invalid remote name"), Some(&e));
+                err.add_response("ok", "OK");
+                err.present(Some(&dialog));
                 return;
             }
             let r#type = provider_type(&state.borrow().providers, type_row.selected());
+            if let Some(provider) = state
+                .borrow()
+                .providers
+                .iter()
+                .find(|p| p.prefix == r#type || p.name == r#type)
+                .cloned()
+            {
+                let fields = state.borrow().fields.clone();
+                for option in &provider.options {
+                    let value = fields
+                        .get(&option.name)
+                        .map(|row| row.text().to_string())
+                        .unwrap_or_default();
+                    if let Err(e) = crate::validators::validate_option(option, &value) {
+                        let err = adw::AlertDialog::new(Some("Invalid provider field"), Some(&e));
+                        err.add_response("ok", "OK");
+                        err.present(Some(&dialog));
+                        return;
+                    }
+                }
+            }
             let mut params = collect_params(&state);
             if let Some(client) = ctx.client() {
                 for (key, value) in params
@@ -585,6 +635,23 @@ fn option_row(
         super::dialogs::attach_path_picker(ctx, &row, crate::picker::FilePickerConfig::folders());
         apply_path_usage(&row);
         row.connect_changed(|row| apply_path_usage(row));
+    }
+    {
+        let option = option.clone();
+        row.connect_changed(move |row| {
+            match crate::validators::validate_option(&option, &row.text()) {
+                Ok(()) => {
+                    row.remove_css_class("error");
+                    if !option.help.is_empty() {
+                        row.set_tooltip_text(Some(&option.help));
+                    }
+                }
+                Err(msg) => {
+                    row.add_css_class("error");
+                    row.set_tooltip_text(Some(&msg));
+                }
+            }
+        });
     }
     row
 }

@@ -733,7 +733,7 @@ pub fn job_from_status(jobid: u64, status: &Value, stats: Option<&Value>) -> Job
         src,
         dst,
         group,
-        stats: stats_value,
+        stats: stats_value.clone(),
         transferring,
         duration,
         progress,
@@ -742,8 +742,64 @@ pub fn job_from_status(jobid: u64, status: &Value, stats: Option<&Value>) -> Job
     };
     if finished {
         apply_cryptcheck_outcome(&mut job);
+    } else if stats_value
+        .get("preparing")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false)
+    {
+        job.status = "preparing".into();
     }
     job
+}
+
+/// Local job shown immediately after `start_job` returns, before rclone reports transfers.
+pub fn preparing_job(
+    id: u64,
+    remote: &str,
+    src: &str,
+    dst: &str,
+    total_files: u64,
+    total_bytes: u64,
+) -> JobInfo {
+    JobInfo {
+        id,
+        operation: "upload".into(),
+        remote: remote.into(),
+        profile: "default".into(),
+        status: "preparing".into(),
+        origin: "filemanager".into(),
+        start_time: Utc::now(),
+        error: None,
+        dry_run: false,
+        src: src.into(),
+        dst: dst.into(),
+        group: format!("job/{id}"),
+        stats: json!({
+            "totalBytes": total_bytes,
+            "bytes": 0,
+            "transfers": 0,
+            "totalTransfers": total_files,
+            "completed": [],
+            "transferring": [],
+            "preparing": true
+        }),
+        transferring: json!([]),
+        duration: 0.0,
+        progress: 0.0,
+        output: json!({ "operation": "upload", "origin": "filemanager" }),
+        completed: json!([]),
+    }
+}
+
+/// Keep preparing uploads in the live list until rclone reports the same job id.
+pub fn merge_preparing_jobs(live: Vec<JobInfo>, history: &[JobInfo]) -> Vec<JobInfo> {
+    let mut out = live;
+    for job in history {
+        if job.status == "preparing" && !out.iter().any(|j| j.id == job.id) {
+            out.insert(0, job.clone());
+        }
+    }
+    out
 }
 
 /// Parses raw text output from `operations/cryptcheck` into structured JSON.
@@ -1101,6 +1157,26 @@ mod tests {
     }
 
     #[test]
+    fn builds_cryptcheck_endpoint() {
+        let req = build_job_params(
+            OperationType::Cryptcheck,
+            "crypt",
+            "crypt:",
+            "plain:",
+            &json!({}),
+        )
+        .unwrap();
+        match req {
+            JobRequest::Async { endpoint, params } => {
+                assert_eq!(endpoint, "operations/cryptcheck");
+                assert_eq!(params["srcFs"], "crypt:");
+                assert_eq!(params["dstFs"], "plain:");
+            }
+            _ => panic!("expected async cryptcheck"),
+        }
+    }
+
+    #[test]
     fn rejects_incomplete_sync() {
         assert!(build_job_params(OperationType::Sync, "d", "", "/tmp", &json!({})).is_err());
         assert!(build_job_params(OperationType::Mount, "d", "d:", "", &json!({})).is_err());
@@ -1439,5 +1515,32 @@ mod tests {
         assert_eq!(dest["main"]["transfers"], 8);
         assert_eq!(dest["main"]["checkers"], 2);
         assert_eq!(dest["keep"], true);
+    }
+
+    #[test]
+    fn preparing_job_and_merge() {
+        let preparing = preparing_job(9, "drive", "/tmp/a.txt", "Inbox/a.txt", 1, 32);
+        assert_eq!(preparing.status, "preparing");
+        assert_eq!(preparing.stats["preparing"], true);
+        assert_eq!(preparing.stats["totalBytes"], 32);
+        let live = vec![running_job(1, "drive", "sync", "nightly")];
+        let merged = merge_preparing_jobs(live.clone(), &[preparing.clone()]);
+        assert_eq!(merged[0].id, 9);
+        assert_eq!(merged.len(), 2);
+        let already = merge_preparing_jobs(
+            vec![JobInfo {
+                status: "running".into(),
+                ..preparing.clone()
+            }],
+            &[preparing],
+        );
+        assert_eq!(already.len(), 1);
+        assert_eq!(already[0].status, "running");
+        let from_stats = job_from_status(
+            4,
+            &json!({ "finished": false, "success": false, "output": { "operation": "upload" } }),
+            Some(&json!({ "preparing": true, "bytes": 0 })),
+        );
+        assert_eq!(from_stats.status, "preparing");
     }
 }

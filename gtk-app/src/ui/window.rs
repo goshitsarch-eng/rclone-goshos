@@ -27,6 +27,12 @@ pub fn activate(app: &adw::Application) {
     ctx.apply_persisted_options();
     ctx.refresh_runtime();
 
+    let args: Vec<String> = std::env::args().collect();
+    if let Some(req) = crate::platform::parse_dialog_args(&args) {
+        dialogs::present_standalone(app, ctx, req);
+        return;
+    }
+
     if !ctx.settings.borrow().core.completed_onboarding {
         onboarding::present(app, ctx.clone());
         return;

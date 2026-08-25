@@ -2,6 +2,9 @@
 
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
+use std::sync::atomic::{AtomicBool, Ordering};
+
+static STANDALONE_DIALOG: AtomicBool = AtomicBool::new(false);
 
 const INVALID_NAME_CHARS: &str = r#"<>:"/\|?*"#;
 
@@ -591,6 +594,123 @@ pub fn parse_send_to_args(args: &[String]) -> Option<SendToArgs> {
     })
 }
 
+/// Standalone dialog requested via `--dialog TYPE [--dialog-data JSON] [--dialog-result PATH]`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DialogRequest {
+    pub kind: String,
+    pub data: serde_json::Value,
+    pub result_path: Option<PathBuf>,
+}
+
+pub const DIALOG_KINDS: &[&str] = &[
+    "preferences",
+    "about",
+    "logs",
+    "export",
+    "backend",
+    "rclone-flags",
+    "job-detail",
+    "properties",
+    "remote-about",
+    "keyboard-shortcuts",
+    "alerts",
+    "archive-create",
+    "quick-run-editor",
+    "template-manager",
+    "delete-remote",
+    "remote-config",
+    "quick-add-remote",
+    "restore-preview",
+];
+
+pub fn parse_dialog_args(args: &[String]) -> Option<DialogRequest> {
+    let mut kind = None;
+    let mut data = serde_json::json!({});
+    let mut result_path = None;
+    let mut i = 0;
+    while i < args.len() {
+        match args[i].as_str() {
+            "--dialog" => {
+                i += 1;
+                kind = args.get(i).cloned();
+            }
+            "--dialog-data" => {
+                i += 1;
+                if let Some(raw) = args.get(i) {
+                    data = serde_json::from_str(raw).unwrap_or(serde_json::json!({}));
+                }
+            }
+            "--dialog-result" => {
+                i += 1;
+                result_path = args.get(i).map(PathBuf::from);
+            }
+            _ => {}
+        }
+        i += 1;
+    }
+    kind.filter(|k| DIALOG_KINDS.contains(&k.as_str()))
+        .map(|kind| DialogRequest {
+            kind,
+            data,
+            result_path,
+        })
+}
+
+pub fn set_standalone_dialog(enabled: bool) {
+    STANDALONE_DIALOG.store(enabled, Ordering::SeqCst);
+}
+
+pub fn is_standalone_dialog() -> bool {
+    STANDALONE_DIALOG.load(Ordering::SeqCst)
+}
+
+pub fn spawn_standalone_dialog(kind: &str, data: &serde_json::Value) -> Result<Child, String> {
+    if !DIALOG_KINDS.contains(&kind) {
+        return Err(format!("unknown dialog type: {kind}"));
+    }
+    let exe = std::env::current_exe().map_err(|e| e.to_string())?;
+    let result = std::env::temp_dir().join(format!(
+        "rm-dialog-{}-{}.json",
+        sanitize_name(kind),
+        chrono::Utc::now().timestamp_millis()
+    ));
+    Command::new(exe)
+        .arg("--dialog")
+        .arg(kind)
+        .arg("--dialog-data")
+        .arg(data.to_string())
+        .arg("--dialog-result")
+        .arg(&result)
+        .stdin(Stdio::null())
+        .spawn()
+        .map_err(|e| e.to_string())
+}
+
+pub fn write_dialog_result(
+    path: Option<&Path>,
+    ok: bool,
+    kind: &str,
+    data: serde_json::Value,
+) -> Result<(), String> {
+    let payload = serde_json::json!({
+        "ok": ok,
+        "type": kind,
+        "data": data
+    });
+    match path {
+        Some(path) => {
+            if let Some(parent) = path.parent() {
+                std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+            }
+            std::fs::write(path, payload.to_string()).map_err(|e| e.to_string())
+        }
+        None => {
+            println!("{payload}");
+            Ok(())
+        }
+    }
+}
+
 /// `--share-intake FILE [FILE…]` queues local files for the Files upload banner.
 pub fn parse_share_intake_args(args: &[String]) -> Option<Vec<PathBuf>> {
     if !args.iter().any(|arg| arg == "--share-intake") {
@@ -746,6 +866,34 @@ mod tests {
         assert_eq!(parsed.len(), 2);
         assert_eq!(parsed[0], PathBuf::from("/tmp/a.jpg"));
         assert!(parse_share_intake_args(&["app".into()]).is_none());
+    }
+
+    #[test]
+    fn parses_standalone_dialog_cli() {
+        let args = [
+            "app".into(),
+            "--dialog".into(),
+            "job-detail".into(),
+            "--dialog-data".into(),
+            r#"{"jobid":7,"remote":"drive"}"#.into(),
+            "--dialog-result".into(),
+            "/tmp/rm-dialog.json".into(),
+        ];
+        let parsed = parse_dialog_args(&args).unwrap();
+        assert_eq!(parsed.kind, "job-detail");
+        assert_eq!(parsed.data["jobid"], 7);
+        assert_eq!(
+            parsed.result_path,
+            Some(PathBuf::from("/tmp/rm-dialog.json"))
+        );
+        assert!(parse_dialog_args(&["app".into(), "--dialog".into(), "nope".into()]).is_none());
+        assert!(spawn_standalone_dialog("nope", &serde_json::json!({})).is_err());
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("result.json");
+        write_dialog_result(Some(&path), true, "about", serde_json::json!({})).unwrap();
+        let text = std::fs::read_to_string(path).unwrap();
+        assert!(text.contains("\"ok\":true"));
+        assert!(text.contains("about"));
     }
 
     #[test]

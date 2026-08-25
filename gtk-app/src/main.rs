@@ -5,6 +5,7 @@ mod backend_options;
 mod backup;
 mod checks;
 mod connection;
+mod cron;
 mod fileops;
 mod flags;
 mod i18n;
@@ -41,6 +42,7 @@ mod tray_menu;
 mod ui;
 mod updater;
 mod user_templates;
+mod validators;
 mod vfs;
 mod watch;
 

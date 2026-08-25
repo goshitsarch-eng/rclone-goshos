@@ -19,6 +19,102 @@ use gtk::prelude::*;
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
+fn try_spawn_standalone(ctx: &AppCtx, kind: &str, data: serde_json::Value) -> bool {
+    if crate::platform::is_standalone_dialog() {
+        return false;
+    }
+    if !ctx.settings.borrow().general.standalone_dialogs {
+        return false;
+    }
+    crate::platform::spawn_standalone_dialog(kind, &data).is_ok()
+}
+
+pub fn present_standalone(
+    app: &adw::Application,
+    ctx: AppCtx,
+    req: crate::platform::DialogRequest,
+) {
+    crate::platform::set_standalone_dialog(true);
+    let window = adw::ApplicationWindow::builder()
+        .application(app)
+        .title(&req.kind)
+        .default_width(780)
+        .default_height(640)
+        .build();
+    let toast = adw::ToastOverlay::new();
+    window.set_content(Some(&toast));
+    window.present();
+    let remote = req
+        .data
+        .get("remote")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string();
+    let path = req
+        .data
+        .get("path")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string();
+    let name = req
+        .data
+        .get("name")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string();
+    let jobid = req.data.get("jobid").and_then(|v| v.as_u64()).unwrap_or(0);
+    let noop = Rc::new(|| ());
+    match req.kind.as_str() {
+        "preferences" => preferences(&window, ctx.clone()),
+        "about" => about(&window, ctx.clone()),
+        "logs" => logs(
+            &window,
+            ctx.clone(),
+            if remote.is_empty() {
+                None
+            } else {
+                Some(remote.clone())
+            },
+        ),
+        "export" => export_backup(&window, ctx.clone(), toast),
+        "backend" => backends(&window, ctx.clone()),
+        "rclone-flags" => rclone_flags(&window, ctx.clone()),
+        "job-detail" => job_detail(&window, ctx.clone(), jobid),
+        "properties" => properties(&window, ctx.clone(), &remote, &path, &name),
+        "remote-about" => remote_about(&window, ctx.clone(), &remote),
+        "keyboard-shortcuts" => shortcuts(&window, &ctx),
+        "alerts" => alerts(&window, ctx.clone()),
+        "archive-create" => archive_create(&window, ctx.clone(), &remote, &path),
+        "quick-run-editor" => quick_run_editor(&window, ctx.clone(), None, noop),
+        "template-manager" => templates(&window, ctx.clone()),
+        "delete-remote" => delete_remote(&window, ctx.clone(), &remote, noop),
+        "remote-config" => remote_config(
+            &window,
+            ctx.clone(),
+            if remote.is_empty() {
+                None
+            } else {
+                Some(remote)
+            },
+            noop,
+        ),
+        "quick-add-remote" => quick_add_remote(&window, ctx.clone(), noop),
+        "restore-preview" => {}
+        _ => {}
+    }
+    let result_path = req.result_path.clone();
+    let kind = req.kind.clone();
+    window.connect_close_request(move |_| {
+        let _ = crate::platform::write_dialog_result(
+            result_path.as_deref(),
+            true,
+            &kind,
+            serde_json::json!({}),
+        );
+        glib::Propagation::Proceed
+    });
+}
+
 pub fn prompt(
     parent: &impl IsA<gtk::Widget>,
     title: &str,
@@ -44,6 +140,9 @@ pub fn prompt(
 }
 
 pub fn preferences(parent: &impl IsA<gtk::Widget>, ctx: AppCtx) {
+    if try_spawn_standalone(&ctx, "preferences", serde_json::json!({})) {
+        return;
+    }
     let dialog = adw::PreferencesDialog::new();
     dialog.set_title(&ctx.t_or("titlebar.menu.preferences", "Preferences"));
     dialog.set_search_enabled(true);
@@ -475,6 +574,17 @@ pub fn preferences(parent: &impl IsA<gtk::Widget>, ctx: AppCtx) {
         let ctx = ctx.clone();
         bw.connect_changed(move |row| {
             let rate = row.text().to_string();
+            match crate::validators::validate_bandwidth(&rate) {
+                Ok(()) => {
+                    row.remove_css_class("error");
+                    row.set_tooltip_text(None);
+                }
+                Err(msg) => {
+                    row.add_css_class("error");
+                    row.set_tooltip_text(Some(&msg));
+                    return;
+                }
+            }
             ctx.settings.borrow_mut().core.bandwidth_limit = rate;
             ctx.persist();
             ctx.apply_effective_bandwidth();
@@ -490,7 +600,14 @@ pub fn preferences(parent: &impl IsA<gtk::Widget>, ctx: AppCtx) {
     {
         let ctx = ctx.clone();
         metered_bw.connect_changed(move |row| {
-            ctx.settings.borrow_mut().core.metered_bandwidth_limit = row.text().to_string();
+            let rate = row.text().to_string();
+            if let Err(msg) = crate::validators::validate_bandwidth(&rate) {
+                row.add_css_class("error");
+                row.set_tooltip_text(Some(&msg));
+                return;
+            }
+            row.remove_css_class("error");
+            ctx.settings.borrow_mut().core.metered_bandwidth_limit = rate;
             ctx.persist();
             ctx.apply_effective_bandwidth();
         });
@@ -851,6 +968,9 @@ fn switch_row(title: &str, active: bool, on_change: impl Fn(bool) + 'static) -> 
 }
 
 pub fn about(parent: &impl IsA<gtk::Widget>, ctx: AppCtx) {
+    if try_spawn_standalone(&ctx, "about", serde_json::json!({})) {
+        return;
+    }
     let version = ctx
         .engine
         .borrow()
@@ -1456,6 +1576,25 @@ pub fn debug_info(parent: &impl IsA<gtk::Widget>, ctx: AppCtx) {
         row.set_subtitle_lines(3);
         list.append(&row);
     }
+    if let Some(client) = ctx.client() {
+        if let Ok(paths) = client.config_paths() {
+            for key in ["config", "cache", "temp"] {
+                if let Some(value) = paths.get(key).and_then(|v| v.as_str()) {
+                    let row = adw::ActionRow::new();
+                    row.set_title(&format!("rclone {key}"));
+                    row.set_subtitle(value);
+                    row.set_subtitle_lines(3);
+                    list.append(&row);
+                }
+            }
+        }
+        if let Ok(encrypted) = client.config_is_encrypted() {
+            let row = adw::ActionRow::new();
+            row.set_title("rclone.conf encrypted");
+            row.set_subtitle(if encrypted { "yes" } else { "no" });
+            list.append(&row);
+        }
+    }
     let copy = gtk::Button::with_label(&ctx.t_or("common.copy", "Copy"));
     let summary = format!(
         "version={}\nplatform={}/{}\nmode={}\nconfig={}\ncache={}\nlogs={}",
@@ -1716,6 +1855,13 @@ pub fn vfs_control(
 }
 
 pub fn logs(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, remote: Option<String>) {
+    if try_spawn_standalone(
+        &ctx,
+        "logs",
+        serde_json::json!({ "remote": remote.clone().unwrap_or_default() }),
+    ) {
+        return;
+    }
     let dialog = adw::Dialog::new();
     let title = if let Some(name) = remote.as_ref().filter(|r| *r != "_engine") {
         ctx.tf("modals.logs.remoteLogs", &[("name", name)])
@@ -1993,6 +2139,9 @@ pub fn logs(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, remote: Option<String>)
 }
 
 pub fn rclone_flags(parent: &impl IsA<gtk::Widget>, ctx: AppCtx) {
+    if try_spawn_standalone(&ctx, "rclone-flags", serde_json::json!({})) {
+        return;
+    }
     let dialog = adw::PreferencesDialog::new();
     dialog.set_title(&ctx.t_or("titlebar.menu.flags", "Rclone Flags"));
     dialog.set_search_enabled(true);
@@ -2324,6 +2473,9 @@ pub fn action_order(
 }
 
 pub fn backends(parent: &impl IsA<gtk::Widget>, ctx: AppCtx) {
+    if try_spawn_standalone(&ctx, "backend", serde_json::json!({})) {
+        return;
+    }
     let dialog = adw::Dialog::new();
     dialog.set_title(&ctx.t_or("titlebar.menu.backends", "Backends"));
     dialog.set_content_width(560);
@@ -2706,6 +2858,9 @@ fn backend_editor(
 }
 
 pub fn alerts(parent: &impl IsA<gtk::Widget>, ctx: AppCtx) {
+    if try_spawn_standalone(&ctx, "alerts", serde_json::json!({})) {
+        return;
+    }
     let dialog = adw::Dialog::new();
     dialog.set_title(&ctx.t_or("alerts.title", "Alerts"));
     dialog.set_content_width(720);
@@ -2993,6 +3148,13 @@ pub fn remote_config(
     existing: Option<String>,
     on_done: Rc<dyn Fn()>,
 ) {
+    if try_spawn_standalone(
+        &ctx,
+        "remote-config",
+        serde_json::json!({ "remote": existing.clone().unwrap_or_default() }),
+    ) {
+        return;
+    }
     if let Some(name) = existing {
         super::remote_config::present(parent, ctx, name, on_done);
     } else {
@@ -3651,6 +3813,7 @@ pub fn quick_run_editor(
             }
         });
     }
+    let cron_presets = attach_cron_builder(&cron);
     let op_row = adw::ComboRow::new();
     op_row.set_title(&ctx.t_or("wizards.cliImport.operation", "Operation"));
     let labels: Vec<&str> = OperationType::ALL.iter().map(|o| o.as_str()).collect();
@@ -3693,6 +3856,10 @@ pub fn quick_run_editor(
     group.add(&src);
     group.add(&dst);
     group.add(&cron);
+    let cron_preset_row = adw::ActionRow::new();
+    cron_preset_row.set_title("Cron schedule");
+    cron_preset_row.add_suffix(&cron_presets);
+    group.add(&cron_preset_row);
     group.add(&auto);
     group.add(&watch);
     group.add(&tray);
@@ -4326,6 +4493,20 @@ pub fn properties(
             ));
             list.append(&row);
         }
+        if remote == "local" {
+            if let Ok(du) = client.du(Some(path)) {
+                let row = adw::ActionRow::new();
+                row.set_title(&ctx.t_or("fileBrowser.properties.localDisk", "Local disk"));
+                row.set_subtitle(&format!(
+                    "{} · used {} · free {} · total {}",
+                    du.dir,
+                    crate::rclone::format_bytes(du.used),
+                    crate::rclone::format_bytes(du.free),
+                    crate::rclone::format_bytes(du.total)
+                ));
+                list.append(&row);
+            }
+        }
         if let Ok(size) = client.size(&fs, path) {
             let row = adw::ActionRow::new();
             row.set_title(&ctx.t_or("fileBrowser.properties.size", "Size"));
@@ -4485,6 +4666,9 @@ pub fn properties(
 }
 
 pub fn job_detail(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, job_id: u64) {
+    if try_spawn_standalone(&ctx, "job-detail", serde_json::json!({ "jobid": job_id })) {
+        return;
+    }
     let dialog = adw::Dialog::new();
     dialog.set_title(&ctx.tf("modals.jobDetail.title", &[("id", &job_id.to_string())]));
     dialog.set_content_width(640);
@@ -5031,6 +5215,13 @@ fn pdf_panel(path: Option<std::path::PathBuf>, name: &str) -> gtk::Box {
     label.set_xalign(0.0);
     box_.append(&label);
     if let Some(path) = path {
+        if let Some(preview) = crate::media::render_pdf_preview(&path) {
+            let picture = gtk::Picture::for_filename(&preview);
+            picture.set_can_shrink(true);
+            picture.set_content_fit(gtk::ContentFit::Contain);
+            picture.set_vexpand(true);
+            box_.append(&picture);
+        }
         let open = gtk::Button::with_label("Open native");
         open.add_css_class("suggested-action");
         let p = path.clone();
@@ -5048,6 +5239,7 @@ fn attach_text_preview(
     text: &str,
     editable: bool,
     save_path: Option<&str>,
+    remote_save: Option<(AppCtx, String, String)>,
 ) {
     let shown = if text.len() > 200_000 {
         format!("{}\n\n… truncated …", &text[..200_000])
@@ -5087,16 +5279,32 @@ fn attach_text_preview(
     } else {
         parent.append(&source_scroll);
     }
-    if let Some(path) = save_path.filter(|_| editable) {
+    if editable && (save_path.is_some() || remote_save.is_some()) {
         let save = gtk::Button::with_label("Save");
         save.add_css_class("suggested-action");
         let view = view.clone();
-        let path = path.to_string();
+        let local = save_path.map(|p| p.to_string());
         save.connect_clicked(move |_| {
             let buffer = view.buffer();
             let text = buffer.text(&buffer.start_iter(), &buffer.end_iter(), false);
-            if let Err(e) = std::fs::write(&path, text.as_str()) {
-                log::warn!("failed to save {path}: {e}");
+            if let Some(path) = &local {
+                if let Err(e) = std::fs::write(path, text.as_str()) {
+                    log::warn!("failed to save {path}: {e}");
+                }
+            }
+            if let Some((ctx, fs, remote)) = remote_save.clone() {
+                let Some(client) = ctx.client() else {
+                    return;
+                };
+                let dir = crate::rclone::parent_remote_path(&remote);
+                let name = remote
+                    .rsplit_once('/')
+                    .map(|(_, n)| n)
+                    .filter(|n| !n.is_empty())
+                    .unwrap_or(remote.as_str());
+                if let Err(e) = client.upload_file(&fs, &dir, name, text.as_bytes()) {
+                    log::warn!("remote save failed: {e}");
+                }
             }
         });
         parent.append(&save);
@@ -5275,52 +5483,25 @@ pub fn file_viewer(
         scroll.set_child(Some(&archive_list));
         box_.append(&scroll);
     }
-    if remote == "local" && matches!(category, crate::operations::FileTypeCategory::Image) {
-        let picture = gtk::Picture::for_filename(path);
-        picture.set_vexpand(true);
-        box_.append(&picture);
-    }
-    if remote == "local"
-        && matches!(
-            category,
-            crate::operations::FileTypeCategory::Video | crate::operations::FileTypeCategory::Audio
-        )
-    {
-        let video = gtk::Video::for_filename(Some(path));
-        video.set_vexpand(true);
-        video.set_autoplay(true);
-        box_.append(&video);
-        if matches!(category, crate::operations::FileTypeCategory::Audio) {
-            if let Some(cover) = crate::media::sibling_cover(std::path::Path::new(path)) {
-                let picture = gtk::Picture::for_filename(&cover);
-                picture.set_can_shrink(true);
-                picture.set_content_fit(gtk::ContentFit::Contain);
-                picture.set_size_request(-1, 180);
-                box_.append(&picture);
-            }
-        }
-    }
-    if matches!(category, crate::operations::FileTypeCategory::Pdf) {
-        box_.append(&pdf_panel(
-            if remote == "local" {
-                Some(std::path::PathBuf::from(path))
-            } else {
-                None
-            },
-            name,
-        ));
-    }
-    if remote == "local" && matches!(category, crate::operations::FileTypeCategory::Text) {
-        let text = std::fs::read_to_string(path).unwrap_or_default();
-        attach_text_preview(&box_, name, &text, true, Some(path));
-    }
+    let mut preview_path = if remote == "local" {
+        Some(std::path::PathBuf::from(path))
+    } else {
+        None
+    };
     if remote != "local" {
         if let Some(client) = ctx.client() {
             let fs = remote_fs(remote, "");
             if matches!(category, crate::operations::FileTypeCategory::Text) {
                 if let Ok(text) = client.cat(&fs, path, Some(crate::rclone::CAT_PREVIEW_BYTES)) {
                     info.set_text("Remote preview via operations/cat");
-                    attach_text_preview(&box_, name, &text, false, None);
+                    attach_text_preview(
+                        &box_,
+                        name,
+                        &text,
+                        true,
+                        None,
+                        Some((ctx.clone(), fs, path.to_string())),
+                    );
                 }
             } else {
                 let dest = std::env::temp_dir().join(name);
@@ -5329,11 +5510,42 @@ pub fn file_viewer(
                     .is_ok()
                 {
                     info.set_text(&format!("Downloaded preview to {}", dest.display()));
-                    if matches!(category, crate::operations::FileTypeCategory::Pdf) {
-                        box_.append(&pdf_panel(Some(dest.clone()), name));
-                    }
+                    preview_path = Some(dest);
                 }
             }
+        }
+    }
+    if let Some(local) = preview_path.as_ref() {
+        let local_s = local.to_string_lossy();
+        if matches!(category, crate::operations::FileTypeCategory::Image) {
+            let picture = gtk::Picture::for_filename(local);
+            picture.set_vexpand(true);
+            box_.append(&picture);
+        }
+        if matches!(
+            category,
+            crate::operations::FileTypeCategory::Video | crate::operations::FileTypeCategory::Audio
+        ) {
+            let video = gtk::Video::for_filename(Some(local_s.as_ref()));
+            video.set_vexpand(true);
+            video.set_autoplay(true);
+            box_.append(&video);
+            if matches!(category, crate::operations::FileTypeCategory::Audio) {
+                if let Some(cover) = crate::media::sibling_cover(local) {
+                    let picture = gtk::Picture::for_filename(&cover);
+                    picture.set_can_shrink(true);
+                    picture.set_content_fit(gtk::ContentFit::Contain);
+                    picture.set_size_request(-1, 180);
+                    box_.append(&picture);
+                }
+            }
+        }
+        if matches!(category, crate::operations::FileTypeCategory::Pdf) {
+            box_.append(&pdf_panel(Some(local.clone()), name));
+        }
+        if remote == "local" && matches!(category, crate::operations::FileTypeCategory::Text) {
+            let text = std::fs::read_to_string(local).unwrap_or_default();
+            attach_text_preview(&box_, name, &text, true, Some(&local_s), None);
         }
     }
     dialog.set_child(Some(&box_));
@@ -6411,6 +6623,188 @@ pub(crate) fn attach_path_kind(row: &adw::EntryRow, current_remote: &str) -> adw
         });
     }
     combo
+}
+
+pub(crate) fn attach_cron_presets(cron: &adw::EntryRow) -> gtk::Box {
+    let box_ = gtk::Box::new(gtk::Orientation::Horizontal, 4);
+    box_.add_css_class("linked");
+    box_.set_hexpand(true);
+    for preset in crate::cron::PRESETS {
+        let btn = gtk::Button::with_label(preset.label);
+        btn.set_tooltip_text(Some(preset.cron));
+        let cron = cron.clone();
+        btn.connect_clicked(move |_| {
+            cron.set_text(preset.cron);
+        });
+        box_.append(&btn);
+    }
+    box_
+}
+
+pub(crate) fn attach_cron_builder(cron: &adw::EntryRow) -> gtk::Box {
+    let outer = gtk::Box::new(gtk::Orientation::Vertical, 8);
+    outer.append(&attach_cron_presets(cron));
+
+    let simple = gtk::Box::new(gtk::Orientation::Horizontal, 6);
+    let freq = gtk::DropDown::from_strings(&["Daily", "Weekly", "Monthly", "Interval"]);
+    let hour = gtk::SpinButton::with_range(0.0, 23.0, 1.0);
+    hour.set_value(9.0);
+    hour.set_tooltip_text(Some("Hour"));
+    let minute = gtk::SpinButton::with_range(0.0, 59.0, 1.0);
+    minute.set_tooltip_text(Some("Minute"));
+    let dow = gtk::Entry::new();
+    dow.set_placeholder_text(Some("1-5"));
+    dow.set_text("1");
+    dow.set_width_chars(5);
+    dow.set_tooltip_text(Some("Day of week"));
+    let dom = gtk::SpinButton::with_range(1.0, 31.0, 1.0);
+    dom.set_tooltip_text(Some("Day of month"));
+    let interval = gtk::SpinButton::with_range(1.0, 24.0, 1.0);
+    interval.set_value(6.0);
+    interval.set_tooltip_text(Some("Every N hours"));
+    if let Some(parsed) = crate::cron::parse_simple(&cron.text()) {
+        freq.set_selected(match parsed.frequency {
+            crate::cron::SimpleFrequency::Weekly => 1,
+            crate::cron::SimpleFrequency::Monthly => 2,
+            crate::cron::SimpleFrequency::Interval => 3,
+            crate::cron::SimpleFrequency::Daily => 0,
+        });
+        hour.set_value(parsed.hour as f64);
+        minute.set_value(parsed.minute as f64);
+        dow.set_text(&parsed.day_of_week);
+        dom.set_value(parsed.day_of_month as f64);
+        interval.set_value(parsed.interval_hours as f64);
+    }
+    let apply_simple = {
+        let cron = cron.clone();
+        let freq = freq.clone();
+        let hour = hour.clone();
+        let minute = minute.clone();
+        let dow = dow.clone();
+        let dom = dom.clone();
+        let interval = interval.clone();
+        Rc::new(move || {
+            let simple = crate::cron::SimpleCron {
+                frequency: match freq.selected() {
+                    1 => crate::cron::SimpleFrequency::Weekly,
+                    2 => crate::cron::SimpleFrequency::Monthly,
+                    3 => crate::cron::SimpleFrequency::Interval,
+                    _ => crate::cron::SimpleFrequency::Daily,
+                },
+                minute: minute.value() as u32,
+                hour: hour.value() as u32,
+                day_of_week: dow.text().to_string(),
+                day_of_month: dom.value() as u32,
+                interval_hours: interval.value().max(1.0) as u32,
+            };
+            cron.set_text(&crate::cron::build_simple(&simple));
+        })
+    };
+    {
+        let apply = apply_simple.clone();
+        freq.connect_selected_notify(move |_| apply());
+    }
+    {
+        let apply = apply_simple.clone();
+        hour.connect_value_changed(move |_| apply());
+    }
+    {
+        let apply = apply_simple.clone();
+        minute.connect_value_changed(move |_| apply());
+    }
+    {
+        let apply = apply_simple.clone();
+        dow.connect_changed(move |_| apply());
+    }
+    {
+        let apply = apply_simple.clone();
+        dom.connect_value_changed(move |_| apply());
+    }
+    {
+        let apply = apply_simple.clone();
+        interval.connect_value_changed(move |_| apply());
+    }
+    {
+        let dow = dow.clone();
+        let dom = dom.clone();
+        let interval = interval.clone();
+        let hour = hour.clone();
+        let minute = minute.clone();
+        freq.connect_selected_notify(move |freq| {
+            let weekly = freq.selected() == 1;
+            let monthly = freq.selected() == 2;
+            let every = freq.selected() == 3;
+            dow.set_visible(weekly);
+            dom.set_visible(monthly);
+            interval.set_visible(every);
+            hour.set_visible(!every);
+            minute.set_visible(!every);
+        });
+    }
+    dow.set_visible(false);
+    dom.set_visible(false);
+    interval.set_visible(false);
+    simple.append(&freq);
+    simple.append(&hour);
+    simple.append(&minute);
+    simple.append(&dow);
+    simple.append(&dom);
+    simple.append(&interval);
+    outer.append(&simple);
+
+    let advanced = gtk::Box::new(gtk::Orientation::Horizontal, 4);
+    let minute_f = gtk::Entry::new();
+    minute_f.set_placeholder_text(Some("min"));
+    minute_f.set_text("0");
+    minute_f.set_width_chars(4);
+    let hour_f = gtk::Entry::new();
+    hour_f.set_placeholder_text(Some("hour"));
+    hour_f.set_text("*");
+    hour_f.set_width_chars(4);
+    let dom_f = gtk::Entry::new();
+    dom_f.set_placeholder_text(Some("dom"));
+    dom_f.set_text("*");
+    dom_f.set_width_chars(4);
+    let month_f = gtk::Entry::new();
+    month_f.set_placeholder_text(Some("mon"));
+    month_f.set_text("*");
+    month_f.set_width_chars(4);
+    let dow_f = gtk::Entry::new();
+    dow_f.set_placeholder_text(Some("dow"));
+    dow_f.set_text("*");
+    dow_f.set_width_chars(4);
+    if let Some([min, hr, d, mon, dw]) = crate::cron::split_cron(&cron.text()) {
+        minute_f.set_text(&min);
+        hour_f.set_text(&hr);
+        dom_f.set_text(&d);
+        month_f.set_text(&mon);
+        dow_f.set_text(&dw);
+    }
+    let apply_adv = {
+        let cron = cron.clone();
+        let minute_f = minute_f.clone();
+        let hour_f = hour_f.clone();
+        let dom_f = dom_f.clone();
+        let month_f = month_f.clone();
+        let dow_f = dow_f.clone();
+        Rc::new(move || {
+            cron.set_text(&crate::cron::build_advanced(
+                &minute_f.text(),
+                &hour_f.text(),
+                &dom_f.text(),
+                &month_f.text(),
+                &dow_f.text(),
+            ));
+        })
+    };
+    for field in [&minute_f, &hour_f, &dom_f, &month_f, &dow_f] {
+        let apply = apply_adv.clone();
+        field.connect_changed(move |_| apply());
+        advanced.append(field);
+    }
+    outer.append(&advanced);
+    let _ = apply_simple;
+    outer
 }
 
 pub(crate) fn attach_path_picker(

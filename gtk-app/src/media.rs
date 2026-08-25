@@ -39,6 +39,26 @@ pub fn local_path_usage(path: &str) -> Option<String> {
     }
 }
 
+/// Render the first PDF page to a PNG via `pdftoppm` when Poppler tools are installed.
+pub fn render_pdf_preview(path: &Path) -> Option<PathBuf> {
+    if !path.is_file() {
+        return None;
+    }
+    let stem = path.file_stem()?.to_string_lossy();
+    let out = std::env::temp_dir().join(format!("rm-pdf-{stem}"));
+    let status = std::process::Command::new("pdftoppm")
+        .args(["-png", "-f", "1", "-l", "1", "-singlefile"])
+        .arg(path)
+        .arg(&out)
+        .status()
+        .ok()?;
+    if !status.success() {
+        return None;
+    }
+    let png = out.with_extension("png");
+    png.is_file().then_some(png)
+}
+
 pub fn is_path_field(name: &str, help: &str) -> bool {
     let hay = format!("{name} {help}").to_ascii_lowercase();
     [
@@ -82,6 +102,11 @@ mod tests {
         let usage = local_path_usage(&dir.path().to_string_lossy()).unwrap();
         assert!(usage.contains("item"));
         assert!(local_path_usage("/definitely/missing").is_none());
+    }
+
+    #[test]
+    fn pdf_preview_skips_missing_file() {
+        assert!(render_pdf_preview(Path::new("/tmp/rm-missing.pdf")).is_none());
     }
 
     #[test]

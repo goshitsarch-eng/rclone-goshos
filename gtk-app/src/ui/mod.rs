@@ -427,7 +427,10 @@ impl AppCtx {
             .local_disks()
             .unwrap_or_else(|_| local_fallback_disks());
         let hidden = self.store.borrow().hidden_remotes.clone();
-        let jobs = collect_jobs(&client);
+        let jobs = crate::jobs::merge_preparing_jobs(
+            collect_jobs(&client),
+            &self.store.borrow().job_history,
+        );
         let remotes = crate::store::build_remote_infos(&dump, &mounts, &serves, &jobs, &hidden);
         let previous = self.snapshot.borrow().jobs.clone();
         let previous_mounts = self.snapshot.borrow().mounts.clone();

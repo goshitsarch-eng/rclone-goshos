@@ -769,6 +769,11 @@ fn operation_page(
     automation.add(&auto_start);
     automation.add(&cron_enabled);
     automation.add(&cron);
+    let cron_preset_row = adw::ActionRow::new();
+    cron_preset_row.set_title("Cron schedule");
+    cron_preset_row.set_visible(op.is_automatable());
+    cron_preset_row.add_suffix(&dialogs::attach_cron_builder(&cron));
+    automation.add(&cron_preset_row);
     automation.add(&watch_enabled);
     automation.add(&watch_delay);
     automation.add(&watch_changed);

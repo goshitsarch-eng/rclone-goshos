@@ -7,6 +7,7 @@ pub mod backend_options;
 pub mod backup;
 pub mod checks;
 pub mod connection;
+pub mod cron;
 pub mod fileops;
 pub mod flags;
 pub mod i18n;
@@ -42,6 +43,7 @@ pub mod transfers;
 pub mod tray_menu;
 pub mod updater;
 pub mod user_templates;
+pub mod validators;
 pub mod vfs;
 pub mod watch;
 

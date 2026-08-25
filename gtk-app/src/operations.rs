@@ -199,7 +199,7 @@ impl OperationType {
             Self::Check => Some("operations/check"),
             Self::Delete => Some("operations/delete"),
             Self::Copyurl => Some("operations/copyurl"),
-            Self::Cryptcheck => Some("operations/check"),
+            Self::Cryptcheck => Some("operations/cryptcheck"),
             Self::Archivecreate => Some("operations/copyfile"),
             Self::Mount | Self::Serve => None,
         }
@@ -424,6 +424,14 @@ mod tests {
         assert!(!OperationType::Mount.is_automatable());
         assert!(!OperationType::Delete.is_browsable());
         assert!(OperationType::Cryptcheck.is_browsable());
+        assert_eq!(
+            OperationType::Cryptcheck.rc_job_endpoint(),
+            Some("operations/cryptcheck")
+        );
+        assert_eq!(
+            OperationType::Check.rc_job_endpoint(),
+            Some("operations/check")
+        );
         assert_eq!(OperationType::Mount.config_key(), "mountConfigs");
         assert_eq!(OperationType::SERVE_TYPES.len(), 8);
         assert!(OperationType::Sync.supports_multi_source());

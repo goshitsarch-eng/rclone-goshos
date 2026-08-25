@@ -191,11 +191,23 @@ This client is the GTK 4 + libadwaita rewrite of the Angular/Tauri desktop UI. I
 - `--share-intake` CLI queues files; Files shows an Upload here banner (Android share parity on Linux)
 - Alert history filters by remote / profile / backend
 - Backup restore can scope to one remote and rename it (`restore as`)
+- Cryptcheck jobs call `operations/cryptcheck` (not `operations/check`)
+- Remote text save via `operations/uploadfile` (multipart, with copyfile fallback)
+- Remote image/video/audio preview downloads to a temp file then embeds GTK Picture/Video
+- PDF first-page preview via `pdftoppm` when Poppler is installed
+- Cron preset buttons plus simple/advanced builder (Angular `cron-input` parity)
+- RC wrappers: `core/du`, `config/paths`, `config/isencrypted`, `config/unlock`
+- Engine calls `config/unlock` after rcd is ready when a config password is set
+- Onboarding: test existing binary, import backup, i18n for remaining pages
+- Provider-field and remote-name validators (Angular `ValidatorRegistryService`)
+- Preparing-upload jobs appear immediately after `start_job` (status `preparing`)
+- Standalone dialog CLI (`--dialog TYPE --dialog-data JSON --dialog-result PATH`) and spawn when the setting is on
 
 ## Still deepening toward pixel-level Angular parity
 
-- Embedded PDF page renderer (system viewer is used today)
+- Full embedded PDF page renderer (first page via pdftoppm; system viewer for the rest)
 - Workflow builder (stub in both apps)
 - Live GUI session against rclone rcd (no display in this environment)
 - Native share portal / Android share intent (Linux uses `--share-intake` + Files banner)
 - Full UI string translation (most GTK labels still English)
+- Standalone dialog child-window result binding beyond the JSON result file

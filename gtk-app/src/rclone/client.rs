@@ -311,6 +311,72 @@ impl RcClient {
         )
     }
 
+    pub fn upload_file(
+        &self,
+        fs: &str,
+        remote: &str,
+        name: &str,
+        content: &[u8],
+    ) -> Result<Value, RcError> {
+        match self.upload_file_multipart(fs, remote, name, content) {
+            Ok(value) => Ok(value),
+            Err(_) => {
+                let tmp = std::env::temp_dir().join(format!("rm-upload-{name}"));
+                std::fs::write(&tmp, content).map_err(|e| RcError::message(e.to_string()))?;
+                let dest = upload_dest_path(remote, name);
+                let result = self.copy_file("/", &tmp.to_string_lossy(), fs, &dest);
+                let _ = std::fs::remove_file(&tmp);
+                result
+            }
+        }
+    }
+
+    fn upload_file_multipart(
+        &self,
+        fs: &str,
+        remote: &str,
+        name: &str,
+        content: &[u8],
+    ) -> Result<Value, RcError> {
+        let boundary = "----rclone-manager-gtk";
+        let mut body = Vec::new();
+        body.extend(
+            format!(
+                "--{boundary}\r\nContent-Disposition: form-data; name=\"file\"; filename=\"{name}\"\r\nContent-Type: application/octet-stream\r\n\r\n"
+            )
+            .into_bytes(),
+        );
+        body.extend(content);
+        body.extend(format!("\r\n--{boundary}--\r\n").into_bytes());
+        let url = format!(
+            "{}/operations/uploadfile?fs={}&remote={}",
+            self.base_url.trim_end_matches('/'),
+            urlencoding::encode(fs),
+            urlencoding::encode(remote)
+        );
+        let mut request = ureq::post(&url).timeout(self.timeout).set(
+            "Content-Type",
+            &format!("multipart/form-data; boundary={boundary}"),
+        );
+        if let (Some(user), Some(pass)) = (&self.user, &self.pass) {
+            request = request.set("Authorization", &basic_auth_header(user, pass));
+        }
+        match request.send_bytes(&body) {
+            Ok(resp) => {
+                let text = resp.into_string().unwrap_or_default();
+                if text.is_empty() {
+                    return Ok(serde_json::json!({}));
+                }
+                serde_json::from_str(&text).or_else(|_| Ok(serde_json::json!({ "raw": text })))
+            }
+            Err(ureq::Error::Status(code, resp)) => {
+                let text = resp.into_string().unwrap_or_default();
+                Err(RcError::Message(format!("HTTP {code}: {text}")))
+            }
+            Err(e) => Err(RcError::Http(e.to_string())),
+        }
+    }
+
     pub fn copy_file(
         &self,
         src_fs: &str,
@@ -411,6 +477,32 @@ impl RcClient {
             "operations/hashsumfile",
             json!({ "fs": fs, "remote": remote, "hashType": hash_type }),
         )
+    }
+
+    pub fn du(&self, dir: Option<&str>) -> Result<DiskUsage, RcError> {
+        let params = match dir.filter(|d| !d.is_empty()) {
+            Some(path) => json!({ "dir": path }),
+            None => json!({}),
+        };
+        let value = self.call("core/du", params)?;
+        parse_du(&value).ok_or_else(|| RcError::message("rclone du returned no usage info"))
+    }
+
+    pub fn config_paths(&self) -> Result<Value, RcError> {
+        self.call("config/paths", json!({}))
+    }
+
+    pub fn config_is_encrypted(&self) -> Result<bool, RcError> {
+        let value = self.call("config/isencrypted", json!({}))?;
+        Ok(value
+            .get("encrypted")
+            .or_else(|| value.get("isEncrypted"))
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false))
+    }
+
+    pub fn config_unlock(&self, password: &str) -> Result<Value, RcError> {
+        self.call("config/unlock", json!({ "configPassword": password }))
     }
 
     pub fn cat(&self, fs: &str, remote: &str, count: Option<i64>) -> Result<String, RcError> {
@@ -986,6 +1078,47 @@ pub struct StatItem {
 
 pub const CAT_PREVIEW_BYTES: i64 = 512 * 1024;
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DiskUsage {
+    pub dir: String,
+    pub total: i64,
+    pub free: i64,
+    pub used: i64,
+}
+
+pub fn parse_du(value: &Value) -> Option<DiskUsage> {
+    let info = value.get("info").unwrap_or(value);
+    let total = info
+        .get("Total")
+        .or_else(|| info.get("total"))
+        .and_then(|v| v.as_i64())?;
+    let free = info
+        .get("Free")
+        .or_else(|| info.get("free"))
+        .and_then(|v| v.as_i64())
+        .unwrap_or(0);
+    Some(DiskUsage {
+        dir: value
+            .get("dir")
+            .and_then(|v| v.as_str())
+            .unwrap_or_default()
+            .to_string(),
+        total,
+        free,
+        used: total.saturating_sub(free),
+    })
+}
+
+pub fn upload_dest_path(remote_dir: &str, name: &str) -> String {
+    if remote_dir.is_empty() || remote_dir == "/" {
+        name.to_string()
+    } else if remote_dir.ends_with('/') {
+        format!("{remote_dir}{name}")
+    } else {
+        format!("{remote_dir}/{name}")
+    }
+}
+
 pub fn parse_cat_content(value: &Value) -> Option<String> {
     if let Some(text) = value.get("content").and_then(|v| v.as_str()) {
         return Some(text.to_string());
@@ -1364,6 +1497,16 @@ mod tests {
         assert_eq!(parse_cat_content(&json!("plain")).as_deref(), Some("plain"));
         assert_eq!(parse_cat_content(&json!({ "hash": "abc" })), None);
         assert_eq!(CAT_PREVIEW_BYTES, 512 * 1024);
+        let du = parse_du(&json!({
+            "dir": "/home",
+            "info": { "Total": 1000, "Free": 400 }
+        }))
+        .unwrap();
+        assert_eq!(du.used, 600);
+        assert_eq!(du.dir, "/home");
+        assert_eq!(upload_dest_path("docs", "a.txt"), "docs/a.txt");
+        assert_eq!(upload_dest_path("docs/", "a.txt"), "docs/a.txt");
+        assert_eq!(upload_dest_path("", "a.txt"), "a.txt");
         assert_eq!(
             parse_batch_results(&json!({ "results": [{ "ok": true }] })).len(),
             1
