@@ -260,6 +260,11 @@ This client is the GTK 4 + libadwaita rewrite of the Angular/Tauri desktop UI. I
 - Files listing shows relative Modified dates
 - File viewer: size in chrome, ArrowLeft/ArrowRight gallery, binary / preview-unavailable pages
 - Alert rule and action editors use `alerts.*` labels
+- Properties: directory bulk `operations/hashsum` listing + copy, file `hashsumfile`
+- Public-link expiry combo (Never / 1h / 1d / 7d / 30d) and unlink i18n
+- Remote About splits MetadataInfo into System vs Standard groups with Type/Help/Example/ReadOnly
+- Files grid tiles show size and relative Modified dates
+- Remaining dialog chrome (quick-add, CLI import, helper profiles, template capture, path kind) uses i18n fallbacks
 
 ## Still deepening toward pixel-level Angular parity
 

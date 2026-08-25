@@ -803,7 +803,7 @@ fn operation_page(
     vfs_row.set_visible(op.supports_vfs());
 
     let src_kind = if op != OperationType::Copyurl {
-        Some(dialogs::attach_path_kind(&src, remote))
+        Some(dialogs::attach_path_kind(&ctx, &src, remote))
     } else {
         None
     };
@@ -811,7 +811,7 @@ fn operation_page(
         op,
         OperationType::Mount | OperationType::Serve | OperationType::Delete
     ) {
-        Some(dialogs::attach_path_kind(&dst, remote))
+        Some(dialogs::attach_path_kind(&ctx, &dst, remote))
     } else {
         None
     };

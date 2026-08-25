@@ -6,8 +6,8 @@ use crate::jobs::{
 };
 use crate::operations::OperationType;
 use crate::rclone::{
-    browse_target, describe_cron_i18n, nanoseconds_to_duration, parse_hashsum, remote_fs,
-    validate_cron,
+    browse_target, describe_cron_i18n, group_metadata_info, nanoseconds_to_duration, parse_hashsum,
+    parse_hashsum_list, public_link_expiry_value, remote_fs, validate_cron,
 };
 use crate::rename::{preview as rename_preview, RenameMode, RenamePlan};
 use crate::store::{
@@ -2844,16 +2844,17 @@ fn remote_editor(
     on_done: Rc<dyn Fn()>,
 ) {
     let dialog = adw::Dialog::new();
-    dialog.set_title(if quick {
-        "Quick Add Remote"
+    let title = if quick {
+        ctx.t_or("wizards.quickAdd.title", "Quick Add Remote")
     } else {
-        "Remote Configuration"
-    });
+        ctx.t_or("general.remoteConfig.title.add", "Remote Configuration")
+    };
+    dialog.set_title(&title);
     dialog.set_content_width(520);
     let page = adw::PreferencesPage::new();
     let group = adw::PreferencesGroup::new();
     let name = adw::EntryRow::new();
-    name.set_title("Remote name");
+    name.set_title(&ctx.t_or("wizards.remoteConfig.remoteName", "Remote name"));
     if let Some(existing) = &existing {
         name.set_text(existing);
         name.set_sensitive(false);
@@ -2885,13 +2886,16 @@ fn remote_editor(
         });
     let type_labels: Vec<&str> = providers.iter().map(|s| s.as_str()).collect();
     let type_row = adw::ComboRow::new();
-    type_row.set_title("Provider type");
+    type_row.set_title(&ctx.t_or("wizards.remoteConfig.remoteType", "Provider type"));
     type_row.set_model(Some(&gtk::StringList::new(&type_labels)));
     if let Some(idx) = providers.iter().position(|p| p == "drive") {
         type_row.set_selected(idx as u32);
     }
     let extra = adw::EntryRow::new();
-    extra.set_title("Parameters (key=value;key=value)");
+    extra.set_title(&ctx.t_or(
+        "wizards.remoteConfig.additionalConfig",
+        "Parameters (key=value;key=value)",
+    ));
     group.add(&name);
     group.add(&type_row);
     group.add(&extra);
@@ -3000,7 +3004,7 @@ pub fn start_operation(
     src.set_text(&default_source(remote, &rclone));
     let src_kind = if op != OperationType::Copyurl {
         attach_path_picker(&ctx, &src, crate::picker::FilePickerConfig::folders());
-        Some(attach_path_kind(&src, remote))
+        Some(attach_path_kind(&ctx, &src, remote))
     } else {
         None
     };
@@ -3046,7 +3050,7 @@ pub fn start_operation(
         None
     } else {
         attach_path_picker(&ctx, &dst, crate::picker::FilePickerConfig::folders());
-        Some(attach_path_kind(&dst, remote))
+        Some(attach_path_kind(&ctx, &dst, remote))
     };
     let dest_status = gtk::Label::new(None);
     dest_status.add_css_class("dim-label");
@@ -3176,7 +3180,7 @@ pub fn start_operation(
             });
         }
     }
-    attach_cli_import(&flags_group, flag_rows.clone());
+    attach_cli_import(&ctx, &flags_group, flag_rows.clone());
 
     {
         let profiles = profiles.clone();
@@ -3553,7 +3557,7 @@ pub fn quick_run_editor(
     group.add(&dst);
     group.add(&cron);
     let cron_preset_row = adw::ActionRow::new();
-    cron_preset_row.set_title("Cron schedule");
+    cron_preset_row.set_title(&ctx.t_or("flow.quickRun.editor.cron", "Cron schedule"));
     cron_preset_row.add_suffix(&cron_presets);
     group.add(&cron_preset_row);
     group.add(&auto);
@@ -3606,7 +3610,7 @@ pub fn quick_run_editor(
         }
     }
     let mount_type = adw::ComboRow::new();
-    mount_type.set_title("Mount type");
+    mount_type.set_title(&ctx.t_or("remoteConfig.mountType", "Mount type"));
     mount_type.set_model(Some(&gtk::StringList::new(
         &crate::operations::combo_names(&mount_types),
     )));
@@ -3628,7 +3632,7 @@ pub fn quick_run_editor(
             &serve_types,
         );
     }
-    attach_cli_import(&flags_group, flag_rows.clone());
+    attach_cli_import(&ctx, &flags_group, flag_rows.clone());
     {
         let flags_group = flags_group.clone();
         let flag_rows = flag_rows.clone();
@@ -4285,8 +4289,10 @@ pub fn properties(
         remote_fs(remote, "")
     };
     let info = ctx.fs_info(remote);
+    let mut is_dir = path.is_empty() || path.ends_with('/') || name.ends_with('/');
     if let Some(client) = ctx.client() {
         if let Ok(Some(stat)) = client.stat(&fs, path) {
+            is_dir = stat.is_dir;
             let row = adw::ActionRow::new();
             row.set_title(&ctx.t_or("fileBrowser.properties.kind", "Kind"));
             row.set_subtitle(&format!(
@@ -4371,6 +4377,120 @@ pub fn properties(
                 "This remote does not advertise hash support",
             ));
             list.append(&row);
+        } else if is_dir {
+            let instr = adw::ActionRow::new();
+            instr.set_title(&ctx.t_or("fileBrowser.properties.checksums", "Checksums"));
+            instr.set_subtitle(&ctx.t_or(
+                "fileBrowser.properties.bulkHashInstruction",
+                "Select a hash type to calculate checksums for all files in this directory.",
+            ));
+            list.append(&instr);
+            let result_view = gtk::TextView::new();
+            result_view.set_editable(false);
+            result_view.set_monospace(true);
+            result_view.set_wrap_mode(gtk::WrapMode::Char);
+            result_view.set_left_margin(12);
+            result_view.set_right_margin(12);
+            result_view.set_top_margin(8);
+            result_view.set_bottom_margin(8);
+            let result_scroll = gtk::ScrolledWindow::new();
+            result_scroll.set_min_content_height(160);
+            result_scroll.set_policy(gtk::PolicyType::Automatic, gtk::PolicyType::Automatic);
+            result_scroll.set_child(Some(&result_view));
+            let result_row = gtk::ListBoxRow::new();
+            result_row.set_activatable(false);
+            result_row.set_child(Some(&result_scroll));
+            result_row.set_visible(false);
+            list.append(&result_row);
+            let result_actions = adw::ActionRow::new();
+            result_actions.set_title(&ctx.t_or(
+                "fileBrowser.properties.generatedChecksums",
+                "Generated Checksums",
+            ));
+            result_actions.set_visible(false);
+            let copy = gtk::Button::from_icon_name("edit-copy-symbolic");
+            copy.set_valign(gtk::Align::Center);
+            copy.set_tooltip_text(Some(&ctx.t_or(
+                "fileBrowser.properties.copyToClipboard",
+                "Copy to clipboard",
+            )));
+            {
+                let result_view = result_view.clone();
+                copy.connect_clicked(move |_| {
+                    let buffer = result_view.buffer();
+                    let start = buffer.start_iter();
+                    let end = buffer.end_iter();
+                    let text = buffer.text(&start, &end, false);
+                    if !text.is_empty() {
+                        if let Some(display) = gtk::gdk::Display::default() {
+                            display.clipboard().set_text(&text);
+                        }
+                    }
+                });
+            }
+            let another = gtk::Button::with_label(&ctx.t_or(
+                "fileBrowser.properties.calculateAnother",
+                "Calculate Another",
+            ));
+            another.set_valign(gtk::Align::Center);
+            {
+                let result_view = result_view.clone();
+                let result_row = result_row.clone();
+                let result_actions = result_actions.clone();
+                another.connect_clicked(move |_| {
+                    result_view.buffer().set_text("");
+                    result_row.set_visible(false);
+                    result_actions.set_visible(false);
+                });
+            }
+            result_actions.add_suffix(&copy);
+            result_actions.add_suffix(&another);
+            list.append(&result_actions);
+            for hash_type in hashes.iter() {
+                let row = adw::ActionRow::new();
+                row.set_title(&hash_type.to_ascii_uppercase());
+                row.set_subtitle(&ctx.t_or("fileBrowser.properties.calculating", "Not calculated"));
+                let calc = gtk::Button::with_label(
+                    &ctx.t_or("fileBrowser.properties.calculateMore", "Calculate"),
+                );
+                calc.set_valign(gtk::Align::Center);
+                {
+                    let row = row.clone();
+                    let ctx = ctx.clone();
+                    let fs = fs.clone();
+                    let path = path.to_string();
+                    let hash_type = hash_type.clone();
+                    let result_view = result_view.clone();
+                    let result_row = result_row.clone();
+                    let result_actions = result_actions.clone();
+                    calc.connect_clicked(move |_| {
+                        if let Some(client) = ctx.client() {
+                            match client.hashsum(&fs, &path, &hash_type) {
+                                Ok(value) => match parse_hashsum_list(&value) {
+                                    Some(text) => {
+                                        result_view.buffer().set_text(&text);
+                                        result_row.set_visible(true);
+                                        result_actions.set_visible(true);
+                                        result_actions
+                                            .set_subtitle(&hash_type.to_ascii_uppercase());
+                                        row.set_subtitle(&ctx.t_or(
+                                            "fileBrowser.properties.generatedChecksums",
+                                            "Generated Checksums",
+                                        ));
+                                    }
+                                    None => row.set_subtitle(&ctx.t_or(
+                                        "fileBrowser.properties.noHashesFound",
+                                        "No hashes returned",
+                                    )),
+                                },
+                                Err(e) => row.set_subtitle(&e.to_string()),
+                            }
+                        }
+                    });
+                }
+                row.add_suffix(&calc);
+                list.append(&row);
+            }
         } else {
             for (idx, hash_type) in hashes.iter().enumerate() {
                 let row = adw::ActionRow::new();
@@ -4433,11 +4553,21 @@ pub fn properties(
             link_row.set_title(&ctx.t_or("fileBrowser.properties.publicLink", "Public link"));
             link_row.set_subtitle(&ctx.t_or("fileBrowser.properties.creatingLink", "Not created"));
             list.append(&link_row);
-            let expire = adw::EntryRow::new();
-            expire.set_title(&ctx.t_or(
-                "fileBrowser.properties.expires",
-                "Link expiry (e.g. 1d, 7d, 1M)",
-            ));
+            let exp_never = ctx.t_or("fileBrowser.properties.expiry.never", "Never");
+            let exp_1h = ctx.t_or("fileBrowser.properties.expiry.1h", "1 Hour");
+            let exp_1d = ctx.t_or("fileBrowser.properties.expiry.1d", "1 Day");
+            let exp_7d = ctx.t_or("fileBrowser.properties.expiry.7d", "7 Days");
+            let exp_30d = ctx.t_or("fileBrowser.properties.expiry.30d", "30 Days");
+            let expire = adw::ComboRow::new();
+            expire.set_title(&ctx.t_or("fileBrowser.properties.expires", "Expires"));
+            expire.set_model(Some(&gtk::StringList::new(&[
+                exp_never.as_str(),
+                exp_1h.as_str(),
+                exp_1d.as_str(),
+                exp_7d.as_str(),
+                exp_30d.as_str(),
+            ])));
+            expire.set_selected(0);
             list.append(&expire);
             let get_link =
                 gtk::Button::with_label(&ctx.t_or("fileBrowser.properties.getLink", "Get Link"));
@@ -4452,11 +4582,11 @@ pub fn properties(
                 let expire = expire.clone();
                 get_link.connect_clicked(move |_| {
                     if let Some(client) = ctx.client() {
-                        let exp = expire.text().to_string();
+                        let exp = public_link_expiry_value(expire.selected()).unwrap_or("");
                         match client.public_link_ex(
                             &fs,
                             &path,
-                            (!exp.is_empty()).then_some(exp.as_str()),
+                            (!exp.is_empty()).then_some(exp),
                             false,
                         ) {
                             Ok(url) if !url.is_empty() => {
@@ -4482,7 +4612,9 @@ pub fn properties(
                 unlink.connect_clicked(move |_| {
                     if let Some(client) = ctx.client() {
                         match client.public_link_ex(&fs, &path, None, true) {
-                            Ok(_) => link_row.set_subtitle("Link removed"),
+                            Ok(_) => link_row.set_subtitle(
+                                &ctx.t_or("fileBrowser.properties.linkRemoved", "Link removed"),
+                            ),
                             Err(e) => link_row.set_subtitle(&e.to_string()),
                         }
                     }
@@ -5697,6 +5829,54 @@ pub fn file_viewer(
     dialog.present(Some(parent));
 }
 
+fn metadata_item_row(ctx: &AppCtx, key: &str, meta: &serde_json::Value) -> adw::ActionRow {
+    let row = adw::ActionRow::new();
+    row.set_title(key);
+    let typ = meta
+        .get("Type")
+        .or_else(|| meta.get("type"))
+        .and_then(|x| x.as_str());
+    let help = meta
+        .get("Help")
+        .or_else(|| meta.get("help"))
+        .and_then(|x| x.as_str())
+        .unwrap_or("");
+    let example = meta
+        .get("Example")
+        .or_else(|| meta.get("example"))
+        .and_then(|x| x.as_str());
+    let readonly = meta
+        .get("ReadOnly")
+        .or_else(|| meta.get("readOnly"))
+        .and_then(|x| x.as_bool());
+    let mut parts = Vec::new();
+    if let Some(typ) = typ.filter(|s| !s.is_empty()) {
+        parts.push(typ.to_string());
+    } else {
+        parts.push(ctx.t_or("fileBrowser.remoteAbout.unknown", "Unknown"));
+    }
+    if !help.is_empty() {
+        parts.push(help.to_string());
+    }
+    if let Some(ex) = example.filter(|s| !s.is_empty()) {
+        parts.push(format!(
+            "{}: {ex}",
+            ctx.t_or("fileBrowser.remoteAbout.example", "Example")
+        ));
+    }
+    if let Some(ro) = readonly {
+        let yes = ctx.t_or("fileBrowser.remoteAbout.yes", "Yes");
+        let no = ctx.t_or("fileBrowser.remoteAbout.no", "No");
+        parts.push(format!(
+            "{}: {}",
+            ctx.t_or("fileBrowser.remoteAbout.readOnly", "Read Only"),
+            if ro { yes } else { no }
+        ));
+    }
+    row.set_subtitle(&parts.join(" · "));
+    row
+}
+
 pub fn remote_about(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, remote: &str) {
     let dialog = adw::Dialog::new();
     dialog.set_title(&format!(
@@ -5722,10 +5902,15 @@ pub fn remote_about(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, remote: &str) {
     if let Some(client) = ctx.client() {
         match client.about(&fs) {
             Ok(about) => {
-                for key in ["used", "free", "total", "trashed"] {
+                for (key, label, fallback) in [
+                    ("used", "fileBrowser.remoteAbout.usedSpace", "Used Space"),
+                    ("free", "fileBrowser.remoteAbout.freeSpace", "Free Space"),
+                    ("total", "fileBrowser.remoteAbout.totalSpace", "Total Space"),
+                    ("trashed", "fileBrowser.remoteAbout.trashed", "Trashed"),
+                ] {
                     if let Some(value) = about.get(key).and_then(|x| x.as_i64()) {
                         let row = adw::ActionRow::new();
-                        row.set_title(key);
+                        row.set_title(&ctx.t_or(label, fallback));
                         row.set_subtitle(&crate::rclone::format_bytes(value));
                         usage.add(&row);
                     }
@@ -5761,7 +5946,7 @@ pub fn remote_about(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, remote: &str) {
             }
             Err(e) => {
                 let row = adw::ActionRow::new();
-                row.set_title("Size");
+                row.set_title(&ctx.t_or("fileBrowser.properties.size", "Size"));
                 row.set_subtitle(&e.to_string());
                 usage.add(&row);
             }
@@ -5782,13 +5967,16 @@ pub fn remote_about(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, remote: &str) {
             root.set_subtitle(&root_text);
             usage.add(&root);
             let precision = adw::ActionRow::new();
-            precision.set_title("Timestamp precision");
+            precision.set_title(&ctx.t_or(
+                "fileBrowser.remoteAbout.timePrecision",
+                "Timestamp precision",
+            ));
             let precision_text = nanoseconds_to_duration(info.precision);
             precision.set_subtitle(&precision_text);
             usage.add(&precision);
             if info.hashes.is_empty() {
                 let row = adw::ActionRow::new();
-                row.set_title("None");
+                row.set_title(&ctx.t_or("fileBrowser.remoteAbout.noneSupported", "None"));
                 hashes.add(&row);
             } else {
                 for hash in &info.hashes {
@@ -5803,32 +5991,58 @@ pub fn remote_about(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, remote: &str) {
                 }
                 let row = adw::ActionRow::new();
                 row.set_title(key);
-                row.set_subtitle(if *value { "yes" } else { "no" });
+                let yes = ctx.t_or("fileBrowser.remoteAbout.yes", "Yes");
+                let no = ctx.t_or("fileBrowser.remoteAbout.no", "No");
+                row.set_subtitle(if *value { &yes } else { &no });
                 features.add(&row);
             }
-            if let Some(obj) = info.metadata.as_object() {
-                for (group_name, data) in obj {
-                    if let Some(items) = data.as_object() {
-                        for (key, meta) in items {
-                            let row = adw::ActionRow::new();
-                            row.set_title(&format!("{group_name}.{key}"));
-                            let help = meta
-                                .get("Help")
-                                .or_else(|| meta.get("help"))
-                                .and_then(|x| x.as_str())
-                                .unwrap_or("");
-                            row.set_subtitle(help);
-                            metadata.add(&row);
-                        }
-                    }
-                }
+            let (system_items, standard_items) = group_metadata_info(&info.metadata);
+            let metadata_system = adw::PreferencesGroup::new();
+            metadata_system
+                .set_title(&ctx.t_or("fileBrowser.remoteAbout.metadata.system", "System Metadata"));
+            let metadata_standard = adw::PreferencesGroup::new();
+            metadata_standard.set_title(&ctx.t_or(
+                "fileBrowser.remoteAbout.metadata.standard",
+                "Standard Metadata",
+            ));
+            for (key, meta) in &system_items {
+                metadata_system.add(&metadata_item_row(&ctx, key, meta));
             }
+            for (key, meta) in &standard_items {
+                metadata_standard.add(&metadata_item_row(&ctx, key, meta));
+            }
+            if system_items.is_empty() && standard_items.is_empty() {
+                let row = adw::ActionRow::new();
+                row.set_title(&ctx.t_or(
+                    "fileBrowser.remoteAbout.noMetadata",
+                    "No metadata specifications available.",
+                ));
+                metadata.add(&row);
+            }
+            page.add(&usage);
+            page.add(&hashes);
+            page.add(&features);
+            if !system_items.is_empty() {
+                page.add(&metadata_system);
+            }
+            if !standard_items.is_empty() {
+                page.add(&metadata_standard);
+            }
+            if system_items.is_empty() && standard_items.is_empty() {
+                page.add(&metadata);
+            }
+        } else {
+            page.add(&usage);
+            page.add(&hashes);
+            page.add(&features);
+            page.add(&metadata);
         }
+    } else {
+        page.add(&usage);
+        page.add(&hashes);
+        page.add(&features);
+        page.add(&metadata);
     }
-    page.add(&usage);
-    page.add(&hashes);
-    page.add(&features);
-    page.add(&metadata);
     let scroll = gtk::ScrolledWindow::new();
     scroll.set_vexpand(true);
     scroll.set_child(Some(&page));
@@ -6251,14 +6465,20 @@ pub fn install_rclone_update(
 
 pub fn helper_profiles(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, remote: &str) {
     let dialog = adw::Dialog::new();
-    dialog.set_title(&format!("Helper profiles — {remote}"));
+    dialog.set_title(&format!(
+        "{} — {remote}",
+        ctx.t_or(
+            "general.remoteConfig.advancedProfiles.title",
+            "Helper profiles"
+        )
+    ));
     dialog.set_content_width(560);
     dialog.set_content_height(520);
     let kind = adw::ComboRow::new();
-    kind.set_title("Category");
+    kind.set_title(&ctx.t_or("common.category", "Category"));
     kind.set_model(Some(&gtk::StringList::new(&["vfs", "filter", "backend"])));
     let name = adw::EntryRow::new();
-    name.set_title("Profile name");
+    name.set_title(&ctx.t_or("wizards.cliImport.profileName", "Profile name"));
     name.set_text("default");
     let json_view = gtk::TextView::new();
     json_view.set_monospace(true);
@@ -6596,12 +6816,13 @@ fn flag_value_row(flag: &crate::flags::FlagOption, rclone: &serde_json::Value) -
 }
 
 fn attach_cli_import(
+    ctx: &AppCtx,
     flags_group: &adw::PreferencesGroup,
     flag_rows: Rc<RefCell<Vec<(String, adw::EntryRow, String)>>>,
 ) {
     let cli = adw::EntryRow::new();
-    cli.set_title("Import rclone CLI flags");
-    let apply_cli = gtk::Button::with_label("Apply");
+    cli.set_title(&ctx.t_or("wizards.cliImport.placeholder", "Import rclone CLI flags"));
+    let apply_cli = gtk::Button::with_label(&ctx.t_or("common.apply", "Apply"));
     {
         let flag_rows = flag_rows.clone();
         let cli = cli.clone();
@@ -6618,7 +6839,7 @@ fn attach_cli_import(
         });
     }
     let cli_row = adw::ActionRow::new();
-    cli_row.set_title("CLI import");
+    cli_row.set_title(&ctx.t_or("wizards.cliImport.title", "CLI import"));
     cli_row.add_suffix(&apply_cli);
     flags_group.add(&cli);
     flags_group.add(&cli_row);
@@ -6792,36 +7013,54 @@ fn delete_check_side(ctx: &AppCtx, fs: &str, path: &str) {
 
 fn capture_template(parent: &impl IsA<gtk::Widget>, ctx: AppCtx) {
     let dialog = adw::Dialog::new();
-    dialog.set_title("Capture template");
+    dialog.set_title(&ctx.t_or("templates.saveAsTemplate", "Capture template"));
     dialog.set_content_width(420);
     let name = adw::EntryRow::new();
-    name.set_title("Name");
+    name.set_title(&ctx.t_or("templates.templateName", "Name"));
     name.set_text(&format!(
         "Template {}",
         chrono::Local::now().format("%Y-%m-%d %H:%M")
     ));
     let categories = [
-        ("backend", "Backend / main"),
-        ("filter", "Filter"),
-        ("vfs", "VFS"),
-        ("mount", "Mount"),
-        ("copy", "Copy"),
-        ("sync", "Sync"),
-        ("check", "Check"),
-        ("network", "Network"),
-        ("other", "Other"),
+        (
+            "backend",
+            ctx.t_or("general.remoteConfig.steps.backend", "Backend / main"),
+        ),
+        (
+            "filter",
+            ctx.t_or("general.remoteConfig.steps.filter", "Filter"),
+        ),
+        ("vfs", ctx.t_or("general.remoteConfig.steps.vfs", "VFS")),
+        (
+            "mount",
+            ctx.t_or("general.remoteConfig.steps.mount", "Mount"),
+        ),
+        ("copy", ctx.t_or("general.remoteConfig.steps.copy", "Copy")),
+        ("sync", ctx.t_or("general.remoteConfig.steps.sync", "Sync")),
+        (
+            "check",
+            ctx.t_or("general.remoteConfig.steps.check", "Check"),
+        ),
+        (
+            "network",
+            ctx.t_or(
+                "settings.rcloneFlags.mainCategories.network.title",
+                "Network",
+            ),
+        ),
+        ("other", ctx.t_or("common.other", "Other")),
     ];
     let switches: Vec<(&'static str, adw::SwitchRow)> = categories
-        .into_iter()
+        .iter()
         .map(|(id, label)| {
             let row = adw::SwitchRow::new();
             row.set_title(label);
             row.set_active(true);
-            (id, row)
+            (*id, row)
         })
         .collect();
     let group = adw::PreferencesGroup::new();
-    group.set_title("Categories to include");
+    group.set_title(&ctx.t_or("templates.selectAllKeys", "Categories to include"));
     group.add(&name);
     for (_, row) in &switches {
         group.add(row);
@@ -6920,13 +7159,20 @@ pub(crate) fn helper_selected(row: &adw::ComboRow, names: &[String]) -> String {
         .unwrap_or_default()
 }
 
-pub(crate) fn attach_path_kind(row: &adw::EntryRow, current_remote: &str) -> adw::ComboRow {
+pub(crate) fn attach_path_kind(
+    ctx: &AppCtx,
+    row: &adw::EntryRow,
+    current_remote: &str,
+) -> adw::ComboRow {
     let combo = adw::ComboRow::new();
-    combo.set_title("Path type");
+    combo.set_title(&ctx.t_or("fileBrowser.pathKind.title", "Path type"));
+    let local = ctx.t_or("fileBrowser.pathKind.local", "Local");
+    let current = ctx.t_or("fileBrowser.pathKind.currentRemote", "Current remote");
+    let other = ctx.t_or("fileBrowser.pathKind.otherRemote", "Other remote");
     combo.set_model(Some(&gtk::StringList::new(&[
-        "Local",
-        "Current remote",
-        "Other remote",
+        local.as_str(),
+        current.as_str(),
+        other.as_str(),
     ])));
     let remote = current_remote.to_string();
     let kind = crate::path_kind::infer_path_kind(&row.text(), &remote);

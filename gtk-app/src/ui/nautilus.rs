@@ -2084,6 +2084,15 @@ impl NautilusView {
         label.set_wrap(true);
         tile.append(&icon);
         tile.append(&label);
+        let caption = crate::rclone::listing_caption(entry.is_dir, entry.size, &entry.mod_time);
+        if !caption.is_empty() {
+            let meta = gtk::Label::new(Some(&caption));
+            meta.add_css_class("dim-label");
+            meta.set_ellipsize(gtk::pango::EllipsizeMode::End);
+            meta.set_max_width_chars(14);
+            meta.set_justify(gtk::Justification::Center);
+            tile.append(&meta);
+        }
         self.attach_item_dnd(&tile, &entry, tab, primary);
         tile
     }

@@ -1452,6 +1452,78 @@ pub fn parse_hashsum(value: &Value) -> Option<String> {
     None
 }
 
+/// Angular `calculateBulkHash` result: join the full `hashsum[]` listing.
+pub fn parse_hashsum_list(value: &Value) -> Option<String> {
+    if let Some(arr) = value.get("hashsum").and_then(|x| x.as_array()) {
+        let lines: Vec<&str> = arr.iter().filter_map(|x| x.as_str()).collect();
+        if !lines.is_empty() {
+            return Some(lines.join("\n"));
+        }
+    }
+    if let Some(s) = value.get("hash").and_then(|x| x.as_str()) {
+        if !s.trim().is_empty() {
+            return Some(s.to_string());
+        }
+    }
+    None
+}
+
+/// Angular `expiryOptions`: Never / 1h / 1d / 7d / 30d.
+pub const PUBLIC_LINK_EXPIRY_VALUES: [&str; 5] = ["", "1h", "1d", "7d", "30d"];
+
+pub fn public_link_expiry_value(index: u32) -> Option<&'static str> {
+    PUBLIC_LINK_EXPIRY_VALUES.get(index as usize).copied()
+}
+
+/// Angular `metadataGroups`: System keys vs other MetadataInfo object groups.
+pub fn group_metadata_info(metadata: &Value) -> (Vec<(String, Value)>, Vec<(String, Value)>) {
+    let Some(obj) = metadata.as_object() else {
+        return (Vec::new(), Vec::new());
+    };
+    let mut system = Vec::new();
+    let mut standard = Vec::new();
+    if let Some(sys) = obj.get("System").and_then(|x| x.as_object()) {
+        for (key, meta) in sys {
+            system.push((key.clone(), meta.clone()));
+        }
+    }
+    for (group_name, data) in obj {
+        if group_name.eq_ignore_ascii_case("System") || group_name.eq_ignore_ascii_case("Help") {
+            continue;
+        }
+        if let Some(items) = data.as_object() {
+            let looks_grouped = items.values().any(|v| {
+                v.is_object()
+                    && (v.get("Help").is_some()
+                        || v.get("help").is_some()
+                        || v.get("Type").is_some()
+                        || v.get("type").is_some())
+            });
+            if looks_grouped {
+                for (key, meta) in items {
+                    standard.push((key.clone(), meta.clone()));
+                }
+            } else {
+                standard.push((group_name.clone(), data.clone()));
+            }
+        }
+    }
+    (system, standard)
+}
+
+/// Files grid caption: folders show relative date; files show `size · date`.
+pub fn listing_caption(is_dir: bool, size: i64, mod_time: &str) -> String {
+    let relative = format_relative_mod_time(mod_time);
+    if is_dir {
+        return relative;
+    }
+    if relative.is_empty() {
+        format_bytes(size)
+    } else {
+        format!("{} · {relative}", format_bytes(size))
+    }
+}
+
 pub fn parse_archive_list(result: &str, long: bool) -> Vec<ArchiveListItem> {
     let mut items = Vec::new();
     for line in result.lines() {
@@ -1722,6 +1794,32 @@ mod tests {
             parse_hashsum(&json!({ "hashsum": ["deadbeef file.bin"] })).as_deref(),
             Some("deadbeef")
         );
+        assert_eq!(
+            parse_hashsum_list(&json!({
+                "hashsum": ["abc  a.txt", "def  b.txt"]
+            }))
+            .as_deref(),
+            Some("abc  a.txt\ndef  b.txt")
+        );
+        assert_eq!(
+            parse_hashsum_list(&json!({ "hash": "only-hash" })).as_deref(),
+            Some("only-hash")
+        );
+        assert_eq!(parse_hashsum_list(&json!({})), None);
+        assert_eq!(public_link_expiry_value(0), Some(""));
+        assert_eq!(public_link_expiry_value(2), Some("1d"));
+        assert_eq!(public_link_expiry_value(9), None);
+        let (system, standard) = group_metadata_info(&json!({
+            "System": { "mtime": { "Help": "mod time", "Type": "date" } },
+            "Help": "ignored string",
+            "User": { "comment": { "Help": "user field" } }
+        }));
+        assert_eq!(system.len(), 1);
+        assert_eq!(system[0].0, "mtime");
+        assert_eq!(standard.len(), 1);
+        assert_eq!(standard[0].0, "comment");
+        assert!(listing_caption(true, 0, "").is_empty());
+        assert!(listing_caption(false, 1024, "").contains("1.0"));
         assert_eq!(
             public_link_payload("drive:", "Photos/a.jpg", Some("1d"), false),
             json!({ "fs": "drive:", "remote": "Photos/a.jpg", "expire": "1d" })
