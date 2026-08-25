@@ -1,0 +1,10 @@
+[Desktop Entry]
+Name=Rclone Manager
+Comment=GTK 4 + libadwaita client for managing rclone remotes
+Exec=rclone-manager-gtk
+Icon=folder-remote
+Terminal=false
+Type=Application
+Categories=Utility;FileTools;Network;
+StartupWMClass=io.github.zarestia_dev.rclone-manager
+Keywords=rclone;cloud;sync;mount;

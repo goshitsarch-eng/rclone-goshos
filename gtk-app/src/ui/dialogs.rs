@@ -1,0 +1,840 @@
+use super::AppCtx;
+use crate::backup;
+use crate::operations::OperationType;
+use crate::rclone::{remote_fs, validate_cron};
+use crate::store::{AlertAction, AlertEvent, AlertEventKind, AlertRule, AlertSeverity, QuickRun};
+use adw::prelude::*;
+use gtk::gio;
+use gtk::prelude::*;
+use std::rc::Rc;
+
+pub fn prompt(
+    parent: &impl IsA<gtk::Widget>,
+    title: &str,
+    label: &str,
+    initial: &str,
+    on_ok: impl Fn(String) + 'static,
+) {
+    let dialog = adw::AlertDialog::new(Some(title), Some(label));
+    let entry = gtk::Entry::new();
+    entry.set_text(initial);
+    dialog.set_extra_child(Some(&entry));
+    dialog.add_response("cancel", "Cancel");
+    dialog.add_response("ok", "OK");
+    dialog.set_response_appearance("ok", adw::ResponseAppearance::Suggested);
+    dialog.set_default_response(Some("ok"));
+    dialog.set_close_response("cancel");
+    dialog.connect_response(None, move |_, response| {
+        if response == "ok" {
+            on_ok(entry.text().to_string());
+        }
+    });
+    dialog.present(Some(parent));
+}
+
+pub fn preferences(parent: &impl IsA<gtk::Widget>, ctx: AppCtx) {
+    let dialog = adw::PreferencesDialog::new();
+    dialog.set_title("Preferences");
+    dialog.set_search_enabled(true);
+
+    let general = adw::PreferencesPage::new();
+    general.set_title("General");
+    general.set_icon_name(Some("preferences-system-symbolic"));
+    let g1 = adw::PreferencesGroup::new();
+    g1.set_title("Appearance & language");
+
+    let langs = crate::i18n::SUPPORTED_LANGUAGES;
+    let lang_model = gtk::StringList::new(langs);
+    let lang = adw::ComboRow::new();
+    lang.set_title("Language");
+    lang.set_subtitle("Application language");
+    lang.set_model(Some(&lang_model));
+    if let Some(idx) = langs
+        .iter()
+        .position(|l| *l == ctx.settings.borrow().general.language)
+    {
+        lang.set_selected(idx as u32);
+    }
+    {
+        let ctx = ctx.clone();
+        lang.connect_selected_notify(move |row| {
+            let idx = row.selected() as usize;
+            if let Some(code) = langs.get(idx) {
+                ctx.settings.borrow_mut().general.language = (*code).to_string();
+                *ctx.i18n.borrow_mut() = crate::i18n::I18n::load(code);
+                ctx.persist();
+            }
+        });
+    }
+    g1.add(&lang);
+
+    let views = ["main_menu", "nautilus", "flow"];
+    let view_model = gtk::StringList::new(&views);
+    let view = adw::ComboRow::new();
+    view.set_title("Default view");
+    view.set_model(Some(&view_model));
+    if let Some(idx) = views
+        .iter()
+        .position(|v| *v == ctx.settings.borrow().general.default_view)
+    {
+        view.set_selected(idx as u32);
+    }
+    {
+        let ctx = ctx.clone();
+        view.connect_selected_notify(move |row| {
+            if let Some(v) = views.get(row.selected() as usize) {
+                ctx.settings.borrow_mut().general.default_view = (*v).to_string();
+                ctx.persist();
+            }
+        });
+    }
+    g1.add(&view);
+
+    g1.add(&switch_row(
+        "Enable tray",
+        ctx.settings.borrow().general.tray_enabled,
+        {
+            let ctx = ctx.clone();
+            move |v| ctx.settings.borrow_mut().general.tray_enabled = v
+        },
+    ));
+    g1.add(&switch_row(
+        "Start on startup",
+        ctx.settings.borrow().general.start_on_startup,
+        {
+            let ctx = ctx.clone();
+            move |v| ctx.settings.borrow_mut().general.start_on_startup = v
+        },
+    ));
+    g1.add(&switch_row(
+        "Notifications",
+        ctx.settings.borrow().general.notifications,
+        {
+            let ctx = ctx.clone();
+            move |v| ctx.settings.borrow_mut().general.notifications = v
+        },
+    ));
+    g1.add(&switch_row(
+        "Restrict sensitive values",
+        ctx.settings.borrow().general.restrict,
+        {
+            let ctx = ctx.clone();
+            move |v| ctx.settings.borrow_mut().general.restrict = v
+        },
+    ));
+    g1.add(&switch_row(
+        "Prevent sleep during jobs",
+        ctx.settings.borrow().general.prevent_sleep,
+        {
+            let ctx = ctx.clone();
+            move |v| ctx.settings.borrow_mut().general.prevent_sleep = v
+        },
+    ));
+    general.add(&g1);
+
+    let core = adw::PreferencesPage::new();
+    core.set_title("Core");
+    core.set_icon_name(Some("application-x-executable-symbolic"));
+    let c1 = adw::PreferencesGroup::new();
+    c1.set_title("Rclone");
+    let binary = adw::EntryRow::new();
+    binary.set_title("Rclone binary");
+    binary.set_text(&ctx.settings.borrow().core.rclone_binary);
+    {
+        let ctx = ctx.clone();
+        binary.connect_changed(move |row| {
+            ctx.settings.borrow_mut().core.rclone_binary = row.text().to_string();
+            ctx.persist();
+        });
+    }
+    c1.add(&binary);
+    let bw = adw::EntryRow::new();
+    bw.set_title("Bandwidth limit");
+    bw.set_text(&ctx.settings.borrow().core.bandwidth_limit);
+    {
+        let ctx = ctx.clone();
+        bw.connect_changed(move |row| {
+            let rate = row.text().to_string();
+            ctx.settings.borrow_mut().core.bandwidth_limit = rate.clone();
+            ctx.persist();
+            if let Some(client) = ctx.client() {
+                let _ = client.bwlimit(if rate.is_empty() { None } else { Some(&rate) });
+            }
+        });
+    }
+    c1.add(&bw);
+    let tray_items = adw::SpinRow::with_range(1.0, 40.0, 1.0);
+    tray_items.set_title("Max tray items");
+    tray_items.set_value(ctx.settings.borrow().core.max_tray_items as f64);
+    {
+        let ctx = ctx.clone();
+        tray_items.connect_changed(move |row| {
+            ctx.settings.borrow_mut().core.max_tray_items = row.value() as usize;
+            ctx.persist();
+        });
+    }
+    c1.add(&tray_items);
+    core.add(&c1);
+
+    let dev = adw::PreferencesPage::new();
+    dev.set_title("Developer");
+    dev.set_icon_name(Some("applications-engineering-symbolic"));
+    let d1 = adw::PreferencesGroup::new();
+    let levels = ["error", "warn", "info", "debug", "trace"];
+    let level_model = gtk::StringList::new(&levels);
+    let level = adw::ComboRow::new();
+    level.set_title("Log level");
+    level.set_model(Some(&level_model));
+    if let Some(idx) = levels
+        .iter()
+        .position(|l| *l == ctx.settings.borrow().developer.log_level)
+    {
+        level.set_selected(idx as u32);
+    }
+    {
+        let ctx = ctx.clone();
+        level.connect_selected_notify(move |row| {
+            if let Some(v) = levels.get(row.selected() as usize) {
+                ctx.settings.borrow_mut().developer.log_level = (*v).to_string();
+                ctx.persist();
+            }
+        });
+    }
+    d1.add(&level);
+    d1.add(&switch_row(
+        "Destroy window on close",
+        ctx.settings.borrow().developer.destroy_window_on_close,
+        {
+            let ctx = ctx.clone();
+            move |v| ctx.settings.borrow_mut().developer.destroy_window_on_close = v
+        },
+    ));
+    dev.add(&d1);
+
+    dialog.add(&general);
+    dialog.add(&core);
+    dialog.add(&dev);
+    dialog.present(Some(parent));
+}
+
+fn switch_row(title: &str, active: bool, on_change: impl Fn(bool) + 'static) -> adw::SwitchRow {
+    let row = adw::SwitchRow::new();
+    row.set_title(title);
+    row.set_active(active);
+    row.connect_active_notify(move |row| on_change(row.is_active()));
+    row
+}
+
+pub fn about(parent: &impl IsA<gtk::Widget>, ctx: AppCtx) {
+    let version = ctx
+        .engine
+        .borrow()
+        .as_ref()
+        .map(|e| e.version.clone())
+        .unwrap_or_default();
+    let dialog = adw::AboutDialog::builder()
+        .application_name("Rclone Manager")
+        .application_icon("folder-remote-symbolic")
+        .developer_name("Zarestia Dev")
+        .version(env!("CARGO_PKG_VERSION"))
+        .website("https://github.com/Zarestia-Dev/rclone-manager")
+        .issue_url("https://github.com/Zarestia-Dev/rclone-manager/issues")
+        .license_type(gtk::License::Gpl30)
+        .comments(format!(
+            "GTK 4 + libadwaita desktop client\nrclone {version}"
+        ))
+        .build();
+    dialog.present(Some(parent));
+}
+
+pub fn shortcuts(parent: &impl IsA<gtk::Widget>) {
+    let dialog = adw::Dialog::new();
+    dialog.set_title("Keyboard Shortcuts");
+    dialog.set_content_width(560);
+    dialog.set_content_height(520);
+    let list = gtk::ListBox::new();
+    list.add_css_class("boxed-list");
+    for (keys, desc) in [
+        ("Ctrl+Q", "Quit"),
+        ("Ctrl+B", "File browser"),
+        ("Ctrl+N", "Detailed remote"),
+        ("Ctrl+R", "Quick add remote"),
+        ("Ctrl+I", "Import settings"),
+        ("Ctrl+E", "Export settings"),
+        ("Ctrl+,", "Preferences"),
+        ("Ctrl+.", "Rclone flags"),
+        ("Ctrl+Alt+A", "Alerts"),
+        ("Ctrl+Alt+F", "Flow"),
+        ("Ctrl+Shift+?", "Shortcuts"),
+        ("Ctrl+Shift+M", "Refresh mounts"),
+        ("Ctrl+Shift+S", "Refresh serves"),
+        ("Ctrl+L / Ctrl+F", "Focus path / search (Files)"),
+        ("F5", "Reload listing"),
+        ("F2", "Rename"),
+        ("Delete", "Delete"),
+        ("Ctrl+C / X / V", "Copy / Cut / Paste"),
+        ("Ctrl+Shift+N", "New folder"),
+        ("Ctrl+H", "Toggle hidden files"),
+        ("Backspace", "Parent folder"),
+    ] {
+        let row = adw::ActionRow::new();
+        row.set_title(desc);
+        row.set_subtitle(keys);
+        list.append(&row);
+    }
+    let scroll = gtk::ScrolledWindow::new();
+    scroll.set_child(Some(&list));
+    dialog.set_child(Some(&scroll));
+    dialog.present(Some(parent));
+}
+
+pub fn logs(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, remote: Option<String>) {
+    let dialog = adw::Dialog::new();
+    dialog.set_title("Logs");
+    dialog.set_content_width(720);
+    dialog.set_content_height(480);
+    let view = gtk::TextView::new();
+    view.set_editable(false);
+    view.set_monospace(true);
+    let key = remote.unwrap_or_else(|| "_engine".into());
+    let text = ctx
+        .store
+        .borrow()
+        .logs
+        .get(&key)
+        .map(|lines| lines.join("\n"))
+        .unwrap_or_else(|| "No logs yet.".into());
+    view.buffer().set_text(&text);
+    let scroll = gtk::ScrolledWindow::new();
+    scroll.set_child(Some(&view));
+    dialog.set_child(Some(&scroll));
+    dialog.present(Some(parent));
+}
+
+pub fn rclone_flags(parent: &impl IsA<gtk::Widget>, ctx: AppCtx) {
+    let dialog = adw::PreferencesDialog::new();
+    dialog.set_title("Rclone Flags");
+    let page = adw::PreferencesPage::new();
+    page.set_title("Options");
+    let group = adw::PreferencesGroup::new();
+    group.set_description(Some(
+        "Global rclone RC options. Changes apply immediately when the engine is running.",
+    ));
+    if let Some(client) = ctx.client() {
+        if let Ok(opts) = client.options_get() {
+            if let Some(obj) = opts.as_object() {
+                for (section, values) in obj.iter().take(8) {
+                    let row = adw::ActionRow::new();
+                    row.set_title(section);
+                    row.set_subtitle(&values.to_string());
+                    group.add(&row);
+                }
+            }
+        } else {
+            let row = adw::ActionRow::new();
+            row.set_title("Unable to load options");
+            group.add(&row);
+        }
+    } else {
+        let row = adw::ActionRow::new();
+        row.set_title("Engine offline");
+        group.add(&row);
+    }
+    page.add(&group);
+    dialog.add(&page);
+    dialog.present(Some(parent));
+}
+
+pub fn backends(parent: &impl IsA<gtk::Widget>, ctx: AppCtx) {
+    let dialog = adw::Dialog::new();
+    dialog.set_title("Backends");
+    let page = adw::StatusPage::new();
+    page.set_icon_name(Some("network-server-symbolic"));
+    page.set_title("Local rclone RC backend");
+    let ready = ctx.engine_ready();
+    let port = ctx.engine.borrow().as_ref().map(|e| e.port).unwrap_or(0);
+    page.set_description(Some(&format!(
+        "This GTK client manages a local rclone rcd instance on 127.0.0.1:{port}. Ready: {ready}"
+    )));
+    dialog.set_child(Some(&page));
+    dialog.present(Some(parent));
+}
+
+pub fn alerts(parent: &impl IsA<gtk::Widget>, ctx: AppCtx) {
+    let dialog = adw::Dialog::new();
+    dialog.set_title("Alerts");
+    dialog.set_content_width(720);
+    dialog.set_content_height(520);
+    let stack = adw::ViewStack::new();
+    let history = gtk::ListBox::new();
+    history.add_css_class("boxed-list");
+    for event in ctx.store.borrow().alert_history.iter().take(50) {
+        let row = adw::ActionRow::new();
+        row.set_title(&event.title);
+        row.set_subtitle(&format!(
+            "{} · {} · {}",
+            event.severity.as_str(),
+            event.kind.as_str(),
+            event.body
+        ));
+        history.append(&row);
+    }
+    if history.first_child().is_none() {
+        let row = adw::ActionRow::new();
+        row.set_title("No alert history");
+        history.append(&row);
+    }
+    stack.add_titled(&scrolled_list(&history), Some("history"), "History");
+
+    let rules = gtk::ListBox::new();
+    rules.add_css_class("boxed-list");
+    for rule in &ctx.store.borrow().alert_rules {
+        let row = adw::ActionRow::new();
+        row.set_title(&rule.name);
+        row.set_subtitle(&format!(
+            "min {} · {} actions",
+            rule.severity_min.as_str(),
+            rule.action_ids.len()
+        ));
+        rules.append(&row);
+    }
+    let add_rule = gtk::Button::with_label("Add rule");
+    {
+        let ctx = ctx.clone();
+        let parent = parent.clone();
+        add_rule.connect_clicked(move |_| {
+            let mut rule = AlertRule::new("New rule".into());
+            rule.event_filter = vec![AlertEventKind::Job];
+            ctx.store.borrow_mut().alert_rules.push(rule);
+            ctx.persist();
+            alerts(&parent, ctx.clone());
+        });
+    }
+    let rules_box = gtk::Box::new(gtk::Orientation::Vertical, 8);
+    rules_box.append(&scrolled_list(&rules));
+    rules_box.append(&add_rule);
+    stack.add_titled(&rules_box, Some("rules"), "Rules");
+
+    let actions = gtk::ListBox::new();
+    actions.add_css_class("boxed-list");
+    for action in &ctx.store.borrow().alert_actions {
+        let row = adw::ActionRow::new();
+        row.set_title(&action.name);
+        row.set_subtitle(&action.kind);
+        actions.append(&row);
+    }
+    let add_action = gtk::Button::with_label("Add action");
+    {
+        let ctx = ctx.clone();
+        add_action.connect_clicked(move |_| {
+            ctx.store.borrow_mut().alert_actions.push(AlertAction::new(
+                "Desktop notification".into(),
+                "os_toast".into(),
+            ));
+            ctx.persist();
+        });
+    }
+    let actions_box = gtk::Box::new(gtk::Orientation::Vertical, 8);
+    actions_box.append(&scrolled_list(&actions));
+    actions_box.append(&add_action);
+    stack.add_titled(&actions_box, Some("actions"), "Actions");
+
+    let switcher = adw::ViewSwitcher::new();
+    switcher.set_stack(Some(&stack));
+    let box_ = gtk::Box::new(gtk::Orientation::Vertical, 8);
+    box_.append(&switcher);
+    box_.append(&stack);
+    dialog.set_child(Some(&box_));
+    dialog.present(Some(parent));
+    let _ = AlertSeverity::Info;
+    let _ = AlertEvent::new(
+        AlertEventKind::System,
+        AlertSeverity::Info,
+        String::new(),
+        String::new(),
+    );
+}
+
+pub fn quick_add_remote(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, on_done: Rc<dyn Fn()>) {
+    remote_editor(parent, ctx, None, true, on_done);
+}
+
+pub fn remote_config(
+    parent: &impl IsA<gtk::Widget>,
+    ctx: AppCtx,
+    existing: Option<String>,
+    on_done: Rc<dyn Fn()>,
+) {
+    remote_editor(parent, ctx, existing, false, on_done);
+}
+
+fn remote_editor(
+    parent: &impl IsA<gtk::Widget>,
+    ctx: AppCtx,
+    existing: Option<String>,
+    quick: bool,
+    on_done: Rc<dyn Fn()>,
+) {
+    let dialog = adw::Dialog::new();
+    dialog.set_title(if quick {
+        "Quick Add Remote"
+    } else {
+        "Remote Configuration"
+    });
+    dialog.set_content_width(520);
+    let page = adw::PreferencesPage::new();
+    let group = adw::PreferencesGroup::new();
+    let name = adw::EntryRow::new();
+    name.set_title("Remote name");
+    if let Some(existing) = &existing {
+        name.set_text(existing);
+        name.set_sensitive(false);
+    }
+    let type_row = adw::EntryRow::new();
+    type_row.set_title("Provider type");
+    type_row.set_text("drive");
+    let extra = adw::EntryRow::new();
+    extra.set_title("Parameters (key=value;key=value)");
+    group.add(&name);
+    group.add(&type_row);
+    group.add(&extra);
+    page.add(&group);
+
+    let save = gtk::Button::with_label("Save");
+    save.add_css_class("suggested-action");
+    {
+        let ctx = ctx.clone();
+        let dialog = dialog.clone();
+        let on_done = on_done.clone();
+        save.connect_clicked(move |_| {
+            let remote_name = name.text().to_string();
+            let r#type = type_row.text().to_string();
+            if remote_name.is_empty() || r#type.is_empty() {
+                return;
+            }
+            let mut params = serde_json::Map::new();
+            for pair in extra.text().split(';') {
+                if let Some((k, v)) = pair.split_once('=') {
+                    params.insert(k.trim().into(), serde_json::Value::String(v.trim().into()));
+                }
+            }
+            if let Some(client) = ctx.client() {
+                let result = if existing.is_some() {
+                    client.update_remote(&remote_name, serde_json::Value::Object(params))
+                } else {
+                    client.create_remote(&remote_name, &r#type, serde_json::Value::Object(params))
+                };
+                match result {
+                    Ok(_) => {
+                        ctx.store
+                            .borrow_mut()
+                            .push_log(&remote_name, "Remote saved".into());
+                        ctx.persist();
+                        on_done();
+                        dialog.close();
+                    }
+                    Err(e) => {
+                        let toast = adw::AlertDialog::new(Some("Error"), Some(&e.to_string()));
+                        toast.add_response("ok", "OK");
+                        toast.present(Some(&dialog));
+                    }
+                }
+            }
+        });
+    }
+    let box_ = gtk::Box::new(gtk::Orientation::Vertical, 12);
+    box_.set_margin_top(12);
+    box_.set_margin_bottom(12);
+    box_.append(&page);
+    box_.append(&save);
+    dialog.set_child(Some(&box_));
+    dialog.present(Some(parent));
+}
+
+pub fn delete_remote(
+    parent: &impl IsA<gtk::Widget>,
+    ctx: AppCtx,
+    name: &str,
+    on_done: Rc<dyn Fn()>,
+) {
+    let dialog = adw::AlertDialog::new(
+        Some("Delete remote"),
+        Some(&format!(
+            "Delete {name}? Active mounts, serves, and jobs will be stopped."
+        )),
+    );
+    dialog.add_response("cancel", "Cancel");
+    dialog.add_response("delete", "Delete");
+    dialog.set_response_appearance("delete", adw::ResponseAppearance::Destructive);
+    let name = name.to_string();
+    dialog.connect_response(None, move |_, response| {
+        if response == "delete" {
+            if let Some(client) = ctx.client() {
+                let _ = client.delete_remote(&name);
+            }
+            ctx.store.borrow_mut().remotes.remove(&name);
+            ctx.persist();
+            on_done();
+        }
+    });
+    dialog.present(Some(parent));
+}
+
+pub fn quick_run_editor(
+    parent: &impl IsA<gtk::Widget>,
+    ctx: AppCtx,
+    existing: Option<QuickRun>,
+    on_done: Rc<dyn Fn()>,
+) {
+    let dialog = adw::Dialog::new();
+    dialog.set_title("Quick Run");
+    dialog.set_content_width(520);
+    let group = adw::PreferencesGroup::new();
+    let name = adw::EntryRow::new();
+    name.set_title("Name");
+    let remote = adw::EntryRow::new();
+    remote.set_title("Remote");
+    let src = adw::EntryRow::new();
+    src.set_title("Source");
+    let dst = adw::EntryRow::new();
+    dst.set_title("Destination / mount point");
+    let cron = adw::EntryRow::new();
+    cron.set_title("Cron expression");
+    let op_row = adw::ComboRow::new();
+    op_row.set_title("Operation");
+    let labels: Vec<&str> = OperationType::ALL.iter().map(|o| o.as_str()).collect();
+    op_row.set_model(Some(&gtk::StringList::new(&labels)));
+    let auto = adw::SwitchRow::new();
+    auto.set_title("Auto start");
+    let watch = adw::SwitchRow::new();
+    watch.set_title("Watch enabled");
+    let tray = adw::SwitchRow::new();
+    tray.set_title("Show on tray");
+    if let Some(qr) = &existing {
+        name.set_text(&qr.name);
+        remote.set_text(&qr.remote_name);
+        let (s, d) = qr.paths();
+        src.set_text(&s.unwrap_or_default());
+        dst.set_text(&d.unwrap_or_default());
+        cron.set_text(&qr.config.app.cron_expression);
+        auto.set_active(qr.config.app.auto_start);
+        watch.set_active(qr.config.app.watch_enabled);
+        tray.set_active(qr.show_on_tray);
+        if let Some(idx) = OperationType::ALL
+            .iter()
+            .position(|o| *o == qr.operation_type)
+        {
+            op_row.set_selected(idx as u32);
+        }
+    }
+    group.add(&name);
+    group.add(&remote);
+    group.add(&op_row);
+    group.add(&src);
+    group.add(&dst);
+    group.add(&cron);
+    group.add(&auto);
+    group.add(&watch);
+    group.add(&tray);
+    let save = gtk::Button::with_label("Save");
+    save.add_css_class("suggested-action");
+    {
+        let ctx = ctx.clone();
+        let dialog = dialog.clone();
+        let existing_id = existing.as_ref().map(|q| q.id.clone());
+        save.connect_clicked(move |_| {
+            let expr = cron.text().to_string();
+            if !expr.is_empty() {
+                if let Err(e) = validate_cron(&expr) {
+                    let err = adw::AlertDialog::new(Some("Invalid cron"), Some(&e));
+                    err.add_response("ok", "OK");
+                    err.present(Some(&dialog));
+                    return;
+                }
+            }
+            let op = OperationType::ALL
+                .get(op_row.selected() as usize)
+                .copied()
+                .unwrap_or(OperationType::Sync);
+            let mut qr = existing_id
+                .as_ref()
+                .and_then(|id| {
+                    ctx.store
+                        .borrow()
+                        .quick_runs
+                        .iter()
+                        .find(|q| &q.id == id)
+                        .cloned()
+                })
+                .unwrap_or_else(|| {
+                    QuickRun::new(name.text().to_string(), op, remote.text().to_string())
+                });
+            qr.name = name.text().to_string();
+            qr.remote_name = remote.text().to_string();
+            qr.operation_type = op;
+            qr.config.app.auto_start = auto.is_active();
+            qr.config.app.watch_enabled = watch.is_active();
+            qr.config.app.cron_enabled = !expr.is_empty();
+            qr.config.app.cron_expression = expr;
+            qr.show_on_tray = tray.is_active();
+            qr.config.rclone = serde_json::json!({
+                "srcFs": src.text().to_string(),
+                "dstFs": dst.text().to_string(),
+                "mountPoint": dst.text().to_string(),
+                "fs": src.text().to_string(),
+            });
+            {
+                let mut store = ctx.store.borrow_mut();
+                if let Some(idx) = store.quick_runs.iter().position(|q| q.id == qr.id) {
+                    store.quick_runs[idx] = qr;
+                } else {
+                    store.quick_runs.push(qr);
+                }
+            }
+            ctx.persist();
+            on_done();
+            dialog.close();
+        });
+    }
+    let box_ = gtk::Box::new(gtk::Orientation::Vertical, 12);
+    box_.set_margin_top(12);
+    box_.set_margin_bottom(12);
+    box_.append(&group);
+    box_.append(&save);
+    dialog.set_child(Some(&box_));
+    dialog.present(Some(parent));
+}
+
+pub fn export_backup(parent: &impl IsA<gtk::Window>, ctx: AppCtx, toast: adw::ToastOverlay) {
+    let dialog = gtk::FileDialog::new();
+    dialog.set_initial_name(Some("rclone-manager-backup.zip"));
+    let dest_default = dirs::download_dir()
+        .or_else(dirs::home_dir)
+        .unwrap_or_else(|| std::path::PathBuf::from("."));
+    dialog.save(
+        Some(parent),
+        None::<gio::Cancellable>.as_ref(),
+        move |result| {
+            if let Ok(file) = result {
+                if let Some(path) = file.path() {
+                    let dump = ctx
+                        .client()
+                        .and_then(|c| c.dump_config().ok())
+                        .unwrap_or(serde_json::json!({}));
+                    match backup::create_backup(
+                        &path,
+                        &ctx.settings.borrow(),
+                        &ctx.store.borrow(),
+                        &dump,
+                        "FullBackup",
+                        "",
+                        None,
+                    ) {
+                        Ok(_) => toast.add_toast(adw::Toast::new("Backup exported")),
+                        Err(e) => toast.add_toast(adw::Toast::new(&e)),
+                    }
+                }
+            }
+            let _ = dest_default;
+        },
+    );
+}
+
+pub fn import_backup(
+    parent: &impl IsA<gtk::Window>,
+    ctx: AppCtx,
+    toast: adw::ToastOverlay,
+    on_done: Rc<dyn Fn()>,
+) {
+    let dialog = gtk::FileDialog::new();
+    dialog.open(
+        Some(parent),
+        None::<gio::Cancellable>.as_ref(),
+        move |result| {
+            if let Ok(file) = result {
+                if let Some(path) = file.path() {
+                    match backup::analyze_backup(&path) {
+                        Ok(analysis) if analysis.valid => match backup::restore_backup(&path) {
+                            Ok((settings, store, rclone)) => {
+                                if let Some(settings) = settings {
+                                    *ctx.settings.borrow_mut() = settings;
+                                }
+                                if let Some(store) = store {
+                                    *ctx.store.borrow_mut() = store;
+                                }
+                                if let (Some(dump), Some(client)) = (rclone, ctx.client()) {
+                                    if let Some(obj) = dump.as_object() {
+                                        for (name, cfg) in obj {
+                                            if let Some(t) =
+                                                cfg.get("type").and_then(|x| x.as_str())
+                                            {
+                                                let _ = client.create_remote(name, t, cfg.clone());
+                                            }
+                                        }
+                                    }
+                                }
+                                ctx.persist();
+                                toast.add_toast(adw::Toast::new("Backup restored"));
+                                on_done();
+                            }
+                            Err(e) => toast.add_toast(adw::Toast::new(&e)),
+                        },
+                        Ok(_) => toast.add_toast(adw::Toast::new("Backup file is not valid")),
+                        Err(e) => toast.add_toast(adw::Toast::new(&e)),
+                    }
+                }
+            }
+        },
+    );
+}
+
+pub fn file_viewer(
+    parent: &impl IsA<gtk::Widget>,
+    ctx: AppCtx,
+    remote: &str,
+    path: &str,
+    name: &str,
+) {
+    let dialog = adw::Dialog::new();
+    dialog.set_title(name);
+    dialog.set_content_width(720);
+    dialog.set_content_height(520);
+    let category = crate::operations::FileTypeCategory::from_name(name, false);
+    let info = gtk::Label::new(Some(&format!(
+        "{remote}:{path}\nType: {:?}\nUse Download to open with a system app when needed.",
+        category
+    )));
+    info.set_wrap(true);
+    info.set_margin_top(16);
+    info.set_margin_start(16);
+    info.set_margin_end(16);
+    let open = gtk::Button::with_label("Open native");
+    {
+        let path = if remote == "local" {
+            path.to_string()
+        } else {
+            remote_fs(remote, path)
+        };
+        open.connect_clicked(move |_| {
+            let _ = open::that(&path);
+        });
+    }
+    let box_ = gtk::Box::new(gtk::Orientation::Vertical, 12);
+    box_.append(&info);
+    box_.append(&open);
+    if matches!(category, crate::operations::FileTypeCategory::Image) && remote == "local" {
+        let picture = gtk::Picture::for_filename(path);
+        picture.set_vexpand(true);
+        box_.append(&picture);
+    }
+    dialog.set_child(Some(&box_));
+    dialog.present(Some(parent));
+    let _ = ctx;
+}
+
+fn scrolled_list(list: &gtk::ListBox) -> gtk::ScrolledWindow {
+    let scroll = gtk::ScrolledWindow::new();
+    scroll.set_vexpand(true);
+    scroll.set_child(Some(list));
+    scroll
+}

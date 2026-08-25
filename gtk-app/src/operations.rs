@@ -1,0 +1,391 @@
+//! Operation registry — mirrors `src/app/shared/types/operation-registry.ts`.
+
+use serde::{Deserialize, Serialize};
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum OperationType {
+    Mount,
+    Sync,
+    Copy,
+    Move,
+    Bisync,
+    Serve,
+    Check,
+    Delete,
+    Copyurl,
+    Archivecreate,
+    Cryptcheck,
+}
+
+impl OperationType {
+    pub const ALL: [OperationType; 11] = [
+        Self::Mount,
+        Self::Sync,
+        Self::Copy,
+        Self::Move,
+        Self::Bisync,
+        Self::Serve,
+        Self::Check,
+        Self::Delete,
+        Self::Copyurl,
+        Self::Archivecreate,
+        Self::Cryptcheck,
+    ];
+
+    pub const PRIMARY_SYNC: [OperationType; 4] = [Self::Sync, Self::Copy, Self::Move, Self::Bisync];
+
+    pub const MORE_SYNC: [OperationType; 5] = [
+        Self::Check,
+        Self::Delete,
+        Self::Copyurl,
+        Self::Archivecreate,
+        Self::Cryptcheck,
+    ];
+
+    pub const SERVE_TYPES: [&'static str; 8] = [
+        "http", "webdav", "ftp", "sftp", "nfs", "dlna", "restic", "s3",
+    ];
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Mount => "mount",
+            Self::Sync => "sync",
+            Self::Copy => "copy",
+            Self::Move => "move",
+            Self::Bisync => "bisync",
+            Self::Serve => "serve",
+            Self::Check => "check",
+            Self::Delete => "delete",
+            Self::Copyurl => "copyurl",
+            Self::Archivecreate => "archivecreate",
+            Self::Cryptcheck => "cryptcheck",
+        }
+    }
+
+    pub fn parse(value: &str) -> Option<Self> {
+        match value.to_ascii_lowercase().as_str() {
+            "mount" => Some(Self::Mount),
+            "sync" => Some(Self::Sync),
+            "copy" => Some(Self::Copy),
+            "move" => Some(Self::Move),
+            "bisync" => Some(Self::Bisync),
+            "serve" => Some(Self::Serve),
+            "check" => Some(Self::Check),
+            "delete" => Some(Self::Delete),
+            "copyurl" => Some(Self::Copyurl),
+            "archivecreate" | "archive" => Some(Self::Archivecreate),
+            "cryptcheck" => Some(Self::Cryptcheck),
+            _ => None,
+        }
+    }
+
+    pub fn api_label(self) -> &'static str {
+        match self {
+            Self::Mount => "Mount",
+            Self::Sync => "Sync",
+            Self::Copy => "Copy",
+            Self::Move => "Move",
+            Self::Bisync => "Bisync",
+            Self::Serve => "Serve",
+            Self::Check => "Check",
+            Self::Delete => "Delete",
+            Self::Copyurl => "Copyurl",
+            Self::Archivecreate => "Archivecreate",
+            Self::Cryptcheck => "Cryptcheck",
+        }
+    }
+
+    pub fn icon_name(self) -> &'static str {
+        match self {
+            Self::Mount => "drive-harddisk-symbolic",
+            Self::Sync => "view-refresh-symbolic",
+            Self::Copy => "edit-copy-symbolic",
+            Self::Move => "go-jump-symbolic",
+            Self::Bisync => "media-playlist-repeat-symbolic",
+            Self::Serve => "network-server-symbolic",
+            Self::Check => "system-search-symbolic",
+            Self::Delete => "user-trash-symbolic",
+            Self::Copyurl => "insert-link-symbolic",
+            Self::Archivecreate => "package-x-generic-symbolic",
+            Self::Cryptcheck => "security-high-symbolic",
+        }
+    }
+
+    pub fn action_label_key(self) -> &'static str {
+        match self {
+            Self::Mount => "actions.mount",
+            Self::Sync => "actions.sync",
+            Self::Copy => "actions.copy",
+            Self::Move => "actions.move",
+            Self::Bisync => "actions.bisync",
+            Self::Serve => "actions.serve",
+            Self::Check => "actions.check",
+            Self::Delete => "actions.delete",
+            Self::Copyurl => "actions.copyurl",
+            Self::Archivecreate => "actions.archivecreate",
+            Self::Cryptcheck => "actions.cryptcheck",
+        }
+    }
+
+    pub fn is_sync_type(self) -> bool {
+        !matches!(self, Self::Mount | Self::Serve)
+    }
+
+    pub fn is_primary(self) -> bool {
+        true
+    }
+
+    pub fn is_browsable(self) -> bool {
+        matches!(
+            self,
+            Self::Mount
+                | Self::Sync
+                | Self::Copy
+                | Self::Move
+                | Self::Bisync
+                | Self::Check
+                | Self::Cryptcheck
+        )
+    }
+
+    pub fn is_automatable(self) -> bool {
+        self.is_sync_type()
+    }
+
+    pub fn supports_vfs(self) -> bool {
+        matches!(self, Self::Mount | Self::Serve)
+    }
+
+    pub fn supports_profiles(self) -> bool {
+        true
+    }
+
+    pub fn config_key(self) -> &'static str {
+        match self {
+            Self::Mount => "mountConfigs",
+            Self::Sync => "syncConfigs",
+            Self::Copy => "copyConfigs",
+            Self::Move => "moveConfigs",
+            Self::Bisync => "bisyncConfigs",
+            Self::Serve => "serveConfigs",
+            Self::Check => "checkConfigs",
+            Self::Delete => "deleteConfigs",
+            Self::Copyurl => "copyurlConfigs",
+            Self::Archivecreate => "archivecreateConfigs",
+            Self::Cryptcheck => "cryptcheckConfigs",
+        }
+    }
+
+    pub fn rc_job_endpoint(self) -> Option<&'static str> {
+        match self {
+            Self::Sync => Some("sync/sync"),
+            Self::Copy => Some("sync/copy"),
+            Self::Move => Some("sync/move"),
+            Self::Bisync => Some("sync/bisync"),
+            Self::Check => Some("operations/check"),
+            Self::Delete => Some("operations/delete"),
+            Self::Copyurl => Some("operations/copyurl"),
+            Self::Cryptcheck => Some("operations/check"),
+            Self::Archivecreate => Some("operations/copyfile"),
+            Self::Mount | Self::Serve => None,
+        }
+    }
+}
+
+impl std::fmt::Display for OperationType {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum MainView {
+    MainMenu,
+    Nautilus,
+    Flow,
+}
+
+impl MainView {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::MainMenu => "main_menu",
+            Self::Nautilus => "nautilus",
+            Self::Flow => "flow",
+        }
+    }
+
+    pub fn parse(value: &str) -> Self {
+        match value {
+            "nautilus" => Self::Nautilus,
+            "flow" => Self::Flow,
+            _ => Self::MainMenu,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum AppTab {
+    General,
+    Mount,
+    Operations,
+    Serve,
+}
+
+impl AppTab {
+    pub const ALL: [AppTab; 4] = [Self::General, Self::Mount, Self::Operations, Self::Serve];
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::General => "general",
+            Self::Mount => "mount",
+            Self::Operations => "operations",
+            Self::Serve => "serve",
+        }
+    }
+
+    pub fn label_key(self) -> &'static str {
+        match self {
+            Self::General => "tabs.general",
+            Self::Mount => "tabs.mount",
+            Self::Operations => "tabs.operations",
+            Self::Serve => "tabs.serve",
+        }
+    }
+
+    pub fn icon_name(self) -> &'static str {
+        match self {
+            Self::General => "go-home-symbolic",
+            Self::Mount => "drive-harddisk-symbolic",
+            Self::Operations => "media-playlist-consecutive-symbolic",
+            Self::Serve => "network-server-symbolic",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FileTypeCategory {
+    Directory,
+    Image,
+    Video,
+    Audio,
+    Pdf,
+    Text,
+    Archive,
+    Binary,
+}
+
+impl FileTypeCategory {
+    pub fn from_name(name: &str, is_dir: bool) -> Self {
+        if is_dir {
+            return Self::Directory;
+        }
+        let ext = std::path::Path::new(name)
+            .extension()
+            .and_then(|e| e.to_str())
+            .unwrap_or("")
+            .to_ascii_lowercase();
+        match ext.as_str() {
+            "png" | "jpg" | "jpeg" | "gif" | "webp" | "bmp" | "svg" | "avif" | "jxl" | "tif"
+            | "tiff" | "ico" => Self::Image,
+            "mp4" | "mkv" | "webm" | "avi" | "mov" | "m4v" | "ogv" => Self::Video,
+            "mp3" | "flac" | "ogg" | "wav" | "m4a" | "aac" | "opus" | "wma" => Self::Audio,
+            "pdf" => Self::Pdf,
+            "zip" | "tar" | "gz" | "tgz" | "bz2" | "xz" | "7z" | "rar" | "iso" => Self::Archive,
+            "txt" | "md" | "json" | "toml" | "yml" | "yaml" | "xml" | "csv" | "rs" | "ts"
+            | "js" | "html" | "css" | "py" | "go" | "c" | "h" | "cpp" | "sh" | "log" | "ini"
+            | "conf" | "cfg" => Self::Text,
+            _ => Self::Binary,
+        }
+    }
+
+    pub fn icon_name(self) -> &'static str {
+        match self {
+            Self::Directory => "folder-symbolic",
+            Self::Image => "image-x-generic-symbolic",
+            Self::Video => "video-x-generic-symbolic",
+            Self::Audio => "audio-x-generic-symbolic",
+            Self::Pdf => "x-office-document-symbolic",
+            Self::Text => "text-x-generic-symbolic",
+            Self::Archive => "package-x-generic-symbolic",
+            Self::Binary => "application-x-executable-symbolic",
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parses_all_operation_keys() {
+        for op in OperationType::ALL {
+            assert_eq!(OperationType::parse(op.as_str()), Some(op));
+        }
+        assert_eq!(
+            OperationType::parse("archive"),
+            Some(OperationType::Archivecreate)
+        );
+        assert_eq!(OperationType::parse("nope"), None);
+    }
+
+    #[test]
+    fn classification_matches_registry() {
+        assert!(OperationType::Sync.is_sync_type());
+        assert!(!OperationType::Mount.is_sync_type());
+        assert!(OperationType::Mount.supports_vfs());
+        assert!(OperationType::Serve.supports_vfs());
+        assert!(!OperationType::Copy.supports_vfs());
+        assert!(OperationType::Copy.is_automatable());
+        assert!(!OperationType::Mount.is_automatable());
+        assert!(!OperationType::Delete.is_browsable());
+        assert!(OperationType::Cryptcheck.is_browsable());
+        assert_eq!(OperationType::Mount.config_key(), "mountConfigs");
+        assert_eq!(OperationType::SERVE_TYPES.len(), 8);
+    }
+
+    #[test]
+    fn file_type_categories() {
+        assert_eq!(
+            FileTypeCategory::from_name("photos", true),
+            FileTypeCategory::Directory
+        );
+        assert_eq!(
+            FileTypeCategory::from_name("a.PNG", false),
+            FileTypeCategory::Image
+        );
+        assert_eq!(
+            FileTypeCategory::from_name("clip.mkv", false),
+            FileTypeCategory::Video
+        );
+        assert_eq!(
+            FileTypeCategory::from_name("song.flac", false),
+            FileTypeCategory::Audio
+        );
+        assert_eq!(
+            FileTypeCategory::from_name("doc.pdf", false),
+            FileTypeCategory::Pdf
+        );
+        assert_eq!(
+            FileTypeCategory::from_name("notes.md", false),
+            FileTypeCategory::Text
+        );
+        assert_eq!(
+            FileTypeCategory::from_name("pack.zip", false),
+            FileTypeCategory::Archive
+        );
+        assert_eq!(
+            FileTypeCategory::from_name("blob.bin", false),
+            FileTypeCategory::Binary
+        );
+    }
+
+    #[test]
+    fn main_view_and_tabs() {
+        assert_eq!(MainView::parse("flow"), MainView::Flow);
+        assert_eq!(MainView::parse("unknown"), MainView::MainMenu);
+        assert_eq!(AppTab::ALL.len(), 4);
+    }
+}

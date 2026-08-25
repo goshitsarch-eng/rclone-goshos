@@ -19,7 +19,7 @@
 
 <p align="center">
   <b>A powerful, cross-platform GUI for managing Rclone remotes with style and ease.</b><br>
-  <i>Built with Angular 22 + Tauri · Linux • Windows • macOS • Android (Beta) • ARM Support</i>
+  <i>Linux desktop: GTK 4 + libadwaita · Also Angular 22 + Tauri · Windows • macOS • Android (Beta) • ARM Support</i>
 </p>
 
 <p align="center">
@@ -117,6 +117,17 @@ Install RClone Manager using your preferred package manager, or download standal
 > 🛠️ **System Requirements:** Mounting drives requires WinFsp (Windows), macFUSE (macOS), or FUSE3 (Linux). Rclone itself is downloaded automatically if missing. See [Wiki: System Requirements](https://hakanismail.info/zarestia/rclone-manager/docs/Installation#%EF%B8%8F-dependencies).
 
 ---
+
+## GTK 4 + Adwaita desktop client
+
+The Linux desktop UI is rewritten in **GTK 4** and **libadwaita** (`gtk-app/`) with feature parity for remotes, mounts, serves, jobs, the Nautilus file browser, Flow/quick runs, preferences, alerts, backup/restore, onboarding, and i18n.
+
+```bash
+sudo apt install libgtk-4-dev libadwaita-1-dev pkg-config
+cd gtk-app && cargo test && cargo run --release
+```
+
+See [gtk-app/README.md](gtk-app/README.md) for the full workspace map and build notes.
 
 ## Development & Support
 
