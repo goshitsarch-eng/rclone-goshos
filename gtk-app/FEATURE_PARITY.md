@@ -117,6 +117,10 @@ This client is the GTK 4 + libadwaita rewrite of the Angular/Tauri desktop UI. I
 - Mount and local dest path inspection with collision warnings
 - Alert rules honor backend and profile filters
 - Title-bar banner surfaces the highest-priority repair diagnosis
+- Embedded Nautilus file picker (mode/selection/remote/extension filters) used by operation, quick-run, wizard, and remote-config path fields
+- One-shot import of a Tauri/rcman `remotes/` + alerts/templates layout into the GTK store
+- Path kinds (local / current remote / other remote) with combo rows and job-path resolution
+- Native Share… from Files (stage remote files, then `xdg-email` / `xdg-open`)
 
 ## Still deepening toward pixel-level Angular parity
 

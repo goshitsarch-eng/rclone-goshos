@@ -298,6 +298,36 @@ pub fn parse_send_to_args(args: &[String]) -> Option<SendToArgs> {
     })
 }
 
+/// Stage a local file for the desktop "share" action.
+/// Prefers `xdg-email --attach` when available, then the default opener.
+pub fn share_file(path: &Path) -> Result<(), String> {
+    if !path.exists() {
+        return Err(format!("File not found: {}", path.display()));
+    }
+    if Command::new("xdg-email")
+        .arg("--attach")
+        .arg(path)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .is_ok()
+    {
+        return Ok(());
+    }
+    if Command::new("xdg-open")
+        .arg(path)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .is_ok()
+    {
+        return Ok(());
+    }
+    open::that(path).map_err(|e| e.to_string())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -337,6 +367,13 @@ mod tests {
     fn templates_substitute_placeholders() {
         let out = apply_template("x {remote} {path}", &[("remote", "a"), ("path", "b")]);
         assert_eq!(out, "x a b");
+    }
+
+    #[test]
+    fn share_missing_file_errors() {
+        let err = share_file(Path::new("/tmp/rclone-manager-missing-share-file"))
+            .expect_err("missing file");
+        assert!(err.contains("not found"));
     }
 
     #[test]

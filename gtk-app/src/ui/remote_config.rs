@@ -386,12 +386,14 @@ fn operation_page(
         "Source"
     });
     src.set_text(&default_source(remote, &rclone));
-    dialogs::attach_folder_picker(parent, &src);
+    if op != OperationType::Copyurl {
+        dialogs::attach_path_picker(&ctx, &src, crate::picker::FilePickerConfig::folders());
+    }
     let extra_sources: Rc<RefCell<Vec<adw::EntryRow>>> = Rc::new(RefCell::new(Vec::new()));
     let more = path_list(&rclone, SOURCE_KEYS);
     if more.len() > 1 {
         for extra in more.iter().skip(1) {
-            let row = extra_source_row(parent, extra);
+            let row = extra_source_row(&ctx, extra);
             extra_sources.borrow_mut().push(row);
         }
     }
@@ -405,7 +407,11 @@ fn operation_page(
     });
     dst.set_text(&default_dest(remote, &rclone, op));
     dst.set_visible(op != OperationType::Delete);
-    dialogs::attach_folder_picker(parent, &dst);
+    if op == OperationType::Mount {
+        dialogs::attach_path_picker(&ctx, &dst, crate::picker::FilePickerConfig::local_folders());
+    } else if op != OperationType::Serve && op != OperationType::Delete {
+        dialogs::attach_path_picker(&ctx, &dst, crate::picker::FilePickerConfig::folders());
+    }
 
     let serve = adw::ComboRow::new();
     serve.set_title("Serve type");
@@ -481,8 +487,25 @@ fn operation_page(
     );
     vfs_row.set_visible(op.supports_vfs());
 
+    let src_kind = if op != OperationType::Copyurl {
+        Some(dialogs::attach_path_kind(&src, remote))
+    } else {
+        None
+    };
+    let dst_kind = if !matches!(
+        op,
+        OperationType::Mount | OperationType::Serve | OperationType::Delete
+    ) {
+        Some(dialogs::attach_path_kind(&dst, remote))
+    } else {
+        None
+    };
+
     let identity = adw::PreferencesGroup::new();
     identity.set_title("Paths");
+    if let Some(kind) = &src_kind {
+        identity.add(kind);
+    }
     identity.add(&src);
     for row in extra_sources.borrow().iter() {
         identity.add(row);
@@ -491,9 +514,9 @@ fn operation_page(
         let add_src = gtk::Button::with_label("Add source");
         let extra_sources = extra_sources.clone();
         let identity_for_add = identity.clone();
-        let parent = parent.clone();
+        let ctx = ctx.clone();
         add_src.connect_clicked(move |_| {
-            let row = extra_source_row(&parent, "");
+            let row = extra_source_row(&ctx, "");
             identity_for_add.add(&row);
             extra_sources.borrow_mut().push(row);
         });
@@ -501,6 +524,9 @@ fn operation_page(
         add_row.set_title("Multiple sources");
         add_row.add_suffix(&add_src);
         identity.add(&add_row);
+    }
+    if let Some(kind) = &dst_kind {
+        identity.add(kind);
     }
     identity.add(&dst);
     identity.add(&serve);
@@ -793,7 +819,18 @@ fn operation_page(
                     sources.push(text);
                 }
             }
-            let rclone = assemble_rclone(op, &sources, &dst.text(), flags);
+            if op != OperationType::Copyurl {
+                sources = sources
+                    .into_iter()
+                    .map(|s| crate::path_kind::resolve_job_path(&s, &remote))
+                    .collect();
+            }
+            let dest = if matches!(op, OperationType::Serve | OperationType::Delete) {
+                dst.text().to_string()
+            } else {
+                crate::path_kind::resolve_job_path(&dst.text(), &remote)
+            };
+            let rclone = assemble_rclone(op, &sources, &dest, flags);
             let profile = ProfileConfig {
                 name: name.clone(),
                 app: AppConfig {
@@ -1171,11 +1208,11 @@ fn refresh_combo(combo: &adw::ComboRow, names: &[String]) {
     combo.set_model(Some(&gtk::StringList::new(&refs)));
 }
 
-fn extra_source_row(parent: &impl IsA<gtk::Widget>, value: &str) -> adw::EntryRow {
+fn extra_source_row(ctx: &AppCtx, value: &str) -> adw::EntryRow {
     let row = adw::EntryRow::new();
     row.set_title("Additional source");
     row.set_text(value);
-    dialogs::attach_folder_picker(parent, &row);
+    dialogs::attach_path_picker(ctx, &row, crate::picker::FilePickerConfig::folders());
     row
 }
 

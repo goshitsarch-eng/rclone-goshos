@@ -33,12 +33,21 @@ pub struct AppCtx {
     pub watch_mtimes: Rc<RefCell<HashMap<String, u64>>>,
     pub watch_hub: Rc<RefCell<crate::watch::WatchHub>>,
     pub fsinfo_cache: Rc<RefCell<HashMap<String, crate::rclone::FsInfo>>>,
+    pub pending_picker: Rc<RefCell<Option<crate::picker::PickerRequest>>>,
 }
 
 impl AppCtx {
     pub fn new() -> Self {
-        let settings = AppSettings::load();
-        let store = AppStore::load();
+        let mut settings = AppSettings::load();
+        let mut store = AppStore::load();
+        let config_dir = AppSettings::config_dir();
+        if crate::migrate::detect_rcman_layout(&config_dir) {
+            let report = crate::migrate::import_rcman(&config_dir, &mut store, &mut settings);
+            if report.changed() {
+                let _ = store.save();
+                let _ = settings.save();
+            }
+        }
         let i18n = I18n::load(&settings.general.language);
         let ctx = Self {
             settings: Rc::new(RefCell::new(settings)),
@@ -53,6 +62,7 @@ impl AppCtx {
             watch_mtimes: Rc::new(RefCell::new(HashMap::new())),
             watch_hub: Rc::new(RefCell::new(crate::watch::WatchHub::new())),
             fsinfo_cache: Rc::new(RefCell::new(HashMap::new())),
+            pending_picker: Rc::new(RefCell::new(None)),
         };
         ctx.apply_remote_layout();
         {
@@ -89,6 +99,29 @@ impl AppCtx {
 
     pub fn request_browse(&self, remote: &str, path: &str) {
         *self.pending_browse.borrow_mut() = Some((remote.to_string(), path.to_string()));
+    }
+
+    pub fn request_picker(
+        &self,
+        config: crate::picker::FilePickerConfig,
+        on_pick: Rc<dyn Fn(crate::picker::PickerResult)>,
+    ) {
+        let loc = config
+            .initial_location
+            .clone()
+            .unwrap_or_else(|| match config.mode {
+                crate::picker::PickerMode::Remote => String::new(),
+                _ => dirs::home_dir()
+                    .map(|p| p.to_string_lossy().into_owned())
+                    .unwrap_or_else(|| "/".into()),
+            });
+        let (remote, path) = if loc.is_empty() {
+            ("local".into(), String::new())
+        } else {
+            crate::rclone::split_remote_path(&loc)
+        };
+        *self.pending_picker.borrow_mut() = Some(crate::picker::PickerRequest { config, on_pick });
+        self.request_browse(&remote, &path);
     }
 
     pub fn persist(&self) {

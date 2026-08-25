@@ -1805,7 +1805,12 @@ pub fn start_operation(
         "Source"
     });
     src.set_text(&default_source(remote, &rclone));
-    attach_folder_picker(parent, &src);
+    let src_kind = if op != OperationType::Copyurl {
+        attach_path_picker(&ctx, &src, crate::picker::FilePickerConfig::folders());
+        Some(attach_path_kind(&src, remote))
+    } else {
+        None
+    };
     let extra_sources: Rc<RefCell<Vec<adw::EntryRow>>> = Rc::new(RefCell::new(Vec::new()));
     let more_src = crate::jobs::path_list(&rclone, crate::jobs::SOURCE_KEYS);
     if more_src.len() > 1 {
@@ -1813,7 +1818,7 @@ pub fn start_operation(
             let row = adw::EntryRow::new();
             row.set_title("Additional source");
             row.set_text(extra);
-            attach_folder_picker(parent, &row);
+            attach_path_picker(&ctx, &row, crate::picker::FilePickerConfig::folders());
             extra_sources.borrow_mut().push(row);
         }
     }
@@ -1829,7 +1834,15 @@ pub fn start_operation(
     } else {
         default_dest(remote, &rclone, op)
     });
-    attach_folder_picker(parent, &dst);
+    let dst_kind = if op == OperationType::Mount {
+        attach_path_picker(&ctx, &dst, crate::picker::FilePickerConfig::local_folders());
+        None
+    } else if op == OperationType::Serve {
+        None
+    } else {
+        attach_path_picker(&ctx, &dst, crate::picker::FilePickerConfig::folders());
+        Some(attach_path_kind(&dst, remote))
+    };
     let dest_status = gtk::Label::new(None);
     dest_status.add_css_class("dim-label");
     dest_status.set_xalign(0.0);
@@ -1843,9 +1856,10 @@ pub fn start_operation(
         let ctx = ctx.clone();
         let remote = remote.to_string();
         let refresh_status = move |path: &str| {
+            let resolved = crate::path_kind::resolve_job_path(path, &remote);
             let status = crate::path_inspection::inspect_dest(
                 &ctx.store.borrow(),
-                path,
+                &resolved,
                 &remote,
                 op,
                 &ctx.snapshot.borrow().mounts,
@@ -2044,6 +2058,17 @@ pub fn start_operation(
                     sources.push(text);
                 }
             }
+            if op != OperationType::Copyurl {
+                sources = sources
+                    .into_iter()
+                    .map(|s| crate::path_kind::resolve_job_path(&s, &remote))
+                    .collect();
+            }
+            let dest = if op == OperationType::Serve {
+                dst.text().to_string()
+            } else {
+                crate::path_kind::resolve_job_path(&dst.text(), &remote)
+            };
             let mut rclone = serde_json::Value::Object(rclone);
             if let Some(meta) = ctx.store.borrow().remotes.get(&remote) {
                 let mut profile = crate::store::ProfileConfig::default();
@@ -2055,7 +2080,7 @@ pub fn start_operation(
             let mut ids = Vec::new();
             let mut error = None;
             for source in sources {
-                match build_job_params(op, &remote, &source, &dst.text(), &rclone) {
+                match build_job_params(op, &remote, &source, &dest, &rclone) {
                     Ok(req) => match start_request(&client, &req) {
                         Ok(id) => ids.push(id),
                         Err(e) => {
@@ -2088,6 +2113,9 @@ pub fn start_operation(
     let page = adw::PreferencesPage::new();
     let identity = adw::PreferencesGroup::new();
     identity.add(&profile_row);
+    if let Some(kind) = &src_kind {
+        identity.add(kind);
+    }
     identity.add(&src);
     for row in extra_sources.borrow().iter() {
         identity.add(row);
@@ -2097,11 +2125,11 @@ pub fn start_operation(
         {
             let extra_sources = extra_sources.clone();
             let identity = identity.clone();
-            let parent = parent.clone();
+            let ctx = ctx.clone();
             add_src.connect_clicked(move |_| {
                 let row = adw::EntryRow::new();
                 row.set_title("Additional source");
-                attach_folder_picker(&parent, &row);
+                attach_path_picker(&ctx, &row, crate::picker::FilePickerConfig::folders());
                 identity.add(&row);
                 extra_sources.borrow_mut().push(row);
             });
@@ -2110,6 +2138,9 @@ pub fn start_operation(
         add_row.set_title("Multiple sources");
         add_row.add_suffix(&add_src);
         identity.add(&add_row);
+    }
+    if let Some(kind) = &dst_kind {
+        identity.add(kind);
     }
     identity.add(&dst);
     identity.add(&{
@@ -2221,10 +2252,10 @@ pub fn quick_run_editor(
     remote.set_title("Remote");
     let src = adw::EntryRow::new();
     src.set_title("Source");
-    attach_folder_picker(parent, &src);
+    attach_path_picker(&ctx, &src, crate::picker::FilePickerConfig::folders());
     let dst = adw::EntryRow::new();
     dst.set_title("Destination / mount point");
-    attach_folder_picker(parent, &dst);
+    attach_path_picker(&ctx, &dst, crate::picker::FilePickerConfig::folders());
     let cron = adw::EntryRow::new();
     cron.set_title("Cron expression");
     let cron_hint = gtk::Label::new(None);
@@ -3985,32 +4016,100 @@ pub(crate) fn helper_selected(row: &adw::ComboRow, names: &[String]) -> String {
         .unwrap_or_default()
 }
 
-pub(crate) fn attach_folder_picker(parent: &impl IsA<gtk::Widget>, row: &adw::EntryRow) {
+pub(crate) fn attach_path_kind(row: &adw::EntryRow, current_remote: &str) -> adw::ComboRow {
+    let combo = adw::ComboRow::new();
+    combo.set_title("Path type");
+    combo.set_model(Some(&gtk::StringList::new(&[
+        "Local",
+        "Current remote",
+        "Other remote",
+    ])));
+    let remote = current_remote.to_string();
+    let kind = crate::path_kind::infer_path_kind(&row.text(), &remote);
+    combo.set_selected(crate::path_kind::kind_index(kind));
+    {
+        let row = row.clone();
+        let remote = remote.clone();
+        combo.connect_selected_notify(move |combo| {
+            let kind = crate::path_kind::kind_from_index(combo.selected());
+            let rewritten = crate::path_kind::rewrite_path_for_kind(&row.text(), &remote, kind);
+            if rewritten != row.text().as_str() {
+                row.set_text(&rewritten);
+            }
+        });
+    }
+    {
+        let combo = combo.clone();
+        let remote = remote.clone();
+        row.connect_changed(move |row| {
+            let kind = crate::path_kind::infer_path_kind(&row.text(), &remote);
+            let idx = crate::path_kind::kind_index(kind);
+            if combo.selected() != idx {
+                combo.set_selected(idx);
+            }
+        });
+    }
+    combo
+}
+
+pub(crate) fn attach_path_picker(
+    ctx: &AppCtx,
+    row: &adw::EntryRow,
+    config: crate::picker::FilePickerConfig,
+) {
     let btn = gtk::Button::from_icon_name("folder-open-symbolic");
     btn.set_valign(gtk::Align::Center);
     btn.set_tooltip_text(Some("Browse"));
-    let parent = parent.clone();
-    {
-        let row = row.clone();
-        btn.connect_clicked(move |_| {
-            let Some(win) = parent.root().and_downcast::<gtk::Window>() else {
+    let ctx = ctx.clone();
+    let picked = row.clone();
+    btn.connect_clicked(move |_| {
+        let mut config = config.clone();
+        if config.initial_location.is_none() && !picked.text().is_empty() {
+            config.initial_location = Some(picked.text().to_string());
+        }
+        if config.mode == crate::picker::PickerMode::Local {
+            let Some(win) = picked.root().and_downcast::<gtk::Window>() else {
                 return;
             };
             let dialog = gtk::FileDialog::new();
-            let row = row.clone();
-            dialog.select_folder(
-                Some(&win),
-                None::<gio::Cancellable>.as_ref(),
-                move |result| {
-                    if let Ok(file) = result {
-                        if let Some(path) = file.path() {
-                            row.set_text(&path.to_string_lossy());
+            let row = picked.clone();
+            if config.selection == crate::picker::PickerSelection::Files {
+                dialog.open(
+                    Some(&win),
+                    None::<gio::Cancellable>.as_ref(),
+                    move |result| {
+                        if let Ok(file) = result {
+                            if let Some(path) = file.path() {
+                                row.set_text(&path.to_string_lossy());
+                            }
                         }
-                    }
-                },
-            );
-        });
-    }
+                    },
+                );
+            } else {
+                dialog.select_folder(
+                    Some(&win),
+                    None::<gio::Cancellable>.as_ref(),
+                    move |result| {
+                        if let Ok(file) = result {
+                            if let Some(path) = file.path() {
+                                row.set_text(&path.to_string_lossy());
+                            }
+                        }
+                    },
+                );
+            }
+            return;
+        }
+        let row = picked.clone();
+        ctx.request_picker(
+            config.clone(),
+            Rc::new(move |result| {
+                if !result.cancelled {
+                    row.set_text(&result.formatted_path());
+                }
+            }),
+        );
+    });
     row.add_suffix(&btn);
 }
 

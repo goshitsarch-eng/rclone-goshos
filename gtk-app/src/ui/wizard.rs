@@ -80,6 +80,7 @@ pub fn present(
     }));
     rebuild_fields(
         parent,
+        &ctx,
         &fields_group,
         &advanced_group,
         &state,
@@ -93,10 +94,12 @@ pub fn present(
         let state = state.clone();
         let providers = providers.clone();
         let parent = parent.clone();
+        let ctx = ctx.clone();
         type_row.connect_selected_notify(move |row| {
             let provider = providers.get(row.selected() as usize);
             rebuild_fields(
                 &parent,
+                &ctx,
                 &fields_group,
                 &advanced_group,
                 &state,
@@ -108,13 +111,17 @@ pub fn present(
 
     let mount = adw::EntryRow::new();
     mount.set_title("Mount point");
-    super::dialogs::attach_folder_picker(parent, &mount);
+    super::dialogs::attach_path_picker(
+        &ctx,
+        &mount,
+        crate::picker::FilePickerConfig::local_folders(),
+    );
     let src = adw::EntryRow::new();
     src.set_title("Default source path");
-    super::dialogs::attach_folder_picker(parent, &src);
+    super::dialogs::attach_path_picker(&ctx, &src, crate::picker::FilePickerConfig::folders());
     let dst = adw::EntryRow::new();
     dst.set_title("Default destination path");
-    super::dialogs::attach_folder_picker(parent, &dst);
+    super::dialogs::attach_path_picker(&ctx, &dst, crate::picker::FilePickerConfig::folders());
     let serve = adw::ComboRow::new();
     serve.set_title("Default serve type");
     serve.set_model(Some(&gtk::StringList::new(&OperationType::SERVE_TYPES)));
@@ -447,6 +454,7 @@ fn provider_type(providers: &[Provider], index: u32) -> String {
 
 fn rebuild_fields(
     parent: &impl IsA<gtk::Widget>,
+    ctx: &AppCtx,
     basic: &adw::PreferencesGroup,
     advanced: &adw::PreferencesGroup,
     state: &Rc<RefCell<WizardState>>,
@@ -462,20 +470,24 @@ fn rebuild_fields(
         return;
     };
     for option in provider.basic_options() {
-        let row = option_row(parent, option);
+        let row = option_row(parent, ctx, option);
         basic.add(&row);
         state.borrow_mut().fields.insert(option.name.clone(), row);
     }
     if include_advanced {
         for option in provider.advanced_options() {
-            let row = option_row(parent, option);
+            let row = option_row(parent, ctx, option);
             advanced.add(&row);
             state.borrow_mut().fields.insert(option.name.clone(), row);
         }
     }
 }
 
-fn option_row(parent: &impl IsA<gtk::Widget>, option: &ProviderOption) -> adw::EntryRow {
+fn option_row(
+    _parent: &impl IsA<gtk::Widget>,
+    ctx: &AppCtx,
+    option: &ProviderOption,
+) -> adw::EntryRow {
     let row = adw::EntryRow::new();
     let title = if option.required {
         format!("{} *", option.name)
@@ -501,7 +513,7 @@ fn option_row(parent: &impl IsA<gtk::Widget>, option: &ProviderOption) -> adw::E
         row.set_text(example);
     }
     if crate::media::is_path_field(&option.name, &option.help) {
-        super::dialogs::attach_folder_picker(parent, &row);
+        super::dialogs::attach_path_picker(ctx, &row, crate::picker::FilePickerConfig::folders());
         apply_path_usage(&row);
         row.connect_changed(|row| apply_path_usage(row));
     }

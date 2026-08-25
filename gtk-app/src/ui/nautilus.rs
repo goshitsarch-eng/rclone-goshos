@@ -49,6 +49,8 @@ pub struct NautilusView {
     right_scroll: gtk::ScrolledWindow,
     ops: gtk::ListBox,
     last_listing: Rc<RefCell<Vec<DirEntry>>>,
+    picker_bar: gtk::Box,
+    picker_label: gtk::Label,
 }
 
 impl NautilusView {
@@ -158,7 +160,24 @@ impl NautilusView {
         status.set_margin_start(10);
         status.set_margin_bottom(6);
 
+        let picker_bar = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+        picker_bar.add_css_class("toolbar");
+        picker_bar.set_margin_start(8);
+        picker_bar.set_margin_end(8);
+        picker_bar.set_margin_bottom(4);
+        picker_bar.set_visible(false);
+        let picker_label = gtk::Label::new(Some("Select a location"));
+        picker_label.set_hexpand(true);
+        picker_label.set_xalign(0.0);
+        picker_bar.append(&picker_label);
+        let picker_cancel = gtk::Button::with_label("Cancel");
+        picker_bar.append(&picker_cancel);
+        let picker_select = gtk::Button::with_label("Select");
+        picker_select.add_css_class("suggested-action");
+        picker_bar.append(&picker_select);
+
         root.append(&toolbar);
+        root.append(&picker_bar);
         root.append(&split);
         root.append(&ops_scroll);
         root.append(&status);
@@ -201,6 +220,8 @@ impl NautilusView {
             right_scroll,
             ops,
             last_listing: Rc::new(RefCell::new(Vec::new())),
+            picker_bar,
+            picker_label,
         };
 
         {
@@ -309,6 +330,14 @@ impl NautilusView {
         view.attach_file_controllers(&view.grid, true);
         view.attach_file_controllers(&view.grid_right, true);
 
+        {
+            let view = view.clone();
+            picker_cancel.connect_clicked(move |_| view.finish_picker(true));
+        }
+        {
+            let view = view.clone();
+            picker_select.connect_clicked(move |_| view.finish_picker(false));
+        }
         view.sync_layout();
         view.reload_sidebar();
         view.reload();
@@ -535,10 +564,23 @@ impl NautilusView {
         while let Some(child) = self.sidebar.first_child() {
             self.sidebar.remove(&child);
         }
+        let picker_cfg = self
+            .ctx
+            .pending_picker
+            .borrow()
+            .as_ref()
+            .map(|r| r.config.clone());
+        let allowed = |loc: &str| {
+            picker_cfg
+                .as_ref()
+                .is_none_or(|cfg| crate::picker::is_location_allowed(loc, cfg))
+        };
         self.add_side_header("Starred");
         for star in &self.ctx.settings.borrow().nautilus.starred {
             if let Some(path) = star.get("path").and_then(|x| x.as_str()) {
-                self.add_side_row(path, path);
+                if allowed(path) {
+                    self.add_side_row(path, path);
+                }
             }
         }
         self.add_side_header("Bookmarks");
@@ -547,16 +589,23 @@ impl NautilusView {
                 mark.get("name").and_then(|x| x.as_str()),
                 mark.get("path").and_then(|x| x.as_str()),
             ) {
-                self.add_side_row(name, path);
+                if allowed(path) {
+                    self.add_side_row(name, path);
+                }
             }
         }
         self.add_side_header("Local");
         for disk in &self.ctx.snapshot.borrow().local_disks {
-            self.add_side_row(disk, disk);
+            if allowed(disk) {
+                self.add_side_row(disk, disk);
+            }
         }
         self.add_side_header("Cloud remotes");
         for remote in &self.ctx.snapshot.borrow().remotes {
-            self.add_side_row(&remote.name, &format!("{}:", remote.name));
+            let loc = format!("{}:", remote.name);
+            if allowed(&loc) {
+                self.add_side_row(&remote.name, &loc);
+            }
         }
     }
 
@@ -578,6 +627,14 @@ impl NautilusView {
     }
 
     pub fn navigate_to(&self, input: &str) {
+        if let Some(req) = self.ctx.pending_picker.borrow().as_ref() {
+            if !crate::picker::is_location_allowed(input, &req.config) {
+                self.toast.add_toast(adw::Toast::new(
+                    "That location is not allowed for this picker",
+                ));
+                return;
+            }
+        }
         let current = self.current.borrow().clone();
         self.history
             .borrow_mut()
@@ -588,6 +645,81 @@ impl NautilusView {
         self.current.borrow_mut().path = path;
         self.sync_current_tab();
         self.reload();
+    }
+
+    pub fn apply_pending_picker(&self) {
+        let active = self.ctx.pending_picker.borrow().is_some();
+        if active != self.picker_bar.is_visible() {
+            self.picker_bar.set_visible(active);
+            self.reload_sidebar();
+            self.reload();
+        }
+        if let Some(req) = self.ctx.pending_picker.borrow().as_ref() {
+            let text = match req.config.selection {
+                crate::picker::PickerSelection::Folders => "Select a folder",
+                crate::picker::PickerSelection::Files => "Select a file",
+                crate::picker::PickerSelection::Both => "Select a file or folder",
+            };
+            if self.picker_label.text().as_str() != text {
+                self.picker_label.set_text(text);
+            }
+        }
+    }
+
+    fn finish_picker(&self, cancelled: bool) {
+        self.finish_picker_choice(cancelled, None);
+    }
+
+    fn finish_picker_choice(&self, cancelled: bool, forced: Option<(String, bool)>) {
+        let Some(req) = self.ctx.pending_picker.borrow_mut().take() else {
+            return;
+        };
+        let current = self.current.borrow().clone();
+        let listing = self.last_listing.borrow().clone();
+        let result = if cancelled {
+            crate::picker::PickerResult {
+                cancelled: true,
+                ..Default::default()
+            }
+        } else if let Some((name, is_dir)) = forced {
+            crate::picker::PickerResult {
+                remote: current.remote.clone(),
+                path: join_remote_path(&current.path, &name),
+                is_dir,
+                cancelled: false,
+            }
+        } else if let Some(name) = self.selected_name() {
+            let is_dir = listing
+                .iter()
+                .find(|e| e.name == name)
+                .map(|e| e.is_dir)
+                .unwrap_or(true);
+            crate::picker::PickerResult {
+                remote: current.remote.clone(),
+                path: join_remote_path(&current.path, &name),
+                is_dir,
+                cancelled: false,
+            }
+        } else {
+            crate::picker::PickerResult {
+                remote: current.remote.clone(),
+                path: current.path.clone(),
+                is_dir: true,
+                cancelled: false,
+            }
+        };
+        let dirs = usize::from(result.is_dir);
+        let files = usize::from(!result.is_dir);
+        if !cancelled && !crate::picker::can_confirm_selection(dirs, files, &req.config) {
+            *self.ctx.pending_picker.borrow_mut() = Some(req);
+            self.picker_bar.set_visible(true);
+            self.toast
+                .add_toast(adw::Toast::new("Select a valid item to continue"));
+            return;
+        }
+        self.picker_bar.set_visible(false);
+        self.reload_sidebar();
+        (req.on_pick)(result);
     }
 
     fn go_back(&self) {
@@ -655,6 +787,14 @@ impl NautilusView {
                 let show_hidden = self.ctx.settings.borrow().nautilus.show_hidden;
                 if !show_hidden {
                     entries.retain(|e| !e.name.starts_with('.'));
+                }
+                if let Some(req) = self.ctx.pending_picker.borrow().as_ref() {
+                    entries.retain(|e| {
+                        e.is_dir || crate::picker::is_entry_allowed(&e.name, e.is_dir, &req.config)
+                    });
+                    if req.config.selection == crate::picker::PickerSelection::Folders {
+                        entries.retain(|e| e.is_dir);
+                    }
                 }
                 sort_entries(
                     &mut entries,
@@ -765,6 +905,15 @@ impl NautilusView {
     }
 
     fn open_name(&self, name: &str) {
+        if self.ctx.pending_picker.borrow().is_some() {
+            let listing = self.last_listing.borrow().clone();
+            if let Some(entry) = listing.iter().find(|e| e.name == name) {
+                if !entry.is_dir {
+                    self.finish_picker_choice(false, Some((name.to_string(), false)));
+                    return;
+                }
+            }
+        }
         let current = self.current.borrow().clone();
         let next = join_remote_path(&current.path, name);
         let Some(client) = self.ctx.client() else {
@@ -1531,6 +1680,7 @@ impl NautilusView {
         }
         items.extend([
             ("Send to…", "sendto"),
+            ("Share…", "share"),
             ("Undo", "undo"),
             ("Redo", "redo"),
             ("Paste from system clipboard", "syspaste"),
@@ -1581,6 +1731,7 @@ impl NautilusView {
                         );
                     }
                 }
+                "share" => view.share_selected(),
                 "sendto" => {
                     let current = view.current.borrow().clone();
                     let registered = crate::platform::is_send_to_registered(
@@ -1837,6 +1988,39 @@ impl NautilusView {
                 }
             },
         );
+    }
+
+    fn share_selected(&self) {
+        let Some(name) = self.selected_name() else {
+            self.toast
+                .add_toast(adw::Toast::new("Select a file to share"));
+            return;
+        };
+        let current = self.current.borrow().clone();
+        let path = join_remote_path(&current.path, &name);
+        if current.remote == "local" {
+            match crate::platform::share_file(std::path::Path::new(&path)) {
+                Ok(()) => self
+                    .toast
+                    .add_toast(adw::Toast::new("Opened system share for the file")),
+                Err(e) => self.toast.add_toast(adw::Toast::new(&e)),
+            }
+            return;
+        }
+        let Some(client) = self.ctx.client() else {
+            return;
+        };
+        let (fs, remote) = fs_remote(&current.remote, &path);
+        let dest = std::env::temp_dir().join(&name);
+        match client.copy_file(&fs, &remote, "/", &dest.to_string_lossy()) {
+            Ok(_) => match crate::platform::share_file(&dest) {
+                Ok(()) => self
+                    .toast
+                    .add_toast(adw::Toast::new("Opened system share for the file")),
+                Err(e) => self.toast.add_toast(adw::Toast::new(&e)),
+            },
+            Err(e) => self.toast.add_toast(adw::Toast::new(&e.to_string())),
+        }
     }
 
     fn open_native_selected(&self) {

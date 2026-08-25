@@ -130,8 +130,12 @@ pub fn present_main(app: &adw::Application, ctx: AppCtx) {
         let stack_nav = view_stack.clone();
         let nautilus_nav = nautilus.clone();
         glib::timeout_add_local(std::time::Duration::from_millis(200), move || {
-            if let Some((remote, path)) = ctx_nav.pending_browse.borrow_mut().take() {
+            if ctx_nav.pending_picker.borrow().is_some()
+                || ctx_nav.pending_browse.borrow().is_some()
+            {
                 stack_nav.set_visible_child_name("nautilus");
+            }
+            if let Some((remote, path)) = ctx_nav.pending_browse.borrow_mut().take() {
                 let target = if remote == "local" {
                     if path.is_empty() {
                         "/".into()
@@ -145,6 +149,7 @@ pub fn present_main(app: &adw::Application, ctx: AppCtx) {
                 };
                 nautilus_nav.navigate_to(&target);
             }
+            nautilus_nav.apply_pending_picker();
             glib::ControlFlow::Continue
         });
     }
