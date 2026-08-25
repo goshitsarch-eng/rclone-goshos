@@ -64,6 +64,92 @@ impl NavTarget {
     }
 }
 
+/// Angular `openFromBrowseQueryParam` / `PathNavigationService.parseLocation`.
+/// Accepts `--browse remote[:path]`, `--browse-path`, and nautilus URLs.
+pub fn parse_browse_args(args: &[String]) -> Option<(String, String)> {
+    let mut browse = None;
+    let mut path = None;
+    for (idx, arg) in args.iter().enumerate() {
+        match arg.as_str() {
+            "--browse" => browse = args.get(idx + 1).cloned(),
+            "--browse-path" => path = args.get(idx + 1).cloned(),
+            other if idx > 0 && !other.starts_with("--") => {
+                if let Some(parsed) = parse_browse_url(other) {
+                    return Some(parsed);
+                }
+            }
+            _ => {}
+        }
+    }
+    let browse = browse?;
+    if browse.contains(':') && path.is_none() {
+        return Some(crate::rclone::split_remote_path(&browse));
+    }
+    Some((browse, path.unwrap_or_default()))
+}
+
+pub fn parse_browse_url(input: &str) -> Option<(String, String)> {
+    let trimmed = input.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    if let Some(query) = query_string(trimmed) {
+        if let Some(remote) = query_param(&query, "browse") {
+            return Some((remote, query_param(&query, "path").unwrap_or_default()));
+        }
+    }
+    if let Some(idx) = trimmed.find("#/nautilus") {
+        return parse_nautilus_segments(&trimmed[idx + "#/nautilus".len()..]);
+    }
+    if let Some(idx) = trimmed.find("/nautilus") {
+        return parse_nautilus_segments(&trimmed[idx + "/nautilus".len()..]);
+    }
+    None
+}
+
+fn query_string(input: &str) -> Option<String> {
+    let after_q = input.split_once('?')?.1;
+    Some(after_q.split(['#']).next().unwrap_or(after_q).to_string())
+}
+
+fn query_param(query: &str, key: &str) -> Option<String> {
+    for pair in query.split('&') {
+        let (name, value) = pair.split_once('=')?;
+        if name == key {
+            return Some(
+                urlencoding::decode(value)
+                    .unwrap_or(std::borrow::Cow::Borrowed(value))
+                    .into_owned(),
+            );
+        }
+    }
+    None
+}
+
+fn parse_nautilus_segments(rest: &str) -> Option<(String, String)> {
+    let rest = rest
+        .split(['?', '#'])
+        .next()
+        .unwrap_or(rest)
+        .trim_start_matches('/');
+    if rest.is_empty() {
+        return None;
+    }
+    let mut parts = rest.split('/');
+    let remote = decode_segment(parts.next()?);
+    if remote.is_empty() {
+        return None;
+    }
+    let path = parts.map(decode_segment).collect::<Vec<_>>().join("/");
+    Some((remote, path))
+}
+
+fn decode_segment(value: &str) -> String {
+    urlencoding::decode(value)
+        .unwrap_or(std::borrow::Cow::Borrowed(value))
+        .into_owned()
+}
+
 fn nonempty(value: &str) -> Option<String> {
     if value.is_empty() {
         None
@@ -180,5 +266,40 @@ mod tests {
                 quick_run: Some("abc-123".into()),
             }
         );
+    }
+
+    #[test]
+    fn parses_browse_cli_and_urls() {
+        assert_eq!(
+            parse_browse_args(&["app".into(), "--browse".into(), "drive:Photos".into()]),
+            Some(("drive".into(), "Photos".into()))
+        );
+        assert_eq!(
+            parse_browse_args(&[
+                "app".into(),
+                "--browse".into(),
+                "drive".into(),
+                "--browse-path".into(),
+                "Inbox".into()
+            ]),
+            Some(("drive".into(), "Inbox".into()))
+        );
+        assert_eq!(
+            parse_browse_url("https://app.local/?browse=gdrive&path=Photos%2F2024"),
+            Some(("gdrive".into(), "Photos/2024".into()))
+        );
+        assert_eq!(
+            parse_browse_url("#/nautilus/gdrive/Photos/2024"),
+            Some(("gdrive".into(), "Photos/2024".into()))
+        );
+        assert_eq!(
+            parse_browse_url("/nautilus/gdrive/Docs"),
+            Some(("gdrive".into(), "Docs".into()))
+        );
+        assert_eq!(
+            parse_browse_args(&["app".into(), "/nautilus/local/home/ada".into()]),
+            Some(("local".into(), "home/ada".into()))
+        );
+        assert_eq!(parse_browse_url("https://app.local/dashboard"), None);
     }
 }

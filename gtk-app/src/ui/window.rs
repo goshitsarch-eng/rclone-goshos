@@ -38,6 +38,10 @@ pub fn activate(app: &adw::Application) {
         return;
     }
 
+    if let Some((remote, path)) = crate::navigation::parse_browse_args(&args) {
+        ctx.request_browse(&remote, &path);
+    }
+
     present_main(app, ctx);
 }
 

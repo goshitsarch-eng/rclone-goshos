@@ -419,6 +419,38 @@ impl Dashboard {
         layout_bar.append(&edit_btn);
         layout_bar.append(&order_btn);
         layout_bar.append(&reset);
+        if editing {
+            let detailed = self.ctx.settings.borrow().runtime.dashboard_card_variant == "detailed";
+            let variant_label = if detailed {
+                self.ctx
+                    .t_or("generalOverview.layout.showCompact", "Show Compact Cards")
+            } else {
+                self.ctx
+                    .t_or("generalOverview.layout.showDetailed", "Show Detailed Cards")
+            };
+            let variant_btn = gtk::Button::with_label(&variant_label);
+            variant_btn.set_tooltip_text(Some(&variant_label));
+            {
+                let dash = self.clone();
+                variant_btn.connect_clicked(move |_| {
+                    let next = if dash.ctx.settings.borrow().runtime.dashboard_card_variant
+                        == "detailed"
+                    {
+                        "compact"
+                    } else {
+                        "detailed"
+                    };
+                    dash.ctx
+                        .settings
+                        .borrow_mut()
+                        .runtime
+                        .dashboard_card_variant = next.into();
+                    dash.ctx.persist();
+                    dash.refresh();
+                });
+            }
+            layout_bar.append(&variant_btn);
+        }
         self.host().append(&layout_bar);
         self.host().append(&self.origin_filter_bar());
         let layout = crate::layout::PanelLayout::from_value(

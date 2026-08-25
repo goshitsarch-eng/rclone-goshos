@@ -376,6 +376,8 @@ This client is the GTK 4 + libadwaita rewrite of the Angular/Tauri desktop UI. I
 - Startup loading overlay (`onboarding.loadingTitle` / `loadingMessage`) hides after the first runtime refresh
 - Extra RC backends call `config/setpath` + `config/unlock` on switch/save (Tauri `configure_remote_backend`)
 - Interactive config step: required badge, default value, exclusive vs custom examples, password peek, Yes/No, validation hint
+- Dashboard layout toolbar toggles compact/detailed cards (`generalOverview.layout.showDetailed` / `showCompact`)
+- Files launch from `--browse` / `--browse-path` and Angular nautilus URLs (`?browse=`, `#/nautilus/`, `/nautilus/`)
 
 ## Still deepening toward pixel-level Angular parity
 
