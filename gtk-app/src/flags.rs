@@ -31,6 +31,7 @@ pub struct FlagOption {
     pub default_str: String,
     pub value: Value,
     pub examples: Vec<(String, String)>,
+    pub exclusive: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -151,6 +152,11 @@ fn parse_flag_option(value: &Value) -> Option<FlagOption> {
                     .collect()
             })
             .unwrap_or_default(),
+        exclusive: value
+            .get("Exclusive")
+            .or_else(|| value.get("exclusive"))
+            .and_then(|x| x.as_bool())
+            .unwrap_or(false),
         name,
         field_name,
     })
@@ -185,18 +191,7 @@ pub fn set_option_payload(block: &str, option_name: &str, value: Value) -> Value
 }
 
 pub fn parse_flag_value(type_name: &str, text: &str) -> Value {
-    match type_name {
-        "bool" => json!(text.eq_ignore_ascii_case("true") || text == "1"),
-        "int" | "int64" | "SizeSuffix" => text
-            .parse::<i64>()
-            .map(Value::from)
-            .unwrap_or_else(|_| json!(text)),
-        "float" | "Duration" => text
-            .parse::<f64>()
-            .map(|n| json!(n))
-            .unwrap_or_else(|_| json!(text)),
-        _ => json!(text),
-    }
+    crate::value_mapper::human_to_machine(text, type_name)
 }
 
 pub fn static_flags_for(op: OperationType) -> Vec<FlagOption> {
@@ -261,6 +256,7 @@ pub fn static_flags_for(op: OperationType) -> Vec<FlagOption> {
                 default_str: "50".into(),
                 value: json!(50),
                 examples: vec![],
+                exclusive: false,
             },
             bool_flag("force", "Bypass --max-delete safety check."),
             string_flag("compare", "size,modtime,checksum"),
@@ -282,6 +278,7 @@ fn bool_flag(name: &str, help: &str) -> FlagOption {
         default_str: "false".into(),
         value: json!(false),
         examples: vec![],
+        exclusive: false,
     }
 }
 
@@ -296,6 +293,7 @@ fn string_flag(name: &str, help: &str) -> FlagOption {
         default_str: String::new(),
         value: json!(""),
         examples: vec![],
+        exclusive: false,
     }
 }
 
@@ -601,6 +599,27 @@ mod tests {
         assert!(parse_json_object("[1]").is_err());
         assert!(parse_json_object("{").is_err());
         assert!(parse_json_object("").unwrap().is_empty());
+    }
+
+    #[test]
+    fn parses_exclusive_and_human_flag_values() {
+        let info = json!({
+            "main": [{
+                "Name": "logLevel",
+                "FieldName": "logLevel",
+                "Type": "string",
+                "Exclusive": true,
+                "Examples": [{"Value": "DEBUG", "Help": "debug"}]
+            }]
+        });
+        let blocks = parse_options_info(&info);
+        assert!(blocks[0].options[0].exclusive);
+        assert_eq!(blocks[0].options[0].examples[0].0, "DEBUG");
+        assert_eq!(parse_flag_value("bool", "true"), json!(true));
+        assert_eq!(parse_flag_value("int", "8"), json!(8));
+        assert_eq!(parse_flag_value("Duration", "30s"), json!("30s"));
+        assert_eq!(parse_flag_value("SizeSuffix", "1Gi"), json!("1Gi"));
+        assert_eq!(parse_flag_value("Tristate", "unset"), json!(null));
     }
 
     #[test]

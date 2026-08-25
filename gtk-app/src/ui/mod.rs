@@ -3,6 +3,7 @@ mod dialogs;
 mod flow;
 mod nautilus;
 mod onboarding;
+mod preferences;
 mod remote_config;
 mod tray;
 mod window;

@@ -209,6 +209,11 @@ This client is the GTK 4 + libadwaita rewrite of the Angular/Tauri desktop UI. I
 - Rclone flags editor lists the full `options/info` set (no 40-flag cap)
 - Standalone dialog result file is polled so the parent refreshes after close
 - Default mount/bisync directory templates (`{home}/rclone-manager/{remote}`)
+- Preferences pending-restart batch for `rclone_binary` / extra flags / env vars, with Save & Restart and Discard
+- Per-setting reset-to-default controls on every Preferences row
+- Remote wizard i18n for identity, fields, interactive flow, profiles, and errors
+- Wizard rebuilds provider fields when the vendor/provider combo changes
+- Rclone flags editor typed controls (bool/tristate/select/numeric) plus Duration/SizeSuffix hints
 
 ## Still deepening toward pixel-level Angular parity
 
@@ -216,5 +221,4 @@ This client is the GTK 4 + libadwaita rewrite of the Angular/Tauri desktop UI. I
 - Workflow builder (stub in both apps)
 - Live GUI session against rclone rcd (no display in this environment)
 - Native share portal / Android share intent (Linux uses `--share-intake` + Files banner)
-- Full UI string translation (most GTK labels still English)
-- Preferences pending-restart batch and per-setting reset
+- Remaining UI string translation (dashboard/remote-config still have English labels)

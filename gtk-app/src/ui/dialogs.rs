@@ -162,856 +162,7 @@ pub fn preferences(parent: &impl IsA<gtk::Widget>, ctx: AppCtx) {
     if try_spawn_standalone(&ctx, "preferences", serde_json::json!({})) {
         return;
     }
-    let dialog = adw::PreferencesDialog::new();
-    dialog.set_title(&ctx.t_or("titlebar.menu.preferences", "Preferences"));
-    dialog.set_search_enabled(true);
-
-    let general = adw::PreferencesPage::new();
-    general.set_title(&ctx.t_or("modals.preferences.tabs.general", "General"));
-    general.set_icon_name(Some("preferences-system-symbolic"));
-    let g1 = adw::PreferencesGroup::new();
-    g1.set_title(&ctx.t_or("settings.general.language.label", "Appearance & language"));
-
-    let langs = crate::i18n::SUPPORTED_LANGUAGES;
-    let lang_labels = [
-        "English (US)",
-        "Türkçe (Türkiye)",
-        "Español (España)",
-        "中文 (简体)",
-        "Français (France)",
-        "Українська (Україна)",
-        "Русский (Россия)",
-        "Português (Brasil)",
-        "日本語 (日本)",
-    ];
-    let lang_model = gtk::StringList::new(&lang_labels);
-    let lang = adw::ComboRow::new();
-    lang.set_title(&ctx.t_or("settings.general.language.label", "Language"));
-    lang.set_subtitle(&ctx.t_or(
-        "settings.general.language.description",
-        "Application language",
-    ));
-    lang.set_model(Some(&lang_model));
-    if let Some(idx) = langs
-        .iter()
-        .position(|l| *l == ctx.settings.borrow().general.language)
-    {
-        lang.set_selected(idx as u32);
-    }
-    {
-        let ctx = ctx.clone();
-        lang.connect_selected_notify(move |row| {
-            let idx = row.selected() as usize;
-            if let Some(code) = langs.get(idx) {
-                ctx.settings.borrow_mut().general.language = (*code).to_string();
-                *ctx.i18n.borrow_mut() = crate::i18n::I18n::load(code);
-                ctx.persist();
-            }
-        });
-    }
-    g1.add(&lang);
-
-    let views = ["main_menu", "nautilus", "flow"];
-    let view_model = gtk::StringList::new(&views);
-    let view = adw::ComboRow::new();
-    view.set_title(&ctx.t_or("settings.general.default_view.label", "Default view"));
-    view.set_model(Some(&view_model));
-    if let Some(idx) = views
-        .iter()
-        .position(|v| *v == ctx.settings.borrow().general.default_view)
-    {
-        view.set_selected(idx as u32);
-    }
-    {
-        let ctx = ctx.clone();
-        view.connect_selected_notify(move |row| {
-            if let Some(v) = views.get(row.selected() as usize) {
-                ctx.settings.borrow_mut().general.default_view = (*v).to_string();
-                ctx.persist();
-            }
-        });
-    }
-    g1.add(&view);
-
-    g1.add(&switch_row(
-        &ctx.t_or("settings.general.tray_enabled.label", "Enable tray"),
-        ctx.settings.borrow().general.tray_enabled,
-        {
-            let ctx = ctx.clone();
-            move |v| ctx.settings.borrow_mut().general.tray_enabled = v
-        },
-    ));
-    g1.add(&switch_row(
-        &ctx.t_or(
-            "settings.general.start_on_startup.label",
-            "Start on startup",
-        ),
-        ctx.settings.borrow().general.start_on_startup,
-        {
-            let ctx = ctx.clone();
-            move |v| {
-                ctx.settings.borrow_mut().general.start_on_startup = v;
-                let _ = crate::platform::set_autostart(v);
-            }
-        },
-    ));
-    g1.add(&switch_row(
-        &ctx.t_or("settings.general.notifications.label", "Notifications"),
-        ctx.settings.borrow().general.notifications,
-        {
-            let ctx = ctx.clone();
-            move |v| ctx.settings.borrow_mut().general.notifications = v
-        },
-    ));
-    g1.add(&switch_row(
-        &ctx.t_or(
-            "settings.general.restrict.label",
-            "Restrict sensitive values",
-        ),
-        ctx.settings.borrow().general.restrict,
-        {
-            let ctx = ctx.clone();
-            move |v| ctx.settings.borrow_mut().general.restrict = v
-        },
-    ));
-    g1.add(&switch_row(
-        &ctx.t_or(
-            "settings.general.prevent_sleep.label",
-            "Prevent sleep during jobs",
-        ),
-        ctx.settings.borrow().general.prevent_sleep,
-        {
-            let ctx = ctx.clone();
-            move |v| ctx.settings.borrow_mut().general.prevent_sleep = v
-        },
-    ));
-    g1.add(&switch_row(
-        &ctx.t_or(
-            "settings.general.standalone_dialogs.label",
-            "Standalone dialog windows",
-        ),
-        ctx.settings.borrow().general.standalone_dialogs,
-        {
-            let ctx = ctx.clone();
-            move |v| ctx.settings.borrow_mut().general.standalone_dialogs = v
-        },
-    ));
-    let cards = ["compact", "detailed"];
-    let card_row = adw::ComboRow::new();
-    card_row.set_title(&ctx.t_or(
-        "settings.runtime.dashboard_card_variant.label",
-        "Dashboard cards",
-    ));
-    card_row.set_model(Some(&gtk::StringList::new(&cards)));
-    if let Some(idx) = cards
-        .iter()
-        .position(|c| *c == ctx.settings.borrow().runtime.dashboard_card_variant)
-    {
-        card_row.set_selected(idx as u32);
-    }
-    {
-        let ctx = ctx.clone();
-        card_row.connect_selected_notify(move |row| {
-            if let Some(v) = cards.get(row.selected() as usize) {
-                ctx.settings.borrow_mut().runtime.dashboard_card_variant = (*v).to_string();
-                ctx.persist();
-            }
-        });
-    }
-    g1.add(&card_row);
-    let themes = ["system", "light", "dark"];
-    let theme_row = adw::ComboRow::new();
-    theme_row.set_title(&ctx.t_or("titlebar.menu.theme", "Theme"));
-    theme_row.set_model(Some(&gtk::StringList::new(&themes)));
-    if let Some(idx) = themes
-        .iter()
-        .position(|t| *t == ctx.settings.borrow().runtime.theme)
-    {
-        theme_row.set_selected(idx as u32);
-    }
-    {
-        let ctx = ctx.clone();
-        theme_row.connect_selected_notify(move |row| {
-            if let Some(v) = themes.get(row.selected() as usize) {
-                ctx.settings.borrow_mut().runtime.theme = (*v).to_string();
-                ctx.persist();
-                ctx.apply_theme();
-            }
-        });
-    }
-    g1.add(&theme_row);
-    let tray_themes = [
-        "system",
-        "color",
-        "monochrome_light",
-        "monochrome_dark",
-        "symbolic",
-    ];
-    let tray_theme = adw::ComboRow::new();
-    tray_theme.set_title(&ctx.t_or("settings.general.tray_icon_theme.label", "Tray icon theme"));
-    tray_theme.set_model(Some(&gtk::StringList::new(&tray_themes)));
-    if let Some(idx) = tray_themes
-        .iter()
-        .position(|t| *t == ctx.settings.borrow().general.tray_icon_theme)
-    {
-        tray_theme.set_selected(idx as u32);
-    }
-    {
-        let ctx = ctx.clone();
-        tray_theme.connect_selected_notify(move |row| {
-            if let Some(v) = tray_themes.get(row.selected() as usize) {
-                ctx.settings.borrow_mut().general.tray_icon_theme = (*v).to_string();
-                ctx.persist();
-            }
-        });
-    }
-    g1.add(&tray_theme);
-    let sorts = ["name", "size", "modified"];
-    let sort_row = adw::ComboRow::new();
-    sort_row.set_title(&ctx.t_or("nautilus.sort.label", "Files sort"));
-    sort_row.set_subtitle(&ctx.t_or("nautilus.sort.defaultHint", "Default Nautilus listing sort"));
-    sort_row.set_model(Some(&gtk::StringList::new(&sorts)));
-    if let Some(idx) = sorts
-        .iter()
-        .position(|s| *s == ctx.settings.borrow().nautilus.sort_by)
-    {
-        sort_row.set_selected(idx as u32);
-    }
-    {
-        let ctx = ctx.clone();
-        sort_row.connect_selected_notify(move |row| {
-            if let Some(v) = sorts.get(row.selected() as usize) {
-                ctx.settings.borrow_mut().nautilus.sort_by = (*v).to_string();
-                ctx.persist();
-            }
-        });
-    }
-    g1.add(&sort_row);
-    g1.add(&switch_row(
-        &ctx.t_or("nautilus.sort.descending", "Sort files descending"),
-        ctx.settings.borrow().nautilus.sort_desc,
-        {
-            let ctx = ctx.clone();
-            move |v| ctx.settings.borrow_mut().nautilus.sort_desc = v
-        },
-    ));
-    let channels = ["stable", "beta"];
-    let app_ch = adw::ComboRow::new();
-    app_ch.set_title(&ctx.t_or(
-        "settings.runtime.app_update_channel.label",
-        "App update channel",
-    ));
-    app_ch.set_model(Some(&gtk::StringList::new(&channels)));
-    if let Some(idx) = channels
-        .iter()
-        .position(|c| *c == ctx.settings.borrow().runtime.app_update_channel)
-    {
-        app_ch.set_selected(idx as u32);
-    }
-    {
-        let ctx = ctx.clone();
-        app_ch.connect_selected_notify(move |row| {
-            if let Some(v) = channels.get(row.selected() as usize) {
-                ctx.settings.borrow_mut().runtime.app_update_channel = (*v).to_string();
-                ctx.persist();
-            }
-        });
-    }
-    g1.add(&app_ch);
-    let rclone_ch = adw::ComboRow::new();
-    rclone_ch.set_title(&ctx.t_or(
-        "settings.runtime.rclone_update_channel.label",
-        "rclone update channel",
-    ));
-    rclone_ch.set_model(Some(&gtk::StringList::new(&channels)));
-    if let Some(idx) = channels
-        .iter()
-        .position(|c| *c == ctx.settings.borrow().runtime.rclone_update_channel)
-    {
-        rclone_ch.set_selected(idx as u32);
-    }
-    {
-        let ctx = ctx.clone();
-        rclone_ch.connect_selected_notify(move |row| {
-            if let Some(v) = channels.get(row.selected() as usize) {
-                ctx.settings.borrow_mut().runtime.rclone_update_channel = (*v).to_string();
-                ctx.persist();
-            }
-        });
-    }
-    g1.add(&rclone_ch);
-    g1.add(&switch_row(
-        &ctx.t_or(
-            "settings.runtime.app_auto_check_updates.label",
-            "Check for app updates",
-        ),
-        ctx.settings.borrow().runtime.app_auto_check_updates,
-        {
-            let ctx = ctx.clone();
-            move |v| ctx.settings.borrow_mut().runtime.app_auto_check_updates = v
-        },
-    ));
-    g1.add(&switch_row(
-        &ctx.t_or(
-            "settings.runtime.rclone_auto_check_updates.label",
-            "Check for rclone updates",
-        ),
-        ctx.settings.borrow().runtime.rclone_auto_check_updates,
-        {
-            let ctx = ctx.clone();
-            move |v| ctx.settings.borrow_mut().runtime.rclone_auto_check_updates = v
-        },
-    ));
-    g1.add(&switch_row(
-        &ctx.t_or(
-            "settings.runtime.show_json_mode.label",
-            "JSON mode for flag editors",
-        ),
-        ctx.settings.borrow().runtime.show_json_mode,
-        {
-            let ctx = ctx.clone();
-            move |v| {
-                ctx.settings.borrow_mut().runtime.show_json_mode = v;
-                ctx.persist();
-            }
-        },
-    ));
-    let reset =
-        gtk::Button::with_label(&ctx.t_or("modals.preferences.resetAll", "Reset all settings"));
-    reset.add_css_class("destructive-action");
-    {
-        let ctx = ctx.clone();
-        let parent = parent.clone();
-        reset.connect_clicked(move |_| {
-            let alert = adw::AlertDialog::new(
-                Some(&ctx.t_or("settings.resetAll.title", "Reset Settings")),
-                Some(&ctx.t_or(
-                    "settings.resetAll.message",
-                    "Are you sure you want to reset all app settings? This cannot be undone.",
-                )),
-            );
-            alert.add_response("cancel", &ctx.t("common.cancel"));
-            alert.add_response("reset", &ctx.t_or("common.reset", "Reset"));
-            alert.set_response_appearance("reset", adw::ResponseAppearance::Destructive);
-            let ctx = ctx.clone();
-            alert.connect_response(None, move |_, response| {
-                if response != "reset" {
-                    return;
-                }
-                let mut next = crate::settings::AppSettings::default();
-                next.core.completed_onboarding = true;
-                let lang = next.general.language.clone();
-                *ctx.settings.borrow_mut() = next;
-                *ctx.i18n.borrow_mut() = crate::i18n::I18n::load(&lang);
-                ctx.persist();
-                ctx.apply_theme();
-            });
-            alert.present(Some(&parent));
-        });
-    }
-    g1.add(&{
-        let row = adw::ActionRow::new();
-        row.set_title(&ctx.t_or("modals.preferences.resetAll", "Reset all settings"));
-        row.add_suffix(&reset);
-        row
-    });
-    let skip_updates =
-        gtk::Button::with_label(&ctx.t_or("modals.about.skipVersion", "Skip pending updates"));
-    {
-        let ctx = ctx.clone();
-        skip_updates.connect_clicked(move |_| {
-            let pending = ctx.updates.borrow().clone();
-            let mut settings = ctx.settings.borrow_mut();
-            if let Some(app) = &pending.app {
-                if !settings.runtime.app_skipped_updates.contains(&app.latest) {
-                    settings
-                        .runtime
-                        .app_skipped_updates
-                        .push(app.latest.clone());
-                }
-            }
-            if let Some(rclone) = &pending.rclone {
-                if !settings
-                    .runtime
-                    .rclone_skipped_updates
-                    .contains(&rclone.latest)
-                {
-                    settings
-                        .runtime
-                        .rclone_skipped_updates
-                        .push(rclone.latest.clone());
-                }
-            }
-            drop(settings);
-            ctx.persist();
-            *ctx.updates.borrow_mut() = crate::updater::PendingUpdates::default();
-        });
-    }
-    g1.add(&{
-        let row = adw::ActionRow::new();
-        row.set_title(&ctx.t_or("modals.about.skipVersion", "Skip pending updates"));
-        row.add_suffix(&skip_updates);
-        row
-    });
-    general.add(&g1);
-
-    let core = adw::PreferencesPage::new();
-    core.set_title(&ctx.t_or("modals.preferences.tabs.core", "Core"));
-    core.set_icon_name(Some("application-x-executable-symbolic"));
-    let c1 = adw::PreferencesGroup::new();
-    c1.set_title(&ctx.t_or("titlebar.menu.installRclone", "Rclone"));
-    let binary = adw::EntryRow::new();
-    binary.set_title(&ctx.t_or("settings.core.rclone_binary.label", "Rclone binary"));
-    binary.set_text(&ctx.settings.borrow().core.rclone_binary);
-    {
-        let ctx = ctx.clone();
-        binary.connect_changed(move |row| {
-            ctx.settings.borrow_mut().core.rclone_binary = row.text().to_string();
-            ctx.persist();
-        });
-    }
-    let restart = gtk::Button::with_label(&ctx.t_or(
-        "modals.preferences.aria.saveAndRestart",
-        "Restart rclone engine",
-    ));
-    restart.set_tooltip_text(Some(&ctx.t_or(
-        "settings.core.rclone_flags.description",
-        "Required after changing the binary, extra flags, or environment",
-    )));
-    {
-        let ctx = ctx.clone();
-        restart.connect_clicked(move |_| {
-            ctx.restart_engine();
-        });
-    }
-    c1.add(&restart);
-    c1.add(&binary);
-    let bw = adw::EntryRow::new();
-    bw.set_title(&ctx.t_or("settings.core.bandwidth_limit.label", "Bandwidth limit"));
-    bw.set_text(&ctx.settings.borrow().core.bandwidth_limit);
-    {
-        let ctx = ctx.clone();
-        bw.connect_changed(move |row| {
-            let rate = row.text().to_string();
-            match crate::validators::validate_bandwidth(&rate) {
-                Ok(()) => {
-                    row.remove_css_class("error");
-                    row.set_tooltip_text(None);
-                }
-                Err(msg) => {
-                    row.add_css_class("error");
-                    row.set_tooltip_text(Some(&msg));
-                    return;
-                }
-            }
-            ctx.settings.borrow_mut().core.bandwidth_limit = rate;
-            ctx.persist();
-            ctx.apply_effective_bandwidth();
-        });
-    }
-    c1.add(&bw);
-    let metered_bw = adw::EntryRow::new();
-    metered_bw.set_title(&ctx.t_or(
-        "settings.core.metered_bandwidth_limit.label",
-        "Bandwidth limit on metered networks",
-    ));
-    metered_bw.set_text(&ctx.settings.borrow().core.metered_bandwidth_limit);
-    {
-        let ctx = ctx.clone();
-        metered_bw.connect_changed(move |row| {
-            let rate = row.text().to_string();
-            if let Err(msg) = crate::validators::validate_bandwidth(&rate) {
-                row.add_css_class("error");
-                row.set_tooltip_text(Some(&msg));
-                return;
-            }
-            row.remove_css_class("error");
-            ctx.settings.borrow_mut().core.metered_bandwidth_limit = rate;
-            ctx.persist();
-            ctx.apply_effective_bandwidth();
-        });
-    }
-    c1.add(&metered_bw);
-    let mount_dir = adw::EntryRow::new();
-    mount_dir.set_title(&ctx.t_or(
-        "settings.core.default_mount_directory.label",
-        "Default mount directory ({home}/rclone-manager/{remote})",
-    ));
-    mount_dir.set_text(&ctx.settings.borrow().core.default_mount_directory);
-    {
-        let ctx = ctx.clone();
-        mount_dir.connect_changed(move |row| {
-            ctx.settings.borrow_mut().core.default_mount_directory = row.text().to_string();
-            ctx.persist();
-        });
-    }
-    c1.add(&mount_dir);
-    let bisync_dir = adw::EntryRow::new();
-    bisync_dir.set_title(&ctx.t_or(
-        "settings.core.default_bisync_directory.label",
-        "Default bisync directory ({home}/rclone-manager/{remote}-bisync)",
-    ));
-    bisync_dir.set_text(&ctx.settings.borrow().core.default_bisync_directory);
-    {
-        let ctx = ctx.clone();
-        bisync_dir.connect_changed(move |row| {
-            ctx.settings.borrow_mut().core.default_bisync_directory = row.text().to_string();
-            ctx.persist();
-        });
-    }
-    c1.add(&bisync_dir);
-    let tray_items = adw::SpinRow::with_range(1.0, 40.0, 1.0);
-    tray_items.set_title(&ctx.t_or("settings.core.max_tray_items.label", "Max tray items"));
-    tray_items.set_value(ctx.settings.borrow().core.max_tray_items as f64);
-    {
-        let ctx = ctx.clone();
-        tray_items.connect_changed(move |row| {
-            ctx.settings.borrow_mut().core.max_tray_items = row.value() as usize;
-            ctx.persist();
-        });
-    }
-    c1.add(&tray_items);
-    let flags = adw::EntryRow::new();
-    flags.set_title(&ctx.t_or(
-        "settings.core.rclone_flags.label",
-        "Additional rclone flags (space-separated)",
-    ));
-    flags.set_text(&ctx.settings.borrow().core.rclone_additional_flags.join(" "));
-    {
-        let ctx = ctx.clone();
-        flags.connect_changed(move |row| {
-            ctx.settings.borrow_mut().core.rclone_additional_flags = row
-                .text()
-                .split_whitespace()
-                .map(|s| s.to_string())
-                .collect();
-            ctx.persist();
-        });
-    }
-    c1.add(&flags);
-    let env = adw::EntryRow::new();
-    env.set_title(&ctx.t_or(
-        "settings.core.rclone_env_vars.label",
-        "Rclone environment (KEY=value;KEY=value)",
-    ));
-    env.set_text(&ctx.settings.borrow().core.rclone_env_vars.join(";"));
-    {
-        let ctx = ctx.clone();
-        env.connect_changed(move |row| {
-            ctx.settings.borrow_mut().core.rclone_env_vars = row
-                .text()
-                .split(';')
-                .map(str::trim)
-                .filter(|s| !s.is_empty())
-                .map(|s| s.to_string())
-                .collect();
-            ctx.persist();
-        });
-    }
-    c1.add(&env);
-    let urls = adw::EntryRow::new();
-    urls.set_title(&ctx.t_or(
-        "settings.core.connection_check_urls.label",
-        "Connectivity check URLs (comma-separated)",
-    ));
-    urls.set_text(&ctx.settings.borrow().core.connection_check_urls.join(", "));
-    {
-        let ctx = ctx.clone();
-        urls.connect_changed(move |row| {
-            ctx.settings.borrow_mut().core.connection_check_urls = row
-                .text()
-                .split(',')
-                .map(str::trim)
-                .filter(|s| !s.is_empty())
-                .map(|s| s.to_string())
-                .collect();
-            ctx.persist();
-        });
-    }
-    c1.add(&urls);
-    core.add(&c1);
-
-    let dev = adw::PreferencesPage::new();
-    dev.set_title(&ctx.t_or("modals.preferences.tabs.developer", "Developer"));
-    dev.set_icon_name(Some("applications-engineering-symbolic"));
-    let d1 = adw::PreferencesGroup::new();
-    let levels = ["error", "warn", "info", "debug", "trace"];
-    let level_model = gtk::StringList::new(&levels);
-    let level = adw::ComboRow::new();
-    level.set_title(&ctx.t_or("settings.developer.log_level.label", "Log level"));
-    level.set_model(Some(&level_model));
-    if let Some(idx) = levels
-        .iter()
-        .position(|l| *l == ctx.settings.borrow().developer.log_level)
-    {
-        level.set_selected(idx as u32);
-    }
-    {
-        let ctx = ctx.clone();
-        level.connect_selected_notify(move |row| {
-            if let Some(v) = levels.get(row.selected() as usize) {
-                ctx.settings.borrow_mut().developer.log_level = (*v).to_string();
-                ctx.persist();
-            }
-        });
-    }
-    d1.add(&level);
-    d1.add(&switch_row(
-        &ctx.t_or(
-            "settings.developer.destroy_window_on_close.label",
-            "Destroy window on close",
-        ),
-        ctx.settings.borrow().developer.destroy_window_on_close,
-        {
-            let ctx = ctx.clone();
-            move |v| ctx.settings.borrow_mut().developer.destroy_window_on_close = v
-        },
-    ));
-    let open_cfg =
-        gtk::Button::with_label(&ctx.t_or("titlebar.menu.openConfig", "Open config folder"));
-    {
-        open_cfg.connect_clicked(|_| {
-            let _ = open::that(crate::settings::AppSettings::config_dir());
-        });
-    }
-    let open_cache =
-        gtk::Button::with_label(&ctx.t_or("titlebar.menu.openCache", "Open cache folder"));
-    {
-        open_cache.connect_clicked(|_| {
-            let dir = crate::settings::AppSettings::cache_dir();
-            let _ = std::fs::create_dir_all(&dir);
-            let _ = open::that(dir);
-        });
-    }
-    let open_log = gtk::Button::with_label(&ctx.t_or("titlebar.menu.openLog", "Open rclone log"));
-    {
-        open_log.connect_clicked(|_| {
-            let path = crate::settings::AppSettings::log_path();
-            let _ = open::that(path);
-        });
-    }
-    let cfg_row = adw::ActionRow::new();
-    cfg_row.set_title(&ctx.t_or("developerTools.folders", "Folders"));
-    cfg_row.add_suffix(&open_cfg);
-    cfg_row.add_suffix(&open_cache);
-    cfg_row.add_suffix(&open_log);
-    d1.add(&cfg_row);
-    let gc = gtk::Button::with_label(&ctx.t_or("titlebar.menu.runGc", "Run GC"));
-    {
-        let ctx = ctx.clone();
-        gc.connect_clicked(move |_| {
-            if let Some(client) = ctx.client() {
-                let _ = client.gc();
-            }
-        });
-    }
-    let fscache =
-        gtk::Button::with_label(&ctx.t_or("titlebar.menu.clearFsCache", "Clear FS cache"));
-    {
-        let ctx = ctx.clone();
-        fscache.connect_clicked(move |_| {
-            if let Some(client) = ctx.client() {
-                let _ = client.fscache_clear();
-            }
-        });
-    }
-    let ping =
-        gtk::Button::with_label(&ctx.t_or("titlebar.menu.checkConnectivity", "Check connectivity"));
-    {
-        let ctx = ctx.clone();
-        let parent = parent.clone();
-        ping.connect_clicked(move |_| {
-            let urls = ctx.settings.borrow().core.connection_check_urls.clone();
-            let results = crate::connection::check_links(&urls, 4);
-            let body = results
-                .iter()
-                .map(|r| {
-                    format!(
-                        "{} — {} ({})",
-                        r.url,
-                        if r.ok { "ok" } else { "fail" },
-                        r.detail
-                    )
-                })
-                .collect::<Vec<_>>()
-                .join("\n");
-            let alert =
-                adw::AlertDialog::new(Some(&crate::connection::summarize(&results)), Some(&body));
-            alert.add_response("ok", "OK");
-            alert.present(Some(&parent));
-        });
-    }
-    let maint = adw::ActionRow::new();
-    maint.set_title(&ctx.t_or("developerTools.maintenance", "Maintenance"));
-    maint.add_suffix(&gc);
-    maint.add_suffix(&fscache);
-    maint.add_suffix(&ping);
-    d1.add(&maint);
-    dev.add(&d1);
-
-    let security = adw::PreferencesPage::new();
-    security.set_title(&ctx.t_or("modals.backend.security.encrypted", "Security"));
-    security.set_icon_name(Some("security-high-symbolic"));
-    let s1 = adw::PreferencesGroup::new();
-    s1.set_title(&ctx.t_or(
-        "modals.backend.security.configPassword",
-        "rclone.conf password",
-    ));
-    let stored = adw::PasswordEntryRow::new();
-    stored.set_title(&ctx.t_or("modals.backend.security.password", "Stored password"));
-    stored.set_text(&crate::keyring::resolve_config_password(
-        &ctx.settings.borrow().core.config_password,
-    ));
-    {
-        let ctx = ctx.clone();
-        stored.connect_changed(move |row| {
-            let mut settings = ctx.settings.borrow_mut();
-            crate::keyring::persist_password_setting(
-                &mut settings.core.config_password,
-                &row.text(),
-            );
-            drop(settings);
-            ctx.persist();
-        });
-    }
-    s1.add(&stored);
-    let keyring_row = adw::ActionRow::new();
-    keyring_row.set_title(&ctx.t_or("modals.backend.security.systemKeychain", "OS keyring"));
-    keyring_row.set_subtitle(&if crate::keyring::load_password().is_some() {
-        ctx.t_or(
-            "modals.backend.security.passwordStoredInKeyring",
-            "rclone.conf password is stored in the system keyring",
-        )
-    } else if ctx.settings.borrow().core.config_password.is_empty() {
-        ctx.t_or(
-            "modals.backend.security.protectCredentials",
-            "No password stored. Saving will prefer the system keyring when available.",
-        )
-    } else {
-        ctx.t_or(
-            "modals.backend.security.credentialsPlainText",
-            "Password is stored in settings.json because the keyring is unavailable",
-        )
-    });
-    s1.add(&keyring_row);
-    let validate = gtk::Button::with_label(&ctx.t_or("common.ok", "Validate"));
-    {
-        let ctx = ctx.clone();
-        let parent = parent.clone();
-        let stored = stored.clone();
-        validate.connect_clicked(move |_| {
-            let binary = ctx.settings.borrow().core.rclone_binary.clone();
-            let msg = match crate::security::validate_password(&binary, &stored.text()) {
-                Ok(()) => "Password accepted".into(),
-                Err(e) => e,
-            };
-            let alert = adw::AlertDialog::new(Some("Config password"), Some(&msg));
-            alert.add_response("ok", "OK");
-            alert.present(Some(&parent));
-        });
-    }
-    let encrypt = gtk::Button::with_label(
-        &ctx.t_or("modals.backend.security.enableEncryption", "Encrypt config"),
-    );
-    {
-        let ctx = ctx.clone();
-        let parent = parent.clone();
-        let stored = stored.clone();
-        encrypt.connect_clicked(move |_| {
-            let binary = ctx.settings.borrow().core.rclone_binary.clone();
-            let msg = match crate::security::encrypt_config(&binary, &stored.text()) {
-                Ok(()) => {
-                    ctx.restart_engine();
-                    "rclone.conf encrypted".into()
-                }
-                Err(e) => e,
-            };
-            let alert = adw::AlertDialog::new(Some("Encrypt"), Some(&msg));
-            alert.add_response("ok", "OK");
-            alert.present(Some(&parent));
-        });
-    }
-    let new_pass = adw::PasswordEntryRow::new();
-    new_pass.set_title(&ctx.t_or(
-        "modals.backend.security.newPassword",
-        "New password (change)",
-    ));
-    s1.add(&new_pass);
-    let change = gtk::Button::with_label(
-        &ctx.t_or("modals.backend.security.changePassword", "Change password"),
-    );
-    {
-        let ctx = ctx.clone();
-        let parent = parent.clone();
-        let stored = stored.clone();
-        let new_pass = new_pass.clone();
-        change.connect_clicked(move |_| {
-            let binary = ctx.settings.borrow().core.rclone_binary.clone();
-            let msg =
-                match crate::security::change_password(&binary, &stored.text(), &new_pass.text()) {
-                    Ok(()) => {
-                        crate::keyring::persist_password_setting(
-                            &mut ctx.settings.borrow_mut().core.config_password,
-                            &new_pass.text(),
-                        );
-                        ctx.persist();
-                        ctx.restart_engine();
-                        "Password changed".into()
-                    }
-                    Err(e) => e,
-                };
-            let alert = adw::AlertDialog::new(Some("Change password"), Some(&msg));
-            alert.add_response("ok", "OK");
-            alert.present(Some(&parent));
-        });
-    }
-    let unencrypt = gtk::Button::with_label(&ctx.t_or(
-        "modals.backend.security.removeEncryption",
-        "Remove encryption",
-    ));
-    {
-        let ctx = ctx.clone();
-        let parent = parent.clone();
-        let stored = stored.clone();
-        unencrypt.connect_clicked(move |_| {
-            let binary = ctx.settings.borrow().core.rclone_binary.clone();
-            let msg = match crate::security::unencrypt_config(&binary, &stored.text()) {
-                Ok(()) => {
-                    let _ = crate::keyring::delete_password();
-                    ctx.settings.borrow_mut().core.config_password.clear();
-                    ctx.persist();
-                    ctx.restart_engine();
-                    "rclone.conf encryption removed".into()
-                }
-                Err(e) => e,
-            };
-            let alert = adw::AlertDialog::new(Some("Unencrypt"), Some(&msg));
-            alert.add_response("ok", "OK");
-            alert.present(Some(&parent));
-        });
-    }
-    let sec_row = adw::ActionRow::new();
-    sec_row.set_title(&ctx.t_or("common.moreActions", "Actions"));
-    sec_row.add_suffix(&validate);
-    sec_row.add_suffix(&encrypt);
-    sec_row.add_suffix(&change);
-    sec_row.add_suffix(&unencrypt);
-    s1.add(&sec_row);
-    security.add(&s1);
-
-    dialog.add(&general);
-    dialog.add(&core);
-    dialog.add(&security);
-    dialog.add(&dev);
-    dialog.present(Some(parent));
-}
-
-fn switch_row(title: &str, active: bool, on_change: impl Fn(bool) + 'static) -> adw::SwitchRow {
-    let row = adw::SwitchRow::new();
-    row.set_title(title);
-    row.set_active(active);
-    row.connect_active_notify(move |row| on_change(row.is_active()));
-    row
+    super::preferences::present(parent, ctx);
 }
 
 pub fn about(parent: &impl IsA<gtk::Widget>, ctx: AppCtx) {
@@ -2185,6 +1336,174 @@ pub fn logs(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, remote: Option<String>)
     present_window_or_dialog(parent, &ctx, &dialog);
 }
 
+fn push_flag_edit(
+    edits: &Rc<RefCell<Vec<(String, String, serde_json::Value)>>>,
+    block: &str,
+    field: &str,
+    value: serde_json::Value,
+) {
+    edits
+        .borrow_mut()
+        .push((block.to_string(), field.to_string(), value));
+}
+
+fn add_flag_option_row(
+    group: &adw::PreferencesGroup,
+    edits: &Rc<RefCell<Vec<(String, String, serde_json::Value)>>>,
+    block: &str,
+    option: &crate::flags::FlagOption,
+) {
+    let current_text = crate::value_mapper::machine_to_human(
+        &option.value,
+        &option.type_name,
+        &option.default_str,
+    );
+    let kind = crate::value_mapper::control_kind(
+        &option.type_name,
+        option.exclusive,
+        option.examples.len(),
+    );
+    match kind {
+        crate::value_mapper::ControlKind::Bool => {
+            let row = adw::SwitchRow::new();
+            row.set_title(&option.name);
+            row.set_subtitle(&option.help);
+            row.set_active(current_text.eq_ignore_ascii_case("true"));
+            let edits = edits.clone();
+            let block = block.to_string();
+            let field = option.field_name.clone();
+            row.connect_active_notify(move |row| {
+                push_flag_edit(&edits, &block, &field, serde_json::json!(row.is_active()));
+            });
+            group.add(&row);
+        }
+        crate::value_mapper::ControlKind::Tristate => {
+            let values = ["unset", "true", "false"];
+            let row = adw::ComboRow::new();
+            row.set_title(&option.name);
+            row.set_subtitle(&option.help);
+            row.set_model(Some(&gtk::StringList::new(&values)));
+            if let Some(idx) = values
+                .iter()
+                .position(|v| v.eq_ignore_ascii_case(&current_text))
+            {
+                row.set_selected(idx as u32);
+            }
+            let edits = edits.clone();
+            let block = block.to_string();
+            let field = option.field_name.clone();
+            let type_name = option.type_name.clone();
+            row.connect_selected_notify(move |row| {
+                let text = values
+                    .get(row.selected() as usize)
+                    .copied()
+                    .unwrap_or("unset");
+                push_flag_edit(
+                    &edits,
+                    &block,
+                    &field,
+                    crate::flags::parse_flag_value(&type_name, text),
+                );
+            });
+            group.add(&row);
+        }
+        crate::value_mapper::ControlKind::Select => {
+            let labels: Vec<String> = option
+                .examples
+                .iter()
+                .map(|(value, help)| {
+                    if help.is_empty() {
+                        value.clone()
+                    } else {
+                        format!("{value} — {help}")
+                    }
+                })
+                .collect();
+            let values: Vec<String> = option.examples.iter().map(|(v, _)| v.clone()).collect();
+            let row = adw::ComboRow::new();
+            row.set_title(&option.name);
+            row.set_subtitle(&option.help);
+            let refs: Vec<&str> = labels.iter().map(|s| s.as_str()).collect();
+            row.set_model(Some(&gtk::StringList::new(&refs)));
+            if let Some(idx) = values.iter().position(|v| v == &current_text) {
+                row.set_selected(idx as u32);
+            }
+            let edits = edits.clone();
+            let block = block.to_string();
+            let field = option.field_name.clone();
+            let type_name = option.type_name.clone();
+            row.connect_selected_notify(move |row| {
+                if let Some(text) = values.get(row.selected() as usize) {
+                    push_flag_edit(
+                        &edits,
+                        &block,
+                        &field,
+                        crate::flags::parse_flag_value(&type_name, text),
+                    );
+                }
+            });
+            group.add(&row);
+        }
+        crate::value_mapper::ControlKind::Numeric => {
+            let row = adw::SpinRow::with_range(-1_000_000_000.0, 1_000_000_000.0, 1.0);
+            row.set_title(&option.name);
+            row.set_subtitle(&option.help);
+            if let Ok(v) = current_text.parse::<f64>() {
+                row.set_value(v);
+            }
+            row.set_digits(if crate::value_mapper::is_float_type(&option.type_name) {
+                3
+            } else {
+                0
+            });
+            let edits = edits.clone();
+            let block = block.to_string();
+            let field = option.field_name.clone();
+            let type_name = option.type_name.clone();
+            row.connect_changed(move |row| {
+                let text = if row.value().fract() == 0.0 {
+                    format!("{}", row.value() as i64)
+                } else {
+                    row.value().to_string()
+                };
+                push_flag_edit(
+                    &edits,
+                    &block,
+                    &field,
+                    crate::flags::parse_flag_value(&type_name, &text),
+                );
+            });
+            group.add(&row);
+        }
+        crate::value_mapper::ControlKind::Input => {
+            let row = adw::EntryRow::new();
+            row.set_title(&option.name);
+            row.set_text(&current_text);
+            if !option.help.is_empty() {
+                row.set_tooltip_text(Some(&option.help));
+            }
+            if option.type_name == "Duration" {
+                row.set_title(&format!("{} (1h / 30s / 500ms)", option.name));
+            } else if option.type_name == "SizeSuffix" {
+                row.set_title(&format!("{} (1Gi / 512Mi / off)", option.name));
+            }
+            let edits = edits.clone();
+            let block = block.to_string();
+            let field = option.field_name.clone();
+            let type_name = option.type_name.clone();
+            row.connect_changed(move |row| {
+                push_flag_edit(
+                    &edits,
+                    &block,
+                    &field,
+                    crate::flags::parse_flag_value(&type_name, &row.text()),
+                );
+            });
+            group.add(&row);
+        }
+    }
+}
+
 pub fn rclone_flags(parent: &impl IsA<gtk::Widget>, ctx: AppCtx) {
     if try_spawn_standalone(&ctx, "rclone-flags", serde_json::json!({})) {
         return;
@@ -2219,56 +1538,16 @@ pub fn rclone_flags(parent: &impl IsA<gtk::Widget>, ctx: AppCtx) {
         let options = crate::flags::options_for_category(&blocks, category);
         if options.is_empty() {
             let row = adw::ActionRow::new();
-            row.set_title("No flags in this category");
+            row.set_title(&ctx.t_or("modals.flags.emptyCategory", "No flags in this category"));
             group.add(&row);
         }
         for (block, option) in options {
-            let current_text = match &option.value {
-                serde_json::Value::Null => option.default_str.clone(),
-                serde_json::Value::String(s) => s.clone(),
-                other => other.to_string().trim_matches('"').to_string(),
-            };
-            if option.type_name == "bool" {
-                let row = adw::SwitchRow::new();
-                row.set_title(&option.name);
-                row.set_subtitle(&option.help);
-                row.set_active(current_text.eq_ignore_ascii_case("true"));
-                let edits = edits.clone();
-                let block = block.to_string();
-                let field = option.field_name.clone();
-                row.connect_active_notify(move |row| {
-                    edits.borrow_mut().push((
-                        block.clone(),
-                        field.clone(),
-                        serde_json::json!(row.is_active()),
-                    ));
-                });
-                group.add(&row);
-            } else {
-                let row = adw::EntryRow::new();
-                row.set_title(&option.name);
-                row.set_text(&current_text);
-                if !option.help.is_empty() {
-                    row.set_tooltip_text(Some(&option.help));
-                }
-                let edits = edits.clone();
-                let block = block.to_string();
-                let field = option.field_name.clone();
-                let type_name = option.type_name.clone();
-                row.connect_changed(move |row| {
-                    edits.borrow_mut().push((
-                        block.clone(),
-                        field.clone(),
-                        crate::flags::parse_flag_value(&type_name, &row.text()),
-                    ));
-                });
-                group.add(&row);
-            }
+            add_flag_option_row(&group, &edits, block, option);
         }
         page.add(&group);
         dialog.add(&page);
     }
-    let apply = gtk::Button::with_label("Apply changes");
+    let apply = gtk::Button::with_label(&ctx.t_or("common.apply", "Apply changes"));
     apply.add_css_class("suggested-action");
     {
         let ctx = ctx.clone();

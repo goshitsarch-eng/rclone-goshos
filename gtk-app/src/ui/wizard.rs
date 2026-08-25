@@ -17,7 +17,7 @@ use crate::value_mapper::{
 use adw::prelude::*;
 use gtk::prelude::*;
 use serde_json::{json, Value};
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
 use std::rc::Rc;
 
@@ -74,6 +74,23 @@ impl FieldWidget {
         }
     }
 
+    fn connect_change(&self, callback: impl Fn() + 'static) {
+        match self {
+            Self::Entry(row) => {
+                row.connect_changed(move |_| callback());
+            }
+            Self::Switch(row) => {
+                row.connect_active_notify(move |_| callback());
+            }
+            Self::Combo(row, _) => {
+                row.connect_selected_notify(move |_| callback());
+            }
+            Self::Spin(row) => {
+                row.connect_changed(move |_| callback());
+            }
+        }
+    }
+
     fn set_display_text(&self, text: &str) {
         match self {
             Self::Entry(row) => row.set_text(text),
@@ -99,11 +116,12 @@ pub fn present(
     on_done: Rc<dyn Fn()>,
 ) {
     let dialog = adw::Dialog::new();
-    dialog.set_title(if existing.is_some() {
-        "Remote Configuration"
+    let title = if existing.is_some() {
+        ctx.t_or("modals.remoteConfig.title", "Remote Configuration")
     } else {
-        "Add Remote"
-    });
+        ctx.t_or("wizards.remoteConfig.quickAdd", "Add Remote")
+    };
+    dialog.set_title(&title);
     dialog.set_content_width(680);
     dialog.set_content_height(780);
 
@@ -122,7 +140,7 @@ pub fn present(
         .and_then(|name| ctx.store.borrow().remotes.get(name).cloned());
 
     let name = adw::EntryRow::new();
-    name.set_title("Remote name");
+    name.set_title(&ctx.t_or("wizards.remoteConfig.remoteName", "Remote name"));
     if let Some(existing) = &existing {
         name.set_text(existing);
         name.set_sensitive(false);
@@ -146,7 +164,7 @@ pub fn present(
     }
 
     let type_row = adw::ComboRow::new();
-    type_row.set_title("Provider");
+    type_row.set_title(&ctx.t_or("wizards.remoteConfig.remoteType", "Provider"));
     let labels: Vec<String> = if providers.is_empty() {
         [
             "drive", "s3", "dropbox", "onedrive", "sftp", "webdav", "local", "crypt",
@@ -164,15 +182,16 @@ pub fn present(
     type_row.set_model(Some(&gtk::StringList::new(&label_refs)));
 
     let fields_group = adw::PreferencesGroup::new();
-    fields_group.set_title("Provider options");
+    fields_group.set_title(&ctx.t_or("wizards.remoteConfig.fields", "Provider options"));
     let advanced_group = adw::PreferencesGroup::new();
-    advanced_group.set_title("Advanced options");
+    advanced_group.set_title(&ctx.t_or("wizards.remoteConfig.advancedOptions", "Advanced options"));
     let state = Rc::new(RefCell::new(WizardState {
         providers: providers.clone(),
         fields: HashMap::new(),
         flow: InteractiveFlowState::default(),
         parameters: json!({}),
     }));
+    let rebuilding = Rc::new(Cell::new(false));
     rebuild_fields(
         parent,
         &ctx,
@@ -181,7 +200,20 @@ pub fn present(
         &state,
         providers.first(),
         true,
+        &rebuilding,
     );
+    if !current_vendor(&state).is_empty() {
+        rebuild_fields(
+            parent,
+            &ctx,
+            &fields_group,
+            &advanced_group,
+            &state,
+            providers.first(),
+            true,
+            &rebuilding,
+        );
+    }
     if let Some(ref params) = existing_params {
         if let Some(type_name) = crate::providers::dump_provider_type(params) {
             if let Some(idx) = crate::providers::provider_index_by_name(&providers, &type_name) {
@@ -199,6 +231,7 @@ pub fn present(
         let parent = parent.clone();
         let ctx = ctx.clone();
         let existing_params = existing_params.clone();
+        let rebuilding = rebuilding.clone();
         type_row.connect_selected_notify(move |row| {
             let provider = providers.get(row.selected() as usize);
             rebuild_fields(
@@ -209,6 +242,7 @@ pub fn present(
                 &state,
                 provider,
                 true,
+                &rebuilding,
             );
             if let Some(params) = existing_params.as_ref() {
                 let matches_type = crate::providers::dump_provider_type(params).is_some_and(|t| {
@@ -224,42 +258,45 @@ pub fn present(
     }
 
     let mount = adw::EntryRow::new();
-    mount.set_title("Mount point");
+    mount.set_title(&ctx.t_or("wizards.cliImport.mountPoint", "Mount point"));
     super::dialogs::attach_path_picker(
         &ctx,
         &mount,
         crate::picker::FilePickerConfig::local_folders(),
     );
     let src = adw::EntryRow::new();
-    src.set_title("Default source path");
+    src.set_title(&ctx.t_or("remoteConfig.source", "Default source path"));
     super::dialogs::attach_path_picker(&ctx, &src, crate::picker::FilePickerConfig::folders());
     let dst = adw::EntryRow::new();
-    dst.set_title("Default destination path");
+    dst.set_title(&ctx.t_or("remoteConfig.dest", "Default destination path"));
     super::dialogs::attach_path_picker(&ctx, &dst, crate::picker::FilePickerConfig::folders());
     let serve_types = ctx.serve_types();
     let mount_types = ctx.mount_types();
     let serve = adw::ComboRow::new();
-    serve.set_title("Default serve type");
+    serve.set_title(&ctx.t_or("wizards.cliImport.serveType", "Default serve type"));
     serve.set_model(Some(&gtk::StringList::new(
         &crate::operations::combo_names(&serve_types),
     )));
     let mount_type = adw::ComboRow::new();
-    mount_type.set_title("Default mount type");
+    mount_type.set_title(&ctx.t_or("remoteConfig.mountType", "Default mount type"));
     mount_type.set_model(Some(&gtk::StringList::new(
         &crate::operations::combo_names(&mount_types),
     )));
     let cron = adw::EntryRow::new();
-    cron.set_title("Default cron");
+    cron.set_title(&ctx.t_or("remoteConfig.cron", "Default cron"));
     let tray = adw::SwitchRow::new();
-    tray.set_title("Show in tray");
+    tray.set_title(&ctx.t_or("remoteConfig.showOnTray", "Show in tray"));
     tray.set_active(true);
     let autostart = adw::SwitchRow::new();
-    autostart.set_title("Auto-start mount / jobs");
+    autostart.set_title(&ctx.t_or("remoteConfig.autoStart", "Auto-start mount / jobs"));
     let cli = adw::EntryRow::new();
-    cli.set_title("Import CLI flags (--transfers 8 --vfs-cache-mode full)");
+    cli.set_title(&ctx.t_or(
+        "wizards.cliImport.placeholder",
+        "Import CLI flags (--transfers 8 --vfs-cache-mode full)",
+    ));
     let obscure_in = adw::EntryRow::new();
-    obscure_in.set_title("Obscure a secret");
-    let obscure_btn = gtk::Button::with_label("Obscure");
+    obscure_in.set_title(&ctx.t_or("wizards.obscure.clearPlaceholder", "Obscure a secret"));
+    let obscure_btn = gtk::Button::with_label(&ctx.t_or("wizards.obscure.action", "Obscure"));
     {
         let ctx = ctx.clone();
         let obscure_in = obscure_in.clone();
@@ -274,18 +311,33 @@ pub fn present(
     let op_flags: Rc<RefCell<Vec<(OperationType, adw::SwitchRow, adw::EntryRow, adw::EntryRow)>>> =
         Rc::new(RefCell::new(Vec::new()));
     let ops_group = adw::PreferencesGroup::new();
-    ops_group.set_title("Per-operation profiles");
+    ops_group.set_title(&ctx.t_or(
+        "modals.remoteConfig.steps.profiles",
+        "Per-operation profiles",
+    ));
     for op in OperationType::ALL {
         let enable = adw::SwitchRow::new();
-        enable.set_title(&format!("Configure {}", op.api_label()));
+        enable.set_title(&format!(
+            "{} {}",
+            ctx.t_or("common.configure", "Configure"),
+            op.api_label()
+        ));
         enable.set_active(matches!(
             op,
             OperationType::Mount | OperationType::Sync | OperationType::Serve
         ));
         let osrc = adw::EntryRow::new();
-        osrc.set_title(&format!("{} source", op.as_str()));
+        osrc.set_title(&format!(
+            "{} {}",
+            op.as_str(),
+            ctx.t_or("remoteConfig.source", "source")
+        ));
         let odst = adw::EntryRow::new();
-        odst.set_title(&format!("{} destination / mount / addr", op.as_str()));
+        odst.set_title(&format!(
+            "{} {}",
+            op.as_str(),
+            ctx.t_or("remoteConfig.dest", "destination / mount / addr")
+        ));
         ops_group.add(&enable);
         ops_group.add(&osrc);
         ops_group.add(&odst);
@@ -308,12 +360,16 @@ pub fn present(
         );
     }
 
-    let question_title = gtk::Label::new(Some("Interactive configuration"));
+    let question_title = gtk::Label::new(Some(&ctx.t_or(
+        "wizards.remoteConfig.configRequired",
+        "Interactive configuration",
+    )));
     question_title.add_css_class("title-4");
     question_title.set_xalign(0.0);
-    let question_help = gtk::Label::new(Some(
+    let question_help = gtk::Label::new(Some(&ctx.t_or(
+        "wizards.remoteConfig.nextQuestionHelp",
         "Authorize the provider or answer rclone's configuration questions.",
-    ));
+    )));
     question_help.set_wrap(true);
     question_help.set_xalign(0.0);
     question_help.add_css_class("dim-label");
@@ -322,11 +378,11 @@ pub fn present(
     question_error.set_wrap(true);
     question_error.set_xalign(0.0);
     let answer_row = adw::EntryRow::new();
-    answer_row.set_title("Answer");
+    answer_row.set_title(&ctx.t_or("wizards.remoteConfig.enterValue", "Answer"));
     let answer_switch = adw::SwitchRow::new();
-    answer_switch.set_title("Yes / enabled");
+    answer_switch.set_title(&ctx.t_or("wizards.remoteConfig.yes", "Yes / enabled"));
     let example_row = adw::ComboRow::new();
-    example_row.set_title("Choose an option");
+    example_row.set_title(&ctx.t_or("wizards.remoteConfig.chooseOption", "Choose an option"));
     let oauth_status = gtk::Label::new(Some(""));
     oauth_status.add_css_class("dim-label");
     oauth_status.set_xalign(0.0);
@@ -334,13 +390,17 @@ pub fn present(
     let nav = adw::ViewStack::new();
     let setup = adw::PreferencesPage::new();
     let identity = adw::PreferencesGroup::new();
-    identity.set_title("Identity");
+    identity.set_title(&ctx.t_or("wizards.remoteConfig.remoteName", "Identity"));
     identity.add(&name);
     identity.add(&type_row);
     setup.add(&identity);
     setup.add(&fields_group);
     setup.add(&advanced_group);
-    nav.add_titled(&setup, Some("setup"), "Provider");
+    nav.add_titled(
+        &setup,
+        Some("setup"),
+        &ctx.t_or("wizards.remoteConfig.remoteType", "Provider"),
+    );
 
     let interactive_box = gtk::Box::new(gtk::Orientation::Vertical, 10);
     interactive_box.set_margin_top(16);
@@ -353,25 +413,32 @@ pub fn present(
     interactive_box.append(&answer_row);
     interactive_box.append(&answer_switch);
     interactive_box.append(&oauth_status);
-    let cancel_oauth = gtk::Button::with_label("Cancel OAuth");
+    let cancel_oauth =
+        gtk::Button::with_label(&ctx.t_or("modals.remoteConfig.cancelOauth", "Cancel OAuth"));
     {
         let ctx = ctx.clone();
         let oauth_status = oauth_status.clone();
         cancel_oauth.connect_clicked(move |_| {
             if let Some(client) = ctx.client() {
                 match client.oauth_stop() {
-                    Ok(_) => oauth_status.set_text("OAuth cancelled"),
+                    Ok(_) => oauth_status.set_text(
+                        &ctx.t_or("modals.remoteConfig.oauthCancelled", "OAuth cancelled"),
+                    ),
                     Err(e) => oauth_status.set_text(&e.to_string()),
                 }
             }
         });
     }
     interactive_box.append(&cancel_oauth);
-    nav.add_titled(&interactive_box, Some("interactive"), "Authorize");
+    nav.add_titled(
+        &interactive_box,
+        Some("interactive"),
+        &ctx.t_or("wizards.remoteConfig.authenticationMethod", "Authorize"),
+    );
 
     let profiles = adw::PreferencesPage::new();
     let pgroup = adw::PreferencesGroup::new();
-    pgroup.set_title("Default profiles");
+    pgroup.set_title(&ctx.t_or("modals.remoteConfig.steps.profiles", "Default profiles"));
     pgroup.add(&mount);
     pgroup.add(&src);
     pgroup.add(&dst);
@@ -379,7 +446,7 @@ pub fn present(
     pgroup.add(&mount_type);
     pgroup.add(&cron);
     let cron_row = adw::ActionRow::new();
-    cron_row.set_title("Cron schedule");
+    cron_row.set_title(&ctx.t_or("remoteConfig.cron", "Cron schedule"));
     cron_row.add_suffix(&super::dialogs::attach_cron_builder(&cron));
     pgroup.add(&cron_row);
     pgroup.add(&tray);
@@ -388,15 +455,22 @@ pub fn present(
     pgroup.add(&obscure_in);
     profiles.add(&pgroup);
     profiles.add(&ops_group);
-    nav.add_titled(&profiles, Some("profiles"), "Profiles");
+    nav.add_titled(
+        &profiles,
+        Some("profiles"),
+        &ctx.t_or("modals.remoteConfig.steps.profiles", "Profiles"),
+    );
 
     let switcher = adw::ViewSwitcher::new();
     switcher.set_stack(Some(&nav));
     switcher.set_policy(adw::ViewSwitcherPolicy::Wide);
 
-    let continue_btn = gtk::Button::with_label("Continue / Authorize");
+    let continue_btn = gtk::Button::with_label(&ctx.t_or(
+        "wizards.remoteConfig.readyToContinue",
+        "Continue / Authorize",
+    ));
     continue_btn.add_css_class("suggested-action");
-    let save = gtk::Button::with_label("Save remote");
+    let save = gtk::Button::with_label(&ctx.t_or("common.save", "Save remote"));
     save.add_css_class("pill");
 
     {
@@ -461,10 +535,14 @@ pub fn present(
                         oauth_status.set_text(&format!("Opened authorization URL: {url}"));
                     }
                     if !next.is_active {
-                        question_title.set_text("Authorization complete");
-                        question_help.set_text(
+                        question_title.set_text(&ctx.t_or(
+                            "wizards.remoteConfig.readyToContinue",
+                            "Authorization complete",
+                        ));
+                        question_help.set_text(&ctx.t_or(
+                            "wizards.remoteConfig.setupSubtitle",
                             "rclone finished the interactive flow. Review profiles and save.",
-                        );
+                        ));
                         question_error.set_text("");
                         nav.set_visible_child_name("profiles");
                     } else {
@@ -482,8 +560,13 @@ pub fn present(
                     state.borrow_mut().flow = next;
                 }
                 Err(e) => {
-                    let err =
-                        adw::AlertDialog::new(Some("Configuration failed"), Some(&e.to_string()));
+                    let err = adw::AlertDialog::new(
+                        Some(&ctx.t_or(
+                            "wizards.remoteConfig.configRequired",
+                            "Configuration failed",
+                        )),
+                        Some(&e.to_string()),
+                    );
                     err.add_response("ok", "OK");
                     err.present(Some(&dialog));
                 }
@@ -515,7 +598,13 @@ pub fn present(
                 &existing_names,
                 existing.as_deref(),
             ) {
-                let err = adw::AlertDialog::new(Some("Invalid remote name"), Some(&e));
+                let err = adw::AlertDialog::new(
+                    Some(&ctx.t_or(
+                        "wizards.remoteConfig.remoteNameRequired",
+                        "Invalid remote name",
+                    )),
+                    Some(&e),
+                );
                 err.add_response("ok", "OK");
                 err.present(Some(&dialog));
                 return;
@@ -535,7 +624,13 @@ pub fn present(
                     };
                     let value = widget.display_text();
                     if let Err(e) = crate::validators::validate_option(option, &value) {
-                        let err = adw::AlertDialog::new(Some("Invalid provider field"), Some(&e));
+                        let err = adw::AlertDialog::new(
+                            Some(&ctx.t_or(
+                                "wizards.remoteConfig.fieldRequired",
+                                "Invalid provider field",
+                            )),
+                            Some(&e),
+                        );
                         err.add_response("ok", "OK");
                         err.present(Some(&dialog));
                         return;
@@ -548,7 +643,13 @@ pub fn present(
                 &mount.text(),
                 ctx.client().as_ref(),
             ) {
-                let err = adw::AlertDialog::new(Some("Could not create mount path"), Some(&e));
+                let err = adw::AlertDialog::new(
+                    Some(&ctx.t_or(
+                        "wizards.remoteConfig.allowOtherWarning.title",
+                        "Could not create mount path",
+                    )),
+                    Some(&e),
+                );
                 err.add_response("ok", "OK");
                 err.present(Some(&dialog));
                 return;
@@ -609,7 +710,7 @@ pub fn present(
                     }
                     Err(e) => {
                         let err = adw::AlertDialog::new(
-                            Some("Could not save remote"),
+                            Some(&ctx.t_or("common.error", "Could not save remote")),
                             Some(&e.to_string()),
                         );
                         err.add_response("ok", "OK");
@@ -653,16 +754,33 @@ fn rebuild_fields(
     state: &Rc<RefCell<WizardState>>,
     provider: Option<&Provider>,
     include_advanced: bool,
+    rebuilding: &Rc<Cell<bool>>,
 ) {
+    if rebuilding.get() {
+        return;
+    }
+    rebuilding.set(true);
+    let preserved: HashMap<String, String> = state
+        .borrow()
+        .fields
+        .iter()
+        .map(|(key, row)| (key.clone(), row.display_text()))
+        .collect();
     for row in state.borrow().fields.values() {
         row.remove_from(basic);
         row.remove_from(advanced);
     }
     state.borrow_mut().fields.clear();
     let Some(provider) = provider else {
+        rebuilding.set(false);
         return;
     };
-    let vendor = current_vendor(state);
+    let vendor = preserved
+        .get("provider")
+        .filter(|s| !s.is_empty())
+        .cloned()
+        .or_else(|| preserved.get("vendor").filter(|s| !s.is_empty()).cloned())
+        .unwrap_or_default();
     for option in provider.basic_options() {
         if !matches_provider_rule(&option.provider, &vendor) && !option.provider.is_empty() {
             continue;
@@ -680,6 +798,61 @@ fn rebuild_fields(
             row.add_to(advanced);
             state.borrow_mut().fields.insert(option.name.clone(), row);
         }
+    }
+    for (key, value) in &preserved {
+        if let Some(row) = state.borrow().fields.get(key) {
+            row.set_display_text(value);
+        }
+    }
+    attach_vendor_watchers(
+        parent,
+        ctx,
+        basic,
+        advanced,
+        state,
+        provider,
+        include_advanced,
+        rebuilding,
+    );
+    rebuilding.set(false);
+}
+
+fn attach_vendor_watchers(
+    parent: &impl IsA<gtk::Widget>,
+    ctx: &AppCtx,
+    basic: &adw::PreferencesGroup,
+    advanced: &adw::PreferencesGroup,
+    state: &Rc<RefCell<WizardState>>,
+    provider: &Provider,
+    include_advanced: bool,
+    rebuilding: &Rc<Cell<bool>>,
+) {
+    for key in ["provider", "vendor"] {
+        let Some(widget) = state.borrow().fields.get(key).cloned() else {
+            continue;
+        };
+        let parent = parent.clone();
+        let ctx = ctx.clone();
+        let basic = basic.clone();
+        let advanced = advanced.clone();
+        let state = state.clone();
+        let provider = provider.clone();
+        let rebuilding = rebuilding.clone();
+        widget.connect_change(move || {
+            if rebuilding.get() {
+                return;
+            }
+            rebuild_fields(
+                &parent,
+                &ctx,
+                &basic,
+                &advanced,
+                &state,
+                Some(&provider),
+                include_advanced,
+                &rebuilding,
+            );
+        });
     }
 }
 
@@ -702,9 +875,17 @@ fn option_row(
     vendor: &str,
 ) -> FieldWidget {
     let title = if option.required {
-        format!("{} *", option.name)
+        format!(
+            "{} ({})",
+            option.name,
+            ctx.t_or("wizards.remoteConfig.requiredBadge", "Required")
+        )
     } else if option.advanced {
-        format!("{} (advanced)", option.name)
+        format!(
+            "{} ({})",
+            option.name,
+            ctx.t_or("wizards.remoteConfig.advancedOptions", "advanced")
+        )
     } else {
         option.name.clone()
     };
@@ -798,7 +979,7 @@ fn option_row(
                 }
                 let obscure = gtk::Button::from_icon_name("dialog-password-symbolic");
                 obscure.set_valign(gtk::Align::Center);
-                obscure.set_tooltip_text(Some("Obscure"));
+                obscure.set_tooltip_text(Some(&ctx.t_or("wizards.obscure.action", "Obscure")));
                 let ctx = ctx.clone();
                 let target = row.clone();
                 obscure.connect_clicked(move |_| {

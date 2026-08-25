@@ -311,6 +311,56 @@ impl AppSettings {
     }
 }
 
+/// Setting paths that require an rclone engine restart, matching the Angular
+/// `engine_restart` schema on `rclone_binary`, `rclone_additional_flags`,
+/// and `rclone_env_vars`.
+pub const ENGINE_RESTART_PATHS: &[&str] = &[
+    "core.rclone_binary",
+    "core.rclone_additional_flags",
+    "core.rclone_env_vars",
+];
+
+pub fn requires_engine_restart(path: &str) -> bool {
+    ENGINE_RESTART_PATHS.contains(&path)
+}
+
+pub fn default_for_path(path: &str) -> Option<serde_json::Value> {
+    AppSettings::default().get_by_path(path)
+}
+
+pub fn values_equal(left: &serde_json::Value, right: &serde_json::Value) -> bool {
+    left == right
+}
+
+pub fn apply_path_values(
+    settings: &mut AppSettings,
+    values: &[(String, serde_json::Value)],
+) -> Result<(), String> {
+    for (path, value) in values {
+        settings.set_by_path(path, value.clone())?;
+    }
+    Ok(())
+}
+
+pub fn display_setting(value: &serde_json::Value, sep: &str) -> String {
+    match value {
+        serde_json::Value::Array(items) => items
+            .iter()
+            .filter_map(|item| match item {
+                serde_json::Value::String(s) => Some(s.clone()),
+                other if !other.is_null() => Some(other.to_string().trim_matches('"').to_string()),
+                _ => None,
+            })
+            .collect::<Vec<_>>()
+            .join(sep),
+        serde_json::Value::String(s) => s.clone(),
+        serde_json::Value::Bool(b) => b.to_string(),
+        serde_json::Value::Number(n) => n.to_string(),
+        serde_json::Value::Null => String::new(),
+        other => other.to_string(),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -382,6 +432,86 @@ mod tests {
         assert_eq!(ids, vec!["/home", "a:", "b:"]);
         assert!(sidebar_id_hidden(&["a:".into()], "a:"));
         assert!(!sidebar_id_hidden(&["a:".into()], "b:"));
+    }
+
+    #[test]
+    fn engine_restart_paths_match_angular_schema() {
+        for path in [
+            "core.rclone_binary",
+            "core.rclone_additional_flags",
+            "core.rclone_env_vars",
+        ] {
+            assert!(requires_engine_restart(path), "{path}");
+        }
+        assert!(!requires_engine_restart("core.bandwidth_limit"));
+        assert!(!requires_engine_restart("general.language"));
+    }
+
+    #[test]
+    fn default_for_path_reads_app_defaults() {
+        assert_eq!(
+            default_for_path("core.max_tray_items"),
+            Some(serde_json::json!(5))
+        );
+        assert_eq!(
+            default_for_path("core.rclone_additional_flags"),
+            Some(serde_json::json!([]))
+        );
+        assert_eq!(
+            default_for_path("developer.destroy_window_on_close"),
+            Some(serde_json::json!(true))
+        );
+        assert!(default_for_path("nope.value").is_none());
+    }
+
+    #[test]
+    fn apply_pending_restart_batch() {
+        let mut settings = AppSettings::default();
+        apply_path_values(
+            &mut settings,
+            &[
+                (
+                    "core.rclone_binary".into(),
+                    serde_json::json!("/usr/bin/rclone"),
+                ),
+                (
+                    "core.rclone_additional_flags".into(),
+                    serde_json::json!(["--transfers", "8"]),
+                ),
+                (
+                    "core.rclone_env_vars".into(),
+                    serde_json::json!(["RCLONE_VERBOSE=1"]),
+                ),
+            ],
+        )
+        .unwrap();
+        assert_eq!(settings.core.rclone_binary, "/usr/bin/rclone");
+        assert_eq!(
+            settings.core.rclone_additional_flags,
+            vec!["--transfers", "8"]
+        );
+        assert_eq!(settings.core.rclone_env_vars, vec!["RCLONE_VERBOSE=1"]);
+    }
+
+    #[test]
+    fn display_setting_joins_arrays() {
+        assert_eq!(
+            display_setting(&serde_json::json!(["--rc", "--vfs-cache-mode"]), " "),
+            "--rc --vfs-cache-mode"
+        );
+        assert_eq!(
+            display_setting(&serde_json::json!(["A=1", "B=2"]), ";"),
+            "A=1;B=2"
+        );
+        assert_eq!(display_setting(&serde_json::json!("plain"), " "), "plain");
+        assert!(values_equal(
+            &serde_json::json!(["a"]),
+            &serde_json::json!(["a"])
+        ));
+        assert!(!values_equal(
+            &serde_json::json!(["a"]),
+            &serde_json::json!(["b"])
+        ));
     }
 
     #[test]
