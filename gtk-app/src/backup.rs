@@ -229,10 +229,15 @@ pub fn create_backup(
 
     let settings = filter_settings_category(settings, export_type);
     let store = filter_store_category(store, export_type);
-    let remotes = rclone_dump
-        .as_object()
-        .map(|o| o.keys().cloned().collect())
-        .unwrap_or_default();
+    let rclone_dump = filter_rclone_dump(rclone_dump, export_type);
+    let remotes = if includes_file(export_type, "rclone.json") {
+        rclone_dump
+            .as_object()
+            .map(|o| o.keys().cloned().collect())
+            .unwrap_or_default()
+    } else {
+        Vec::new()
+    };
     let manifest = BackupManifest {
         version: env!("CARGO_PKG_VERSION").into(),
         created_at: chrono::Utc::now().to_rfc3339(),
@@ -245,8 +250,6 @@ pub fn create_backup(
         .map_err(|e| e.to_string())?;
     zip.write_all(serde_json::to_string_pretty(&manifest).unwrap().as_bytes())
         .map_err(|e| e.to_string())?;
-
-    let rclone_dump = filter_rclone_dump(rclone_dump, export_type);
 
     if includes_file(export_type, "settings.json") {
         zip.start_file("settings.json", options)
@@ -646,6 +649,7 @@ mod tests {
         assert!(analysis.has_store);
         assert!(!analysis.has_rclone_config);
         assert_eq!(analysis.manifest.export_type, "alerts");
+        assert!(analysis.manifest.remotes.is_empty());
         assert!(analysis
             .content_rows()
             .iter()
