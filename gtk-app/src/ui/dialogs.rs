@@ -490,9 +490,38 @@ fn remote_editor(
         name.set_text(existing);
         name.set_sensitive(false);
     }
-    let type_row = adw::EntryRow::new();
+    let providers = ctx
+        .client()
+        .and_then(|c| c.providers().ok())
+        .and_then(|v| {
+            v.get("providers").and_then(|p| p.as_array()).map(|arr| {
+                arr.iter()
+                    .filter_map(|item| {
+                        item.get("Name")
+                            .or_else(|| item.get("Prefix"))
+                            .or_else(|| item.get("name"))
+                            .and_then(|x| x.as_str())
+                            .map(|s| s.to_string())
+                    })
+                    .collect::<Vec<_>>()
+            })
+        })
+        .unwrap_or_else(|| {
+            [
+                "drive", "s3", "dropbox", "onedrive", "sftp", "ftp", "webdav", "local", "crypt",
+                "alias", "union", "smb", "b2", "box", "mega", "pcloud", "seafile",
+            ]
+            .into_iter()
+            .map(String::from)
+            .collect()
+        });
+    let type_labels: Vec<&str> = providers.iter().map(|s| s.as_str()).collect();
+    let type_row = adw::ComboRow::new();
     type_row.set_title("Provider type");
-    type_row.set_text("drive");
+    type_row.set_model(Some(&gtk::StringList::new(&type_labels)));
+    if let Some(idx) = providers.iter().position(|p| p == "drive") {
+        type_row.set_selected(idx as u32);
+    }
     let extra = adw::EntryRow::new();
     extra.set_title("Parameters (key=value;key=value)");
     group.add(&name);
@@ -508,7 +537,10 @@ fn remote_editor(
         let on_done = on_done.clone();
         save.connect_clicked(move |_| {
             let remote_name = name.text().to_string();
-            let r#type = type_row.text().to_string();
+            let r#type = providers
+                .get(type_row.selected() as usize)
+                .cloned()
+                .unwrap_or_else(|| "drive".into());
             if remote_name.is_empty() || r#type.is_empty() {
                 return;
             }
@@ -788,6 +820,82 @@ pub fn import_backup(
     );
 }
 
+pub fn properties(
+    parent: &impl IsA<gtk::Widget>,
+    ctx: AppCtx,
+    remote: &str,
+    path: &str,
+    name: &str,
+) {
+    let dialog = adw::Dialog::new();
+    dialog.set_title("Properties");
+    dialog.set_content_width(480);
+    let list = gtk::ListBox::new();
+    list.add_css_class("boxed-list");
+    for (title, value) in [
+        ("Name", name.to_string()),
+        ("Remote", remote.to_string()),
+        ("Path", path.to_string()),
+        (
+            "Type",
+            format!(
+                "{:?}",
+                crate::operations::FileTypeCategory::from_name(name, false)
+            ),
+        ),
+    ] {
+        let row = adw::ActionRow::new();
+        row.set_title(title);
+        row.set_subtitle(&value);
+        list.append(&row);
+    }
+    if let Some(client) = ctx.client() {
+        let fs = if remote == "local" {
+            "/".into()
+        } else {
+            remote_fs(remote, "")
+        };
+        if let Ok(size) = client.size(&fs, path) {
+            let row = adw::ActionRow::new();
+            row.set_title("Size");
+            row.set_subtitle(&size.to_string());
+            list.append(&row);
+        }
+        if let Ok(hash) = client.hashsum(&fs, path, "MD5") {
+            let row = adw::ActionRow::new();
+            row.set_title("MD5");
+            row.set_subtitle(&hash.to_string());
+            list.append(&row);
+        }
+    }
+    dialog.set_child(Some(&list));
+    dialog.present(Some(parent));
+}
+
+pub fn job_detail(parent: &impl IsA<gtk::Widget>, job: &crate::store::JobInfo) {
+    let dialog = adw::Dialog::new();
+    dialog.set_title(&format!("Job #{}", job.id));
+    let list = gtk::ListBox::new();
+    list.add_css_class("boxed-list");
+    for (title, value) in [
+        ("Operation", job.operation.clone()),
+        ("Status", job.status.clone()),
+        ("Remote", job.remote.clone()),
+        ("Profile", job.profile.clone()),
+        ("Origin", job.origin.clone()),
+        ("Source", job.src.clone()),
+        ("Destination", job.dst.clone()),
+        ("Error", job.error.clone().unwrap_or_else(|| "—".into())),
+    ] {
+        let row = adw::ActionRow::new();
+        row.set_title(title);
+        row.set_subtitle(&value);
+        list.append(&row);
+    }
+    dialog.set_child(Some(&list));
+    dialog.present(Some(parent));
+}
+
 pub fn file_viewer(
     parent: &impl IsA<gtk::Widget>,
     ctx: AppCtx,
@@ -822,10 +930,27 @@ pub fn file_viewer(
     let box_ = gtk::Box::new(gtk::Orientation::Vertical, 12);
     box_.append(&info);
     box_.append(&open);
-    if matches!(category, crate::operations::FileTypeCategory::Image) && remote == "local" {
+    if remote == "local" && matches!(category, crate::operations::FileTypeCategory::Image) {
         let picture = gtk::Picture::for_filename(path);
         picture.set_vexpand(true);
         box_.append(&picture);
+    }
+    if remote == "local" && matches!(category, crate::operations::FileTypeCategory::Text) {
+        let view = gtk::TextView::new();
+        view.set_monospace(true);
+        view.set_editable(false);
+        if let Ok(text) = std::fs::read_to_string(path) {
+            let shown = if text.len() > 200_000 {
+                format!("{}\n\n… truncated …", &text[..200_000])
+            } else {
+                text
+            };
+            view.buffer().set_text(&shown);
+        }
+        let scroll = gtk::ScrolledWindow::new();
+        scroll.set_vexpand(true);
+        scroll.set_child(Some(&view));
+        box_.append(&scroll);
     }
     dialog.set_child(Some(&box_));
     dialog.present(Some(parent));

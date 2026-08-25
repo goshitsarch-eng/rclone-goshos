@@ -198,6 +198,12 @@ impl NautilusView {
                 view.rename_selected();
                 return glib::Propagation::Stop;
             }
+            if modifier.contains(gtk::gdk::ModifierType::ALT_MASK)
+                && (key == gtk::gdk::Key::Return || key == gtk::gdk::Key::KP_Enter)
+            {
+                view.properties_selected();
+                return glib::Propagation::Stop;
+            }
             if key == gtk::gdk::Key::Delete {
                 view.delete_selected();
                 return glib::Propagation::Stop;
@@ -473,6 +479,18 @@ impl NautilusView {
                 }
             },
         );
+    }
+
+    fn properties_selected(&self) {
+        let Some(name) = self.selected_name() else {
+            return;
+        };
+        let Some(win) = self.root.root().and_downcast::<gtk::Window>() else {
+            return;
+        };
+        let current = self.current.borrow().clone();
+        let path = join_remote_path(&current.path, &name);
+        dialogs::properties(&win, self.ctx.clone(), &current.remote, &path, &name);
     }
 
     fn rename_selected(&self) {

@@ -664,6 +664,22 @@ mod tests {
     }
 
     #[test]
+    fn job_status_from_flags() {
+        fn status(finished: bool, success: bool) -> &'static str {
+            if !finished {
+                "running"
+            } else if success {
+                "completed"
+            } else {
+                "failed"
+            }
+        }
+        assert_eq!(status(false, false), "running");
+        assert_eq!(status(true, true), "completed");
+        assert_eq!(status(true, false), "failed");
+    }
+
+    #[test]
     fn sort_dirs_first() {
         let mut entries = vec![
             DirEntry {

@@ -74,14 +74,17 @@ impl AppCtx {
             .local_disks()
             .unwrap_or_else(|_| local_fallback_disks());
         let hidden = self.store.borrow().hidden_remotes.clone();
-        let jobs = self.snapshot.borrow().jobs.clone();
+        let jobs = collect_jobs(&client);
         let remotes = crate::store::build_remote_infos(&dump, &mounts, &serves, &jobs, &hidden);
+        let previous = self.snapshot.borrow().jobs.clone();
+        notify_job_changes(self, &previous, &jobs);
         let mut snap = self.snapshot.borrow_mut();
         snap.remotes = remotes;
         snap.mounts = mounts;
         snap.serves = serves;
         snap.stats = stats;
         snap.local_disks = disks;
+        snap.jobs = jobs;
     }
 
     pub fn toast(&self, overlay: &adw::ToastOverlay, message: impl AsRef<str>) {
@@ -104,6 +107,86 @@ impl AppCtx {
             "light" => style.set_color_scheme(adw::ColorScheme::ForceLight),
             "dark" => style.set_color_scheme(adw::ColorScheme::ForceDark),
             _ => style.set_color_scheme(adw::ColorScheme::Default),
+        }
+    }
+}
+
+fn collect_jobs(client: &crate::rclone::RcClient) -> Vec<crate::store::JobInfo> {
+    let Ok(list) = client.job_list() else {
+        return Vec::new();
+    };
+    let ids = list
+        .get("jobids")
+        .and_then(|x| x.as_array())
+        .cloned()
+        .unwrap_or_default();
+    let mut jobs = Vec::new();
+    for id in ids {
+        let Some(jobid) = id.as_u64() else { continue };
+        let Ok(status) = client.job_status(jobid) else {
+            continue;
+        };
+        let finished = status
+            .get("finished")
+            .and_then(|x| x.as_bool())
+            .unwrap_or(false);
+        let success = status
+            .get("success")
+            .and_then(|x| x.as_bool())
+            .unwrap_or(false);
+        let error = status
+            .get("error")
+            .and_then(|x| x.as_str())
+            .filter(|s| !s.is_empty())
+            .map(|s| s.to_string());
+        jobs.push(crate::store::JobInfo {
+            id: jobid,
+            operation: status
+                .get("output")
+                .and_then(|o| o.get("operation"))
+                .and_then(|x| x.as_str())
+                .unwrap_or("job")
+                .to_string(),
+            remote: String::new(),
+            profile: "default".into(),
+            status: if !finished {
+                "running".into()
+            } else if success {
+                "completed".into()
+            } else {
+                "failed".into()
+            },
+            origin: "dashboard".into(),
+            start_time: chrono::Utc::now(),
+            error,
+            dry_run: false,
+            src: String::new(),
+            dst: String::new(),
+            group: format!("job/{jobid}"),
+        });
+    }
+    jobs
+}
+
+fn notify_job_changes(
+    ctx: &AppCtx,
+    previous: &[crate::store::JobInfo],
+    current: &[crate::store::JobInfo],
+) {
+    for job in current {
+        let was = previous.iter().find(|j| j.id == job.id);
+        if job.status == "failed" && was.map(|j| j.status.as_str()) != Some("failed") {
+            let mut event = crate::store::AlertEvent::new(
+                crate::store::AlertEventKind::Job,
+                crate::store::AlertSeverity::High,
+                format!("Job #{} failed", job.id),
+                job.error
+                    .clone()
+                    .unwrap_or_else(|| "rclone job failed".into()),
+            );
+            event.origin = job.origin.clone();
+            ctx.store.borrow_mut().record_event(event);
+            ctx.persist();
         }
     }
 }

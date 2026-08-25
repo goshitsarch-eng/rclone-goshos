@@ -24,6 +24,9 @@ This client is the GTK 4 + libadwaita rewrite of the Angular/Tauri desktop UI. I
 - Theme: system / light / dark
 - i18n: en-US, tr-TR, es-ES, zh-CN, fr-FR, uk-UA, ru-RU, pt-BR, ja-JP
 - Tray action menu: unmount all, stop jobs, stop serves
+- Live job polling from rclone `job/list` + `job/status`, with failure alerts
+- Provider list from `config/providers` when adding remotes
+- Job detail and file properties dialogs; local text/image file viewer
 
 ## Still deepening toward pixel-level Angular parity
 

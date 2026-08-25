@@ -335,6 +335,15 @@ impl Dashboard {
                     });
                 }
                 row.add_suffix(&stop);
+                {
+                    let job = job.clone();
+                    let dash = self.clone();
+                    row.connect_activated(move |_| {
+                        if let Some(win) = dash.root.root().and_downcast::<gtk::Window>() {
+                            dialogs::job_detail(&win, &job);
+                        }
+                    });
+                }
                 jobs.append(&row);
             }
         }
