@@ -43,9 +43,7 @@ pub fn config_path_from_flags(flags: &[String]) -> Option<String> {
 
 pub fn looks_like_password_error(message: &str) -> bool {
     let lower = message.to_ascii_lowercase();
-    lower.contains("password")
-        || lower.contains("encrypted")
-        || lower.contains("decrypt")
+    lower.contains("password") || lower.contains("encrypted") || lower.contains("decrypt")
 }
 
 pub fn diagnose(

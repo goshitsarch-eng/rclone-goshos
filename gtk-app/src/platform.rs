@@ -86,18 +86,32 @@ pub fn autostart_enabled() -> bool {
     autostart_desktop_path().exists()
 }
 
-#[derive(Debug, Default)]
+struct LogindInhibit {
+    _conn: dbus::blocking::Connection,
+    _fd: dbus::arg::OwnedFd,
+}
+
 pub struct PowerInhibitor {
     child: Option<Child>,
+    logind: Option<LogindInhibit>,
+}
+
+impl Default for PowerInhibitor {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl PowerInhibitor {
     pub fn new() -> Self {
-        Self { child: None }
+        Self {
+            child: None,
+            logind: None,
+        }
     }
 
     pub fn is_inhibited(&self) -> bool {
-        self.child.is_some()
+        self.child.is_some() || self.logind.is_some()
     }
 
     pub fn update(&mut self, should_inhibit: bool, reason: &str) {
@@ -109,7 +123,12 @@ impl PowerInhibitor {
     }
 
     pub fn acquire(&mut self, reason: &str) {
-        if self.child.is_some() {
+        if self.is_inhibited() {
+            return;
+        }
+        if let Some(hold) = acquire_logind(reason) {
+            log::info!("logind power inhibitor acquired: {reason}");
+            self.logind = Some(hold);
             return;
         }
         match Command::new("systemd-inhibit")
@@ -136,12 +155,36 @@ impl PowerInhibitor {
     }
 
     pub fn release(&mut self) {
+        if self.logind.take().is_some() {
+            log::info!("logind power inhibitor released");
+        }
         if let Some(mut child) = self.child.take() {
             let _ = child.kill();
             let _ = child.wait();
             log::info!("power inhibitor released");
         }
     }
+}
+
+fn acquire_logind(reason: &str) -> Option<LogindInhibit> {
+    use std::time::Duration;
+    let conn = dbus::blocking::Connection::new_system().ok()?;
+    let proxy = conn.with_proxy(
+        "org.freedesktop.login1",
+        "/org/freedesktop/login1",
+        Duration::from_millis(1500),
+    );
+    let (fd,): (dbus::arg::OwnedFd,) = proxy
+        .method_call(
+            "org.freedesktop.login1.Manager",
+            "Inhibit",
+            ("idle:sleep:shutdown", "Rclone Manager", reason, "block"),
+        )
+        .ok()?;
+    Some(LogindInhibit {
+        _conn: conn,
+        _fd: fd,
+    })
 }
 
 impl Drop for PowerInhibitor {
@@ -294,5 +337,14 @@ mod tests {
     fn templates_substitute_placeholders() {
         let out = apply_template("x {remote} {path}", &[("remote", "a"), ("path", "b")]);
         assert_eq!(out, "x a b");
+    }
+
+    #[test]
+    fn power_inhibitor_release_is_idempotent() {
+        let mut inhibitor = PowerInhibitor::new();
+        assert!(!inhibitor.is_inhibited());
+        inhibitor.release();
+        inhibitor.update(false, "idle");
+        assert!(!inhibitor.is_inhibited());
     }
 }

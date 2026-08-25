@@ -394,15 +394,32 @@ pub fn preferences(parent: &impl IsA<gtk::Widget>, ctx: AppCtx) {
     s1.set_title("rclone.conf password");
     let stored = adw::PasswordEntryRow::new();
     stored.set_title("Stored password");
-    stored.set_text(&ctx.settings.borrow().core.config_password);
+    stored.set_text(&crate::keyring::resolve_config_password(
+        &ctx.settings.borrow().core.config_password,
+    ));
     {
         let ctx = ctx.clone();
         stored.connect_changed(move |row| {
-            ctx.settings.borrow_mut().core.config_password = row.text().to_string();
+            let mut settings = ctx.settings.borrow_mut();
+            crate::keyring::persist_password_setting(
+                &mut settings.core.config_password,
+                &row.text(),
+            );
+            drop(settings);
             ctx.persist();
         });
     }
     s1.add(&stored);
+    let keyring_row = adw::ActionRow::new();
+    keyring_row.set_title("OS keyring");
+    keyring_row.set_subtitle(if crate::keyring::load_password().is_some() {
+        "rclone.conf password is stored in the system keyring"
+    } else if ctx.settings.borrow().core.config_password.is_empty() {
+        "No password stored. Saving will prefer the system keyring when available."
+    } else {
+        "Password is stored in settings.json because the keyring is unavailable"
+    });
+    s1.add(&keyring_row);
     let validate = gtk::Button::with_label("Validate");
     {
         let ctx = ctx.clone();
@@ -452,8 +469,10 @@ pub fn preferences(parent: &impl IsA<gtk::Widget>, ctx: AppCtx) {
             let msg =
                 match crate::security::change_password(&binary, &stored.text(), &new_pass.text()) {
                     Ok(()) => {
-                        ctx.settings.borrow_mut().core.config_password =
-                            new_pass.text().to_string();
+                        crate::keyring::persist_password_setting(
+                            &mut ctx.settings.borrow_mut().core.config_password,
+                            &new_pass.text(),
+                        );
                         ctx.persist();
                         ctx.restart_engine();
                         "Password changed".into()
@@ -474,6 +493,7 @@ pub fn preferences(parent: &impl IsA<gtk::Widget>, ctx: AppCtx) {
             let binary = ctx.settings.borrow().core.rclone_binary.clone();
             let msg = match crate::security::unencrypt_config(&binary, &stored.text()) {
                 Ok(()) => {
+                    let _ = crate::keyring::delete_password();
                     ctx.settings.borrow_mut().core.config_password.clear();
                     ctx.persist();
                     ctx.restart_engine();
@@ -564,6 +584,8 @@ pub fn shortcuts(parent: &impl IsA<gtk::Widget>) {
         ("Ctrl+Shift+M", "Refresh mounts"),
         ("Ctrl+Shift+S", "Refresh serves"),
         ("Ctrl+T / Ctrl+W", "New / close file tab"),
+        ("Ctrl+Shift+D", "Detach current file tab"),
+        ("Ctrl+Z / Ctrl+Shift+Z", "Undo / redo file action"),
         ("Ctrl+/", "Toggle split view"),
         ("Ctrl+L / Ctrl+F", "Focus path / search (Files)"),
         ("F5", "Reload listing"),
@@ -1124,6 +1146,29 @@ pub fn backends(parent: &impl IsA<gtk::Widget>, ctx: AppCtx) {
                 backends(&parent, ctx.clone());
             });
         }
+        let edit = gtk::Button::from_icon_name("document-edit-symbolic");
+        edit.set_valign(gtk::Align::Center);
+        edit.set_tooltip_text(Some("Edit backend"));
+        {
+            let ctx = ctx.clone();
+            let parent = parent.clone();
+            let backend = backend.clone();
+            edit.connect_clicked(move |_| {
+                backend_editor(&parent, ctx.clone(), Some(backend.clone()));
+            });
+        }
+        let clone = gtk::Button::with_label("Clone");
+        clone.set_valign(gtk::Align::Center);
+        clone.set_tooltip_text(Some("Duplicate connection settings into a new backend"));
+        {
+            let ctx = ctx.clone();
+            let parent = parent.clone();
+            let mut entry = backend.clone();
+            entry.name = format!("{}-copy", backend.name);
+            clone.connect_clicked(move |_| {
+                backend_editor(&parent, ctx.clone(), Some(entry.clone()));
+            });
+        }
         let copy = gtk::Button::with_label("Copy remotes");
         copy.set_valign(gtk::Align::Center);
         copy.set_tooltip_text(Some("Copy remotes from the active backend to this one"));
@@ -1158,6 +1203,8 @@ pub fn backends(parent: &impl IsA<gtk::Widget>, ctx: AppCtx) {
         }
         row.add_suffix(&test);
         row.add_suffix(&use_btn);
+        row.add_suffix(&edit);
+        row.add_suffix(&clone);
         row.add_suffix(&copy);
         row.add_suffix(&remove);
         list.append(&row);
@@ -1176,6 +1223,34 @@ pub fn backends(parent: &impl IsA<gtk::Widget>, ctx: AppCtx) {
     box_.append(&add);
     dialog.set_child(Some(&box_));
     present_window_or_dialog(parent, &ctx, &dialog);
+}
+
+fn rc_client_for(ctx: &AppCtx, name: &str) -> Option<crate::rclone::RcClient> {
+    if name.is_empty() || name.eq_ignore_ascii_case("local") {
+        return ctx.client();
+    }
+    ctx.settings
+        .borrow()
+        .core
+        .extra_backends
+        .iter()
+        .find(|b| b.name == name)
+        .map(rc_client_for_entry)
+}
+
+fn rc_client_for_entry(entry: &crate::settings::BackendEntry) -> crate::rclone::RcClient {
+    crate::rclone::RcClient::new(&entry.host, entry.port).with_auth(
+        if entry.user.is_empty() {
+            None
+        } else {
+            Some(entry.user.clone())
+        },
+        if entry.pass.is_empty() {
+            None
+        } else {
+            Some(entry.pass.clone())
+        },
+    )
 }
 
 fn backend_editor(
@@ -1205,6 +1280,29 @@ fn backend_editor(
         user.set_text(&entry.user);
         pass.set_text(&entry.pass);
     }
+    let mut copy_labels = vec![
+        "Don't copy remotes".to_string(),
+        "Local rclone RC".to_string(),
+    ];
+    let mut copy_ids = vec![String::new(), "local".to_string()];
+    for backend in ctx.settings.borrow().core.extra_backends.clone() {
+        if existing
+            .as_ref()
+            .map(|e| e.name == backend.name)
+            .unwrap_or(false)
+        {
+            continue;
+        }
+        copy_labels.push(backend.name.clone());
+        copy_ids.push(backend.name);
+    }
+    let copy_refs: Vec<&str> = copy_labels.iter().map(|s| s.as_str()).collect();
+    let copy_from = gtk::DropDown::from_strings(&copy_refs);
+    copy_from.set_selected(0);
+    let copy_row = adw::ActionRow::new();
+    copy_row.set_title("Copy remotes from");
+    copy_row.set_subtitle("Optional: clone remotes from another RC backend after saving");
+    copy_row.add_suffix(&copy_from);
     let save = gtk::Button::with_label("Save");
     save.add_css_class("suggested-action");
     {
@@ -1216,6 +1314,7 @@ fn backend_editor(
         let port = port.clone();
         let user = user.clone();
         let pass = pass.clone();
+        let copy_from = copy_from.clone();
         save.connect_clicked(move |_| {
             let port_n = port.text().parse::<u16>().unwrap_or(5573);
             let entry = crate::settings::BackendEntry {
@@ -1228,6 +1327,8 @@ fn backend_editor(
             if entry.name.is_empty() || entry.host.is_empty() {
                 return;
             }
+            let source_idx = copy_from.selected() as usize;
+            let source_id = copy_ids.get(source_idx).cloned().unwrap_or_default();
             let mut settings = ctx.settings.borrow_mut();
             if let Some(idx) = settings
                 .core
@@ -1235,12 +1336,24 @@ fn backend_editor(
                 .iter()
                 .position(|b| b.name == entry.name)
             {
-                settings.core.extra_backends[idx] = entry;
+                settings.core.extra_backends[idx] = entry.clone();
             } else {
-                settings.core.extra_backends.push(entry);
+                settings.core.extra_backends.push(entry.clone());
             }
             drop(settings);
             ctx.persist();
+            if !source_id.is_empty() {
+                if let (Some(source), dest) =
+                    (rc_client_for(&ctx, &source_id), rc_client_for_entry(&entry))
+                {
+                    if let Err(e) = dest.copy_remotes_from(&source) {
+                        let alert =
+                            adw::AlertDialog::new(Some("Copy remotes"), Some(&e.to_string()));
+                        alert.add_response("ok", "OK");
+                        alert.present(Some(&parent));
+                    }
+                }
+            }
             dialog.close();
             backends(&parent, ctx.clone());
         });
@@ -1251,6 +1364,7 @@ fn backend_editor(
     group.add(&port);
     group.add(&user);
     group.add(&pass);
+    group.add(&copy_row);
     let box_ = gtk::Box::new(gtk::Orientation::Vertical, 8);
     box_.set_margin_top(12);
     box_.append(&group);
@@ -3038,43 +3152,95 @@ pub fn item_order(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, on_done: Rc<dyn F
     dialog.set_content_height(520);
     let list = gtk::ListBox::new();
     list.add_css_class("boxed-list");
-    let mut names = ctx.store.borrow().remote_order.clone();
-    if names.is_empty() {
-        names = ctx
-            .snapshot
-            .borrow()
-            .remotes
-            .iter()
-            .map(|r| r.name.clone())
-            .collect();
+    let all_names: Vec<String> = ctx
+        .snapshot
+        .borrow()
+        .remotes
+        .iter()
+        .map(|r| r.name.clone())
+        .collect();
+    ctx.store.borrow_mut().ensure_remote_order(&all_names);
+    let names = Rc::new(RefCell::new(ctx.store.borrow().remote_order.clone()));
+    let hidden = Rc::new(RefCell::new(ctx.store.borrow().hidden_remotes.clone()));
+    fn refill(
+        list: &gtk::ListBox,
+        names: &Rc<RefCell<Vec<String>>>,
+        hidden: &Rc<RefCell<Vec<String>>>,
+    ) {
+        while let Some(child) = list.first_child() {
+            list.remove(&child);
+        }
+        let current = names.borrow().clone();
+        for (idx, name) in current.iter().enumerate() {
+            let row = adw::SwitchRow::new();
+            row.set_title(name);
+            row.set_subtitle("Visible in sidebar and overview");
+            row.set_active(!hidden.borrow().iter().any(|n| n == name));
+            {
+                let hidden = hidden.clone();
+                let name = name.clone();
+                row.connect_active_notify(move |row| {
+                    let mut hidden = hidden.borrow_mut();
+                    hidden.retain(|n| n != &name);
+                    if !row.is_active() {
+                        hidden.push(name.clone());
+                    }
+                });
+            }
+            let up = gtk::Button::from_icon_name("go-up-symbolic");
+            up.set_valign(gtk::Align::Center);
+            up.set_sensitive(idx > 0);
+            let down = gtk::Button::from_icon_name("go-down-symbolic");
+            down.set_valign(gtk::Align::Center);
+            down.set_sensitive(idx + 1 < current.len());
+            {
+                let names = names.clone();
+                let hidden = hidden.clone();
+                let list = list.clone();
+                let idx = idx;
+                up.connect_clicked(move |_| {
+                    {
+                        let mut names = names.borrow_mut();
+                        if idx > 0 {
+                            names.swap(idx, idx - 1);
+                        }
+                    }
+                    refill(&list, &names, &hidden);
+                });
+            }
+            {
+                let names = names.clone();
+                let hidden = hidden.clone();
+                let list = list.clone();
+                let idx = idx;
+                down.connect_clicked(move |_| {
+                    {
+                        let mut names = names.borrow_mut();
+                        if idx + 1 < names.len() {
+                            names.swap(idx, idx + 1);
+                        }
+                    }
+                    refill(&list, &names, &hidden);
+                });
+            }
+            row.add_suffix(&up);
+            row.add_suffix(&down);
+            list.append(&row);
+        }
     }
-    let hidden = ctx.store.borrow().hidden_remotes.clone();
-    let rows: Rc<RefCell<Vec<(String, adw::SwitchRow)>>> = Rc::new(RefCell::new(Vec::new()));
-    for name in names {
-        let row = adw::SwitchRow::new();
-        row.set_title(&name);
-        row.set_subtitle("Visible in sidebar");
-        row.set_active(!hidden.contains(&name));
-        list.append(&row);
-        rows.borrow_mut().push((name, row));
-    }
+    refill(&list, &names, &hidden);
     let save = gtk::Button::with_label("Save");
     save.add_css_class("suggested-action");
     {
         let ctx = ctx.clone();
         let dialog = dialog.clone();
+        let names = names.clone();
+        let hidden = hidden.clone();
         save.connect_clicked(move |_| {
-            let mut order = Vec::new();
-            let mut hidden = Vec::new();
-            for (name, row) in rows.borrow().iter() {
-                order.push(name.clone());
-                if !row.is_active() {
-                    hidden.push(name.clone());
-                }
-            }
-            ctx.store.borrow_mut().remote_order = order;
-            ctx.store.borrow_mut().hidden_remotes = hidden;
+            ctx.store.borrow_mut().remote_order = names.borrow().clone();
+            ctx.store.borrow_mut().hidden_remotes = hidden.borrow().clone();
             ctx.persist();
+            ctx.refresh_runtime();
             on_done();
             dialog.close();
         });

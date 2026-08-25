@@ -562,6 +562,47 @@ impl AppStore {
         )
     }
 
+    pub fn ensure_remote_order(&mut self, names: &[String]) {
+        if self.remote_order.is_empty() {
+            self.remote_order = names.to_vec();
+            return;
+        }
+        for name in names {
+            if !self.remote_order.iter().any(|n| n == name) {
+                self.remote_order.push(name.clone());
+            }
+        }
+    }
+
+    pub fn move_remote(&mut self, name: &str, delta: isize) -> bool {
+        let Some(idx) = self.remote_order.iter().position(|n| n == name) else {
+            return false;
+        };
+        let last = self.remote_order.len().saturating_sub(1) as isize;
+        let next = (idx as isize + delta).clamp(0, last) as usize;
+        if next == idx {
+            return false;
+        }
+        self.remote_order.swap(idx, next);
+        true
+    }
+
+    pub fn set_remote_hidden(&mut self, name: &str, hidden: bool) {
+        if hidden {
+            if !self.hidden_remotes.iter().any(|n| n == name) {
+                self.hidden_remotes.push(name.to_string());
+            }
+        } else {
+            self.hidden_remotes.retain(|n| n != name);
+        }
+    }
+
+    pub fn toggle_remote_hidden(&mut self, name: &str) -> bool {
+        let hidden = !self.hidden_remotes.iter().any(|n| n == name);
+        self.set_remote_hidden(name, hidden);
+        hidden
+    }
+
     pub fn remember_job(&mut self, job: JobInfo) {
         self.job_history.retain(|existing| existing.id != job.id);
         self.job_history.insert(0, job);
@@ -844,6 +885,22 @@ mod tests {
         assert!(rule.matches(&event));
         event.kind = AlertEventKind::Mount;
         assert!(!rule.matches(&event));
+    }
+
+    #[test]
+    fn remote_order_and_visibility() {
+        let mut store = AppStore::default();
+        store.ensure_remote_order(&["b".into(), "a".into(), "c".into()]);
+        assert_eq!(store.remote_order, ["b", "a", "c"]);
+        store.ensure_remote_order(&["b".into(), "a".into(), "c".into(), "d".into()]);
+        assert_eq!(store.remote_order, ["b", "a", "c", "d"]);
+        assert!(store.move_remote("a", -1));
+        assert_eq!(store.remote_order, ["a", "b", "c", "d"]);
+        assert!(!store.move_remote("a", -1));
+        assert!(store.toggle_remote_hidden("c"));
+        assert_eq!(store.hidden_remotes, ["c"]);
+        assert!(!store.toggle_remote_hidden("c"));
+        assert!(store.hidden_remotes.is_empty());
     }
 
     #[test]

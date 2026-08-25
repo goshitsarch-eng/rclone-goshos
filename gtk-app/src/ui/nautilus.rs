@@ -446,6 +446,10 @@ impl NautilusView {
                 view.mkdir_prompt();
                 return glib::Propagation::Stop;
             }
+            if ctrl && shift && key == gtk::gdk::Key::d {
+                view.detach_current_tab();
+                return glib::Propagation::Stop;
+            }
             if ctrl && key == gtk::gdk::Key::t {
                 view.open_new_tab();
                 return glib::Propagation::Stop;
@@ -801,7 +805,9 @@ impl NautilusView {
                     };
                     match client.mkdir(&fs, &remote) {
                         Ok(_) => {
-                            view.push_undo(format!("mkdir:{remote}"));
+                            view.push_undo(
+                                crate::fileops::FileOp::Mkdir { fs, path: remote }.encode(),
+                            );
                             view.reload();
                         }
                         Err(e) => view.toast.add_toast(adw::Toast::new(&e.to_string())),
@@ -859,7 +865,13 @@ impl NautilusView {
         };
         match client.copy_file("/", &path.to_string_lossy(), &dst_fs, &dst_remote) {
             Ok(_) => {
-                self.push_undo(format!("upload:{dst_remote}"));
+                self.push_undo(
+                    crate::fileops::FileOp::Upload {
+                        fs: dst_fs,
+                        path: dst_remote,
+                    }
+                    .encode(),
+                );
                 self.reload();
                 self.toast
                     .add_toast(adw::Toast::new(&format!("Uploaded {name}")));
@@ -935,29 +947,68 @@ impl NautilusView {
         let Some(client) = self.ctx.client() else {
             return;
         };
-        let current = self.current.borrow().clone();
-        let (fs, _) = fs_remote(&current.remote, &current.path);
-        if let Some(path) = op.strip_prefix("mkdir:") {
-            let _ = client.purge(&fs, path);
-            self.reload();
-        } else if let Some(path) = op.strip_prefix("upload:") {
-            let _ = client.delete_file(&fs, path);
-            self.reload();
+        let Some(decoded) = crate::fileops::FileOp::decode(op) else {
+            return;
+        };
+        match decoded.invert() {
+            Some(inv) => {
+                if let Err(e) = inv.apply(&client) {
+                    self.toast.add_toast(adw::Toast::new(&e));
+                }
+            }
+            None => self
+                .toast
+                .add_toast(adw::Toast::new("This action cannot be undone")),
         }
+        self.reload();
     }
 
     fn replay_file_op(&self, op: &str) {
-        if let Some(path) = op.strip_prefix("mkdir:") {
-            if let Some(client) = self.ctx.client() {
-                let current = self.current.borrow().clone();
-                let (fs, _) = fs_remote(&current.remote, &current.path);
-                let _ = client.mkdir(&fs, path);
-                self.reload();
+        let Some(client) = self.ctx.client() else {
+            return;
+        };
+        if let Some(decoded) = crate::fileops::FileOp::decode(op) {
+            if let Err(e) = decoded.apply(&client) {
+                self.toast.add_toast(adw::Toast::new(&e));
             }
+            self.reload();
         }
     }
 
     fn paste_system_clipboard(&self) {
+        let Some(display) = gtk::gdk::Display::default() else {
+            return;
+        };
+        let clipboard = display.clipboard();
+        let view = self.clone();
+        clipboard.read_value_async(
+            gtk::gdk::FileList::static_type(),
+            glib::Priority::DEFAULT,
+            None::<gio::Cancellable>.as_ref(),
+            {
+                let view = view.clone();
+                move |result| {
+                    if let Ok(value) = result {
+                        if let Ok(list) = value.get::<gtk::gdk::FileList>() {
+                            for file in list.files() {
+                                if let Some(path) = file.path() {
+                                    if path.is_dir() {
+                                        view.upload_local_tree(&path);
+                                    } else if path.is_file() {
+                                        view.upload_local_path(&path);
+                                    }
+                                }
+                            }
+                            return;
+                        }
+                    }
+                    view.paste_clipboard_text();
+                }
+            },
+        );
+    }
+
+    fn paste_clipboard_text(&self) {
         let Some(display) = gtk::gdk::Display::default() else {
             return;
         };
@@ -1049,7 +1100,17 @@ impl NautilusView {
                     dst
                 };
                 match client.move_file(&fs, &src, &fs, &dst) {
-                    Ok(_) => view.reload(),
+                    Ok(_) => {
+                        view.push_undo(
+                            crate::fileops::FileOp::Rename {
+                                fs,
+                                from: src,
+                                to: dst,
+                            }
+                            .encode(),
+                        );
+                        view.reload();
+                    }
                     Err(e) => view.toast.add_toast(adw::Toast::new(&e.to_string())),
                 }
             }
@@ -1068,9 +1129,27 @@ impl NautilusView {
         for name in names {
             let path = join_remote_path(&current.path, &name);
             let (fs, remote) = fs_remote(&current.remote, &path);
+            let trash = if current.remote == "local" {
+                let local = if path.starts_with('/') {
+                    path.clone()
+                } else {
+                    format!("/{remote}")
+                };
+                crate::fileops::stash_local_path(&local)
+            } else {
+                None
+            };
             if client.delete_file(&fs, &remote).is_err() {
                 let _ = client.purge(&fs, &remote);
             }
+            self.push_undo(
+                crate::fileops::FileOp::Delete {
+                    fs,
+                    path: remote,
+                    trash,
+                }
+                .encode(),
+            );
         }
         self.reload();
     }
@@ -1121,6 +1200,22 @@ impl NautilusView {
                 error = Some(e.to_string());
                 break;
             }
+            let op = if cut {
+                crate::fileops::FileOp::Move {
+                    src_fs,
+                    src: src_remote_path,
+                    dst_fs,
+                    dst: dst_remote_path,
+                }
+            } else {
+                crate::fileops::FileOp::Copy {
+                    src_fs,
+                    src: src_remote_path,
+                    dst_fs,
+                    dst: dst_remote_path,
+                }
+            };
+            self.push_undo(op.encode());
         }
         if let Some(e) = error {
             self.toast.add_toast(adw::Toast::new(&e));
@@ -1223,6 +1318,36 @@ impl NautilusView {
         self.reload();
     }
 
+    fn detach_current_tab(&self) {
+        let Some(win) = self.root.root().and_downcast::<gtk::Window>() else {
+            return;
+        };
+        let Some(app) = win.application() else {
+            return;
+        };
+        let current = self.current.borrow().clone();
+        let toast = adw::ToastOverlay::new();
+        let view = NautilusView::new(self.ctx.clone(), toast.clone());
+        toast.set_child(Some(&view.root));
+        let detached = adw::ApplicationWindow::new(&app);
+        detached.set_title(Some(&format!("Files — {}", current.title)));
+        detached.set_default_width(960);
+        detached.set_default_height(640);
+        detached.set_content(Some(&toast));
+        let target = if current.remote == "local" {
+            current.path.clone()
+        } else if current.path.is_empty() {
+            format!("{}:", current.remote)
+        } else {
+            format!("{}:{}", current.remote, current.path)
+        };
+        view.navigate_to(&target);
+        detached.present();
+        if self.tabs.borrow().len() > 1 {
+            self.close_current_tab();
+        }
+    }
+
     fn popup_context(&self) {
         let Some(win) = self.root.root().and_downcast::<gtk::Window>() else {
             return;
@@ -1254,6 +1379,7 @@ impl NautilusView {
             ("Undo", "undo"),
             ("Redo", "redo"),
             ("Paste from system clipboard", "syspaste"),
+            ("Detach tab", "detach"),
         ] {
             let btn = gtk::Button::with_label(label);
             let view = self.clone();
@@ -1315,6 +1441,7 @@ impl NautilusView {
                 "undo" => view.undo_last(),
                 "redo" => view.redo_last(),
                 "syspaste" => view.paste_system_clipboard(),
+                "detach" => view.detach_current_tab(),
                 _ => {}
             });
             box_.append(&btn);

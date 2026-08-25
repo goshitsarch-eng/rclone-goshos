@@ -18,6 +18,7 @@ pub struct Dashboard {
     content: gtk::Stack,
     overview: gtk::Box,
     detail: gtk::Box,
+    editing_layout: Rc<RefCell<bool>>,
 }
 
 impl Dashboard {
@@ -93,6 +94,7 @@ impl Dashboard {
             content,
             overview,
             detail,
+            editing_layout: Rc::new(RefCell::new(false)),
         };
 
         for tab in AppTab::ALL {
@@ -199,8 +201,9 @@ impl Dashboard {
                     .unwrap_or(usize::MAX)
             });
         }
+        let editing = *self.editing_layout.borrow();
         for remote in remotes {
-            if remote.hidden {
+            if remote.hidden && !editing {
                 continue;
             }
             if !query.is_empty()
@@ -215,7 +218,11 @@ impl Dashboard {
             box_.set_margin_bottom(6);
             box_.set_margin_start(8);
             box_.set_margin_end(8);
-            let name = gtk::Label::new(Some(&remote.name));
+            let name = gtk::Label::new(Some(&if remote.hidden {
+                format!("{} (hidden)", remote.name)
+            } else {
+                remote.name.clone()
+            }));
             name.set_xalign(0.0);
             name.set_hexpand(true);
             let badge = gtk::Label::new(Some(&status_dot(
@@ -239,9 +246,53 @@ impl Dashboard {
         }
     }
 
+    fn remotes_for_display(&self) -> Vec<crate::store::RemoteInfo> {
+        let snap = self.ctx.snapshot.borrow();
+        let mut remotes = snap.remotes.clone();
+        let order = self.ctx.store.borrow().remote_order.clone();
+        if !order.is_empty() {
+            remotes.sort_by_key(|r| {
+                order
+                    .iter()
+                    .position(|n| n == &r.name)
+                    .unwrap_or(usize::MAX)
+            });
+        }
+        if !*self.editing_layout.borrow() {
+            remotes.retain(|r| !r.hidden);
+        }
+        remotes
+    }
+
+    fn move_remote(&self, name: &str, delta: isize) {
+        let names: Vec<String> = self
+            .ctx
+            .snapshot
+            .borrow()
+            .remotes
+            .iter()
+            .map(|r| r.name.clone())
+            .collect();
+        {
+            let mut store = self.ctx.store.borrow_mut();
+            store.ensure_remote_order(&names);
+            store.move_remote(name, delta);
+        }
+        self.ctx.persist();
+        self.refresh();
+    }
+
+    fn toggle_remote_hidden(&self, name: &str) {
+        self.ctx.store.borrow_mut().toggle_remote_hidden(name);
+        self.ctx.persist();
+        self.ctx.refresh_runtime();
+        self.refresh();
+    }
+
     fn fill_overview(&self) {
         clear_box(&self.overview);
         let tab = *self.tab.borrow();
+        let remotes = self.remotes_for_display();
         let snap = self.ctx.snapshot.borrow();
         let title = adw::StatusPage::new();
         title.set_icon_name(Some(tab.icon_name()));
@@ -256,23 +307,51 @@ impl Dashboard {
         self.overview.append(&title);
 
         self.overview.append(&section_label("Remotes"));
+        let editing = *self.editing_layout.borrow();
+        let layout_bar = gtk::Box::new(gtk::Orientation::Horizontal, 6);
+        let edit_btn = gtk::Button::with_label(if editing { "Done" } else { "Edit layout" });
+        edit_btn.set_tooltip_text(Some(
+            "Show hidden remotes and reorder or hide cards on the overview",
+        ));
+        {
+            let dash = self.clone();
+            edit_btn.connect_clicked(move |_| {
+                let next = !*dash.editing_layout.borrow();
+                *dash.editing_layout.borrow_mut() = next;
+                dash.refresh();
+            });
+        }
+        let order_btn = gtk::Button::with_label("Reorder…");
+        order_btn.set_tooltip_text(Some("Open the remote order and visibility editor"));
+        {
+            let dash = self.clone();
+            order_btn.connect_clicked(move |_| {
+                if let Some(win) = dash.root.root().and_downcast::<gtk::Window>() {
+                    dialogs::item_order(&win, dash.ctx.clone(), {
+                        let dash = dash.clone();
+                        Rc::new(move || dash.refresh())
+                    });
+                }
+            });
+        }
+        layout_bar.append(&edit_btn);
+        layout_bar.append(&order_btn);
+        self.overview.append(&layout_bar);
         let detailed = self.ctx.settings.borrow().runtime.dashboard_card_variant == "detailed";
         let list = gtk::ListBox::new();
         list.add_css_class("boxed-list");
-        for remote in snap.remotes.iter() {
-            if remote.hidden {
-                continue;
-            }
-            if tab == AppTab::Mount && !remote.mounted && false {
-                continue;
-            }
+        for remote in remotes {
             let row = adw::ActionRow::new();
             row.set_title(&remote.name);
             row.set_subtitle(&format!(
-                "{} · {}",
+                "{} · {}{}",
                 remote.r#type,
-                remote_state_label(remote.mounted, remote.serving, remote.job_active)
+                remote_state_label(remote.mounted, remote.serving, remote.job_active),
+                if remote.hidden { " · hidden" } else { "" }
             ));
+            if remote.hidden {
+                row.add_css_class("dim-label");
+            }
             let browse = gtk::Button::from_icon_name("folder-symbolic");
             browse.set_valign(gtk::Align::Center);
             browse.set_tooltip_text(Some("Browse"));
@@ -302,6 +381,43 @@ impl Dashboard {
             }
             row.add_suffix(&browse);
             row.add_suffix(&mount);
+            if editing {
+                let hide = gtk::Button::from_icon_name(if remote.hidden {
+                    "view-reveal-symbolic"
+                } else {
+                    "view-conceal-symbolic"
+                });
+                hide.set_valign(gtk::Align::Center);
+                hide.set_tooltip_text(Some(if remote.hidden {
+                    "Show on overview"
+                } else {
+                    "Hide from overview"
+                }));
+                let up = gtk::Button::from_icon_name("go-up-symbolic");
+                up.set_valign(gtk::Align::Center);
+                up.set_tooltip_text(Some("Move up"));
+                let down = gtk::Button::from_icon_name("go-down-symbolic");
+                down.set_valign(gtk::Align::Center);
+                down.set_tooltip_text(Some("Move down"));
+                {
+                    let dash = self.clone();
+                    let name = remote.name.clone();
+                    hide.connect_clicked(move |_| dash.toggle_remote_hidden(&name));
+                }
+                {
+                    let dash = self.clone();
+                    let name = remote.name.clone();
+                    up.connect_clicked(move |_| dash.move_remote(&name, -1));
+                }
+                {
+                    let dash = self.clone();
+                    let name = remote.name.clone();
+                    down.connect_clicked(move |_| dash.move_remote(&name, 1));
+                }
+                row.add_suffix(&hide);
+                row.add_suffix(&up);
+                row.add_suffix(&down);
+            }
             {
                 let ctx = self.ctx.clone();
                 let name = remote.name.clone();

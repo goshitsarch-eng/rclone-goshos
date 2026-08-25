@@ -42,6 +42,8 @@ croner = "2"
 ksni = "0.2"
 native-tls = "0.2"
 notify = "6"
+keyring = "3"
+dbus = "0.9"
 
 [dev-dependencies]
 tempfile = "3"

@@ -82,11 +82,17 @@ This client is the GTK 4 + libadwaita rewrite of the Angular/Tauri desktop UI. I
 - Backend OS/arch/version identity from `core/version`
 - Wizard path pickers + local disk-usage hints on path-like provider fields
 - Folder artwork next to local audio in the file viewer
+- Nautilus undo/redo for mkdir, upload, rename, copy, move, and local delete (with trash stash)
+- Dashboard layout editor (hide/show + reorder remotes) plus ordered overview cards
+- Detach a Files tab into its own window (Ctrl+Shift+D)
+- rclone.conf password prefers the OS keyring (libsecret) and falls back to settings.json
+- Prevent-sleep via logind D-Bus Inhibit, with systemd-inhibit CLI fallback
+- Clone extra RC backends and copy remotes from a chosen source when adding
+- System clipboard FileList paste in addition to text/`file://` paths
 
 ## Still deepening toward pixel-level Angular parity
 
 - Windows/macOS send-to
-- Prevent-sleep via logind D-Bus (systemd-inhibit CLI today)
 - In-app PDF renderer
 - Workflow builder (stub in both apps)
 - Live GUI session against rclone rcd (no display in this environment)
