@@ -9453,23 +9453,15 @@ fn populate_serve_flag_rows(
 }
 
 fn check_status_label(ctx: &AppCtx, status: &str) -> String {
-    match status {
-        "missing_dst" => ctx.t_or(
-            "shared.transferActivity.status.missingDst",
-            "Missing on Destination",
-        ),
-        "missing_src" => ctx.t_or(
-            "shared.transferActivity.status.missingSrc",
-            "Missing on Source",
-        ),
-        "differ" | "partial" => ctx.t_or(
-            "shared.transferActivity.status.differ",
-            "File contents differ",
-        ),
-        "checked" => ctx.t_or("shared.transferActivity.status.checked", "Checked"),
-        "failed" | "error" => ctx.t_or("shared.transferActivity.status.error", "Error"),
-        other => other.to_string(),
-    }
+    let fallback = match status {
+        "missing_dst" => "Missing on Destination",
+        "missing_src" => "Missing on Source",
+        "differ" | "partial" => "File contents differ",
+        "checked" | "match" => "Checked",
+        "failed" | "error" => "Error",
+        other => other,
+    };
+    ctx.t_or(crate::checks::check_status_key(status), fallback)
 }
 
 pub(super) fn check_result_row(
