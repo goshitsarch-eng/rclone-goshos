@@ -1152,6 +1152,7 @@ fn operation_page(
         let ctx = ctx.clone();
         let parent = parent.clone();
         let flag_rows = flag_rows.clone();
+        let flags_group = flags_group.clone();
         let src = src.clone();
         let dst = dst.clone();
         let serve = serve.clone();
@@ -1161,6 +1162,7 @@ fn operation_page(
         let combo = switcher.combo.clone();
         let selected = selected.clone();
         preview.connect_clicked(move |_| {
+            let flags_group = flags_group.clone();
             let remote_type = remote_type_of(&ctx, &remote);
             dialogs::present_cli_import(
                 &parent,
@@ -1224,6 +1226,7 @@ fn operation_page(
                         }
                         let apply = apply.clone();
                         let flag_rows = flag_rows.clone();
+                        let flags_group = flags_group.clone();
                         let src = src.clone();
                         let dst = dst.clone();
                         let serve = serve.clone();
@@ -1231,11 +1234,13 @@ fn operation_page(
                         glib::idle_add_local_once(move || {
                             dialogs::apply_cli_to_form(
                                 &apply,
-                                &flag_rows.borrow(),
+                                Some(&flags_group),
+                                &flag_rows,
                                 Some(&src),
                                 Some(&dst),
                                 Some(&serve),
                                 serve_types.as_ref(),
+                                None,
                             );
                         });
                     }

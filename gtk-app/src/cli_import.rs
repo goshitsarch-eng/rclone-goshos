@@ -1,6 +1,7 @@
 //! Angular-parity rclone CLI import: tokenize, parse, classify, and apply.
 
-use crate::flags::{classify_flag, FlagBlock, FlagOption};
+use crate::flags::{classify_flag, static_flags_for, FlagBlock, FlagOption};
+use crate::operations::OperationType;
 use crate::value_mapper::{human_to_machine, parse_tristate};
 use serde_json::{json, Map, Value};
 use std::collections::{BTreeSet, HashMap, HashSet};
@@ -540,24 +541,71 @@ fn coerce_value(val: &FlagValue, type_name: &str) -> Value {
     }
 }
 
+const COMMON_CLI_FLAGS: &[(&str, &str, &str, &str)] = &[
+    ("transfers", "transfers", "int", "backend"),
+    ("checkers", "checkers", "int", "backend"),
+    ("retries", "retries", "int", "backend"),
+    ("max_delete", "max_delete", "int", "sync"),
+    ("dry_run", "dry_run", "bool", "sync"),
+    ("checksum", "checksum", "bool", "sync"),
+    ("ignore_times", "ignore_times", "bool", "sync"),
+    ("update", "update", "bool", "sync"),
+    ("verbose", "verbose", "int", "backend"),
+    ("progress", "progress", "bool", "backend"),
+    ("bwlimit", "bwlimit", "string", "backend"),
+    ("tpslimit", "tpslimit", "float64", "backend"),
+    ("tpslimit_burst", "tpslimit_burst", "uint32", "backend"),
+    ("backup_dir", "backup_dir", "string", "sync"),
+    ("track_renames", "track_renames", "bool", "sync"),
+    ("fast_list", "fast_list", "bool", "backend"),
+    ("suffix", "suffix", "string", "sync"),
+    ("exclude", "exclude", "string", "filter"),
+    ("include", "include", "string", "filter"),
+    ("filter", "filter", "string", "filter"),
+    ("exclude_from", "exclude_from", "string", "filter"),
+    ("vfs_cache_mode", "vfs_cache_mode", "string", "vfs"),
+    ("vfs_cache_max_size", "vfs_cache_max_size", "string", "vfs"),
+    ("vfs_cache_max_age", "vfs_cache_max_age", "string", "vfs"),
+    ("createEmptySrcDirs", "createEmptySrcDirs", "bool", "sync"),
+];
+
 pub fn boolean_flags_from_blocks(blocks: &[FlagBlock]) -> HashSet<String> {
     let mut bools = HashSet::new();
     for block in blocks {
         for option in &block.options {
-            if !option.type_name.eq_ignore_ascii_case("bool")
-                && !option.type_name.eq_ignore_ascii_case("tristate")
-            {
-                continue;
-            }
-            let name = option.name.to_ascii_lowercase();
-            if name.is_empty() {
-                continue;
-            }
-            bools.insert(name.clone());
-            bools.insert(name.replace('_', "-"));
+            register_bool(&mut bools, option);
+        }
+    }
+    for (name, field, type_name, _) in COMMON_CLI_FLAGS {
+        if type_name.eq_ignore_ascii_case("bool") || type_name.eq_ignore_ascii_case("tristate") {
+            register_bool_name(&mut bools, name);
+            register_bool_name(&mut bools, field);
+        }
+    }
+    for op in OperationType::ALL {
+        for option in static_flags_for(op) {
+            register_bool(&mut bools, &option);
         }
     }
     bools
+}
+
+fn register_bool(bools: &mut HashSet<String>, option: &FlagOption) {
+    if !option.type_name.eq_ignore_ascii_case("bool")
+        && !option.type_name.eq_ignore_ascii_case("tristate")
+    {
+        return;
+    }
+    register_bool_name(bools, &option.name);
+}
+
+fn register_bool_name(bools: &mut HashSet<String>, name: &str) {
+    let name = name.to_ascii_lowercase();
+    if name.is_empty() {
+        return;
+    }
+    bools.insert(name.clone());
+    bools.insert(name.replace('_', "-"));
 }
 
 pub fn lookup_fields_from_blocks(
@@ -573,6 +621,24 @@ pub fn lookup_fields_from_blocks(
                 .or_default()
                 .push(LookupOption::from(option));
         }
+    }
+    for op in OperationType::ALL {
+        for option in static_flags_for(op) {
+            fields
+                .entry(op.as_str().to_string())
+                .or_default()
+                .push(LookupOption::from(&option));
+        }
+    }
+    for (name, field, type_name, kind) in COMMON_CLI_FLAGS {
+        fields
+            .entry((*kind).into())
+            .or_default()
+            .push(LookupOption {
+                name: (*name).into(),
+                field_name: (*field).into(),
+                type_name: (*type_name).into(),
+            });
     }
     if !runtime_remote.is_empty() {
         fields.insert("runtimeRemote".into(), runtime_remote.to_vec());
@@ -1117,5 +1183,40 @@ mod tests {
         assert_eq!(apply.flags.len(), 1);
         assert_eq!(apply.source_path.as_deref(), Some("src:"));
         assert!(apply.dest_path.is_none());
+    }
+
+    #[test]
+    fn classifies_common_flags_without_options_info() {
+        let result = import_cli_command(
+            "rclone sync testdrive: /tmp/out --transfers 8 --max-delete 50 --unknown-flag demo --dry-run",
+            &[],
+            &[],
+            None,
+            Some("sync"),
+        );
+        let mapped: Vec<_> = result
+            .classified
+            .iter()
+            .filter(|item| item.status == FlagStatus::Mapped)
+            .map(|item| item.field_name.clone().unwrap_or_default())
+            .collect();
+        let unknown: Vec<_> = result
+            .classified
+            .iter()
+            .filter(|item| item.status == FlagStatus::Unknown)
+            .map(|item| item.flag.key.clone())
+            .collect();
+        assert!(mapped.iter().any(|name| name == "transfers"));
+        assert!(mapped.iter().any(|name| name == "max_delete"));
+        assert!(mapped.iter().any(|name| name == "dry_run"));
+        assert_eq!(unknown, ["unknown-flag"]);
+        assert_eq!(
+            result
+                .classified
+                .iter()
+                .find(|item| item.field_name.as_deref() == Some("dry_run"))
+                .and_then(|item| item.coerced_value.clone()),
+            Some(json!(true))
+        );
     }
 }

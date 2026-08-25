@@ -8600,6 +8600,7 @@ fn attach_cli_import(
         let ctx = ctx.clone();
         let parent = parent.clone();
         let flag_rows = flag_rows.clone();
+        let flags_group = flags_group.clone();
         let src = src.clone();
         let dst = dst.clone();
         let serve = serve.clone();
@@ -8620,6 +8621,7 @@ fn attach_cli_import(
                 },
                 {
                     let flag_rows = flag_rows.clone();
+                    let flags_group = flags_group.clone();
                     let src = src.clone();
                     let dst = dst.clone();
                     let serve = serve.clone();
@@ -8627,11 +8629,13 @@ fn attach_cli_import(
                     move |apply| {
                         apply_cli_to_form(
                             &apply,
-                            &flag_rows.borrow(),
+                            Some(&flags_group),
+                            &flag_rows,
                             src.as_ref(),
                             dst.as_ref(),
                             serve.as_ref(),
                             &serve_types,
+                            None,
                         );
                     }
                 },
@@ -9170,18 +9174,33 @@ fn fill_cli_preview(
 
 pub(super) fn apply_cli_to_form(
     apply: &CliImportApply,
-    flag_rows: &[(String, adw::EntryRow, String)],
+    flags_group: Option<&adw::PreferencesGroup>,
+    flag_rows: &Rc<RefCell<Vec<(String, adw::EntryRow, String)>>>,
     src: Option<&adw::EntryRow>,
     dst: Option<&adw::EntryRow>,
     serve: Option<&adw::ComboRow>,
     serve_types: &[String],
+    dry: Option<&adw::SwitchRow>,
 ) {
     for (field, value) in &apply.flags {
-        if let Some((_, row, _)) = flag_rows
-            .iter()
-            .find(|(name, _, _)| name == field || name.replace('-', "_") == field.replace('-', "_"))
-        {
+        if field.eq_ignore_ascii_case("dry_run") || field.eq_ignore_ascii_case("dryRun") {
+            if let Some(dry) = dry {
+                dry.set_active(value.as_bool().unwrap_or(true));
+            }
+        }
+        let mut rows = flag_rows.borrow_mut();
+        if let Some((_, row, _)) = rows.iter().find(|(name, _, _)| {
+            name == field
+                || name.replace('-', "_") == field.replace('-', "_")
+                || name.eq_ignore_ascii_case(field)
+        }) {
             row.set_text(&value_as_text(value));
+        } else if let Some(group) = flags_group {
+            let row = adw::EntryRow::new();
+            row.set_title(field);
+            row.set_text(&value_as_text(value));
+            group.add(&row);
+            rows.push((field.clone(), row, String::new()));
         }
     }
     if let (Some(src), Some(path)) = (src, apply.source_path.as_deref()) {
