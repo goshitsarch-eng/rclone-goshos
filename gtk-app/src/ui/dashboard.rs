@@ -625,7 +625,7 @@ impl Dashboard {
             row.set_subtitle(&format!(
                 "{} · {}{}",
                 remote.r#type,
-                remote_state_label(remote.mounted, remote.serving, remote.job_active),
+                remote_state_label(&self.ctx, remote.mounted, remote.serving, remote.job_active,),
                 if remote.hidden { " · hidden" } else { "" }
             ));
             row.add_prefix(&gtk::Image::from_icon_name(
@@ -733,13 +733,39 @@ impl Dashboard {
                     } else {
                         self.ctx.t_or("actions.start", "Start")
                     };
-                    if names.len() > 1 {
+                    if names.is_empty() && !crate::jobs::allows_unconfigured_start(op) {
+                        let btn = gtk::Button::from_icon_name(op.icon_name());
+                        btn.set_valign(gtk::Align::Center);
+                        btn.set_sensitive(false);
+                        btn.set_tooltip_text(Some(&self.ctx.t_or(
+                            "modals.remoteConfig.profile.noProfiles",
+                            "No profiles configured",
+                        )));
+                        row.add_suffix(&btn);
+                    } else if names.len() > 1 {
                         let btn = gtk::MenuButton::new();
                         btn.set_icon_name(op.icon_name());
                         btn.set_valign(gtk::Align::Center);
                         btn.set_tooltip_text(Some(&format!("{verb} {label} · {}", names.len())));
                         if active {
                             btn.add_css_class("destructive-action");
+                        }
+                        if names.iter().any(|pname| {
+                            crate::jobs::action_in_progress(
+                                &remote.name,
+                                op,
+                                pname,
+                                &snap.jobs,
+                                self.ctx.is_busy(&remote.name, op.as_str(), pname),
+                            )
+                        }) {
+                            btn.set_sensitive(false);
+                            btn.set_icon_name("content-loading-symbolic");
+                            btn.set_tooltip_text(Some(
+                                &self
+                                    .ctx
+                                    .t_or("remote.actionInProgress", "Action already in progress"),
+                            ));
                         }
                         let popover = gtk::Popover::new();
                         let list = gtk::Box::new(gtk::Orientation::Vertical, 4);
@@ -982,10 +1008,10 @@ impl Dashboard {
                             } else {
                                 format!("{} · {pname}", op.api_label())
                             });
-                            chip.set_tooltip_text(Some(if active {
-                                "Stop this profile"
+                            chip.set_tooltip_text(Some(&if active {
+                                self.ctx.t_or("remote.stopProfile", "Stop this profile")
                             } else {
-                                "Start this profile"
+                                self.ctx.t_or("remote.startProfile", "Start this profile")
                             }));
                             if active {
                                 chip.add_css_class("destructive-action");
@@ -1482,9 +1508,10 @@ impl Dashboard {
                                 &record,
                                 chrono::Utc::now(),
                             ) {
-                                Ok(id) => {
-                                    toast.add_toast(adw::Toast::new(&format!("Started {id}")))
-                                }
+                                Ok(_) => toast.add_toast(adw::Toast::new(&ctx.tf(
+                                    "notification.title.jobStarted",
+                                    &[("type", record.operation.api_label())],
+                                ))),
                                 Err(e) => {
                                     toast.add_toast(adw::Toast::new(&ctx.translate_error(&e)))
                                 }
@@ -1544,7 +1571,7 @@ impl Dashboard {
             let subtitle = gtk::Label::new(Some(&format!(
                 "{} · {}",
                 remote.r#type,
-                remote_state_label(remote.mounted, remote.serving, remote.job_active)
+                remote_state_label(&self.ctx, remote.mounted, remote.serving, remote.job_active)
             )));
             subtitle.add_css_class("dim-label");
             subtitle.set_xalign(0.0);
@@ -1584,6 +1611,21 @@ impl Dashboard {
             let btn = gtk::Button::new();
             btn.set_label(op.api_label());
             btn.set_tooltip_text(Some(op.as_str()));
+            let names = self
+                .ctx
+                .store
+                .borrow()
+                .remotes
+                .get(&name)
+                .map(|m| m.profile_names(op))
+                .unwrap_or_default();
+            if names.is_empty() && !crate::jobs::allows_unconfigured_start(op) {
+                btn.set_sensitive(false);
+                btn.set_tooltip_text(Some(&self.ctx.t_or(
+                    "modals.remoteConfig.profile.noProfiles",
+                    "No profiles configured",
+                )));
+            }
             {
                 let ctx = self.ctx.clone();
                 let name = name.clone();
@@ -1964,9 +2006,10 @@ impl Dashboard {
             let toast = self.toast.clone();
             btn.connect_clicked(move |_| {
                 let Some(client) = ctx.client() else {
-                    toast.add_toast(adw::Toast::new(
-                        &ctx.t_or("home.errors.engineOffline", "Engine offline"),
-                    ));
+                    toast.add_toast(adw::Toast::new(&ctx.t_or(
+                        "notification.title.engineConnectionFailed",
+                        "Engine Connection Error",
+                    )));
                     return;
                 };
                 let fs = remote_fs(&name, "");
@@ -2438,6 +2481,21 @@ impl Dashboard {
             if active {
                 btn.add_css_class("destructive-action");
             }
+            let names = self
+                .ctx
+                .store
+                .borrow()
+                .remotes
+                .get(name)
+                .map(|m| m.profile_names(op))
+                .unwrap_or_default();
+            if names.is_empty() && !crate::jobs::allows_unconfigured_start(op) {
+                btn.set_sensitive(false);
+                btn.set_tooltip_text(Some(&self.ctx.t_or(
+                    "modals.remoteConfig.profile.noProfiles",
+                    "No profiles configured",
+                )));
+            }
             mark_action_busy(
                 &btn,
                 crate::jobs::action_in_progress(
@@ -2755,7 +2813,10 @@ impl Dashboard {
                 }
             }
         } else {
-            usage.set_subtitle(&self.ctx.t_or("remote.engineOffline", "Engine offline"));
+            usage.set_subtitle(&self.ctx.t_or(
+                "notification.title.engineConnectionFailed",
+                "Engine Connection Error",
+            ));
             box_.append(&usage);
         }
         self.detail.append(&box_);
@@ -3103,10 +3164,13 @@ fn open_overview_path(ctx: &AppCtx, current_remote: &str, raw: &str) {
     ctx.open_typed_path(current_remote, raw);
 }
 
-fn mark_action_busy(widget: &impl gtk::prelude::WidgetExt, busy: bool, ctx: &AppCtx) {
-    widget.set_sensitive(!busy);
+fn mark_action_busy(btn: &gtk::Button, busy: bool, ctx: &AppCtx) {
+    btn.set_sensitive(!busy);
     if busy {
-        widget.set_tooltip_text(Some(
+        let spinner = gtk::Spinner::new();
+        spinner.set_spinning(true);
+        btn.set_child(Some(&spinner));
+        btn.set_tooltip_text(Some(
             &ctx.t_or("remote.actionInProgress", "Action already in progress"),
         ));
     }
@@ -3120,9 +3184,10 @@ fn toggle_mount(ctx: &AppCtx, name: &str, mounted: bool, toast: &adw::ToastOverl
         return;
     };
     let Some(client) = ctx.client() else {
-        toast.add_toast(adw::Toast::new(
-            &ctx.t_or("remote.engineOffline", "Rclone engine is offline"),
-        ));
+        toast.add_toast(adw::Toast::new(&ctx.t_or(
+            "notification.title.engineConnectionFailed",
+            "Engine Connection Error",
+        )));
         return;
     };
     let snap = ctx.snapshot.borrow().clone();
@@ -3130,15 +3195,15 @@ fn toggle_mount(ctx: &AppCtx, name: &str, mounted: bool, toast: &adw::ToastOverl
     let profile = crate::jobs::preferred_mount_profile(meta.as_ref());
     let pname = profile
         .as_ref()
-        .map(|p| p.name.as_str())
+        .map(|p| p.name.clone())
         .filter(|s| !s.is_empty())
-        .unwrap_or("default");
+        .unwrap_or_else(|| "default".into());
     if mounted {
         match crate::jobs::stop_profile(
             &client,
             name,
             OperationType::Mount,
-            pname,
+            &pname,
             &snap.jobs,
             &snap.mounts,
             &snap.serves,
@@ -3170,7 +3235,10 @@ fn toggle_mount(ctx: &AppCtx, name: &str, mounted: bool, toast: &adw::ToastOverl
                     &format!("started mount {id}"),
                     Some(&crate::restrict::redact_value(&profile.rclone)),
                 );
-                toast.add_toast(adw::Toast::new(&format!("Mounted #{id}")));
+                toast.add_toast(adw::Toast::new(&ctx.tf(
+                    "mount.successMount",
+                    &[("remote", name), ("profile", pname.as_str())],
+                )));
             }
             Err(e) => toast.add_toast(adw::Toast::new(&e)),
         }
@@ -3180,7 +3248,15 @@ fn toggle_mount(ctx: &AppCtx, name: &str, mounted: bool, toast: &adw::ToastOverl
     let mount_point = default_mount_point(name);
     let _ = std::fs::create_dir_all(&mount_point);
     match client.mount(&remote_fs(name, ""), &mount_point, "mount") {
-        Ok(_) => toast.add_toast(adw::Toast::new(&format!("Mounted at {mount_point}"))),
+        Ok(_) => toast.add_toast(adw::Toast::new(&ctx.tf(
+            "notification.body.mountSucceeded",
+            &[
+                ("remote", name),
+                ("profile", pname.as_str()),
+                ("backend", "local"),
+                ("mountPoint", &mount_point),
+            ],
+        ))),
         Err(e) => toast.add_toast(adw::Toast::new(&e.to_string())),
     }
     ctx.refresh_runtime();
@@ -3202,7 +3278,10 @@ fn toggle_profile(
         return;
     };
     let Some(client) = ctx.client() else {
-        toast.add_toast(adw::Toast::new("Rclone engine is offline"));
+        toast.add_toast(adw::Toast::new(&ctx.t_or(
+            "notification.title.engineConnectionFailed",
+            "Engine Connection Error",
+        )));
         return;
     };
     let snap = ctx.snapshot.borrow().clone();
@@ -3248,7 +3327,14 @@ fn toggle_profile(
                 &format!("started {op} {id}"),
                 Some(&crate::restrict::redact_value(&profile.rclone)),
             );
-            toast.add_toast(adw::Toast::new(&format!("Started {op} {id}")));
+            toast.add_toast(adw::Toast::new(&ctx.tf(
+                "operations.successStart",
+                &[
+                    ("type", op.api_label()),
+                    ("remote", name),
+                    ("profile", profile_name),
+                ],
+            )));
         }
         Err(e) => toast.add_toast(adw::Toast::new(&e)),
     }
@@ -3263,9 +3349,10 @@ fn start_quick_run(ctx: &AppCtx, qr: &crate::store::QuickRun, toast: &adw::Toast
         return;
     };
     let Some(client) = ctx.client() else {
-        toast.add_toast(adw::Toast::new(
-            &ctx.t_or("remote.engineOffline", "Rclone engine is offline"),
-        ));
+        toast.add_toast(adw::Toast::new(&ctx.t_or(
+            "notification.title.engineConnectionFailed",
+            "Engine Connection Error",
+        )));
         return;
     };
     let meta = ctx.store.borrow().remotes.get(&qr.remote_name).cloned();
@@ -3309,7 +3396,14 @@ fn start_quick_run(ctx: &AppCtx, qr: &crate::store::QuickRun, toast: &adw::Toast
                 }
             }
             ctx.persist();
-            toast.add_toast(adw::Toast::new(&format!("Started {id}")));
+            toast.add_toast(adw::Toast::new(&ctx.tf(
+                "operations.successStart",
+                &[
+                    ("type", qr.operation_type.api_label()),
+                    ("remote", &qr.remote_name),
+                    ("profile", &qr.id),
+                ],
+            )));
         }
         Err(e) => toast.add_toast(adw::Toast::new(&ctx.translate_error(&e))),
     }
@@ -3324,18 +3418,21 @@ fn start_operation(
     dry_run: bool,
     resync: bool,
 ) {
-    let profile = ctx
+    let names = ctx
         .store
         .borrow()
         .remotes
         .get(name)
-        .and_then(|m| {
-            m.profile_names(op)
-                .into_iter()
-                .next()
-                .or_else(|| Some("default".into()))
-        })
-        .unwrap_or_else(|| "default".into());
+        .map(|m| m.profile_names(op))
+        .unwrap_or_default();
+    if names.is_empty() && !crate::jobs::allows_unconfigured_start(op) {
+        toast.add_toast(adw::Toast::new(&ctx.t_or(
+            "modals.remoteConfig.profile.noProfiles",
+            "No profiles configured",
+        )));
+        return;
+    }
+    let profile = names.into_iter().next().unwrap_or_else(|| "default".into());
     toggle_profile(ctx, name, op, &profile, toast, dry_run, resync);
 }
 
@@ -3376,19 +3473,19 @@ fn status_dot(mounted: bool, serving: bool, job: bool) -> String {
     }
 }
 
-fn remote_state_label(mounted: bool, serving: bool, job: bool) -> String {
+fn remote_state_label(ctx: &AppCtx, mounted: bool, serving: bool, job: bool) -> String {
     let mut parts = Vec::new();
     if mounted {
-        parts.push("mounted");
+        parts.push(ctx.t_or("overviews.status.labels.mounted", "Mounted"));
     }
     if serving {
-        parts.push("serving");
+        parts.push(ctx.t_or("serve.serving", "Serving"));
     }
     if job {
-        parts.push("job running");
+        parts.push(ctx.t_or("automation.status.running", "Running"));
     }
     if parts.is_empty() {
-        "idle".into()
+        ctx.t_or("overviews.status.labels.inactive", "Inactive")
     } else {
         parts.join(" · ")
     }

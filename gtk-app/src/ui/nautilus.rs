@@ -2282,10 +2282,11 @@ impl NautilusView {
         self.reload_ops();
 
         let Some(client) = self.ctx.client() else {
-            self.status.set_text(&self.ctx.t_or(
-                "nautilus.errors.connectionFailed",
-                "Rclone engine offline — showing empty listing",
-            ));
+            self.status.set_text(
+                &self
+                    .ctx
+                    .t_or("fileBrowser.errors.connectionFailed", "Connection Failed"),
+            );
             return;
         };
         let fs = if current.remote == "local" {
@@ -4129,11 +4130,24 @@ impl NautilusView {
         };
         let current = self.current.borrow().clone();
         let path = join_remote_path(&current.path, &name);
+        self.toast.add_toast(adw::Toast::new(
+            &self
+                .ctx
+                .tf("fileBrowser.fileViewer.openingNative", &[("name", &name)]),
+        ));
         let client = self.ctx.client();
         if let Err(e) =
             crate::fileops::open_file_natively(client.as_ref(), &current.remote, &path, &name)
         {
-            self.toast.add_toast(adw::Toast::new(&e));
+            let msg = if e == crate::fileops::ENGINE_OFFLINE {
+                self.ctx.t_or(
+                    "notification.title.engineConnectionFailed",
+                    "Engine Connection Error",
+                )
+            } else {
+                e
+            };
+            self.toast.add_toast(adw::Toast::new(&msg));
         }
     }
 

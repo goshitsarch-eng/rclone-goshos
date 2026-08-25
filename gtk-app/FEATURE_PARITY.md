@@ -363,6 +363,11 @@ This client is the GTK 4 + libadwaita rewrite of the Angular/Tauri desktop UI. I
 - Live rclone and mount-plugin install progress with cancel (same download-progress model as Updates)
 - Onboarding password Unlock validates via RC/CLI before continuing
 - Custom / existing rclone install locations on the install card
+- Compact / detail start chips disable when no profiles exist (Angular `hasNoProfiles`); mount keeps the default mount-point fallback
+- Busy chips show a spinner while an action is in progress
+- Repair FUSE / mount-plugin install uses the same live progress dialog as rclone updates
+- Repair issue titles and actions use `repairSheet.*` i18n; dashboard toasts use `mount.*` / `operations.*` / `notification.*`
+- Native Open shows `fileBrowser.fileViewer.openingNative` and translates engine-offline errors
 
 ## Still deepening toward pixel-level Angular parity
 

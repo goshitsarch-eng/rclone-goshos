@@ -717,7 +717,28 @@ fn run_download_job<F, OnOk>(
         + 'static,
     OnOk: FnOnce(AppCtx, std::path::PathBuf, adw::ToastOverlay) + 'static,
 {
-    let dialog = adw::AlertDialog::new(Some(title), Some("Downloading…"));
+    run_progress_job(parent, ctx, toast, title, work, on_ok);
+}
+
+fn run_progress_job<T, F, OnOk>(
+    parent: &impl IsA<gtk::Widget>,
+    ctx: AppCtx,
+    toast: adw::ToastOverlay,
+    title: &str,
+    work: F,
+    on_ok: OnOk,
+) where
+    T: Send + 'static,
+    F: FnOnce(
+            Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
+            Option<std::sync::Arc<std::sync::Mutex<crate::updater::DownloadProgress>>>,
+        ) -> Result<T, String>
+        + Send
+        + 'static,
+    OnOk: FnOnce(AppCtx, T, adw::ToastOverlay) + 'static,
+{
+    let downloading = ctx.t_or("modals.about.downloading", "Downloading…");
+    let dialog = adw::AlertDialog::new(Some(title), Some(&downloading));
     dialog.add_response("cancel", &ctx.t_or("common.cancel", "Cancel"));
     let bar = gtk::ProgressBar::new();
     bar.set_show_text(true);
@@ -726,7 +747,7 @@ fn run_download_job<F, OnOk>(
     let progress = std::sync::Arc::new(std::sync::Mutex::new(
         crate::updater::DownloadProgress::default(),
     ));
-    let result: std::sync::Arc<std::sync::Mutex<Option<Result<std::path::PathBuf, String>>>> =
+    let result: std::sync::Arc<std::sync::Mutex<Option<Result<T, String>>>> =
         std::sync::Arc::new(std::sync::Mutex::new(None));
     {
         let cancel = cancel.clone();
@@ -762,13 +783,15 @@ fn run_download_job<F, OnOk>(
         if let Some(outcome) = finished {
             dialog_poll.close();
             match outcome {
-                Ok(path) => {
+                Ok(value) => {
                     if let Some(cb) = on_ok.borrow_mut().take() {
-                        cb(ctx_done.clone(), path, toast_done.clone());
+                        cb(ctx_done.clone(), value, toast_done.clone());
                     }
                 }
                 Err(e) if e == "cancelled" => {
-                    toast_done.add_toast(adw::Toast::new("Update cancelled"));
+                    toast_done.add_toast(adw::Toast::new(
+                        &ctx_done.t_or("rcloneUpdate.cancelled", "Update cancelled"),
+                    ));
                 }
                 Err(e) => {
                     toast_done.add_toast(adw::Toast::new(&e));
@@ -1105,7 +1128,10 @@ pub fn vfs_control(
             }
             let Some(client) = ctx.client() else {
                 let row = adw::ActionRow::new();
-                row.set_title(&ctx.t_or("repair.engineOffline", "Engine offline"));
+                row.set_title(&ctx.t_or(
+                    "notification.title.engineConnectionFailed",
+                    "Engine Connection Error",
+                ));
                 list.append(&row);
                 return;
             };
@@ -3405,9 +3431,10 @@ pub fn start_operation(
         let backend_names = backend_names.clone();
         start.connect_clicked(move |_| {
             let Some(client) = ctx.client() else {
-                toast.add_toast(adw::Toast::new(
-                    &ctx.t_or("repair.engineOffline", "Engine offline"),
-                ));
+                toast.add_toast(adw::Toast::new(&ctx.t_or(
+                    "notification.title.engineConnectionFailed",
+                    "Engine Connection Error",
+                )));
                 return;
             };
             let mut rclone = serde_json::Map::new();
@@ -3515,7 +3542,14 @@ pub fn start_operation(
                     .borrow_mut()
                     .push_log(&remote, format!("started {op} {}", ids.join(", ")));
                 ctx.refresh_runtime();
-                toast.add_toast(adw::Toast::new(&format!("Started {op} {}", ids.join(", "))));
+                toast.add_toast(adw::Toast::new(&ctx.tf(
+                    "operations.successStart",
+                    &[
+                        ("type", op.api_label()),
+                        ("remote", &remote),
+                        ("profile", "start"),
+                    ],
+                )));
                 on_done();
                 dialog.close();
             }
@@ -6286,13 +6320,28 @@ pub fn file_viewer(
         let path = path.to_string();
         let name = name.to_string();
         open.connect_clicked(move |_| {
+            ctx.notify(
+                &ctx.t_or("fileBrowser.fileViewer.openNative", "Open in External App"),
+                &ctx.tf("fileBrowser.fileViewer.openingNative", &[("name", &name)]),
+            );
             let client = ctx.client();
             if let Err(err) =
                 crate::fileops::open_file_natively(client.as_ref(), &remote, &path, &name)
             {
+                let body = if err == crate::fileops::ENGINE_OFFLINE {
+                    ctx.t_or(
+                        "notification.title.engineConnectionFailed",
+                        "Engine Connection Error",
+                    )
+                } else {
+                    err
+                };
                 let alert = adw::AlertDialog::new(
-                    Some(&ctx.t_or("fileBrowser.fileViewer.openFailed", "Could not open file")),
-                    Some(&err),
+                    Some(&ctx.t_or(
+                        "fileBrowser.fileViewer.errorOpenNative",
+                        "Could not open file",
+                    )),
+                    Some(&body),
                 );
                 alert.add_response("ok", &ctx.t_or("common.ok", "OK"));
                 alert.present(Some(&parent));
@@ -9461,10 +9510,21 @@ pub fn repair(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, toast: adw::ToastOver
         list.append(&row);
     }
     for issue in issues {
+        let (title_key, detail_key, action_key) = crate::repair::issue_i18n_keys(issue.kind);
         let row = adw::ActionRow::new();
-        row.set_title(&issue.title);
-        row.set_subtitle(&issue.detail);
-        let btn = gtk::Button::with_label(&issue.action);
+        row.set_title(&ctx.t_or(title_key, &issue.title));
+        let subtitle = if issue.kind == crate::repair::RepairKind::VersionTooOld {
+            ctx.tf(
+                detail_key,
+                &[("required", crate::repair::MIN_RCLONE_VERSION)],
+            )
+        } else if issue.detail.is_empty() {
+            ctx.t_or(detail_key, &issue.detail)
+        } else {
+            issue.detail.clone()
+        };
+        row.set_subtitle(&subtitle);
+        let btn = gtk::Button::with_label(&ctx.t_or(action_key, &issue.action));
         btn.set_valign(gtk::Align::Center);
         btn.add_css_class("suggested-action");
         {
@@ -9478,17 +9538,22 @@ pub fn repair(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, toast: adw::ToastOver
                     install_rclone_update(&parent, ctx.clone(), toast.clone());
                     ctx.restart_engine();
                 }
-                crate::repair::RepairKind::FuseMissing => match crate::mount_plugin::install() {
-                    Ok(msg) => toast.add_toast(adw::Toast::new(&msg)),
-                    Err(e) => {
-                        let help = adw::AlertDialog::new(
-                            Some(&format!("Install {}", crate::mount_plugin::plugin_label())),
-                            Some(&e),
-                        );
-                        help.add_response("ok", &ctx.t("common.ok"));
-                        help.present(Some(&parent));
-                    }
-                },
+                crate::repair::RepairKind::FuseMissing => {
+                    let title = ctx.t_or(
+                        "repairSheet.progress.installingPlugin",
+                        "Installing Plugin...",
+                    );
+                    run_progress_job(
+                        &parent,
+                        ctx.clone(),
+                        toast.clone(),
+                        &title,
+                        |cancel, progress| crate::mount_plugin::install_ex(cancel, progress),
+                        |_ctx, msg, toast| {
+                            toast.add_toast(adw::Toast::new(&msg));
+                        },
+                    );
+                }
                 crate::repair::RepairKind::PasswordRequired => {
                     password_prompt(&parent, ctx.clone(), toast.clone());
                 }

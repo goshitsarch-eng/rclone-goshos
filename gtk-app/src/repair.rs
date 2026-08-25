@@ -205,6 +205,47 @@ pub fn engine_banner_keys(kind: RepairKind) -> Option<(&'static str, &'static st
     })
 }
 
+/// Title / detail / action keys for the Repair dialog (Angular `repairSheet.*`).
+pub fn issue_i18n_keys(kind: RepairKind) -> (&'static str, &'static str, &'static str) {
+    match kind {
+        RepairKind::MissingBinary => (
+            "repairSheet.titles.missingRclone",
+            "repairSheet.messages.missingRclone",
+            "repairSheet.actions.installRclone",
+        ),
+        RepairKind::VersionTooOld => (
+            "repairSheet.titles.versionTooOld",
+            "repairSheet.messages.versionTooOld",
+            "repairSheet.details.rcloneVersion.action",
+        ),
+        RepairKind::FuseMissing => (
+            "repairSheet.titles.missingMountPlugin",
+            "repairSheet.messages.missingMountPlugin",
+            "repairSheet.actions.installPlugin",
+        ),
+        RepairKind::PasswordRequired => (
+            "repairSheet.titles.passwordRequired",
+            "repairSheet.messages.passwordRequired",
+            "repairSheet.actions.submitPassword",
+        ),
+        RepairKind::AuthFailed => (
+            "repairSheet.titles.authRequired",
+            "repairSheet.messages.authRequired",
+            "repairSheet.actions.repair",
+        ),
+        RepairKind::ConfigUnreadable => (
+            "repairSheet.titles.corruptConfig",
+            "repairSheet.messages.corruptConfig",
+            "repairSheet.actions.restoreBackup",
+        ),
+        RepairKind::EngineUnreachable => (
+            "repairSheet.titles.backendError",
+            "repairSheet.messages.backendError",
+            "repairSheet.actions.restartEngine",
+        ),
+    }
+}
+
 pub fn banner_from_issues(issues: &[RepairIssue]) -> Option<&RepairIssue> {
     const ORDER: &[RepairKind] = &[
         RepairKind::MissingBinary,
@@ -310,5 +351,17 @@ mod tests {
             ))
         );
         assert!(engine_banner_keys(RepairKind::FuseMissing).is_none());
+        assert_eq!(
+            issue_i18n_keys(RepairKind::MissingBinary).0,
+            "repairSheet.titles.missingRclone"
+        );
+        assert_eq!(
+            issue_i18n_keys(RepairKind::FuseMissing).2,
+            "repairSheet.actions.installPlugin"
+        );
+        assert_eq!(
+            issue_i18n_keys(RepairKind::EngineUnreachable).2,
+            "repairSheet.actions.restartEngine"
+        );
     }
 }

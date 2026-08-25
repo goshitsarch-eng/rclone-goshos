@@ -384,4 +384,26 @@ mod tests {
             "Unknown Flag"
         );
     }
+
+    #[test]
+    fn repair_sheet_and_toast_keys_exist() {
+        let i18n = I18n::default();
+        for key in [
+            "repairSheet.titles.missingRclone",
+            "repairSheet.actions.installPlugin",
+            "modals.remoteConfig.profile.noProfiles",
+            "mount.successMount",
+            "operations.successStart",
+            "notification.title.engineConnectionFailed",
+            "modals.about.downloading",
+            "rcloneUpdate.cancelled",
+            "fileBrowser.fileViewer.openingNative",
+            "overviews.status.labels.mounted",
+            "serve.serving",
+            "automation.status.running",
+            "overviews.status.labels.inactive",
+        ] {
+            assert!(i18n.has(key), "missing i18n key {key}");
+        }
+    }
 }

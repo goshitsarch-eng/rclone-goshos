@@ -264,6 +264,8 @@ fn copy_dir(src: &std::path::Path, dst: &std::path::Path) -> std::io::Result<()>
     Ok(())
 }
 
+pub const ENGINE_OFFLINE: &str = "Rclone engine is offline";
+
 pub fn is_local_open_target(remote: &str) -> bool {
     remote.is_empty() || remote == "local"
 }
@@ -279,7 +281,7 @@ pub fn open_file_natively(
         open::that(path).map_err(|e| e.to_string())?;
         return Ok(PathBuf::from(path));
     }
-    let client = client.ok_or_else(|| "Rclone engine is offline".to_string())?;
+    let client = client.ok_or_else(|| ENGINE_OFFLINE.to_string())?;
     let file_name = if name.is_empty() {
         "rclone-open.bin"
     } else {
@@ -408,5 +410,6 @@ mod tests {
         assert!(is_local_open_target(""));
         assert!(!is_local_open_target("drive"));
         assert!(!is_local_open_target("drive:"));
+        assert_eq!(ENGINE_OFFLINE, "Rclone engine is offline");
     }
 }

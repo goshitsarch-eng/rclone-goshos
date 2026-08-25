@@ -809,9 +809,10 @@ impl FlowView {
             return;
         };
         let Some(client) = self.ctx.client() else {
-            self.toast.add_toast(adw::Toast::new(
-                &self.ctx.t_or("home.errors.engineOffline", "Engine offline"),
-            ));
+            self.toast.add_toast(adw::Toast::new(&self.ctx.t_or(
+                "notification.title.engineConnectionFailed",
+                "Engine Connection Error",
+            )));
             return;
         };
         let meta = self
