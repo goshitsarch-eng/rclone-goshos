@@ -86,6 +86,32 @@ pub fn autostart_enabled() -> bool {
     autostart_desktop_path().exists()
 }
 
+/// NetworkManager `Metered` values 1 (yes) and 3 (guess yes).
+pub fn metered_from_nm_status(status: u32) -> bool {
+    matches!(status, 1 | 3)
+}
+
+pub fn is_network_metered() -> bool {
+    use std::time::Duration;
+    let Ok(conn) = dbus::blocking::Connection::new_system() else {
+        return false;
+    };
+    let proxy = conn.with_proxy(
+        "org.freedesktop.NetworkManager",
+        "/org/freedesktop/NetworkManager",
+        Duration::from_millis(400),
+    );
+    use dbus::blocking::stdintf::org_freedesktop_dbus::Properties;
+    match proxy.get::<u32>("org.freedesktop.NetworkManager", "Metered") {
+        Ok(status) => metered_from_nm_status(status),
+        Err(_) => false,
+    }
+}
+
+pub fn is_flatpak() -> bool {
+    std::env::var_os("FLATPAK_ID").is_some() || Path::new("/.flatpak-info").is_file()
+}
+
 struct LogindInhibit {
     _conn: dbus::blocking::Connection,
     _fd: dbus::arg::OwnedFd,
@@ -367,6 +393,15 @@ mod tests {
     fn templates_substitute_placeholders() {
         let out = apply_template("x {remote} {path}", &[("remote", "a"), ("path", "b")]);
         assert_eq!(out, "x a b");
+    }
+
+    #[test]
+    fn metered_status_matches_networkmanager() {
+        assert!(metered_from_nm_status(1));
+        assert!(metered_from_nm_status(3));
+        assert!(!metered_from_nm_status(0));
+        assert!(!metered_from_nm_status(2));
+        assert!(!metered_from_nm_status(4));
     }
 
     #[test]

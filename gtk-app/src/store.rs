@@ -470,6 +470,61 @@ impl AlertAction {
     }
 }
 
+#[derive(Debug, Clone, Default)]
+pub struct AlertActionDraft {
+    pub url: String,
+    pub method: String,
+    pub token: String,
+    pub extra: String,
+    pub body: String,
+}
+
+pub fn alert_action_config(kind: &str, draft: &AlertActionDraft) -> Value {
+    let body = if draft.body.is_empty() {
+        "{{title}}: {{body}}".into()
+    } else {
+        draft.body.clone()
+    };
+    match kind {
+        "os_toast" => json!({ "body_template": body }),
+        "webhook" => json!({
+            "url": draft.url,
+            "method": if draft.method.is_empty() { "POST".into() } else { draft.method.clone() },
+            "body_template": body,
+        }),
+        "telegram" => json!({
+            "bot_token": draft.token,
+            "chat_id": draft.extra,
+            "body_template": body,
+        }),
+        "whatsapp" => json!({
+            "apikey": draft.token,
+            "phone": draft.extra,
+            "gateway_url": draft.url,
+            "body_template": body,
+        }),
+        "script" => json!({
+            "command": draft.extra,
+            "body_template": body,
+        }),
+        "email" => json!({
+            "smtp_server": draft.url,
+            "smtp_port": draft.method.parse::<u16>().unwrap_or(587),
+            "password": draft.token,
+            "from": draft.extra,
+            "to": draft.extra,
+            "body_template": body,
+        }),
+        "mqtt" => json!({
+            "broker_url": draft.url,
+            "topic": if draft.method.is_empty() { "rclone/alerts".into() } else { draft.method.clone() },
+            "password": draft.token,
+            "body_template": body,
+        }),
+        _ => json!({ "body_template": body }),
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AlertEvent {
     pub id: String,
@@ -1304,6 +1359,35 @@ mod tests {
         assert!(store.seed_alert_defaults(false));
         assert!(!store.alert_actions[0].enabled);
         assert!(!store.alert_rules[0].enabled);
+    }
+
+    #[test]
+    fn builds_kind_specific_alert_config() {
+        let draft = AlertActionDraft {
+            url: "https://hooks.example/x".into(),
+            method: "PUT".into(),
+            token: "secret".into(),
+            extra: "123".into(),
+            body: "{{title}}".into(),
+        };
+        let webhook = alert_action_config("webhook", &draft);
+        assert_eq!(webhook["url"], "https://hooks.example/x");
+        assert_eq!(webhook["method"], "PUT");
+        assert!(webhook.get("bot_token").is_none());
+        let telegram = alert_action_config("telegram", &draft);
+        assert_eq!(telegram["bot_token"], "secret");
+        assert_eq!(telegram["chat_id"], "123");
+        let email = alert_action_config(
+            "email",
+            &AlertActionDraft {
+                url: "smtp.example".into(),
+                method: "465".into(),
+                extra: "ops@example.com".into(),
+                ..draft.clone()
+            },
+        );
+        assert_eq!(email["smtp_port"], 465);
+        assert_eq!(email["to"], "ops@example.com");
     }
 
     #[test]

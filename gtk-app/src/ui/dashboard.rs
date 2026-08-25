@@ -1411,7 +1411,5 @@ fn apply_bandwidth(ctx: &AppCtx, value: &str) {
         rate.clone()
     };
     ctx.persist();
-    if let Some(client) = ctx.client() {
-        let _ = client.bwlimit(Some(&rate));
-    }
+    ctx.apply_effective_bandwidth();
 }

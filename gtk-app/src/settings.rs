@@ -41,6 +41,8 @@ pub struct CoreSettings {
     pub rclone_env_vars: Vec<String>,
     pub connection_check_urls: Vec<String>,
     pub bandwidth_limit: String,
+    #[serde(default)]
+    pub metered_bandwidth_limit: String,
     pub completed_onboarding: bool,
     #[serde(default)]
     pub extra_backends: Vec<BackendEntry>,
@@ -63,6 +65,7 @@ impl Default for CoreSettings {
                 "https://onedrive.live.com".into(),
             ],
             bandwidth_limit: String::new(),
+            metered_bandwidth_limit: String::new(),
             completed_onboarding: false,
             extra_backends: vec![],
             active_backend: String::new(),
@@ -110,6 +113,12 @@ pub struct RuntimeSettings {
     pub dashboard_card_variant: String,
     #[serde(default)]
     pub show_json_mode: bool,
+    #[serde(default = "default_true")]
+    pub flatpak_warn: bool,
+}
+
+fn default_true() -> bool {
+    true
 }
 
 impl Default for RuntimeSettings {
@@ -127,6 +136,7 @@ impl Default for RuntimeSettings {
             remote_layouts: serde_json::json!({}),
             dashboard_card_variant: "compact".into(),
             show_json_mode: false,
+            flatpak_warn: true,
         }
     }
 }
@@ -281,5 +291,20 @@ mod tests {
         let loaded: AppSettings =
             serde_json::from_str(&std::fs::read_to_string(path).unwrap()).unwrap();
         assert_eq!(loaded.general.language, "ja-JP");
+    }
+
+    #[test]
+    fn loads_legacy_settings_without_new_fields() {
+        let json = r#"{
+            "general": {"language":"en-US","default_view":"main_menu","tray_enabled":true,"tray_icon_theme":"color","start_on_startup":false,"notifications":true,"restrict":true,"standalone_dialogs":false,"prevent_sleep":true},
+            "core": {"max_tray_items":5,"rclone_binary":"","rclone_additional_flags":[],"rclone_env_vars":[],"connection_check_urls":[],"bandwidth_limit":"2M","completed_onboarding":true,"extra_backends":[],"active_backend":"","config_password":""},
+            "developer": {"log_level":"info","destroy_window_on_close":true},
+            "runtime": {"theme":"system","app_auto_check_updates":true,"app_skipped_updates":[],"app_update_channel":"stable","rclone_auto_check_updates":true,"rclone_skipped_updates":[],"rclone_update_channel":"stable","dashboard_layout":{},"quick_run_layout":{},"remote_layouts":{},"dashboard_card_variant":"compact"},
+            "nautilus": {"starred":[],"bookmarks":[],"sidebar_visible":true,"show_hidden":false,"layout":"list","sort_by":"name","sort_desc":false,"icon_size":48}
+        }"#;
+        let loaded: AppSettings = serde_json::from_str(json).unwrap();
+        assert_eq!(loaded.core.bandwidth_limit, "2M");
+        assert!(loaded.core.metered_bandwidth_limit.is_empty());
+        assert!(loaded.runtime.flatpak_warn);
     }
 }

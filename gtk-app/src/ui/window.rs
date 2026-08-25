@@ -88,15 +88,24 @@ pub fn present_main(app: &adw::Application, ctx: AppCtx) {
 
     let banner = adw::Banner::new("");
     banner.set_button_label(Some("Repair"));
+    let banner_kind = Rc::new(std::cell::RefCell::new(BannerKind::None));
     {
         let ctx = ctx.clone();
         let window = window.clone();
         let toast = toast.clone();
-        banner.connect_button_clicked(move |_| {
-            dialogs::repair(&window, ctx.clone(), toast.clone());
+        let banner_kind = banner_kind.clone();
+        let banner_ref = banner.clone();
+        banner.connect_button_clicked(move |_| match *banner_kind.borrow() {
+            BannerKind::Repair => dialogs::repair(&window, ctx.clone(), toast.clone()),
+            BannerKind::Flatpak => {
+                ctx.settings.borrow_mut().runtime.flatpak_warn = false;
+                ctx.persist();
+                update_banner(&ctx, &banner_ref, &banner_kind);
+            }
+            BannerKind::Metered | BannerKind::None => {}
         });
     }
-    update_banner(&ctx, &banner);
+    update_banner(&ctx, &banner, &banner_kind);
 
     toolbar.add_top_bar(&header);
     toolbar.add_top_bar(&banner);
@@ -125,6 +134,7 @@ pub fn present_main(app: &adw::Application, ctx: AppCtx) {
     let dash_poll = dashboard.clone();
     let flow_poll = flow.clone();
     let banner_poll = banner.clone();
+    let banner_kind_poll = banner_kind.clone();
     {
         let ctx_nav = ctx.clone();
         let stack_nav = view_stack.clone();
@@ -158,7 +168,7 @@ pub fn present_main(app: &adw::Application, ctx: AppCtx) {
         ctx_poll.refresh_runtime();
         dash_poll.refresh();
         flow_poll.refresh();
-        update_banner(&ctx_poll, &banner_poll);
+        update_banner(&ctx_poll, &banner_poll, &banner_kind_poll);
         if let Some(tray) = &tray {
             tray.drain(&ctx_poll);
         }
@@ -607,7 +617,15 @@ fn install_shortcuts(window: &adw::ApplicationWindow) {
     window.add_controller(controller);
 }
 
-fn update_banner(ctx: &AppCtx, banner: &adw::Banner) {
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum BannerKind {
+    None,
+    Repair,
+    Flatpak,
+    Metered,
+}
+
+fn update_banner(ctx: &AppCtx, banner: &adw::Banner, kind: &Rc<std::cell::RefCell<BannerKind>>) {
     let settings = ctx.settings.borrow().clone();
     let version = ctx.client().and_then(|c| c.version().ok());
     let issues = crate::repair::diagnose(
@@ -620,9 +638,28 @@ fn update_banner(ctx: &AppCtx, banner: &adw::Banner) {
         banner.set_title(&format!("{} — {}", issue.title, issue.detail));
         banner.set_button_label(Some(&issue.action));
         banner.set_revealed(true);
-    } else {
-        banner.set_revealed(false);
+        *kind.borrow_mut() = BannerKind::Repair;
+        return;
     }
+    if crate::platform::is_flatpak() && settings.runtime.flatpak_warn {
+        banner.set_title(
+            "Flatpak sandbox is active — some mounts and local paths need extra permissions.",
+        );
+        banner.set_button_label(Some("Dismiss"));
+        banner.set_revealed(true);
+        *kind.borrow_mut() = BannerKind::Flatpak;
+        return;
+    }
+    if crate::platform::is_network_metered() {
+        banner
+            .set_title("You are on a metered network. Transfers may use a lower bandwidth limit.");
+        banner.set_button_label(None::<&str>);
+        banner.set_revealed(true);
+        *kind.borrow_mut() = BannerKind::Metered;
+        return;
+    }
+    banner.set_revealed(false);
+    *kind.borrow_mut() = BannerKind::None;
 }
 
 #[allow(dead_code)]

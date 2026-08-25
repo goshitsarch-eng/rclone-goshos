@@ -234,6 +234,25 @@ impl AppCtx {
         }
     }
 
+    pub fn apply_effective_bandwidth(&self) {
+        let metered = crate::platform::is_network_metered();
+        let settings = self.settings.borrow();
+        let rate = if metered && !settings.core.metered_bandwidth_limit.is_empty() {
+            settings.core.metered_bandwidth_limit.clone()
+        } else {
+            settings.core.bandwidth_limit.clone()
+        };
+        drop(settings);
+        let normalized = crate::jobs::normalize_bandwidth(&rate);
+        if let Some(client) = self.client() {
+            let _ = client.bwlimit(if normalized == "off" {
+                None
+            } else {
+                Some(&normalized)
+            });
+        }
+    }
+
     pub fn refresh_runtime(&self) {
         let Some(client) = self.client() else {
             return;
@@ -258,6 +277,7 @@ impl AppCtx {
         snap.local_disks = disks;
         snap.jobs = jobs;
         drop(snap);
+        self.apply_effective_bandwidth();
         self.update_power_inhibit();
     }
 

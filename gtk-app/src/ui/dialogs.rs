@@ -328,14 +328,24 @@ pub fn preferences(parent: &impl IsA<gtk::Widget>, ctx: AppCtx) {
         let ctx = ctx.clone();
         bw.connect_changed(move |row| {
             let rate = row.text().to_string();
-            ctx.settings.borrow_mut().core.bandwidth_limit = rate.clone();
+            ctx.settings.borrow_mut().core.bandwidth_limit = rate;
             ctx.persist();
-            if let Some(client) = ctx.client() {
-                let _ = client.bwlimit(if rate.is_empty() { None } else { Some(&rate) });
-            }
+            ctx.apply_effective_bandwidth();
         });
     }
     c1.add(&bw);
+    let metered_bw = adw::EntryRow::new();
+    metered_bw.set_title("Bandwidth limit on metered networks");
+    metered_bw.set_text(&ctx.settings.borrow().core.metered_bandwidth_limit);
+    {
+        let ctx = ctx.clone();
+        metered_bw.connect_changed(move |row| {
+            ctx.settings.borrow_mut().core.metered_bandwidth_limit = row.text().to_string();
+            ctx.persist();
+            ctx.apply_effective_bandwidth();
+        });
+    }
+    c1.add(&metered_bw);
     let tray_items = adw::SpinRow::with_range(1.0, 40.0, 1.0);
     tray_items.set_title("Max tray items");
     tray_items.set_value(ctx.settings.borrow().core.max_tray_items as f64);
@@ -4445,13 +4455,13 @@ fn alert_action_editor(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, existing_id:
         }
     }
     let url = adw::EntryRow::new();
-    url.set_title("URL / broker / SMTP host");
+    url.set_title("URL");
     let method = adw::EntryRow::new();
-    method.set_title("Method / topic / port");
+    method.set_title("Method");
     let token = adw::PasswordEntryRow::new();
-    token.set_title("Token / password / API key");
+    token.set_title("Token");
     let extra = adw::EntryRow::new();
-    extra.set_title("Chat ID / phone / from / command");
+    extra.set_title("Extra");
     let body = adw::EntryRow::new();
     body.set_title("Body template");
     if let Some(action) = &existing {
@@ -4511,23 +4521,16 @@ fn alert_action_editor(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, existing_id:
             action.name = name.text().to_string();
             action.enabled = enabled.is_active();
             action.kind = selected.into();
-            action.config = serde_json::json!({
-                "url": url.text().to_string(),
-                "broker_url": url.text().to_string(),
-                "smtp_server": url.text().to_string(),
-                "method": method.text().to_string(),
-                "topic": method.text().to_string(),
-                "smtp_port": method.text().parse::<u16>().unwrap_or(587),
-                "bot_token": token.text().to_string(),
-                "password": token.text().to_string(),
-                "apikey": token.text().to_string(),
-                "chat_id": extra.text().to_string(),
-                "phone": extra.text().to_string(),
-                "from": extra.text().to_string(),
-                "to": extra.text().to_string(),
-                "command": extra.text().to_string(),
-                "body_template": body.text().to_string(),
-            });
+            action.config = crate::store::alert_action_config(
+                selected,
+                &crate::store::AlertActionDraft {
+                    url: url.text().to_string(),
+                    method: method.text().to_string(),
+                    token: token.text().to_string(),
+                    extra: extra.text().to_string(),
+                    body: body.text().to_string(),
+                },
+            );
             action
         }
     };
@@ -4582,6 +4585,102 @@ fn alert_action_editor(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, existing_id:
             }
             dialog.close();
             alerts(&parent, ctx.clone());
+        });
+    }
+    let sync_fields = {
+        let url = url.clone();
+        let method = method.clone();
+        let token = token.clone();
+        let extra = extra.clone();
+        let body = body.clone();
+        move |selected: &str| match selected {
+            "os_toast" => {
+                url.set_visible(false);
+                method.set_visible(false);
+                token.set_visible(false);
+                extra.set_visible(false);
+                body.set_visible(true);
+                body.set_title("Toast body template");
+            }
+            "webhook" => {
+                url.set_visible(true);
+                url.set_title("Webhook URL");
+                method.set_visible(true);
+                method.set_title("HTTP method");
+                token.set_visible(false);
+                extra.set_visible(false);
+                body.set_visible(true);
+                body.set_title("JSON / body template");
+            }
+            "telegram" => {
+                url.set_visible(false);
+                method.set_visible(false);
+                token.set_visible(true);
+                token.set_title("Bot token");
+                extra.set_visible(true);
+                extra.set_title("Chat ID");
+                body.set_visible(true);
+                body.set_title("Message template");
+            }
+            "whatsapp" => {
+                url.set_visible(true);
+                url.set_title("Gateway URL (optional)");
+                method.set_visible(false);
+                token.set_visible(true);
+                token.set_title("API key");
+                extra.set_visible(true);
+                extra.set_title("Phone number");
+                body.set_visible(true);
+                body.set_title("Message template");
+            }
+            "script" => {
+                url.set_visible(false);
+                method.set_visible(false);
+                token.set_visible(false);
+                extra.set_visible(true);
+                extra.set_title("Command");
+                body.set_visible(true);
+                body.set_title("Stdin template");
+            }
+            "email" => {
+                url.set_visible(true);
+                url.set_title("SMTP host");
+                method.set_visible(true);
+                method.set_title("SMTP port");
+                token.set_visible(true);
+                token.set_title("Password");
+                extra.set_visible(true);
+                extra.set_title("From / to address");
+                body.set_visible(true);
+                body.set_title("Body template");
+            }
+            "mqtt" => {
+                url.set_visible(true);
+                url.set_title("Broker URL");
+                method.set_visible(true);
+                method.set_title("Topic");
+                token.set_visible(true);
+                token.set_title("Password");
+                extra.set_visible(false);
+                body.set_visible(true);
+                body.set_title("Payload template");
+            }
+            _ => {}
+        }
+    };
+    {
+        let sync_fields = sync_fields.clone();
+        let initial = ACTION_KINDS
+            .get(kind.selected() as usize)
+            .copied()
+            .unwrap_or("os_toast");
+        sync_fields(initial);
+        kind.connect_selected_notify(move |row| {
+            let selected = ACTION_KINDS
+                .get(row.selected() as usize)
+                .copied()
+                .unwrap_or("os_toast");
+            sync_fields(selected);
         });
     }
     let group = adw::PreferencesGroup::new();

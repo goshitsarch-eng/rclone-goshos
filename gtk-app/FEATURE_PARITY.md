@@ -121,6 +121,8 @@ This client is the GTK 4 + libadwaita rewrite of the Angular/Tauri desktop UI. I
 - One-shot import of a Tauri/rcman `remotes/` + alerts/templates layout into the GTK store
 - Path kinds (local / current remote / other remote) with combo rows and job-path resolution
 - Native Share… from Files (stage remote files, then `xdg-email` / `xdg-open`)
+- NetworkManager metered-network detection, optional metered bandwidth limit, and Flatpak/metered title-bar banners
+- Kind-specific alert action fields (webhook, telegram, email, MQTT, script, WhatsApp, OS toast)
 
 ## Still deepening toward pixel-level Angular parity
 
