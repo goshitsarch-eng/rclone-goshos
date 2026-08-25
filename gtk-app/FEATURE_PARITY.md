@@ -373,6 +373,9 @@ This client is the GTK 4 + libadwaita rewrite of the Angular/Tauri desktop UI. I
 - Quick Add lists only OAuth-capable providers (Angular `get_oauth_supported_remotes`)
 - Remote-config Re-authenticate runs the interactive / OAuth flow in-dialog (Angular `InteractiveConfigStep`)
 - OAuth helper shows a clickable authorization link with copy (Angular `modals.oauth.*`)
+- Startup loading overlay (`onboarding.loadingTitle` / `loadingMessage`) hides after the first runtime refresh
+- Extra RC backends call `config/setpath` + `config/unlock` on switch/save (Tauri `configure_remote_backend`)
+- Interactive config step: required badge, default value, exclusive vs custom examples, password peek, Yes/No, validation hint
 
 ## Still deepening toward pixel-level Angular parity
 

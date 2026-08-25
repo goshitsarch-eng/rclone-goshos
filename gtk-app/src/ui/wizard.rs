@@ -1,8 +1,8 @@
 use super::AppCtx;
 use crate::flags::parse_flag_value;
 use crate::interactive::{
-    apply_interactive_response, is_continue_disabled, update_interactive_answer, InteractiveAnswer,
-    InteractiveFlowState,
+    allows_custom_value, apply_interactive_response, example_label, is_continue_disabled,
+    selected_example_index, update_interactive_answer, InteractiveAnswer, InteractiveFlowState,
 };
 use crate::jobs::{
     first_path, flatten_rclone, parse_cli_flags, profile_src_dst, DEST_KEYS, SOURCE_KEYS,
@@ -1750,19 +1750,14 @@ fn apply_question_widgets(
         title.set_text(&option.name);
         help.set_text(&option.help);
         error.set_text(step.error.as_deref().unwrap_or(""));
-        answer_switch.set_visible(option.type_name == "bool");
-        answer_row.set_visible(option.type_name != "bool");
-        if option.type_name == "bool" {
+        let is_bool = option.type_name == "bool";
+        answer_switch.set_visible(is_bool);
+        let show_custom = !is_bool && (option.examples.is_empty() || allows_custom_value(option));
+        answer_row.set_visible(show_custom);
+        if is_bool {
             answer_switch.set_active(matches!(flow.answer, InteractiveAnswer::Bool(true)));
-        } else {
+        } else if show_custom {
             answer_row.set_text(&flow.answer.as_string());
-            if option.is_password {
-                if let Some(child) = answer_row.first_child() {
-                    if let Ok(editable) = child.downcast::<gtk::Text>() {
-                        editable.set_visibility(false);
-                    }
-                }
-            }
         }
         if option.examples.is_empty() {
             example_row.set_visible(false);
@@ -1771,16 +1766,13 @@ fn apply_question_widgets(
             let labels: Vec<String> = option
                 .examples
                 .iter()
-                .map(|(v, h)| {
-                    if h.is_empty() {
-                        v.clone()
-                    } else {
-                        format!("{v} — {h}")
-                    }
-                })
+                .map(|(v, h)| example_label(v, h))
                 .collect();
             let refs: Vec<&str> = labels.iter().map(|s| s.as_str()).collect();
             example_row.set_model(Some(&gtk::StringList::new(&refs)));
+            if let Some(idx) = selected_example_index(option, &flow.answer.as_string()) {
+                example_row.set_selected(idx as u32);
+            }
         }
     } else {
         title.set_text("Continue authorization");

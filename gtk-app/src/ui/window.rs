@@ -44,7 +44,7 @@ pub fn activate(app: &adw::Application) {
 pub fn present_main(app: &adw::Application, ctx: AppCtx) {
     let window = adw::ApplicationWindow::builder()
         .application(app)
-        .title("Rclone Manager")
+        .title(&ctx.t_or("overviews.headers.general", "RClone Manager"))
         .default_width(1280)
         .default_height(820)
         .build();
@@ -215,7 +215,28 @@ pub fn present_main(app: &adw::Application, ctx: AppCtx) {
 
     toolbar.add_top_bar(&header);
     toolbar.add_top_bar(&banner);
-    toolbar.set_content(Some(&view_stack));
+    let overlay = gtk::Overlay::new();
+    overlay.set_child(Some(&view_stack));
+    let loading = adw::StatusPage::new();
+    loading.add_css_class("startup-loading");
+    loading.set_hexpand(true);
+    loading.set_vexpand(true);
+    loading.set_halign(gtk::Align::Fill);
+    loading.set_valign(gtk::Align::Fill);
+    loading.set_icon_name(Some("emblem-synchronizing-symbolic"));
+    loading.set_title(&ctx.t_or("onboarding.loadingTitle", "Initializing RClone Manager"));
+    loading.set_description(Some(&ctx.t_or(
+        "onboarding.loadingMessage",
+        "Checking system configuration...",
+    )));
+    let spinner = gtk::Spinner::new();
+    spinner.set_spinning(true);
+    spinner.set_halign(gtk::Align::Center);
+    loading.set_child(Some(&spinner));
+    apply_startup_css();
+    overlay.add_overlay(&loading);
+    loading.set_visible(!ctx.engine_ready());
+    toolbar.set_content(Some(&overlay));
     toast.set_child(Some(&toolbar));
     window.set_content(Some(&toast));
 
@@ -324,6 +345,8 @@ pub fn present_main(app: &adw::Application, ctx: AppCtx) {
     }
     let poll_tick = Rc::new(Cell::new(0u32));
     let poll_window = window.clone();
+    let loading_poll = loading.clone();
+    let first_refresh_done = Rc::new(Cell::new(false));
     glib::timeout_add_local(crate::refresh::BUSY_POLL, move || {
         let busy = ctx_poll.runtime_busy();
         let visible = poll_window.is_visible();
@@ -337,6 +360,10 @@ pub fn present_main(app: &adw::Application, ctx: AppCtx) {
             ctx_poll.refresh_runtime();
             dash_poll.refresh();
             flow_poll.refresh();
+            if !first_refresh_done.get() {
+                first_refresh_done.set(true);
+                loading_poll.set_visible(false);
+            }
             if ctx_poll.connection_stale(std::time::Duration::from_secs(300)) {
                 ctx_poll.refresh_connection();
             }
@@ -1337,6 +1364,18 @@ fn sync_connection_button(ctx: &AppCtx, btn: &gtk::Button) {
             };
             btn.set_tooltip_text(Some(&tip));
         }
+    }
+}
+
+fn apply_startup_css() {
+    let provider = gtk::CssProvider::new();
+    provider.load_from_string(".startup-loading { background-color: var(--window-bg-color); }");
+    if let Some(display) = gtk::gdk::Display::default() {
+        gtk::style_context_add_provider_for_display(
+            &display,
+            &provider,
+            gtk::STYLE_PROVIDER_PRIORITY_APPLICATION,
+        );
     }
 }
 
