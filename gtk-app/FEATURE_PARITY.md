@@ -430,6 +430,10 @@ This client is the GTK 4 + libadwaita rewrite of the Angular/Tauri desktop UI. I
 - Dashboard/Flow Monitoring embed an inline VFS control panel: `vfs/list` instance picker, 5s poll, stats, cache paths, advanced `opt`, and queue Prioritize / Delay / custom expiry (`PRIORITY_EXPIRY` / `DELAY_EXPIRY`)
 - Monitoring shows Angular-style Job Information + transfer statistics (progress/ETA bars, files, checks, errors)
 - Selected-profile Start/Stop is an expander row matching `app-operation-control`
+- Operation-control expanders include paths, mount usage, per-profile dry-run/resync, and a full Start/Stop action; extra profiles appear when a picker is shown
+- Logs Clear truncates `rclone.log` for engine logs so the tailed file does not refill the dialog
+- Repair auth-failed uses Angular `clear_engine_auth_error` behavior (restart/retry) and still opens Backends
+- Standalone dialogs cover VFS, Repair, Start operation, and File viewer
 
 ## Still deepening toward pixel-level Angular parity
 

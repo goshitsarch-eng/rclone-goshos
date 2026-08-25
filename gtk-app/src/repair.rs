@@ -231,7 +231,7 @@ pub fn issue_i18n_keys(kind: RepairKind) -> (&'static str, &'static str, &'stati
         RepairKind::AuthFailed => (
             "repairSheet.titles.authRequired",
             "repairSheet.messages.authRequired",
-            "repairSheet.actions.repair",
+            "repairSheet.actions.restartEngine",
         ),
         RepairKind::ConfigUnreadable => (
             "repairSheet.titles.corruptConfig",
@@ -361,6 +361,10 @@ mod tests {
         );
         assert_eq!(
             issue_i18n_keys(RepairKind::EngineUnreachable).2,
+            "repairSheet.actions.restartEngine"
+        );
+        assert_eq!(
+            issue_i18n_keys(RepairKind::AuthFailed).2,
             "repairSheet.actions.restartEngine"
         );
     }

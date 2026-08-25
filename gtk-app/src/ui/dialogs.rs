@@ -253,6 +253,29 @@ pub fn present_standalone(
             },
             noop,
         ),
+        "vfs" => vfs_control(&window, ctx.clone(), &remote, toast.clone()),
+        "repair" => repair(&window, ctx.clone(), toast.clone()),
+        "start-operation" => {
+            let op = req
+                .data
+                .get("operation")
+                .and_then(|v| v.as_str())
+                .and_then(OperationType::parse)
+                .unwrap_or(OperationType::Sync);
+            start_operation(&window, ctx.clone(), &remote, op, toast.clone(), noop);
+        }
+        "file-viewer" => file_viewer(
+            &window,
+            ctx.clone(),
+            &remote,
+            &path,
+            &name,
+            req.data
+                .get("isDir")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false),
+            &[],
+        ),
         "quick-add-remote" => quick_add_remote(&window, ctx.clone(), noop),
         "restore-preview" => {
             let backup = req
@@ -1287,6 +1310,9 @@ pub fn vfs_control(
     remote: &str,
     toast: adw::ToastOverlay,
 ) {
+    if try_spawn_standalone(&ctx, "vfs", serde_json::json!({ "remote": remote })) {
+        return;
+    }
     let dialog = adw::Dialog::new();
     dialog.set_title(&format!(
         "{} · {remote}",
@@ -1491,6 +1517,7 @@ pub fn logs(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, remote: Option<String>)
         clear.connect_clicked(move |_| {
             if key == "_engine" {
                 ctx.store.borrow_mut().logs.clear();
+                crate::logs::clear_log_file();
             } else {
                 ctx.store.borrow_mut().logs.remove(&key);
             }
@@ -3210,6 +3237,13 @@ pub fn start_operation(
     toast: adw::ToastOverlay,
     on_done: Rc<dyn Fn()>,
 ) {
+    if try_spawn_standalone(
+        &ctx,
+        "start-operation",
+        serde_json::json!({ "remote": remote, "operation": op.as_str() }),
+    ) {
+        return;
+    }
     let dialog = adw::Dialog::new();
     dialog.set_title(&format!("{} — {remote}", op.api_label()));
     dialog.set_content_width(560);
@@ -6654,6 +6688,18 @@ pub fn file_viewer(
     is_dir: bool,
     siblings: &[(String, bool)],
 ) {
+    if try_spawn_standalone(
+        &ctx,
+        "file-viewer",
+        serde_json::json!({
+            "remote": remote,
+            "path": path,
+            "name": name,
+            "isDir": is_dir,
+        }),
+    ) {
+        return;
+    }
     let dialog = adw::Dialog::new();
     dialog.set_title(name);
     dialog.set_content_width(720);
@@ -10131,6 +10177,9 @@ pub fn password_prompt(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, toast: adw::
 }
 
 pub fn repair(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, toast: adw::ToastOverlay) {
+    if try_spawn_standalone(&ctx, "repair", serde_json::json!({})) {
+        return;
+    }
     let dialog = adw::Dialog::new();
     dialog.set_title(&ctx.t_or("repair.title", "Repair rclone"));
     dialog.set_content_width(560);
@@ -10205,6 +10254,11 @@ pub fn repair(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, toast: adw::ToastOver
                     password_prompt(&parent, ctx.clone(), toast.clone());
                 }
                 crate::repair::RepairKind::AuthFailed => {
+                    ctx.restart_engine();
+                    toast.add_toast(adw::Toast::new(&ctx.t_or(
+                        "repairSheet.progress.restartingEngine",
+                        "Clearing auth error and retrying…",
+                    )));
                     backends(&parent, ctx.clone());
                 }
                 crate::repair::RepairKind::ConfigUnreadable => {
