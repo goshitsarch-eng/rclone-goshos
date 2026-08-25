@@ -170,6 +170,17 @@ pub fn preferences(parent: &impl IsA<gtk::Widget>, ctx: AppCtx) {
         });
     }
     g1.add(&card_row);
+    g1.add(&switch_row(
+        "JSON mode for flag editors",
+        ctx.settings.borrow().runtime.show_json_mode,
+        {
+            let ctx = ctx.clone();
+            move |v| {
+                ctx.settings.borrow_mut().runtime.show_json_mode = v;
+                ctx.persist();
+            }
+        },
+    ));
     general.add(&g1);
 
     let core = adw::PreferencesPage::new();
@@ -765,6 +776,209 @@ pub fn rclone_flags(parent: &impl IsA<gtk::Widget>, ctx: AppCtx) {
     g.add(&row);
     extra.add(&g);
     dialog.add(&extra);
+
+    let json_page = adw::PreferencesPage::new();
+    json_page.set_title("JSON");
+    let json_group = adw::PreferencesGroup::new();
+    json_group.set_title("Raw options/set payload");
+    json_group.set_description(Some(
+        "Edit the current rclone options as JSON. Apply writes the object via options/set.",
+    ));
+    let json_toggle = adw::SwitchRow::new();
+    json_toggle.set_title("Remember JSON mode");
+    json_toggle.set_active(ctx.settings.borrow().runtime.show_json_mode);
+    {
+        let ctx = ctx.clone();
+        json_toggle.connect_active_notify(move |row| {
+            ctx.settings.borrow_mut().runtime.show_json_mode = row.is_active();
+            ctx.persist();
+        });
+    }
+    json_group.add(&json_toggle);
+    let json_view = gtk::TextView::new();
+    json_view.set_monospace(true);
+    json_view.set_wrap_mode(gtk::WrapMode::WordChar);
+    let pretty = serde_json::to_string_pretty(&current).unwrap_or_else(|_| "{}".into());
+    json_view.buffer().set_text(&pretty);
+    let json_scroll = gtk::ScrolledWindow::new();
+    json_scroll.set_min_content_height(280);
+    json_scroll.set_child(Some(&json_view));
+    let json_apply = gtk::Button::with_label("Apply JSON");
+    json_apply.add_css_class("suggested-action");
+    {
+        let ctx = ctx.clone();
+        let json_view = json_view.clone();
+        json_apply.connect_clicked(move |_| {
+            let buffer = json_view.buffer();
+            let text = buffer.text(&buffer.start_iter(), &buffer.end_iter(), false);
+            match crate::flags::parse_json_object(&text) {
+                Ok(map) => {
+                    if let Some(client) = ctx.client() {
+                        match client.options_set(serde_json::Value::Object(map)) {
+                            Ok(_) => log::info!("rclone flags applied from JSON"),
+                            Err(e) => log::warn!("failed to apply JSON flags: {e}"),
+                        }
+                    }
+                }
+                Err(e) => log::warn!("invalid flags JSON: {e}"),
+            }
+        });
+    }
+    let json_row = adw::ActionRow::new();
+    json_row.set_title("Write JSON to the running engine");
+    json_row.add_suffix(&json_apply);
+    json_group.add(&json_row);
+    json_page.add(&json_group);
+    let json_box = gtk::Box::new(gtk::Orientation::Vertical, 8);
+    json_box.set_margin_start(12);
+    json_box.set_margin_end(12);
+    json_box.append(&json_scroll);
+    let json_holder = adw::PreferencesGroup::new();
+    let holder_row = adw::ActionRow::new();
+    holder_row.set_title("Document");
+    holder_row.set_activatable(false);
+    json_holder.add(&holder_row);
+    json_page.add(&json_holder);
+    dialog.add(&json_page);
+    // Attach the editor below the last page content via a toast-less overlay:
+    // PreferencesDialog pages can't host arbitrary boxes easily, so present the
+    // JSON editor as the ActionRow child suffix expansion.
+    holder_row.set_child(Some(&json_box));
+    dialog.present(Some(parent));
+}
+
+pub fn action_order(
+    parent: &impl IsA<gtk::Widget>,
+    title: &str,
+    catalog: &[&str],
+    current: &[String],
+    on_save: impl Fn(Vec<String>) + 'static,
+) {
+    let dialog = adw::Dialog::new();
+    dialog.set_title(title);
+    dialog.set_content_width(480);
+    dialog.set_content_height(560);
+    let items = Rc::new(RefCell::new(crate::action_order::build_items(
+        current, catalog,
+    )));
+    let list = gtk::ListBox::new();
+    list.add_css_class("boxed-list");
+    let rebuild: Rc<RefCell<Box<dyn Fn()>>> = Rc::new(RefCell::new(Box::new(|| {})));
+    let rebuild_fn = {
+        let list = list.clone();
+        let items = items.clone();
+        let rebuild = rebuild.clone();
+        Rc::new(move || {
+            while let Some(child) = list.first_child() {
+                list.remove(&child);
+            }
+            let snapshot = items.borrow().clone();
+            for (idx, item) in snapshot.iter().enumerate() {
+                let row = adw::ActionRow::new();
+                row.set_title(&item.id);
+                row.set_subtitle(if item.visible { "Visible" } else { "Hidden" });
+                let visible = gtk::Switch::new();
+                visible.set_active(item.visible);
+                visible.set_valign(gtk::Align::Center);
+                {
+                    let items = items.clone();
+                    let rebuild = rebuild.clone();
+                    let id = item.id.clone();
+                    visible.connect_active_notify(move |sw| {
+                        crate::action_order::apply_visibility(
+                            &mut items.borrow_mut(),
+                            &id,
+                            sw.is_active(),
+                        );
+                        rebuild.borrow()();
+                    });
+                }
+                let up = gtk::Button::from_icon_name("go-up-symbolic");
+                up.set_valign(gtk::Align::Center);
+                up.set_tooltip_text(Some("Move up"));
+                {
+                    let items = items.clone();
+                    let rebuild = rebuild.clone();
+                    up.connect_clicked(move |_| {
+                        crate::action_order::move_item(&mut items.borrow_mut(), idx, -1);
+                        rebuild.borrow()();
+                    });
+                }
+                let down = gtk::Button::from_icon_name("go-down-symbolic");
+                down.set_valign(gtk::Align::Center);
+                down.set_tooltip_text(Some("Move down"));
+                {
+                    let items = items.clone();
+                    let rebuild = rebuild.clone();
+                    down.connect_clicked(move |_| {
+                        crate::action_order::move_item(&mut items.borrow_mut(), idx, 1);
+                        rebuild.borrow()();
+                    });
+                }
+                row.add_suffix(&up);
+                row.add_suffix(&down);
+                row.add_suffix(&visible);
+                list.append(&row);
+            }
+        })
+    };
+    *rebuild.borrow_mut() = Box::new({
+        let rebuild_fn = rebuild_fn.clone();
+        move || rebuild_fn()
+    });
+    rebuild_fn();
+
+    let save = gtk::Button::with_label("Save");
+    save.add_css_class("suggested-action");
+    {
+        let dialog = dialog.clone();
+        let items = items.clone();
+        save.connect_clicked(move |_| {
+            on_save(crate::action_order::visible_ids(&items.borrow()));
+            dialog.close();
+        });
+    }
+    let cancel = gtk::Button::with_label("Cancel");
+    {
+        let dialog = dialog.clone();
+        cancel.connect_clicked(move |_| {
+            dialog.close();
+        });
+    }
+    let reset = gtk::Button::with_label("Reset");
+    {
+        let items = items.clone();
+        let rebuild = rebuild.clone();
+        let catalog: Vec<String> = catalog.iter().map(|s| (*s).to_string()).collect();
+        reset.connect_clicked(move |_| {
+            let refs: Vec<&str> = catalog.iter().map(|s| s.as_str()).collect();
+            *items.borrow_mut() = crate::action_order::build_items(&[], &refs);
+            rebuild.borrow()();
+        });
+    }
+    let bar = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+    bar.set_margin_top(8);
+    bar.append(&reset);
+    bar.append(&cancel);
+    bar.append(&save);
+    let scroll = gtk::ScrolledWindow::new();
+    scroll.set_vexpand(true);
+    scroll.set_child(Some(&list));
+    let box_ = gtk::Box::new(gtk::Orientation::Vertical, 8);
+    box_.set_margin_top(12);
+    box_.set_margin_bottom(12);
+    box_.set_margin_start(12);
+    box_.set_margin_end(12);
+    let hint = gtk::Label::new(Some(
+        "Toggle visibility and reorder. Hidden actions stay available in Configure.",
+    ));
+    hint.add_css_class("dim-label");
+    hint.set_wrap(true);
+    hint.set_xalign(0.0);
+    box_.append(&hint);
+    box_.append(&scroll);
+    box_.append(&bar);
+    dialog.set_child(Some(&box_));
     dialog.present(Some(parent));
 }
 
@@ -1354,6 +1568,9 @@ pub fn start_operation(
     let flag_rows: Rc<RefCell<Vec<(String, adw::EntryRow, String)>>> =
         Rc::new(RefCell::new(Vec::new()));
     for flag in crate::flags::static_flags_for(op) {
+        if op == OperationType::Serve && flag.field_name == "type" {
+            continue;
+        }
         let row = adw::EntryRow::new();
         row.set_title(&flag.name);
         if !flag.help.is_empty() {
@@ -1368,6 +1585,53 @@ pub fn start_operation(
         flag_rows
             .borrow_mut()
             .push((flag.field_name, row, flag.type_name));
+    }
+    let serve_flag_rows: Rc<RefCell<Vec<(String, String, adw::EntryRow, String)>>> =
+        Rc::new(RefCell::new(Vec::new()));
+    if op == OperationType::Serve {
+        if let Some(client) = ctx.client() {
+            if let Ok(info) = client.options_info() {
+                let blocks = crate::flags::parse_options_info(&info);
+                for serve_type in OperationType::SERVE_TYPES {
+                    for flag in crate::flags::collect_serve_flags(&blocks, serve_type) {
+                        let row = adw::EntryRow::new();
+                        row.set_title(&format!("{serve_type} · {}", flag.name));
+                        if !flag.help.is_empty() {
+                            row.set_tooltip_text(Some(&flag.help));
+                        }
+                        let current = rclone
+                            .get(&flag.field_name)
+                            .map(|v| v.to_string().trim_matches('"').to_string())
+                            .unwrap_or_else(|| flag.default_str.clone());
+                        row.set_text(&current);
+                        let selected = OperationType::SERVE_TYPES
+                            .get(serve.selected() as usize)
+                            .copied()
+                            .unwrap_or("http");
+                        row.set_visible(serve_type == selected);
+                        flags_group.add(&row);
+                        serve_flag_rows.borrow_mut().push((
+                            serve_type.to_string(),
+                            flag.field_name,
+                            row,
+                            flag.type_name,
+                        ));
+                    }
+                }
+            }
+        }
+        {
+            let serve_flag_rows = serve_flag_rows.clone();
+            serve.connect_selected_notify(move |row| {
+                let selected = OperationType::SERVE_TYPES
+                    .get(row.selected() as usize)
+                    .copied()
+                    .unwrap_or("http");
+                for (serve_type, _, widget, _) in serve_flag_rows.borrow().iter() {
+                    widget.set_visible(serve_type == selected);
+                }
+            });
+        }
     }
 
     {
@@ -1400,6 +1664,7 @@ pub fn start_operation(
         let serve = serve.clone();
         let dry = dry.clone();
         let flag_rows = flag_rows.clone();
+        let serve_flag_rows = serve_flag_rows.clone();
         let extra_sources = extra_sources.clone();
         let vfs_row = vfs_row.clone();
         let filter_row = filter_row.clone();
@@ -1426,6 +1691,22 @@ pub fn start_operation(
                 rclone.insert("dryRun".into(), serde_json::json!(true));
             }
             for (field, row, type_name) in flag_rows.borrow().iter() {
+                let text = row.text().to_string();
+                if !text.is_empty() {
+                    rclone.insert(
+                        field.clone(),
+                        crate::flags::parse_flag_value(type_name, &text),
+                    );
+                }
+            }
+            let selected_serve = OperationType::SERVE_TYPES
+                .get(serve.selected() as usize)
+                .copied()
+                .unwrap_or("webdav");
+            for (serve_type, field, row, type_name) in serve_flag_rows.borrow().iter() {
+                if serve_type != selected_serve {
+                    continue;
+                }
                 let text = row.text().to_string();
                 if !text.is_empty() {
                     rclone.insert(
@@ -2193,11 +2474,90 @@ pub fn file_viewer(
     remote: &str,
     path: &str,
     name: &str,
+    siblings: &[String],
 ) {
     let dialog = adw::Dialog::new();
     dialog.set_title(name);
     dialog.set_content_width(720);
     dialog.set_content_height(520);
+    let nav = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+    nav.set_margin_start(12);
+    nav.set_margin_end(12);
+    nav.set_margin_top(8);
+    let index = siblings.iter().position(|n| n == name);
+    let prev = gtk::Button::from_icon_name("go-previous-symbolic");
+    prev.set_tooltip_text(Some("Previous file"));
+    let next = gtk::Button::from_icon_name("go-next-symbolic");
+    next.set_tooltip_text(Some("Next file"));
+    let pos = gtk::Label::new(Some(&match index {
+        Some(i) if !siblings.is_empty() => format!("{} / {}", i + 1, siblings.len()),
+        _ => name.to_string(),
+    }));
+    pos.set_hexpand(true);
+    pos.set_xalign(0.5);
+    prev.set_sensitive(index.is_some_and(|i| i > 0));
+    next.set_sensitive(index.is_some_and(|i| i + 1 < siblings.len()));
+    {
+        let parent = parent.clone();
+        let ctx = ctx.clone();
+        let remote = remote.to_string();
+        let path = path.to_string();
+        let name = name.to_string();
+        let siblings = siblings.to_vec();
+        let dialog = dialog.clone();
+        prev.connect_clicked(move |_| {
+            let Some(i) = siblings.iter().position(|n| n == name.as_str()) else {
+                return;
+            };
+            if i == 0 {
+                return;
+            }
+            let prev_name = siblings[i - 1].clone();
+            let parent_path = crate::rclone::parent_remote_path(&path);
+            let next_path = crate::rclone::join_remote_path(&parent_path, &prev_name);
+            dialog.close();
+            file_viewer(
+                &parent,
+                ctx.clone(),
+                &remote,
+                &next_path,
+                &prev_name,
+                &siblings,
+            );
+        });
+    }
+    {
+        let parent = parent.clone();
+        let ctx = ctx.clone();
+        let remote = remote.to_string();
+        let path = path.to_string();
+        let name = name.to_string();
+        let siblings = siblings.to_vec();
+        let dialog = dialog.clone();
+        next.connect_clicked(move |_| {
+            let Some(i) = siblings.iter().position(|n| n == name.as_str()) else {
+                return;
+            };
+            if i + 1 >= siblings.len() {
+                return;
+            }
+            let next_name = siblings[i + 1].clone();
+            let parent_path = crate::rclone::parent_remote_path(&path);
+            let next_path = crate::rclone::join_remote_path(&parent_path, &next_name);
+            dialog.close();
+            file_viewer(
+                &parent,
+                ctx.clone(),
+                &remote,
+                &next_path,
+                &next_name,
+                &siblings,
+            );
+        });
+    }
+    nav.append(&prev);
+    nav.append(&pos);
+    nav.append(&next);
     let category = crate::operations::FileTypeCategory::from_name(name, false);
     let info = gtk::Label::new(Some(&format!(
         "{remote}:{path}\nType: {:?}\nUse Download to open with a system app when needed.",
@@ -2219,6 +2579,7 @@ pub fn file_viewer(
         });
     }
     let box_ = gtk::Box::new(gtk::Orientation::Vertical, 12);
+    box_.append(&nav);
     box_.append(&info);
     box_.append(&open);
     if remote == "local" && matches!(category, crate::operations::FileTypeCategory::Image) {

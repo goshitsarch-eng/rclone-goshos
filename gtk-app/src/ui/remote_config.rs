@@ -233,12 +233,58 @@ fn remote_page(
     let hidden = adw::SwitchRow::new();
     hidden.set_title("Hide from sidebar");
     hidden.set_active(meta.hidden);
-    let primary = adw::EntryRow::new();
-    primary.set_title("Primary actions (comma-separated)");
-    primary.set_text(&meta.primary_actions.join(", "));
-    let sync = adw::EntryRow::new();
-    sync.set_title("Sync actions (comma-separated)");
-    sync.set_text(&meta.sync_actions.join(", "));
+    let primary_ids = Rc::new(RefCell::new(meta.primary_actions.clone()));
+    let sync_ids = Rc::new(RefCell::new(meta.sync_actions.clone()));
+    let primary_row = adw::ActionRow::new();
+    primary_row.set_title("Primary actions");
+    primary_row.set_subtitle(&action_summary(&primary_ids.borrow()));
+    let edit_primary = gtk::Button::with_label("Edit");
+    edit_primary.set_valign(gtk::Align::Center);
+    {
+        let parent = parent.clone();
+        let primary_ids = primary_ids.clone();
+        let primary_row = primary_row.clone();
+        edit_primary.connect_clicked(move |_| {
+            let catalog = crate::action_order::catalog_ids();
+            let current = primary_ids.borrow().clone();
+            dialogs::action_order(&parent, "Primary actions", &catalog, &current, {
+                let primary_ids = primary_ids.clone();
+                let primary_row = primary_row.clone();
+                move |ids| {
+                    primary_row.set_subtitle(&action_summary(&ids));
+                    *primary_ids.borrow_mut() = ids;
+                }
+            });
+        });
+    }
+    primary_row.add_suffix(&edit_primary);
+    let sync_row = adw::ActionRow::new();
+    sync_row.set_title("Sync actions");
+    sync_row.set_subtitle(&action_summary(&sync_ids.borrow()));
+    let edit_sync = gtk::Button::with_label("Edit");
+    edit_sync.set_valign(gtk::Align::Center);
+    {
+        let parent = parent.clone();
+        let sync_ids = sync_ids.clone();
+        let sync_row = sync_row.clone();
+        edit_sync.connect_clicked(move |_| {
+            let catalog: Vec<&str> = OperationType::PRIMARY_SYNC
+                .iter()
+                .chain(OperationType::MORE_SYNC.iter())
+                .map(|op| op.as_str())
+                .collect();
+            let current = sync_ids.borrow().clone();
+            dialogs::action_order(&parent, "Sync actions", &catalog, &current, {
+                let sync_ids = sync_ids.clone();
+                let sync_row = sync_row.clone();
+                move |ids| {
+                    sync_row.set_subtitle(&action_summary(&ids));
+                    *sync_ids.borrow_mut() = ids;
+                }
+            });
+        });
+    }
+    sync_row.add_suffix(&edit_sync);
 
     let provider = gtk::Button::with_label("Edit provider fields…");
     {
@@ -264,8 +310,8 @@ fn remote_page(
     group.set_title("Remote metadata");
     group.add(&tray);
     group.add(&hidden);
-    group.add(&primary);
-    group.add(&sync);
+    group.add(&primary_row);
+    group.add(&sync_row);
     let actions = adw::PreferencesGroup::new();
     actions.set_title("Provider");
     let provider_row = adw::ActionRow::new();
@@ -288,14 +334,14 @@ fn remote_page(
         let remote = remote.to_string();
         let tray = tray.clone();
         let hidden = hidden.clone();
-        let primary = primary.clone();
-        let sync = sync.clone();
+        let primary_ids = primary_ids.clone();
+        let sync_ids = sync_ids.clone();
         move || {
             if let Some(meta) = ctx.store.borrow_mut().remotes.get_mut(&remote) {
                 meta.show_on_tray = tray.is_active();
                 meta.hidden = hidden.is_active();
-                meta.primary_actions = split_csv(&primary.text());
-                meta.sync_actions = split_csv(&sync.text());
+                meta.primary_actions = primary_ids.borrow().clone();
+                meta.sync_actions = sync_ids.borrow().clone();
             }
             ctx.persist();
         }
@@ -492,18 +538,104 @@ fn operation_page(
         }
     }
     for flag in options {
+        if op == OperationType::Serve && flag.field_name == "type" {
+            continue;
+        }
         let row = flag_entry(&flag, &rclone);
         flags_group.add(&row);
         flag_rows
             .borrow_mut()
             .push((flag.field_name, row, flag.type_name));
     }
+    let serve_flag_rows: Rc<RefCell<Vec<(String, String, adw::EntryRow, String)>>> =
+        Rc::new(RefCell::new(Vec::new()));
+    if op == OperationType::Serve {
+        for serve_type in OperationType::SERVE_TYPES {
+            for flag in crate::flags::collect_serve_flags(blocks, serve_type) {
+                let row = flag_entry(&flag, &rclone);
+                row.set_title(&format!("{serve_type} · {}", flag.name));
+                let selected = OperationType::SERVE_TYPES
+                    .get(serve.selected() as usize)
+                    .copied()
+                    .unwrap_or("http");
+                row.set_visible(serve_type == selected);
+                flags_group.add(&row);
+                serve_flag_rows.borrow_mut().push((
+                    serve_type.to_string(),
+                    flag.field_name,
+                    row,
+                    flag.type_name,
+                ));
+            }
+        }
+        {
+            let serve_flag_rows = serve_flag_rows.clone();
+            serve.connect_selected_notify(move |row| {
+                let selected = OperationType::SERVE_TYPES
+                    .get(row.selected() as usize)
+                    .copied()
+                    .unwrap_or("http");
+                for (serve_type, _, widget, _) in serve_flag_rows.borrow().iter() {
+                    widget.set_visible(serve_type == selected);
+                }
+            });
+        }
+    }
+    let json_toggle = adw::SwitchRow::new();
+    json_toggle.set_title("JSON mode");
+    json_toggle.set_subtitle("Edit this profile's rclone flags as a JSON object");
+    json_toggle.set_active(ctx.settings.borrow().runtime.show_json_mode);
+    let json_view = gtk::TextView::new();
+    json_view.set_monospace(true);
+    json_view.set_wrap_mode(gtk::WrapMode::WordChar);
+    json_view
+        .buffer()
+        .set_text(&serde_json::to_string_pretty(&rclone).unwrap_or_else(|_| "{}".into()));
+    let json_scroll = gtk::ScrolledWindow::new();
+    json_scroll.set_min_content_height(180);
+    json_scroll.set_child(Some(&json_view));
+    json_scroll.set_visible(json_toggle.is_active());
+    {
+        let ctx = ctx.clone();
+        let json_scroll = json_scroll.clone();
+        let flag_rows = flag_rows.clone();
+        let serve_flag_rows = serve_flag_rows.clone();
+        let search = search.clone();
+        let serve = serve.clone();
+        json_toggle.connect_active_notify(move |row| {
+            let on = row.is_active();
+            ctx.settings.borrow_mut().runtime.show_json_mode = on;
+            ctx.persist();
+            json_scroll.set_visible(on);
+            search.set_visible(!on);
+            for (_, widget, _) in flag_rows.borrow().iter() {
+                widget.set_visible(!on);
+            }
+            let selected = OperationType::SERVE_TYPES
+                .get(serve.selected() as usize)
+                .copied()
+                .unwrap_or("http");
+            for (serve_type, _, widget, _) in serve_flag_rows.borrow().iter() {
+                widget.set_visible(!on && serve_type == selected);
+            }
+        });
+    }
     {
         let flag_rows = flag_rows.clone();
+        let serve_flag_rows = serve_flag_rows.clone();
+        let serve = serve.clone();
         search.connect_changed(move |entry| {
             let query = entry.text().to_ascii_lowercase();
             for (field, row, _) in flag_rows.borrow().iter() {
                 row.set_visible(query.is_empty() || field.to_ascii_lowercase().contains(&query));
+            }
+            let selected = OperationType::SERVE_TYPES
+                .get(serve.selected() as usize)
+                .copied()
+                .unwrap_or("http");
+            for (serve_type, field, row, _) in serve_flag_rows.borrow().iter() {
+                let matches = query.is_empty() || field.to_ascii_lowercase().contains(&query);
+                row.set_visible(serve_type == selected && matches);
             }
         });
     }
@@ -531,6 +663,12 @@ fn operation_page(
     cli_row.add_suffix(&apply_cli);
     flags_group.add(&cli);
     flags_group.add(&cli_row);
+    flags_group.add(&json_toggle);
+    let json_holder = adw::ActionRow::new();
+    json_holder.set_title("JSON document");
+    json_holder.set_activatable(false);
+    json_holder.set_child(Some(&json_scroll));
+    flags_group.add(&json_holder);
 
     let page = adw::PreferencesPage::new();
     page.add(&switcher.group);
@@ -603,6 +741,9 @@ fn operation_page(
         let backend_names = backend_names.clone();
         let runtime_names = runtime_names.clone();
         let flag_rows = flag_rows.clone();
+        let serve_flag_rows = serve_flag_rows.clone();
+        let json_toggle = json_toggle.clone();
+        let json_view = json_view.clone();
         move || {
             let name = selected.borrow().clone();
             if name.is_empty() {
@@ -618,10 +759,31 @@ fn operation_page(
                         .unwrap_or("webdav")),
                 );
             }
-            for (field, row, type_name) in flag_rows.borrow().iter() {
-                let text = row.text().to_string();
-                if !text.is_empty() {
-                    flags.insert(field.clone(), parse_flag_value(type_name, &text));
+            if json_toggle.is_active() {
+                let buffer = json_view.buffer();
+                let text = buffer.text(&buffer.start_iter(), &buffer.end_iter(), false);
+                if let Ok(map) = crate::flags::parse_json_object(&text) {
+                    flags.extend(map);
+                }
+            } else {
+                for (field, row, type_name) in flag_rows.borrow().iter() {
+                    let text = row.text().to_string();
+                    if !text.is_empty() {
+                        flags.insert(field.clone(), parse_flag_value(type_name, &text));
+                    }
+                }
+                let selected_serve = OperationType::SERVE_TYPES
+                    .get(serve.selected() as usize)
+                    .copied()
+                    .unwrap_or("webdav");
+                for (serve_type, field, row, type_name) in serve_flag_rows.borrow().iter() {
+                    if serve_type != selected_serve {
+                        continue;
+                    }
+                    let text = row.text().to_string();
+                    if !text.is_empty() {
+                        flags.insert(field.clone(), parse_flag_value(type_name, &text));
+                    }
                 }
             }
             let mut sources = vec![src.text().to_string()];
@@ -1047,12 +1209,12 @@ fn value_to_text(value: &Value) -> String {
     }
 }
 
-fn split_csv(text: &str) -> Vec<String> {
-    text.split(',')
-        .map(str::trim)
-        .filter(|s| !s.is_empty())
-        .map(|s| s.to_string())
-        .collect()
+fn action_summary(ids: &[String]) -> String {
+    if ids.is_empty() {
+        "All actions (default order)".into()
+    } else {
+        ids.join(" · ")
+    }
 }
 
 fn update_cron_hint(row: &adw::EntryRow, hint: &gtk::Label) {

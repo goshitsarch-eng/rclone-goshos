@@ -48,6 +48,7 @@ pub struct NautilusView {
     paned: gtk::Paned,
     right_scroll: gtk::ScrolledWindow,
     ops: gtk::ListBox,
+    last_listing: Rc<RefCell<Vec<DirEntry>>>,
 }
 
 impl NautilusView {
@@ -196,6 +197,7 @@ impl NautilusView {
             paned,
             right_scroll,
             ops,
+            last_listing: Rc::new(RefCell::new(Vec::new())),
         };
 
         {
@@ -642,6 +644,9 @@ impl NautilusView {
     }
 
     fn populate_entries(&self, entries: &[DirEntry], primary: bool) {
+        if primary {
+            *self.last_listing.borrow_mut() = entries.to_vec();
+        }
         if self.is_grid() {
             let grid = if primary {
                 &self.grid
@@ -756,7 +761,21 @@ impl NautilusView {
         let current = self.current.borrow().clone();
         let path = join_remote_path(&current.path, name);
         if let Some(win) = self.root.root().and_downcast::<gtk::Window>() {
-            dialogs::file_viewer(&win, self.ctx.clone(), &current.remote, &path, name);
+            let siblings: Vec<String> = self
+                .last_listing
+                .borrow()
+                .iter()
+                .filter(|e| !e.is_dir)
+                .map(|e| e.name.clone())
+                .collect();
+            dialogs::file_viewer(
+                &win,
+                self.ctx.clone(),
+                &current.remote,
+                &path,
+                name,
+                &siblings,
+            );
         }
     }
 

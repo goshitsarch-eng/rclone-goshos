@@ -1,5 +1,6 @@
 //! GTK 4 + libadwaita rewrite of Rclone Manager.
 
+pub mod action_order;
 pub mod automation;
 pub mod backup;
 pub mod connection;

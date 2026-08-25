@@ -1,3 +1,4 @@
+mod action_order;
 mod automation;
 mod backup;
 mod connection;

@@ -149,10 +149,23 @@ pub fn is_local_watch_path(path: &str) -> bool {
 }
 
 pub fn path_mtime(path: &str) -> Option<u64> {
-    std::fs::metadata(path)
-        .and_then(|m| m.modified())
+    let meta = std::fs::metadata(path).ok()?;
+    let mut best = meta.modified().ok()?;
+    if meta.is_dir() {
+        if let Ok(entries) = std::fs::read_dir(path) {
+            for entry in entries.flatten() {
+                if let Ok(child) = entry.metadata() {
+                    if let Ok(modified) = child.modified() {
+                        if modified > best {
+                            best = modified;
+                        }
+                    }
+                }
+            }
+        }
+    }
+    best.duration_since(SystemTime::UNIX_EPOCH)
         .ok()
-        .and_then(|t| t.duration_since(SystemTime::UNIX_EPOCH).ok())
         .map(|d| d.as_secs())
 }
 
@@ -288,6 +301,16 @@ mod tests {
         let path = file.to_string_lossy().to_string();
         let mut seen = HashMap::new();
         seen.insert(path.clone(), 1);
+        assert!(watch_triggered(&[path], &mut seen, true));
+    }
+
+    #[test]
+    fn watch_detects_child_file_in_directory() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().to_string_lossy().to_string();
+        let mut seen = HashMap::new();
+        seen.insert(path.clone(), 1);
+        std::fs::write(dir.path().join("child.txt"), "changed").unwrap();
         assert!(watch_triggered(&[path], &mut seen, true));
     }
 }

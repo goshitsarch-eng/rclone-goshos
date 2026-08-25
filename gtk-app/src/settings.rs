@@ -108,6 +108,8 @@ pub struct RuntimeSettings {
     pub quick_run_layout: serde_json::Value,
     pub remote_layouts: serde_json::Value,
     pub dashboard_card_variant: String,
+    #[serde(default)]
+    pub show_json_mode: bool,
 }
 
 impl Default for RuntimeSettings {
@@ -124,6 +126,7 @@ impl Default for RuntimeSettings {
             quick_run_layout: serde_json::json!({}),
             remote_layouts: serde_json::json!({}),
             dashboard_card_variant: "compact".into(),
+            show_json_mode: false,
         }
     }
 }

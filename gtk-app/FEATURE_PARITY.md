@@ -68,6 +68,14 @@ This client is the GTK 4 + libadwaita rewrite of the Angular/Tauri desktop UI. I
 - Copy remotes from the active backend onto an extra RC backend
 - Nautilus redo and paste from the system clipboard
 - Live rclone.log tail in the Logs dialog
+- Dynamic serve flags from `options/info` per serve type (http/webdav/ftp/sftp/nfs/dlna/restic/s3)
+- JSON mode for remote-config flags and the rclone flags dialog
+- Dedicated action-order / visibility editor (primary + sync)
+- Dashboard compact vs detailed cards with per-profile start chips
+- File viewer prev/next gallery across the current listing
+- SMTP STARTTLS / implicit TLS and MQTT TLS (`mqtts://` / port 8883)
+- Directory-contents mtime for local watch automations
+- Static serve + archivecreate flags matching Angular `flag-definitions`
 
 ## Still deepening toward pixel-level Angular parity
 

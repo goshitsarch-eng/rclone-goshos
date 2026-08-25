@@ -11,7 +11,13 @@ pub fn publish_alert(config: &Value, body: &str) -> Result<(), String> {
         .or_else(|| config.get("url"))
         .and_then(|x| x.as_str())
         .unwrap_or("");
-    let (host, port) = parse_broker(url)?;
+    let (host, port, tls) = parse_broker(url)?;
+    let use_tls = tls
+        || config
+            .get("use_tls")
+            .and_then(|x| x.as_bool())
+            .unwrap_or(false)
+        || port == 8883;
     let topic = config
         .get("topic")
         .and_then(|x| x.as_str())
@@ -25,12 +31,15 @@ pub fn publish_alert(config: &Value, body: &str) -> Result<(), String> {
         .get("password")
         .and_then(|x| x.as_str())
         .unwrap_or("");
-    publish(&host, port, user, pass, topic, body)
+    publish(&host, port, use_tls, user, pass, topic, body)
 }
 
-pub fn parse_broker(url: &str) -> Result<(String, u16), String> {
-    let trimmed = url
-        .trim()
+pub fn parse_broker(url: &str) -> Result<(String, u16, bool), String> {
+    let trimmed = url.trim();
+    let tls = trimmed.starts_with("mqtts://") || trimmed.starts_with("ssl://");
+    let trimmed = trimmed
+        .trim_start_matches("mqtts://")
+        .trim_start_matches("ssl://")
         .trim_start_matches("mqtt://")
         .trim_start_matches("tcp://");
     if trimmed.is_empty() {
@@ -43,27 +52,46 @@ pub fn parse_broker(url: &str) -> Result<(String, u16), String> {
                 .next()
                 .unwrap_or(port)
                 .parse::<u16>()
-                .unwrap_or(1883);
-            return Ok((host.to_string(), port));
+                .unwrap_or(if tls { 8883 } else { 1883 });
+            return Ok((host.to_string(), port, tls || port == 8883));
         }
     }
     Ok((
         trimmed.split('/').next().unwrap_or(trimmed).to_string(),
-        1883,
+        if tls { 8883 } else { 1883 },
+        tls,
     ))
 }
 
 pub fn publish(
     host: &str,
     port: u16,
+    use_tls: bool,
     user: &str,
     pass: &str,
     topic: &str,
     payload: &str,
 ) -> Result<(), String> {
-    let mut stream = TcpStream::connect((host, port)).map_err(|e| e.to_string())?;
+    let stream = TcpStream::connect((host, port)).map_err(|e| e.to_string())?;
     stream.set_read_timeout(Some(Duration::from_secs(8))).ok();
     stream.set_write_timeout(Some(Duration::from_secs(8))).ok();
+    if use_tls {
+        let connector = native_tls::TlsConnector::new().map_err(|e| e.to_string())?;
+        let mut tls = connector.connect(host, stream).map_err(|e| e.to_string())?;
+        mqtt_session(&mut tls, user, pass, topic, payload)
+    } else {
+        let mut plain = stream;
+        mqtt_session(&mut plain, user, pass, topic, payload)
+    }
+}
+
+fn mqtt_session<S: Read + Write>(
+    stream: &mut S,
+    user: &str,
+    pass: &str,
+    topic: &str,
+    payload: &str,
+) -> Result<(), String> {
     stream
         .write_all(&connect_packet(user, pass))
         .map_err(|e| e.to_string())?;
@@ -144,11 +172,15 @@ mod tests {
     fn parses_broker_urls() {
         assert_eq!(
             parse_broker("mqtt://localhost:1883").unwrap(),
-            ("localhost".into(), 1883)
+            ("localhost".into(), 1883, false)
         );
         assert_eq!(
             parse_broker("127.0.0.1").unwrap(),
-            ("127.0.0.1".into(), 1883)
+            ("127.0.0.1".into(), 1883, false)
+        );
+        assert_eq!(
+            parse_broker("mqtts://broker.example:8883").unwrap(),
+            ("broker.example".into(), 8883, true)
         );
         assert!(parse_broker("").is_err());
     }

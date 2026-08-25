@@ -256,6 +256,7 @@ impl Dashboard {
         self.overview.append(&title);
 
         self.overview.append(&section_label("Remotes"));
+        let detailed = self.ctx.settings.borrow().runtime.dashboard_card_variant == "detailed";
         let list = gtk::ListBox::new();
         list.add_css_class("boxed-list");
         for remote in snap.remotes.iter() {
@@ -310,7 +311,67 @@ impl Dashboard {
                     dash.refresh();
                 });
             }
-            list.append(&row);
+            if detailed {
+                let card = gtk::Box::new(gtk::Orientation::Vertical, 6);
+                card.set_margin_top(4);
+                card.set_margin_bottom(8);
+                card.set_margin_start(8);
+                card.set_margin_end(8);
+                card.append(&row);
+                let chips = gtk::Box::new(gtk::Orientation::Horizontal, 6);
+                chips.add_css_class("linked");
+                chips.set_hexpand(true);
+                if let Some(meta) = self.ctx.store.borrow().remotes.get(&remote.name) {
+                    for op in meta.visible_operations() {
+                        if tab == AppTab::Mount && op != OperationType::Mount {
+                            continue;
+                        }
+                        if tab == AppTab::Serve && op != OperationType::Serve {
+                            continue;
+                        }
+                        if tab == AppTab::Operations
+                            && matches!(op, OperationType::Mount | OperationType::Serve)
+                        {
+                            continue;
+                        }
+                        for pname in meta.profile_names(op) {
+                            let chip =
+                                gtk::Button::with_label(&format!("{} · {pname}", op.api_label()));
+                            chip.set_tooltip_text(Some("Start this profile"));
+                            let ctx = self.ctx.clone();
+                            let name = remote.name.clone();
+                            let toast = self.toast.clone();
+                            let dash = self.clone();
+                            chip.connect_clicked(move |_| {
+                                if let Some(win) = dash.root.root().and_downcast::<gtk::Window>() {
+                                    dialogs::start_operation(
+                                        &win,
+                                        ctx.clone(),
+                                        &name,
+                                        op,
+                                        toast.clone(),
+                                        {
+                                            let dash = dash.clone();
+                                            Rc::new(move || dash.refresh())
+                                        },
+                                    );
+                                } else {
+                                    start_operation(&ctx, &name, op, &toast);
+                                    dash.refresh();
+                                }
+                            });
+                            chips.append(&chip);
+                        }
+                    }
+                }
+                card.append(&chips);
+                let wrap = gtk::ListBoxRow::new();
+                wrap.set_activatable(false);
+                wrap.set_child(Some(&card));
+                list.append(&wrap);
+            } else {
+                list.append(&row);
+            }
         }
         self.overview.append(&list);
 

@@ -235,6 +235,12 @@ pub fn static_flags_for(op: OperationType) -> Vec<FlagOption> {
             bool_flag("differ", "Report all non-matching files."),
             bool_flag("error", "Report all files with errors."),
         ],
+        OperationType::Serve => vec![string_flag("type", "Serve type to use.")],
+        OperationType::Archivecreate => vec![
+            string_flag("format", "Archive format (zip, tar, tgz, tbz, txz, etc.)"),
+            string_flag("prefix", "Add prefix directory in the archive"),
+            bool_flag("fullPath", "Use full path of files in the archive"),
+        ],
         OperationType::Bisync => vec![
             bool_flag("dryRun", "Perform a dry-run."),
             bool_flag("resync", "Performs the resync run."),
@@ -296,6 +302,91 @@ pub fn flag_category_for_op(op: OperationType) -> Option<&'static str> {
         OperationType::Copy | OperationType::Move => Some("copy"),
         OperationType::Check | OperationType::Cryptcheck => Some("check"),
         _ => None,
+    }
+}
+
+/// Block names used by rclone `options/info` for a serve type.
+pub fn serve_block_aliases(serve_type: &str) -> Vec<String> {
+    let raw = serve_type.trim();
+    if raw.is_empty() {
+        return vec!["http".into(), "HTTP".into()];
+    }
+    let lower = raw.to_ascii_lowercase();
+    let mut aliases = vec![
+        lower.clone(),
+        raw.to_string(),
+        raw.to_ascii_uppercase(),
+        capitalize_ascii(&lower),
+    ];
+    match lower.as_str() {
+        "webdav" => aliases.extend(["WebDAV".into(), "WEBDAV".into()]),
+        "sftp" => aliases.extend(["SFTP".into(), "SFtp".into()]),
+        "nfs" => aliases.push("NFS".into()),
+        "dlna" => aliases.extend(["DLNA".into(), "Dlna".into()]),
+        "s3" => aliases.extend(["S3".into(), "s3".into()]),
+        _ => {}
+    }
+    aliases.sort();
+    aliases.dedup();
+    aliases
+}
+
+fn capitalize_ascii(value: &str) -> String {
+    let mut chars = value.chars();
+    match chars.next() {
+        Some(first) => first.to_ascii_uppercase().to_string() + chars.as_str(),
+        None => String::new(),
+    }
+}
+
+pub fn simplify_field_name(field: &str) -> String {
+    field.rsplit('.').next().unwrap_or(field).to_string()
+}
+
+/// Flags for a serve type — matches Tauri `get_serve_flags`.
+pub fn options_for_serve_type<'a>(
+    blocks: &'a [FlagBlock],
+    serve_type: &str,
+) -> Vec<&'a FlagOption> {
+    let aliases = serve_block_aliases(serve_type);
+    for block in blocks {
+        if aliases.iter().any(|a| a.eq_ignore_ascii_case(&block.name)) {
+            return block.options.iter().collect();
+        }
+    }
+    Vec::new()
+}
+
+pub fn collect_serve_flags(blocks: &[FlagBlock], serve_type: &str) -> Vec<FlagOption> {
+    options_for_serve_type(blocks, serve_type)
+        .into_iter()
+        .map(|option| {
+            let mut clone = option.clone();
+            clone.field_name = simplify_field_name(&clone.field_name);
+            clone
+        })
+        .collect()
+}
+
+pub fn flags_to_object(flags: &[(String, Value)]) -> Value {
+    let mut map = Map::new();
+    for (key, value) in flags {
+        if !key.is_empty() {
+            map.insert(key.clone(), value.clone());
+        }
+    }
+    Value::Object(map)
+}
+
+pub fn parse_json_object(text: &str) -> Result<Map<String, Value>, String> {
+    let trimmed = text.trim();
+    if trimmed.is_empty() {
+        return Ok(Map::new());
+    }
+    match serde_json::from_str::<Value>(trimmed) {
+        Ok(Value::Object(map)) => Ok(map),
+        Ok(_) => Err("JSON must be an object".into()),
+        Err(e) => Err(e.to_string()),
     }
 }
 
@@ -391,6 +482,44 @@ mod tests {
         assert_eq!(flag_category_for_op(OperationType::Mount), Some("mount"));
         assert_eq!(flag_category_for_op(OperationType::Move), Some("copy"));
         assert_eq!(flag_category_for_op(OperationType::Serve), None);
+        assert!(!static_flags_for(OperationType::Serve).is_empty());
+        assert!(!static_flags_for(OperationType::Archivecreate).is_empty());
+    }
+
+    #[test]
+    fn serve_flags_match_block_aliases() {
+        let info = json!({
+            "HTTP": [{
+                "Name": "ListenAddr",
+                "FieldName": "HTTP.ListenAddr",
+                "Help": "listen",
+                "Type": "string"
+            }],
+            "webdav": [{
+                "Name": "DisableGET",
+                "FieldName": "DisableGET",
+                "Help": "off",
+                "Type": "bool"
+            }]
+        });
+        let blocks = parse_options_info(&info);
+        let http = collect_serve_flags(&blocks, "http");
+        assert_eq!(http.len(), 1);
+        assert_eq!(http[0].field_name, "ListenAddr");
+        assert_eq!(collect_serve_flags(&blocks, "webdav").len(), 1);
+        assert!(collect_serve_flags(&blocks, "sftp").is_empty());
+        assert!(serve_block_aliases("webdav").iter().any(|a| a == "WebDAV"));
+    }
+
+    #[test]
+    fn json_object_roundtrip() {
+        let obj = flags_to_object(&[("type".into(), json!("http")), ("port".into(), json!(8080))]);
+        assert_eq!(obj["type"], "http");
+        let parsed = parse_json_object(r#"{ "addr": ":8080" }"#).unwrap();
+        assert_eq!(parsed["addr"], ":8080");
+        assert!(parse_json_object("[1]").is_err());
+        assert!(parse_json_object("{").is_err());
+        assert!(parse_json_object("").unwrap().is_empty());
     }
 
     #[test]
