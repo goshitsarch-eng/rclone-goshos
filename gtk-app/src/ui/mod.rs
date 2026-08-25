@@ -134,6 +134,10 @@ impl AppCtx {
         self.i18n.borrow().tf(key, params)
     }
 
+    pub fn option_label(&self, name: &str, kind: &str, fallback: &str) -> String {
+        self.i18n.borrow().option_label(name, kind, fallback, None)
+    }
+
     pub fn refresh_connection(&self) {
         *self.connection.borrow_mut() = crate::connection::ConnectionStatus::Checking;
         let urls = self.settings.borrow().core.connection_check_urls.clone();
@@ -428,10 +432,16 @@ impl AppCtx {
             .local_disks()
             .unwrap_or_else(|_| local_fallback_disks());
         let hidden = self.store.borrow().hidden_remotes.clone();
-        let jobs = crate::jobs::merge_preparing_jobs(
+        let mut jobs = crate::jobs::merge_preparing_jobs(
             collect_jobs(&client),
             &self.store.borrow().job_history,
         );
+        {
+            let registry = self.store.borrow().job_meta.clone();
+            for job in &mut jobs {
+                crate::jobs::apply_job_meta(job, registry.get(&job.id));
+            }
+        }
         let remotes = crate::store::build_remote_infos(&dump, &mounts, &serves, &jobs, &hidden);
         let previous = self.snapshot.borrow().jobs.clone();
         let previous_mounts = self.snapshot.borrow().mounts.clone();
@@ -481,9 +491,14 @@ impl AppCtx {
                 };
                 for profile in profiles.values() {
                     if profile.app.auto_start {
-                        if let Err(e) =
-                            crate::jobs::start_profile(&client, &name, op, profile, Some(&meta))
-                        {
+                        if let Err(e) = crate::jobs::start_profile(
+                            &client,
+                            &name,
+                            op,
+                            profile,
+                            Some(&meta),
+                            "autostart",
+                        ) {
                             log::warn!("autostart {op} on {name} failed: {e}");
                         }
                     }
@@ -500,6 +515,7 @@ impl AppCtx {
                     qr.operation_type,
                     &qr.config,
                     meta.as_ref(),
+                    "quick-run",
                 ) {
                     log::warn!("autostart quick run {} failed: {e}", qr.name);
                 }

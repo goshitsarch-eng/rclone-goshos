@@ -474,6 +474,7 @@ impl FlowView {
                     other,
                     &qr.config,
                     meta.as_ref(),
+                    "flow",
                 ) {
                     Ok(id) => {
                         if let Some(run) = self

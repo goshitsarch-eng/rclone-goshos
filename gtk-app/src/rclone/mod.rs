@@ -8,4 +8,4 @@ pub use client::{
     DirEntry, DiskUsage, FsInfo, MountedRemote, RcClient, RcError, ServeItem, StatItem,
     CAT_PREVIEW_BYTES,
 };
-pub use engine::{describe_cron, rclone_exists, validate_cron, RcloneEngine};
+pub use engine::{describe_cron, describe_cron_i18n, rclone_exists, validate_cron, RcloneEngine};

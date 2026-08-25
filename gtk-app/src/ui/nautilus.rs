@@ -753,6 +753,23 @@ impl NautilusView {
                 view.detach_current_tab();
                 return glib::Propagation::Stop;
             }
+            if ctrl && shift && key == gtk::gdk::Key::T {
+                let id = view.current.borrow().id;
+                view.duplicate_tab(id);
+                return glib::Propagation::Stop;
+            }
+            if modifier.contains(gtk::gdk::ModifierType::ALT_MASK)
+                && (key == gtk::gdk::Key::Left || key == gtk::gdk::Key::KP_Left)
+            {
+                view.go_back();
+                return glib::Propagation::Stop;
+            }
+            if modifier.contains(gtk::gdk::ModifierType::ALT_MASK)
+                && (key == gtk::gdk::Key::Right || key == gtk::gdk::Key::KP_Right)
+            {
+                view.go_forward();
+                return glib::Propagation::Stop;
+            }
             if ctrl && key == gtk::gdk::Key::t {
                 view.open_new_tab();
                 return glib::Propagation::Stop;

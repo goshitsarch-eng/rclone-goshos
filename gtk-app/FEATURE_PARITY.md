@@ -214,6 +214,10 @@ This client is the GTK 4 + libadwaita rewrite of the Angular/Tauri desktop UI. I
 - Remote wizard i18n for identity, fields, interactive flow, profiles, and errors
 - Wizard rebuilds provider fields when the vendor/provider combo changes
 - Rclone flags editor typed controls (bool/tristate/select/numeric) plus Duration/SizeSuffix hints
+- Local job metadata registry (origin/profile/remote/backend) merged into RC-polled jobs
+- Remote-config deep-link (`initial` step + profile) and dashboard Add/Edit profile actions
+- Rclone option title/help translation (`rclone.json` snake_case keys)
+- Localized cron hints and Files shortcuts Alt+←/→ plus Ctrl+Shift+T
 
 ## Still deepening toward pixel-level Angular parity
 
@@ -221,4 +225,4 @@ This client is the GTK 4 + libadwaita rewrite of the Angular/Tauri desktop UI. I
 - Workflow builder (stub in both apps)
 - Live GUI session against rclone rcd (no display in this environment)
 - Native share portal / Android share intent (Linux uses `--share-intake` + Files banner)
-- Remaining UI string translation (dashboard/remote-config still have English labels)
+- Remaining dashboard/remote-config English labels

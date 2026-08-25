@@ -3,9 +3,10 @@
 
 use crate::operations::OperationType;
 use crate::rclone::{remote_fs, MountedRemote, RcClient, RcError, ServeItem};
-use crate::store::{quick_run_paths, JobInfo, ProfileConfig, QuickRun, RemoteMeta};
+use crate::store::{quick_run_paths, JobInfo, JobMeta, ProfileConfig, QuickRun, RemoteMeta};
 use chrono::{DateTime, Utc};
 use serde_json::{json, Map, Value};
+use std::collections::HashMap;
 
 pub const SOURCE_KEYS: &[&str] = &["source", "srcFs", "path1", "fs"];
 pub const DEST_KEYS: &[&str] = &["dest", "dstFs", "path2", "mountPoint"];
@@ -458,6 +459,7 @@ pub fn start_profile(
     op: OperationType,
     profile: &ProfileConfig,
     meta: Option<&RemoteMeta>,
+    origin: &str,
 ) -> Result<String, String> {
     let mut rclone = flatten_rclone(&profile.rclone);
     apply_helper_options(&mut rclone, profile, meta);
@@ -468,6 +470,7 @@ pub fn start_profile(
             profile.name.as_str()
         };
         obj.insert("profile".into(), json!(pname));
+        obj.insert("origin".into(), json!(origin));
     }
     let dest = default_dest(remote, &rclone, op);
     let mut sources = path_list(&rclone, SOURCE_KEYS);
@@ -489,6 +492,61 @@ pub fn start_profile(
         ids.push(start_request(client, &request).map_err(|e| e.to_string())?);
     }
     Ok(ids.join(", "))
+}
+
+pub fn parse_started_ids(result: &str) -> Vec<u64> {
+    result
+        .split(',')
+        .filter_map(|part| {
+            let trimmed = part.trim().trim_start_matches('#');
+            if trimmed.is_empty() {
+                None
+            } else {
+                trimmed.parse().ok()
+            }
+        })
+        .collect()
+}
+
+pub fn remember_started(map: &mut HashMap<u64, JobMeta>, result: &str, meta: JobMeta) {
+    for id in parse_started_ids(result) {
+        map.insert(id, meta.clone());
+    }
+}
+
+pub fn apply_job_meta(job: &mut JobInfo, meta: Option<&JobMeta>) {
+    let Some(meta) = meta else {
+        return;
+    };
+    if job.origin.is_empty() || job.origin == "dashboard" && !meta.origin.is_empty() {
+        job.origin = meta.origin.clone();
+    }
+    if (job.profile.is_empty() || job.profile == "default") && !meta.profile.is_empty() {
+        job.profile = meta.profile.clone();
+    }
+    if job.remote.is_empty() && !meta.remote.is_empty() {
+        job.remote = meta.remote.clone();
+    }
+}
+
+pub fn job_meta_for(
+    remote: &str,
+    profile: &ProfileConfig,
+    origin: &str,
+    backend: &str,
+    quick_run_id: &str,
+) -> JobMeta {
+    JobMeta {
+        origin: origin.to_string(),
+        profile: if profile.name.is_empty() {
+            "default".into()
+        } else {
+            profile.name.clone()
+        },
+        remote: remote.to_string(),
+        backend: backend.to_string(),
+        quick_run_id: quick_run_id.to_string(),
+    }
 }
 
 pub fn job_is_running(job: &JobInfo) -> bool {
@@ -1313,6 +1371,29 @@ mod tests {
         assert!((job.progress - 0.5).abs() < f64::EPSILON);
         assert_eq!(job.transferring[0]["name"], "a.bin");
         assert_eq!(job.completed[0]["name"], "done.bin");
+    }
+
+    #[test]
+    fn parse_started_ids_and_apply_registry() {
+        assert_eq!(parse_started_ids("#12, #34"), vec![12, 34]);
+        assert!(parse_started_ids("/mnt/drive").is_empty());
+        let mut map = HashMap::new();
+        remember_started(
+            &mut map,
+            "#9",
+            JobMeta {
+                origin: "flow".into(),
+                profile: "photos".into(),
+                remote: "drive".into(),
+                backend: "extra".into(),
+                quick_run_id: "qr-1".into(),
+            },
+        );
+        let mut job = running_job(9, "", "sync", "default");
+        apply_job_meta(&mut job, map.get(&9));
+        assert_eq!(job.origin, "flow");
+        assert_eq!(job.profile, "photos");
+        assert_eq!(job.remote, "drive");
     }
 
     #[test]

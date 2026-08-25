@@ -190,9 +190,14 @@ pub fn handle(ctx: &AppCtx, cmd: TrayAction) {
                     .as_ref()
                     .and_then(|m| m.get_profile(OperationType::Mount, &profile))
                     .unwrap_or_default();
-                if let Err(e) =
-                    start_profile(&c, &remote, OperationType::Mount, &cfg, meta.as_ref())
-                {
+                if let Err(e) = start_profile(
+                    &c,
+                    &remote,
+                    OperationType::Mount,
+                    &cfg,
+                    meta.as_ref(),
+                    "tray",
+                ) {
                     log::warn!("tray mount {remote} failed: {e}");
                     let point = dirs::home_dir()
                         .unwrap_or_default()
@@ -250,7 +255,7 @@ pub fn handle(ctx: &AppCtx, cmd: TrayAction) {
                     .as_ref()
                     .and_then(|m| m.get_profile(op, &profile))
                     .unwrap_or_default();
-                if let Err(e) = start_profile(&c, &remote, op, &cfg, meta.as_ref()) {
+                if let Err(e) = start_profile(&c, &remote, op, &cfg, meta.as_ref(), "tray") {
                     log::warn!("tray start {op} {remote}/{profile} failed: {e}");
                 }
             }
@@ -296,6 +301,7 @@ pub fn handle(ctx: &AppCtx, cmd: TrayAction) {
                     qr.operation_type,
                     &qr.config,
                     meta.as_ref(),
+                    "quick-run",
                 ) {
                     log::warn!("tray quick run {} failed: {e}", qr.name);
                 }

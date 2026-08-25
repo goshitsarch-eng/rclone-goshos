@@ -290,6 +290,16 @@ pub struct JobInfo {
     pub completed: Value,
 }
 
+/// Local start-time metadata for a job id (not persisted).
+#[derive(Debug, Clone, Default)]
+pub struct JobMeta {
+    pub origin: String,
+    pub profile: String,
+    pub remote: String,
+    pub backend: String,
+    pub quick_run_id: String,
+}
+
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
 pub enum AlertSeverity {
@@ -635,6 +645,8 @@ pub struct AppStore {
     pub automation_paused: Vec<String>,
     #[serde(default)]
     pub pending_share_paths: Vec<String>,
+    #[serde(default, skip)]
+    pub job_meta: HashMap<u64, JobMeta>,
 }
 
 impl AppStore {

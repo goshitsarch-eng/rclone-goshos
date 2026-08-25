@@ -207,6 +207,60 @@ pub fn describe_cron(expression: &str) -> String {
     expression.to_string()
 }
 
+pub fn describe_cron_i18n(expression: &str, i18n: &crate::i18n::I18n) -> String {
+    let parts: Vec<&str> = expression.split_whitespace().collect();
+    if parts.len() < 5 {
+        return expression.to_string();
+    }
+    let (min, hour, dom, mon, dow) = (parts[0], parts[1], parts[2], parts[3], parts[4]);
+    if min.starts_with("*/") && hour == "*" && dom == "*" && mon == "*" && dow == "*" {
+        let n = min.trim_start_matches("*/");
+        return if i18n.has("cron.everyMinutes") {
+            i18n.tf("cron.everyMinutes", &[("n", n)])
+        } else {
+            format!("Every {n} minutes")
+        };
+    }
+    if min == "0" && hour.starts_with("*/") && dom == "*" && mon == "*" && dow == "*" {
+        let n = hour.trim_start_matches("*/");
+        return if i18n.has("cron.everyHours") {
+            i18n.tf("cron.everyHours", &[("n", n)])
+        } else {
+            format!("Every {n} hours")
+        };
+    }
+    if min == "*" && hour == "*" && dom == "*" && mon == "*" && dow == "*" {
+        return i18n.t_or("cron.everyMinute", "Every minute");
+    }
+    if min.chars().all(|c| c.is_ascii_digit())
+        && hour.chars().all(|c| c.is_ascii_digit())
+        && dom == "*"
+        && mon == "*"
+        && dow == "*"
+    {
+        let time = format!("{hour}:{min:0>2}");
+        return if i18n.has("cron.dailyAt") {
+            i18n.tf("cron.dailyAt", &[("time", &time)])
+        } else {
+            format!("Daily at {time}")
+        };
+    }
+    if min.chars().all(|c| c.is_ascii_digit())
+        && hour.chars().all(|c| c.is_ascii_digit())
+        && dom == "*"
+        && mon == "*"
+        && dow.chars().all(|c| c.is_ascii_digit())
+    {
+        let time = format!("{hour}:{min:0>2}");
+        return if i18n.has("cron.weeklyAt") {
+            i18n.tf("cron.weeklyAt", &[("dow", dow), ("time", &time)])
+        } else {
+            format!("Weekly on day {dow} at {time}")
+        };
+    }
+    expression.to_string()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -228,6 +282,9 @@ mod tests {
         assert_eq!(describe_cron("*/5 * * * *"), "Every 5 minutes");
         assert_eq!(describe_cron("0 */2 * * *"), "Every 2 hours");
         assert_eq!(describe_cron("30 8 * * *"), "Daily at 8:30");
+        let i18n = crate::i18n::I18n::default();
+        assert_eq!(describe_cron_i18n("*/5 * * * *", &i18n), "Every 5 minutes");
+        assert_eq!(describe_cron_i18n("* * * * *", &i18n), "Every minute");
     }
 
     #[test]

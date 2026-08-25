@@ -1348,11 +1348,14 @@ fn push_flag_edit(
 }
 
 fn add_flag_option_row(
+    ctx: &AppCtx,
     group: &adw::PreferencesGroup,
     edits: &Rc<RefCell<Vec<(String, String, serde_json::Value)>>>,
     block: &str,
     option: &crate::flags::FlagOption,
 ) {
+    let title = ctx.option_label(&option.name, "title", &option.name);
+    let help = ctx.option_label(&option.name, "help", &option.help);
     let current_text = crate::value_mapper::machine_to_human(
         &option.value,
         &option.type_name,
@@ -1366,8 +1369,8 @@ fn add_flag_option_row(
     match kind {
         crate::value_mapper::ControlKind::Bool => {
             let row = adw::SwitchRow::new();
-            row.set_title(&option.name);
-            row.set_subtitle(&option.help);
+            row.set_title(&title);
+            row.set_subtitle(&help);
             row.set_active(current_text.eq_ignore_ascii_case("true"));
             let edits = edits.clone();
             let block = block.to_string();
@@ -1380,8 +1383,8 @@ fn add_flag_option_row(
         crate::value_mapper::ControlKind::Tristate => {
             let values = ["unset", "true", "false"];
             let row = adw::ComboRow::new();
-            row.set_title(&option.name);
-            row.set_subtitle(&option.help);
+            row.set_title(&title);
+            row.set_subtitle(&help);
             row.set_model(Some(&gtk::StringList::new(&values)));
             if let Some(idx) = values
                 .iter()
@@ -1421,8 +1424,8 @@ fn add_flag_option_row(
                 .collect();
             let values: Vec<String> = option.examples.iter().map(|(v, _)| v.clone()).collect();
             let row = adw::ComboRow::new();
-            row.set_title(&option.name);
-            row.set_subtitle(&option.help);
+            row.set_title(&title);
+            row.set_subtitle(&help);
             let refs: Vec<&str> = labels.iter().map(|s| s.as_str()).collect();
             row.set_model(Some(&gtk::StringList::new(&refs)));
             if let Some(idx) = values.iter().position(|v| v == &current_text) {
@@ -1446,8 +1449,8 @@ fn add_flag_option_row(
         }
         crate::value_mapper::ControlKind::Numeric => {
             let row = adw::SpinRow::with_range(-1_000_000_000.0, 1_000_000_000.0, 1.0);
-            row.set_title(&option.name);
-            row.set_subtitle(&option.help);
+            row.set_title(&title);
+            row.set_subtitle(&help);
             if let Ok(v) = current_text.parse::<f64>() {
                 row.set_value(v);
             }
@@ -1477,15 +1480,15 @@ fn add_flag_option_row(
         }
         crate::value_mapper::ControlKind::Input => {
             let row = adw::EntryRow::new();
-            row.set_title(&option.name);
+            row.set_title(&title);
             row.set_text(&current_text);
-            if !option.help.is_empty() {
-                row.set_tooltip_text(Some(&option.help));
+            if !help.is_empty() {
+                row.set_tooltip_text(Some(&help));
             }
             if option.type_name == "Duration" {
-                row.set_title(&format!("{} (1h / 30s / 500ms)", option.name));
+                row.set_title(&format!("{title} (1h / 30s / 500ms)"));
             } else if option.type_name == "SizeSuffix" {
-                row.set_title(&format!("{} (1Gi / 512Mi / off)", option.name));
+                row.set_title(&format!("{title} (1Gi / 512Mi / off)"));
             }
             let edits = edits.clone();
             let block = block.to_string();
@@ -1542,7 +1545,7 @@ pub fn rclone_flags(parent: &impl IsA<gtk::Widget>, ctx: AppCtx) {
             group.add(&row);
         }
         for (block, option) in options {
-            add_flag_option_row(&group, &edits, block, option);
+            add_flag_option_row(&ctx, &group, &edits, block, option);
         }
         page.add(&group);
         dialog.add(&page);
@@ -2474,15 +2477,36 @@ pub fn remote_config(
     existing: Option<String>,
     on_done: Rc<dyn Fn()>,
 ) {
+    remote_config_open(
+        parent,
+        ctx,
+        existing,
+        super::remote_config::RemoteConfigOpen::default(),
+        on_done,
+    );
+}
+
+pub fn remote_config_open(
+    parent: &impl IsA<gtk::Widget>,
+    ctx: AppCtx,
+    existing: Option<String>,
+    open: super::remote_config::RemoteConfigOpen,
+    on_done: Rc<dyn Fn()>,
+) {
     if try_spawn_standalone(
         &ctx,
         "remote-config",
-        serde_json::json!({ "remote": existing.clone().unwrap_or_default() }),
+        serde_json::json!({
+            "remote": existing.clone().unwrap_or_default(),
+            "initial": open.initial.clone().unwrap_or_default(),
+            "profile": open.profile.clone().unwrap_or_default(),
+            "autoAdd": open.auto_add
+        }),
     ) {
         return;
     }
     if let Some(name) = existing {
-        super::remote_config::present(parent, ctx, name, on_done);
+        super::remote_config::present_with(parent, ctx, name, open, on_done);
     } else {
         super::wizard::present(parent, ctx, None, on_done);
     }
@@ -4240,12 +4264,20 @@ pub fn job_detail(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, job_id: u64) {
                     job.origin.clone(),
                 ),
                 (ctx.t_or("modals.jobDetail.fields.backend", "Backend"), {
-                    let backend = ctx.settings.borrow().core.active_backend.clone();
-                    if backend.is_empty() {
-                        "local".into()
-                    } else {
-                        backend
-                    }
+                    ctx.store
+                        .borrow()
+                        .job_meta
+                        .get(&job.id)
+                        .map(|m| m.backend.clone())
+                        .filter(|s| !s.is_empty())
+                        .unwrap_or_else(|| {
+                            let backend = ctx.settings.borrow().core.active_backend.clone();
+                            if backend.is_empty() {
+                                "local".into()
+                            } else {
+                                backend
+                            }
+                        })
                 }),
                 (
                     ctx.t_or("fileBrowser.operations.details.source", "Source"),

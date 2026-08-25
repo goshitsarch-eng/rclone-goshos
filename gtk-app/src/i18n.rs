@@ -103,6 +103,50 @@ impl I18n {
     pub fn translate_backend(&self, message: &str) -> String {
         translate_backend_message(self, message)
     }
+
+    /// Angular `RcloneOptionTranslatePipe`: camelCase / kebab → snake_case `.title` / `.help`.
+    pub fn option_label(
+        &self,
+        name: &str,
+        kind: &str,
+        fallback: &str,
+        provider: Option<&str>,
+    ) -> String {
+        if name.is_empty() {
+            return fallback.to_string();
+        }
+        let normalized = normalize_option_name(name);
+        if let Some(provider) = provider.filter(|p| !p.is_empty()) {
+            let key = format!("providers.{provider}.{normalized}.{kind}");
+            if self.has(&key) {
+                return self.t(&key);
+            }
+        }
+        let key = format!("{normalized}.{kind}");
+        self.t_or(&key, fallback)
+    }
+}
+
+pub fn normalize_option_name(name: &str) -> String {
+    let mut out = String::with_capacity(name.len() + 4);
+    let mut chars = name.chars().peekable();
+    while let Some(ch) = chars.next() {
+        if ch == '-' || ch == '.' {
+            out.push('_');
+            continue;
+        }
+        if ch.is_ascii_uppercase()
+            && !out.is_empty()
+            && out
+                .chars()
+                .last()
+                .is_some_and(|prev| prev.is_ascii_lowercase() || prev.is_ascii_digit())
+        {
+            out.push('_');
+        }
+        out.push(ch.to_ascii_lowercase());
+    }
+    out
 }
 
 pub fn translate_backend_message(i18n: &I18n, message: &str) -> String {
@@ -309,5 +353,35 @@ mod tests {
             strings: HashMap::new(),
         };
         assert_eq!(i18n.t_or("missing.key", "Fallback"), "Fallback");
+    }
+
+    #[test]
+    fn option_label_normalizes_and_falls_back() {
+        assert_eq!(
+            normalize_option_name("createEmptySrcDirs"),
+            "create_empty_src_dirs"
+        );
+        assert_eq!(normalize_option_name("allow-other"), "allow_other");
+        assert_eq!(normalize_option_name("vfs.CacheMode"), "vfs_cache_mode");
+        let mut i18n = I18n {
+            lang: "en-US".into(),
+            strings: HashMap::new(),
+        };
+        i18n.strings
+            .insert("transfers.title".into(), "Transfers".into());
+        i18n.strings
+            .insert("providers.s3.acl.title".into(), "S3 ACL".into());
+        assert_eq!(
+            i18n.option_label("transfers", "title", "transfers", None),
+            "Transfers"
+        );
+        assert_eq!(
+            i18n.option_label("acl", "title", "acl", Some("s3")),
+            "S3 ACL"
+        );
+        assert_eq!(
+            i18n.option_label("unknownFlag", "title", "Unknown Flag", None),
+            "Unknown Flag"
+        );
     }
 }

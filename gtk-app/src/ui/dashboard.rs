@@ -50,9 +50,11 @@ impl Dashboard {
 
         let add_box = gtk::Box::new(gtk::Orientation::Horizontal, 6);
         let quick = gtk::Button::from_icon_name("list-add-symbolic");
-        quick.set_tooltip_text(Some("Quick add remote"));
+        quick.set_tooltip_text(Some(&ctx.t_or("sidebar.quickAdd", "Quick add remote")));
         let detailed = gtk::Button::from_icon_name("document-edit-symbolic");
-        detailed.set_tooltip_text(Some("Detailed remote config"));
+        detailed.set_tooltip_text(Some(
+            &ctx.t_or("sidebar.detailedConfig", "Detailed remote config"),
+        ));
         add_box.append(&quick);
         add_box.append(&detailed);
 
@@ -349,7 +351,12 @@ impl Dashboard {
 
         let editing = *self.editing_layout.borrow();
         let layout_bar = gtk::Box::new(gtk::Orientation::Horizontal, 6);
-        let edit_btn = gtk::Button::with_label(if editing { "Done" } else { "Edit layout" });
+        let edit_label = if editing {
+            self.ctx.t_or("common.done", "Done")
+        } else {
+            self.ctx.t_or("generalOverview.editLayout", "Edit layout")
+        };
+        let edit_btn = gtk::Button::with_label(&edit_label);
         edit_btn.set_tooltip_text(Some("Hide or reorder remotes and overview panels"));
         {
             let dash = self.clone();
@@ -359,7 +366,11 @@ impl Dashboard {
                 dash.refresh();
             });
         }
-        let order_btn = gtk::Button::with_label("Reorder remotes…");
+        let order_btn = gtk::Button::with_label(
+            &self
+                .ctx
+                .t_or("generalOverview.reorderRemotes", "Reorder remotes…"),
+        );
         order_btn.set_tooltip_text(Some("Open the remote order and visibility editor"));
         {
             let dash = self.clone();
@@ -372,7 +383,8 @@ impl Dashboard {
                 }
             });
         }
-        let reset = gtk::Button::with_label("Reset panels");
+        let reset =
+            gtk::Button::with_label(&self.ctx.t_or("generalOverview.resetPanels", "Reset panels"));
         reset.set_tooltip_text(Some("Restore the default overview panel order"));
         {
             let dash = self.clone();
@@ -741,7 +753,11 @@ impl Dashboard {
         let bw_group = gtk::ListBox::new();
         bw_group.add_css_class("boxed-list");
         let current = adw::ActionRow::new();
-        current.set_title("Current transfer");
+        current.set_title(
+            &self
+                .ctx
+                .t_or("bandwidth.currentTransfer", "Current transfer"),
+        );
         current.set_subtitle(&format!(
             "{} transferred · {:.1} KiB/s",
             format_bytes(bytes),
@@ -1106,7 +1122,7 @@ impl Dashboard {
         self.detail.append(&actions);
 
         let usage = adw::ActionRow::new();
-        usage.set_title("Disk usage");
+        usage.set_title(&self.ctx.t_or("remote.diskUsage", "Disk usage"));
         if let Some(client) = self.ctx.client() {
             match client.about(&remote_fs(&name, "")) {
                 Ok(about) => usage.set_subtitle(&crate::store::disk_label_from_about(&about)),
@@ -1117,7 +1133,9 @@ impl Dashboard {
         }
         self.detail.append(&usage);
 
-        self.detail.append(&section_label("Activity"));
+        self.detail.append(&section_label(
+            &self.ctx.t_or("generalOverview.activity", "Activity"),
+        ));
         let activity = gtk::ListBox::new();
         activity.add_css_class("boxed-list");
         let remote_jobs: Vec<_> = snap
@@ -1174,9 +1192,10 @@ impl Dashboard {
         }
         self.detail.append(&activity);
 
-        self.detail.append(&section_label("VFS"));
+        self.detail
+            .append(&section_label(&self.ctx.t_or("remote.vfs", "VFS")));
         let vfs = gtk::Box::new(gtk::Orientation::Horizontal, 8);
-        let open_vfs = gtk::Button::with_label("VFS panel");
+        let open_vfs = gtk::Button::with_label(&self.ctx.t_or("remote.vfsPanel", "VFS panel"));
         open_vfs.add_css_class("suggested-action");
         {
             let ctx = self.ctx.clone();
@@ -1214,13 +1233,16 @@ impl Dashboard {
         }
         self.detail.append(&vfs);
 
-        self.detail.append(&section_label("Profiles"));
+        self.detail.append(&section_label(
+            &self.ctx.t_or("remote.profiles", "Profiles"),
+        ));
         let plist = gtk::ListBox::new();
         plist.add_css_class("boxed-list");
         if let Some(meta) = self.ctx.store.borrow().remotes.get(&name) {
             for (op, profiles) in &meta.profiles {
                 for (pname, profile) in profiles {
                     let row = adw::ActionRow::new();
+                    row.set_activatable(true);
                     row.set_title(&format!("{op} / {pname}"));
                     row.set_subtitle(&crate::jobs::profile_summary(
                         crate::operations::OperationType::parse(op)
@@ -1245,10 +1267,10 @@ impl Dashboard {
                         "media-playback-start-symbolic"
                     });
                     start.set_valign(gtk::Align::Center);
-                    start.set_tooltip_text(Some(if active {
-                        "Stop profile"
+                    start.set_tooltip_text(Some(&if active {
+                        self.ctx.t_or("remote.stopProfile", "Stop profile")
                     } else {
-                        "Start profile"
+                        self.ctx.t_or("remote.startProfile", "Start profile")
                     }));
                     {
                         let ctx = self.ctx.clone();
@@ -1260,17 +1282,80 @@ impl Dashboard {
                         });
                     }
                     row.add_suffix(&start);
+                    {
+                        let ctx = self.ctx.clone();
+                        let dash = self.clone();
+                        let remote = name.clone();
+                        let op_key = op.clone();
+                        let pname = pname.clone();
+                        row.connect_activated(move |_| {
+                            if let Some(win) = dash.root.root().and_downcast::<gtk::Window>() {
+                                dialogs::remote_config_open(
+                                    &win,
+                                    ctx.clone(),
+                                    Some(remote.clone()),
+                                    super::remote_config::RemoteConfigOpen {
+                                        initial: Some(op_key.clone()),
+                                        profile: Some(pname.clone()),
+                                        auto_add: false,
+                                    },
+                                    {
+                                        let dash = dash.clone();
+                                        let ctx = ctx.clone();
+                                        Rc::new(move || {
+                                            ctx.refresh_runtime();
+                                            dash.refresh();
+                                        })
+                                    },
+                                );
+                            }
+                        });
+                    }
                     plist.append(&row);
                 }
             }
         }
         if plist.first_child().is_none() {
             let row = adw::ActionRow::new();
-            row.set_title("No saved profiles — configure the remote to add them");
+            row.set_title(&self.ctx.t_or(
+                "remote.noProfiles",
+                "No saved profiles — configure the remote to add them",
+            ));
             plist.append(&row);
         }
         self.detail.append(&plist);
-        let helpers = gtk::Button::with_label("Edit helper profiles");
+        let add_profile =
+            gtk::Button::with_label(&self.ctx.t_or("remote.addProfile", "Add profile"));
+        {
+            let ctx = self.ctx.clone();
+            let remote = name.clone();
+            let dash = self.clone();
+            add_profile.connect_clicked(move |_| {
+                if let Some(win) = dash.root.root().and_downcast::<gtk::Window>() {
+                    dialogs::remote_config_open(
+                        &win,
+                        ctx.clone(),
+                        Some(remote.clone()),
+                        super::remote_config::RemoteConfigOpen {
+                            initial: Some("sync".into()),
+                            profile: None,
+                            auto_add: true,
+                        },
+                        {
+                            let dash = dash.clone();
+                            let ctx = ctx.clone();
+                            Rc::new(move || {
+                                ctx.refresh_runtime();
+                                dash.refresh();
+                            })
+                        },
+                    );
+                }
+            });
+        }
+        self.detail.append(&add_profile);
+        let helpers =
+            gtk::Button::with_label(&self.ctx.t_or("remote.editHelpers", "Edit helper profiles"));
         {
             let ctx = self.ctx.clone();
             let remote = name.clone();
@@ -1283,8 +1368,11 @@ impl Dashboard {
         }
         self.detail.append(&helpers);
 
-        self.detail
-            .append(&section_label("Quick Runs for this remote"));
+        self.detail.append(&section_label(
+            &self
+                .ctx
+                .t_or("remote.quickRuns", "Quick Runs for this remote"),
+        ));
         let qlist = gtk::ListBox::new();
         qlist.add_css_class("boxed-list");
         for qr in self
@@ -1412,8 +1500,15 @@ fn toggle_profile(
         .as_ref()
         .and_then(|m| m.get_profile(op, profile_name))
         .unwrap_or_default();
-    match crate::jobs::start_profile(&client, name, op, &profile, meta.as_ref()) {
-        Ok(id) => toast.add_toast(adw::Toast::new(&format!("Started {op} {id}"))),
+    match crate::jobs::start_profile(&client, name, op, &profile, meta.as_ref(), "dashboard") {
+        Ok(id) => {
+            crate::jobs::remember_started(
+                &mut ctx.store.borrow_mut().job_meta,
+                &id,
+                crate::jobs::job_meta_for(name, &profile, "dashboard", &ctx.backend_key(), ""),
+            );
+            toast.add_toast(adw::Toast::new(&format!("Started {op} {id}")));
+        }
         Err(e) => toast.add_toast(adw::Toast::new(&e)),
     }
     ctx.refresh_runtime();

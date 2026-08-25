@@ -26,6 +26,13 @@ enum EditorStep {
     Helper(&'static str),
 }
 
+#[derive(Clone, Default)]
+pub struct RemoteConfigOpen {
+    pub initial: Option<String>,
+    pub profile: Option<String>,
+    pub auto_add: bool,
+}
+
 const HELPERS: &[(&str, &str, &str)] = &[
     ("vfs", "VFS", "drive-harddisk-symbolic"),
     ("filter", "Filter", "view-filter-symbolic"),
@@ -34,6 +41,16 @@ const HELPERS: &[(&str, &str, &str)] = &[
 ];
 
 pub fn present(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, remote: String, on_done: Rc<dyn Fn()>) {
+    present_with(parent, ctx, remote, RemoteConfigOpen::default(), on_done);
+}
+
+pub fn present_with(
+    parent: &impl IsA<gtk::Widget>,
+    ctx: AppCtx,
+    remote: String,
+    open: RemoteConfigOpen,
+    on_done: Rc<dyn Fn()>,
+) {
     ctx.store
         .borrow_mut()
         .remotes
@@ -41,7 +58,10 @@ pub fn present(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, remote: String, on_d
         .or_default();
 
     let dialog = adw::Dialog::new();
-    dialog.set_title(&format!("Configure {remote}"));
+    dialog.set_title(&format!(
+        "{} {remote}",
+        ctx.t_or("modals.remoteConfig.steps.remoteConfig", "Configure")
+    ));
     dialog.set_content_width(980);
     dialog.set_content_height(780);
 
@@ -62,7 +82,9 @@ pub fn present(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, remote: String, on_d
     let content = gtk::Box::new(gtk::Orientation::Vertical, 8);
     content.set_hexpand(true);
     content.set_vexpand(true);
-    let title = gtk::Label::new(Some("Remote"));
+    let title = gtk::Label::new(Some(
+        &ctx.t_or("modals.remoteConfig.steps.remote", "Remote"),
+    ));
     title.add_css_class("title-3");
     title.set_xalign(0.0);
     title.set_margin_start(12);
@@ -77,9 +99,9 @@ pub fn present(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, remote: String, on_d
     save_bar.set_margin_start(12);
     save_bar.set_margin_end(12);
     save_bar.set_margin_bottom(10);
-    let save = gtk::Button::with_label("Save step");
+    let save = gtk::Button::with_label(&ctx.t_or("modals.remoteConfig.saveStep", "Save step"));
     save.add_css_class("suggested-action");
-    let close = gtk::Button::with_label("Close");
+    let close = gtk::Button::with_label(&ctx.t_or("common.close", "Close"));
     save_bar.append(&save);
     save_bar.append(&close);
     content.append(&title);
@@ -101,13 +123,19 @@ pub fn present(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, remote: String, on_d
     let steps = editor_steps();
     for step in &steps {
         let row = adw::ActionRow::new();
-        row.set_title(step_label(*step));
+        row.set_title(&step_label(&ctx, *step));
         row.set_activatable(true);
         let icon = gtk::Image::from_icon_name(step_icon(*step));
         row.add_prefix(&icon);
         sidebar.append(&row);
     }
-    if let Some(first) = sidebar.row_at_index(0) {
+    let initial_step = parse_open_step(&open);
+    *current.borrow_mut() = initial_step;
+    if let Some(idx) = editor_steps().iter().position(|step| *step == initial_step) {
+        if let Some(row) = sidebar.row_at_index(idx as i32) {
+            sidebar.select_row(Some(&row));
+        }
+    } else if let Some(first) = sidebar.row_at_index(0) {
         sidebar.select_row(Some(&first));
     }
 
@@ -127,7 +155,7 @@ pub fn present(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, remote: String, on_d
                 body.remove(&child);
             }
             let step = *current.borrow();
-            title.set_text(step_label(step));
+            title.set_text(&step_label(&ctx, step));
             match step {
                 EditorStep::Remote => {
                     let (page, saver) = remote_page(&parent, ctx.clone(), &remote, on_done.clone());
@@ -199,15 +227,37 @@ fn editor_steps() -> Vec<EditorStep> {
     steps
 }
 
-fn step_label(step: EditorStep) -> &'static str {
+fn parse_open_step(open: &RemoteConfigOpen) -> EditorStep {
+    let Some(raw) = open.initial.as_deref() else {
+        return EditorStep::Remote;
+    };
+    let lower = raw.to_ascii_lowercase();
+    if lower.is_empty() || lower == "remote" {
+        return EditorStep::Remote;
+    }
+    if let Some(op) = OperationType::parse(&lower) {
+        return EditorStep::Op(op);
+    }
+    if let Some((kind, _, _)) = HELPERS.iter().find(|(kind, _, _)| *kind == lower) {
+        return EditorStep::Helper(*kind);
+    }
+    EditorStep::Remote
+}
+
+fn step_label(ctx: &AppCtx, step: EditorStep) -> String {
     match step {
-        EditorStep::Remote => "Remote",
-        EditorStep::Op(op) => op.api_label(),
-        EditorStep::Helper(kind) => HELPERS
-            .iter()
-            .find(|(k, _, _)| *k == kind)
-            .map(|(_, label, _)| *label)
-            .unwrap_or(kind),
+        EditorStep::Remote => ctx.t_or("modals.remoteConfig.steps.remote", "Remote"),
+        EditorStep::Op(op) => {
+            ctx.t_or(&format!("operations.{}.label", op.as_str()), op.api_label())
+        }
+        EditorStep::Helper(kind) => ctx.t_or(
+            &format!("modals.remoteConfig.helpers.{kind}"),
+            HELPERS
+                .iter()
+                .find(|(k, _, _)| *k == kind)
+                .map(|(_, label, _)| *label)
+                .unwrap_or(kind),
+        ),
     }
 }
 
@@ -420,15 +470,15 @@ fn remote_page(
         .cloned()
         .unwrap_or_default();
     let tray = adw::SwitchRow::new();
-    tray.set_title("Show on tray");
+    tray.set_title(&ctx.t_or("remoteConfig.showOnTray", "Show on tray"));
     tray.set_active(meta.show_on_tray);
     let hidden = adw::SwitchRow::new();
-    hidden.set_title("Hide from sidebar");
+    hidden.set_title(&ctx.t_or("remoteConfig.hideFromSidebar", "Hide from sidebar"));
     hidden.set_active(meta.hidden);
     let primary_ids = Rc::new(RefCell::new(meta.primary_actions.clone()));
     let sync_ids = Rc::new(RefCell::new(meta.sync_actions.clone()));
     let primary_row = adw::ActionRow::new();
-    primary_row.set_title("Primary actions");
+    primary_row.set_title(&ctx.t_or("remoteConfig.primaryActions", "Primary actions"));
     primary_row.set_subtitle(&action_summary(&primary_ids.borrow()));
     let edit_primary = gtk::Button::with_label("Edit");
     edit_primary.set_valign(gtk::Align::Center);
@@ -478,7 +528,8 @@ fn remote_page(
     }
     sync_row.add_suffix(&edit_sync);
 
-    let provider = gtk::Button::with_label("Edit provider fields…");
+    let provider =
+        gtk::Button::with_label(&ctx.t_or("remoteConfig.editProvider", "Edit provider fields…"));
     {
         let ctx = ctx.clone();
         let parent = parent.clone();
@@ -499,7 +550,7 @@ fn remote_page(
     }
 
     let group = adw::PreferencesGroup::new();
-    group.set_title("Remote metadata");
+    group.set_title(&ctx.t_or("remoteConfig.metadata", "Remote metadata"));
     group.add(&tray);
     group.add(&hidden);
     group.add(&primary_row);
@@ -662,7 +713,7 @@ fn operation_page(
     auto_start.set_title("Start with application");
     auto_start.set_active(initial.app.auto_start);
     let cron_enabled = adw::SwitchRow::new();
-    cron_enabled.set_title("Scheduled (cron)");
+    cron_enabled.set_title(&ctx.t_or("remoteConfig.scheduledCron", "Scheduled (cron)"));
     cron_enabled.set_active(initial.app.cron_enabled);
     cron_enabled.set_visible(op.is_automatable());
     let cron = adw::EntryRow::new();
@@ -674,10 +725,11 @@ fn operation_page(
     cron_hint.set_xalign(0.0);
     cron_hint.set_wrap(true);
     cron_hint.set_visible(op.is_automatable());
-    update_cron_hint(&cron, &cron_hint);
+    update_cron_hint(&ctx, &cron, &cron_hint);
     {
         let cron_hint = cron_hint.clone();
-        cron.connect_changed(move |row| update_cron_hint(row, &cron_hint));
+        let ctx = ctx.clone();
+        cron.connect_changed(move |row| update_cron_hint(&ctx, row, &cron_hint));
     }
     let watch_enabled = adw::SwitchRow::new();
     watch_enabled.set_title("Watch local sources");
@@ -805,7 +857,7 @@ fn operation_page(
         if op == OperationType::Serve && flag.field_name == "type" {
             continue;
         }
-        let row = flag_entry(&flag, &rclone);
+        let row = flag_entry(&ctx, &flag, &rclone);
         flags_group.add(&row);
         flag_rows
             .borrow_mut()
@@ -816,7 +868,7 @@ fn operation_page(
     if op == OperationType::Serve {
         for serve_type in serve_types.iter() {
             for flag in crate::flags::collect_serve_flags(blocks, serve_type) {
-                let row = flag_entry(&flag, &rclone);
+                let row = flag_entry(&ctx, &flag, &rclone);
                 row.set_title(&format!("{serve_type} · {}", flag.name));
                 let selected =
                     crate::operations::selected_or(&serve_types, serve.selected(), "http");
@@ -842,7 +894,7 @@ fn operation_page(
         }
     }
     let json_toggle = adw::SwitchRow::new();
-    json_toggle.set_title("JSON mode");
+    json_toggle.set_title(&ctx.t_or("remoteConfig.jsonMode", "JSON mode"));
     json_toggle.set_subtitle("Edit this profile's rclone flags as a JSON object");
     json_toggle.set_active(ctx.settings.borrow().runtime.show_json_mode);
     let json_view = gtk::TextView::new();
@@ -1144,7 +1196,7 @@ fn helper_page(
     let flag_rows: Rc<RefCell<Vec<(String, adw::EntryRow, String)>>> =
         Rc::new(RefCell::new(Vec::new()));
     for (_, option) in options_for_category(blocks, category) {
-        let row = flag_entry(option, &current);
+        let row = flag_entry(&ctx, option, &current);
         flags_group.add(&row);
         flag_rows
             .borrow_mut()
@@ -1482,11 +1534,12 @@ fn extra_source_row(ctx: &AppCtx, value: &str) -> adw::EntryRow {
     row
 }
 
-fn flag_entry(flag: &FlagOption, current: &Value) -> adw::EntryRow {
+fn flag_entry(ctx: &AppCtx, flag: &FlagOption, current: &Value) -> adw::EntryRow {
     let row = adw::EntryRow::new();
-    row.set_title(&flag.name);
-    if !flag.help.is_empty() {
-        row.set_tooltip_text(Some(&flag.help));
+    row.set_title(&ctx.option_label(&flag.name, "title", &flag.name));
+    let help = ctx.option_label(&flag.name, "help", &flag.help);
+    if !help.is_empty() {
+        row.set_tooltip_text(Some(&help));
     }
     let text = current
         .get(&flag.field_name)
@@ -1520,14 +1573,20 @@ fn action_summary(ids: &[String]) -> String {
     }
 }
 
-fn update_cron_hint(row: &adw::EntryRow, hint: &gtk::Label) {
+fn update_cron_hint(ctx: &AppCtx, row: &adw::EntryRow, hint: &gtk::Label) {
     let expr = row.text().to_string();
     if expr.is_empty() {
         hint.set_text("");
         return;
     }
     match validate_cron(&expr) {
-        Ok(()) => hint.set_text(&crate::rclone::describe_cron(&expr)),
-        Err(e) => hint.set_text(&format!("Invalid cron: {e}")),
+        Ok(()) => hint.set_text(&crate::rclone::describe_cron_i18n(
+            &expr,
+            &ctx.i18n.borrow(),
+        )),
+        Err(e) => hint.set_text(&format!(
+            "{}: {e}",
+            ctx.t_or("cron.invalid", "Invalid cron")
+        )),
     }
 }
