@@ -17,6 +17,7 @@ use crate::rclone::{
 use crate::rename::{preview as rename_preview, RenameMode, RenamePlan};
 use crate::store::{
     AlertAction, AlertEvent, AlertEventKind, AlertRule, AlertSeverity, ProfileConfig, QuickRun,
+    UserTemplate,
 };
 use adw::prelude::*;
 use gtk::gio;
@@ -8137,12 +8138,35 @@ pub fn templates(parent: &impl IsA<gtk::Widget>, ctx: AppCtx) {
     for template in ctx.store.borrow().templates.clone() {
         let row = adw::ActionRow::new();
         row.set_title(&template.name);
-        row.set_subtitle(&template.description);
+        row.set_subtitle(&template_row_subtitle(&ctx, &template));
+        row.set_activatable(true);
+        {
+            let ctx = ctx.clone();
+            let parent = parent.clone();
+            let template = template.clone();
+            row.connect_activated(move |_| {
+                edit_template(&parent, ctx.clone(), Some(template.clone()));
+            });
+        }
         let apply = gtk::Button::with_label(&ctx.t_or("remoteConfig.applyTemplate", "Apply"));
         apply.set_valign(gtk::Align::Center);
         apply.add_css_class("suggested-action");
+        let edit = gtk::Button::from_icon_name("document-edit-symbolic");
+        edit.set_valign(gtk::Align::Center);
+        edit.set_tooltip_text(Some(&ctx.t_or("common.edit", "Edit")));
+        {
+            let ctx = ctx.clone();
+            let parent = parent.clone();
+            let template = template.clone();
+            edit.connect_clicked(move |_| {
+                edit_template(&parent, ctx.clone(), Some(template.clone()));
+            });
+        }
         let delete = gtk::Button::from_icon_name("user-trash-symbolic");
         delete.set_valign(gtk::Align::Center);
+        delete.set_tooltip_text(Some(
+            &ctx.t_or("templates.deleteTemplate", "Delete template"),
+        ));
         {
             let ctx = ctx.clone();
             let parent = parent.clone();
@@ -8215,6 +8239,7 @@ pub fn templates(parent: &impl IsA<gtk::Widget>, ctx: AppCtx) {
             });
         }
         row.add_suffix(&apply);
+        row.add_suffix(&edit);
         row.add_suffix(&delete);
         list.append(&row);
     }
@@ -8233,9 +8258,20 @@ pub fn templates(parent: &impl IsA<gtk::Widget>, ctx: AppCtx) {
             capture_template(&parent, ctx.clone());
         });
     }
+    let empty = gtk::Button::with_label(&ctx.t_or("templates.newTitle", "New template"));
+    {
+        let ctx = ctx.clone();
+        let parent = parent.clone();
+        empty.connect_clicked(move |_| {
+            edit_template(&parent, ctx.clone(), None);
+        });
+    }
+    let buttons = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+    buttons.append(&add);
+    buttons.append(&empty);
     let box_ = gtk::Box::new(gtk::Orientation::Vertical, 8);
     box_.append(&scrolled_list(&list));
-    box_.append(&add);
+    box_.append(&buttons);
     dialog.set_child(Some(&box_));
     present_window_or_dialog(parent, &ctx, &dialog);
 }
@@ -9805,16 +9841,262 @@ fn resolve_check_item(ctx: &AppCtx, item: &crate::checks::CheckResult, kind: &st
     }
 }
 
+fn template_keys_label(ctx: &AppCtx, count: usize) -> String {
+    if count == 0 {
+        ctx.t_or("templates.zeroKeys", "0 keys")
+    } else if count == 1 {
+        ctx.t_or("templates.keyCount", "{{count}} key")
+            .replace("{{count}}", "1")
+    } else {
+        ctx.t_or("templates.keysCount", "{{count}} keys")
+            .replace("{{count}}", &count.to_string())
+    }
+}
+
+fn template_row_subtitle(ctx: &AppCtx, template: &UserTemplate) -> String {
+    let keys = template_keys_label(ctx, crate::user_templates::leaf_count(&template.values));
+    let desc = template.description.trim();
+    if desc.is_empty() {
+        keys
+    } else {
+        format!("{desc} · {keys}")
+    }
+}
+
+fn template_selected_count_label(ctx: &AppCtx, selected: usize, total: usize) -> String {
+    ctx.t_or(
+        "templates.selectedCount",
+        "{{selected}} / {{total}} selected",
+    )
+    .replace("{{selected}}", &selected.to_string())
+    .replace("{{total}}", &total.to_string())
+}
+
+fn update_template_key_count(
+    ctx: &AppCtx,
+    rows: &Rc<RefCell<Vec<(String, adw::SwitchRow)>>>,
+    count: &gtk::Label,
+) {
+    let rows = rows.borrow();
+    let total = rows.len();
+    let selected = rows.iter().filter(|(_, row)| row.is_active()).count();
+    count.set_label(&template_selected_count_label(ctx, selected, total));
+}
+
+fn selected_capture_remote(combo: &adw::ComboRow, remotes: &[String]) -> String {
+    let idx = combo.selected() as usize;
+    if idx == 0 {
+        String::new()
+    } else {
+        remotes
+            .get(idx.saturating_sub(1))
+            .cloned()
+            .unwrap_or_default()
+    }
+}
+
+fn capture_source_value(ctx: &AppCtx, remote: &str, categories: &[&str]) -> serde_json::Value {
+    if !remote.is_empty() {
+        if let Some(meta) = ctx.store.borrow().remotes.get(remote) {
+            let from_meta = crate::user_templates::capture_from_meta(meta, categories);
+            if from_meta.as_object().is_some_and(|obj| !obj.is_empty()) {
+                return from_meta;
+            }
+        }
+    }
+    let current = ctx
+        .client()
+        .and_then(|c| c.options_get().ok())
+        .unwrap_or(serde_json::json!({}));
+    let blocks = operation_flag_blocks(ctx);
+    crate::flags::filter_options_for_categories(&current, &blocks, categories)
+}
+
+fn populate_template_key_rows(
+    ctx: &AppCtx,
+    list: &gtk::ListBox,
+    rows: &Rc<RefCell<Vec<(String, adw::SwitchRow)>>>,
+    count: &gtk::Label,
+    source: &serde_json::Value,
+) {
+    while let Some(child) = list.first_child() {
+        list.remove(&child);
+    }
+    rows.borrow_mut().clear();
+    for (path, value) in crate::user_templates::flatten_leaf_paths(source) {
+        let row = adw::SwitchRow::builder()
+            .title(&path)
+            .subtitle(&value)
+            .active(true)
+            .build();
+        {
+            let ctx = ctx.clone();
+            let rows = rows.clone();
+            let count = count.clone();
+            row.connect_active_notify(move |_| {
+                update_template_key_count(&ctx, &rows, &count);
+            });
+        }
+        list.append(&row);
+        rows.borrow_mut().push((path, row));
+    }
+    if rows.borrow().is_empty() {
+        let empty = adw::ActionRow::new();
+        empty.set_title(&ctx.t_or("templates.noCatKeys", "No settings in this selection yet."));
+        empty.set_sensitive(false);
+        list.append(&empty);
+    }
+    update_template_key_count(ctx, rows, count);
+}
+
+fn persist_user_template(ctx: &AppCtx, existing_id: Option<&str>, template: UserTemplate) {
+    if let Some(id) = existing_id {
+        if let Some(slot) = ctx
+            .store
+            .borrow_mut()
+            .templates
+            .iter_mut()
+            .find(|item| item.id == id)
+        {
+            *slot = template;
+            ctx.persist();
+            return;
+        }
+    }
+    ctx.store.borrow_mut().templates.push(template);
+    ctx.persist();
+}
+
+fn template_error(parent: &impl IsA<gtk::Widget>, ctx: &AppCtx, message: &str) {
+    let err = adw::AlertDialog::new(Some(&ctx.t_or("common.error", "Error")), Some(message));
+    err.add_response("ok", &ctx.t("common.ok"));
+    err.present(Some(parent));
+}
+
+fn edit_template(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, existing: Option<UserTemplate>) {
+    let dialog = adw::Dialog::new();
+    dialog.set_title(&if existing.is_some() {
+        ctx.t_or("templates.manageTitle", "Edit template")
+    } else {
+        ctx.t_or("templates.newTitle", "New template")
+    });
+    dialog.set_content_width(560);
+    dialog.set_content_height(520);
+    let name = adw::EntryRow::new();
+    name.set_title(&ctx.t_or("templates.templateName", "Name"));
+    name.set_text(
+        existing
+            .as_ref()
+            .map(|item| item.name.as_str())
+            .unwrap_or(""),
+    );
+    let description = adw::EntryRow::new();
+    description.set_title(&ctx.t_or("templates.templateDesc", "Description (optional)"));
+    description.set_text(
+        existing
+            .as_ref()
+            .map(|item| item.description.as_str())
+            .unwrap_or(""),
+    );
+    let group = adw::PreferencesGroup::new();
+    group.add(&name);
+    group.add(&description);
+    let json_group = adw::PreferencesGroup::new();
+    json_group.set_title(&ctx.t_or("templates.jsonView", "JSON Editor"));
+    let json_view = gtk::TextView::new();
+    json_view.set_monospace(true);
+    json_view.set_wrap_mode(gtk::WrapMode::WordChar);
+    json_view.set_hexpand(true);
+    json_view.set_vexpand(true);
+    let pretty = existing
+        .as_ref()
+        .map(|item| serde_json::to_string_pretty(&item.values).unwrap_or_else(|_| "{}".into()))
+        .unwrap_or_else(|| "{\n}".into());
+    text_view_set(&json_view, &pretty);
+    let json_scroll = gtk::ScrolledWindow::new();
+    json_scroll.set_min_content_height(260);
+    json_scroll.set_vexpand(true);
+    json_scroll.set_child(Some(&json_view));
+    let save = gtk::Button::with_label(&ctx.t("common.save"));
+    save.add_css_class("suggested-action");
+    {
+        let ctx = ctx.clone();
+        let parent = parent.clone();
+        let dialog = dialog.clone();
+        let name = name.clone();
+        let description = description.clone();
+        let json_view = json_view.clone();
+        let existing_id = existing.as_ref().map(|item| item.id.clone());
+        let created_at = existing
+            .as_ref()
+            .map(|item| item.created_at.clone())
+            .unwrap_or_else(|| chrono::Utc::now().to_rfc3339());
+        let icon = existing
+            .as_ref()
+            .map(|item| item.icon.clone())
+            .unwrap_or_else(|| "emblem-ok-symbolic".into());
+        save.connect_clicked(move |_| {
+            let title = name.text().to_string();
+            if title.trim().is_empty() {
+                template_error(&parent, &ctx, &ctx.t_or("templates.templateName", "Name"));
+                return;
+            }
+            let values = match crate::flags::parse_json_object(&text_view_get(&json_view)) {
+                Ok(map) => serde_json::Value::Object(map),
+                Err(e) => {
+                    template_error(&parent, &ctx, &e);
+                    return;
+                }
+            };
+            persist_user_template(
+                &ctx,
+                existing_id.as_deref(),
+                UserTemplate {
+                    id: existing_id
+                        .clone()
+                        .unwrap_or_else(|| uuid::Uuid::new_v4().to_string()),
+                    name: title,
+                    description: description.text().to_string(),
+                    icon: icon.clone(),
+                    created_at: created_at.clone(),
+                    updated_at: chrono::Utc::now().to_rfc3339(),
+                    values,
+                },
+            );
+            dialog.close();
+            templates(&parent, ctx.clone());
+        });
+    }
+    let box_ = gtk::Box::new(gtk::Orientation::Vertical, 8);
+    box_.set_margin_top(12);
+    box_.append(&group);
+    box_.append(&json_group);
+    box_.append(&json_scroll);
+    box_.append(&save);
+    dialog.set_child(Some(&box_));
+    dialog.present(Some(parent));
+}
+
 fn capture_template(parent: &impl IsA<gtk::Widget>, ctx: AppCtx) {
     let dialog = adw::Dialog::new();
     dialog.set_title(&ctx.t_or("templates.saveAsTemplate", "Capture template"));
-    dialog.set_content_width(420);
+    dialog.set_content_width(560);
+    dialog.set_content_height(640);
     let name = adw::EntryRow::new();
     name.set_title(&ctx.t_or("templates.templateName", "Name"));
     name.set_text(&format!(
         "Template {}",
         chrono::Local::now().format("%Y-%m-%d %H:%M")
     ));
+    let description = adw::EntryRow::new();
+    description.set_title(&ctx.t_or("templates.templateDesc", "Description (optional)"));
+    let remotes = ctx.store.borrow().remote_names();
+    let mut remote_labels = vec![ctx.t_or("settings.rcloneFlags.title", "Current rclone options")];
+    remote_labels.extend(remotes.iter().cloned());
+    let remote_refs: Vec<&str> = remote_labels.iter().map(|s| s.as_str()).collect();
+    let remote = adw::ComboRow::new();
+    remote.set_title(&ctx.t_or("remote.profiles", "Source"));
+    remote.set_model(Some(&gtk::StringList::new(&remote_refs)));
     let categories = [
         (
             "backend",
@@ -9829,12 +10111,20 @@ fn capture_template(parent: &impl IsA<gtk::Widget>, ctx: AppCtx) {
             "mount",
             ctx.t_or("general.remoteConfig.steps.mount", "Mount"),
         ),
-        ("copy", ctx.t_or("general.remoteConfig.steps.copy", "Copy")),
-        ("sync", ctx.t_or("general.remoteConfig.steps.sync", "Sync")),
+        ("copy", ctx.t_or("actions.copy", "Copy")),
+        ("sync", ctx.t_or("actions.sync", "Sync")),
+        ("move", ctx.t_or("actions.move", "Move")),
+        ("bisync", ctx.t_or("actions.bisync", "Bisync")),
+        ("serve", ctx.t_or("actions.serve", "Serve")),
+        ("check", ctx.t_or("actions.check", "Check")),
+        ("delete", ctx.t_or("actions.delete", "Delete")),
+        ("copyurl", ctx.t_or("actions.copyurl", "Copy URL")),
         (
-            "check",
-            ctx.t_or("general.remoteConfig.steps.check", "Check"),
+            "archivecreate",
+            ctx.t_or("actions.archivecreate", "Archive"),
         ),
+        ("cryptcheck", ctx.t_or("actions.cryptcheck", "Cryptcheck")),
+        ("remote", ctx.t_or("remote.profiles", "Remote")),
         (
             "network",
             ctx.t_or(
@@ -9856,9 +10146,77 @@ fn capture_template(parent: &impl IsA<gtk::Widget>, ctx: AppCtx) {
     let group = adw::PreferencesGroup::new();
     group.set_title(&ctx.t_or("templates.selectAllKeys", "Categories to include"));
     group.add(&name);
+    group.add(&description);
+    group.add(&remote);
     for (_, row) in &switches {
         group.add(row);
     }
+    let key_rows: Rc<RefCell<Vec<(String, adw::SwitchRow)>>> = Rc::new(RefCell::new(Vec::new()));
+    let source = Rc::new(RefCell::new(serde_json::json!({})));
+    let keys_list = gtk::ListBox::new();
+    keys_list.add_css_class("boxed-list");
+    keys_list.set_selection_mode(gtk::SelectionMode::None);
+    let count = gtk::Label::new(None);
+    count.add_css_class("dim-label");
+    count.set_xalign(0.0);
+    let rebuild = {
+        let ctx = ctx.clone();
+        let remote = remote.clone();
+        let remotes = remotes.clone();
+        let switches = switches.clone();
+        let keys_list = keys_list.clone();
+        let key_rows = key_rows.clone();
+        let source = source.clone();
+        let count = count.clone();
+        Rc::new(move || {
+            let selected: Vec<&str> = switches
+                .iter()
+                .filter(|(_, row)| row.is_active())
+                .map(|(id, _)| *id)
+                .collect();
+            let remote_name = selected_capture_remote(&remote, &remotes);
+            let value = capture_source_value(&ctx, &remote_name, &selected);
+            *source.borrow_mut() = value.clone();
+            populate_template_key_rows(&ctx, &keys_list, &key_rows, &count, &value);
+        }) as Rc<dyn Fn()>
+    };
+    rebuild();
+    {
+        let rebuild = rebuild.clone();
+        remote.connect_selected_notify(move |_| rebuild());
+    }
+    for (_, row) in &switches {
+        let rebuild = rebuild.clone();
+        row.connect_active_notify(move |_| rebuild());
+    }
+    let select_all =
+        gtk::Button::with_label(&ctx.t_or("templates.selectAllKeys", "Select all keys"));
+    {
+        let key_rows = key_rows.clone();
+        select_all.connect_clicked(move |_| {
+            for (_, row) in key_rows.borrow().iter() {
+                row.set_active(true);
+            }
+        });
+    }
+    let deselect_all =
+        gtk::Button::with_label(&ctx.t_or("templates.deselectAllKeys", "Deselect all keys"));
+    {
+        let key_rows = key_rows.clone();
+        deselect_all.connect_clicked(move |_| {
+            for (_, row) in key_rows.borrow().iter() {
+                row.set_active(false);
+            }
+        });
+    }
+    let key_buttons = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+    key_buttons.append(&select_all);
+    key_buttons.append(&deselect_all);
+    let keys_scroll = gtk::ScrolledWindow::new();
+    keys_scroll.set_min_content_height(220);
+    keys_scroll.set_max_content_height(320);
+    keys_scroll.set_vexpand(true);
+    keys_scroll.set_child(Some(&keys_list));
     let save = gtk::Button::with_label(&ctx.t("common.save"));
     save.add_css_class("suggested-action");
     {
@@ -9866,39 +10224,49 @@ fn capture_template(parent: &impl IsA<gtk::Widget>, ctx: AppCtx) {
         let parent = parent.clone();
         let dialog = dialog.clone();
         let name = name.clone();
-        let switches = switches.clone();
+        let description = description.clone();
+        let key_rows = key_rows.clone();
+        let source = source.clone();
         save.connect_clicked(move |_| {
-            let selected: Vec<&str> = switches
+            let title = name.text().to_string();
+            if title.trim().is_empty() {
+                template_error(&parent, &ctx, &ctx.t_or("templates.templateName", "Name"));
+                return;
+            }
+            let paths: Vec<String> = key_rows
+                .borrow()
                 .iter()
                 .filter(|(_, row)| row.is_active())
-                .map(|(id, _)| *id)
+                .map(|(path, _)| path.clone())
                 .collect();
-            let current = ctx
-                .client()
-                .and_then(|c| c.options_get().ok())
-                .unwrap_or(serde_json::json!({}));
-            let blocks = operation_flag_blocks(&ctx);
-            let values = crate::flags::filter_options_for_categories(&current, &blocks, &selected);
-            ctx.store
-                .borrow_mut()
-                .templates
-                .push(crate::store::UserTemplate {
+            let values = crate::user_templates::filter_by_paths(&source.borrow(), &paths);
+            persist_user_template(
+                &ctx,
+                None,
+                UserTemplate {
                     id: uuid::Uuid::new_v4().to_string(),
-                    name: name.text().to_string(),
-                    description: format!("Captured {} categories", selected.len()),
+                    name: title,
+                    description: description.text().to_string(),
                     icon: "emblem-ok-symbolic".into(),
                     created_at: chrono::Utc::now().to_rfc3339(),
                     updated_at: chrono::Utc::now().to_rfc3339(),
                     values,
-                });
-            ctx.persist();
+                },
+            );
             dialog.close();
             templates(&parent, ctx.clone());
         });
     }
     let box_ = gtk::Box::new(gtk::Orientation::Vertical, 8);
     box_.set_margin_top(12);
-    box_.append(&group);
+    let cats_scroll = gtk::ScrolledWindow::new();
+    cats_scroll.set_min_content_height(180);
+    cats_scroll.set_max_content_height(240);
+    cats_scroll.set_child(Some(&group));
+    box_.append(&cats_scroll);
+    box_.append(&count);
+    box_.append(&key_buttons);
+    box_.append(&keys_scroll);
     box_.append(&save);
     dialog.set_child(Some(&box_));
     dialog.present(Some(parent));

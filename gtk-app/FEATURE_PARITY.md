@@ -20,7 +20,7 @@ This client is the GTK 4 + libadwaita desktop UI. It talks to a local `rclone rc
 - Backends: local rcd plus extra RC backends with add/test/switch/remove
 - Alerts: history, rule editor, action editor (os_toast, webhook, telegram, whatsapp, script, email/mqtt logged)
 - Backup/restore zip with category picker, notes, and restore preview
-- Template manager: capture, apply (`options/set` or categorized helper/profile merge), delete
+- Template manager: capture with per-key picker, apply (`options/set` or categorized helper/profile merge), edit/rename/JSON, delete
 - Remote-config preset bar: apply default OS/provider presets, apply/save/manage user templates
 - Archive create job dialog (`operations/archive` create, selection + format flags)
 - Onboarding: welcome, features, rclone detect, default view, complete
@@ -497,10 +497,14 @@ This client is the GTK 4 + libadwaita desktop UI. It talks to a local `rclone rc
 - Category export scopes the zip: Alerts writes only rules/actions/history, Connections writes extra backends, Settings/Remotes stay file-scoped
 - Restoring an Alerts or Connections backup merges that slice instead of replacing the whole store/settings
 - Alert action body templates use a multi-line editor so Discord/Slack JSON presets can be viewed and edited
+- Template capture lists every flattened flag key with select/deselect all, optional remote source, and a description field
+- Template manager rows show key counts and open an edit/rename/JSON dialog
 
 ## Still deepening
 
 - Workflow builder (stub in both apps)
-- Template manager edit/rename and per-key capture
+- Remote-config global sidebar search
+- Alerts Rules/Actions list search + test/toggle/delete chrome
+- Files ops panel inline job drill-down
 - Remaining dialogs/Files English labels (core chrome now localized)
 - Pixel-level layouts and leftover English `t_or` fallbacks

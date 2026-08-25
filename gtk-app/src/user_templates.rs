@@ -2,7 +2,7 @@
 
 use crate::operations::OperationType;
 use crate::store::{ProfileConfig, RemoteMeta};
-use serde_json::{Map, Value};
+use serde_json::{json, Map, Value};
 
 /// Flag-type keys plus `remote`, matching Angular `TEMPLATE_CATEGORIES`.
 pub const TEMPLATE_CATEGORIES: &[&str] = &[
@@ -181,6 +181,89 @@ pub fn capture_from_meta(meta: &RemoteMeta, categories: &[&str]) -> Value {
     Value::Object(out)
 }
 
+fn display_leaf(value: &Value) -> String {
+    match value {
+        Value::String(text) => text.clone(),
+        Value::Null => String::new(),
+        other => other.to_string(),
+    }
+}
+
+fn flatten_inner(value: &Value, prefix: &str, out: &mut Vec<(String, String)>) {
+    match value {
+        Value::Object(map) => {
+            let mut keys: Vec<&String> = map.keys().collect();
+            keys.sort();
+            for key in keys {
+                let path = if prefix.is_empty() {
+                    key.clone()
+                } else {
+                    format!("{prefix}.{key}")
+                };
+                let child = &map[key];
+                if child.is_object() {
+                    flatten_inner(child, &path, out);
+                } else {
+                    out.push((path, display_leaf(child)));
+                }
+            }
+        }
+        other if !prefix.is_empty() => out.push((prefix.to_string(), display_leaf(other))),
+        _ => {}
+    }
+}
+
+/// Dotted paths of every non-object leaf, for the template key picker.
+pub fn flatten_leaf_paths(value: &Value) -> Vec<(String, String)> {
+    let mut out = Vec::new();
+    flatten_inner(value, "", &mut out);
+    out
+}
+
+fn get_path<'a>(value: &'a Value, path: &str) -> Option<&'a Value> {
+    let mut current = value;
+    for part in path.split('.') {
+        current = current.get(part)?;
+    }
+    Some(current)
+}
+
+fn set_path(dest: &mut Value, path: &str, leaf: Value) {
+    let mut parts = path.split('.').peekable();
+    let mut cursor = dest;
+    while let Some(part) = parts.next() {
+        if parts.peek().is_none() {
+            if let Some(map) = cursor.as_object_mut() {
+                map.insert(part.to_string(), leaf);
+            }
+            return;
+        }
+        if !cursor.is_object() {
+            *cursor = Value::Object(Map::new());
+        }
+        let map = cursor.as_object_mut().expect("object");
+        cursor = map.entry(part.to_string()).or_insert(json!({}));
+        if !cursor.is_object() {
+            *cursor = json!({});
+        }
+    }
+}
+
+/// Keep only the selected dotted leaf paths.
+pub fn filter_by_paths(value: &Value, paths: &[String]) -> Value {
+    let mut out = json!({});
+    for path in paths {
+        if let Some(leaf) = get_path(value, path) {
+            set_path(&mut out, path, leaf.clone());
+        }
+    }
+    out
+}
+
+pub fn leaf_count(value: &Value) -> usize {
+    flatten_leaf_paths(value).len()
+}
+
 /// Apply categorized values when `meta` is present. Returns 0 for flat `options/set` JSON.
 pub fn apply_if_categorized(
     meta: Option<&mut RemoteMeta>,
@@ -316,5 +399,30 @@ mod tests {
             ),
             0
         );
+    }
+
+    #[test]
+    fn flattens_and_filters_leaf_paths() {
+        let value = json!({
+            "main": { "transfers": 8, "checkers": 4 },
+            "filter": { "max_age": "1d" },
+            "empty": {}
+        });
+        let paths = flatten_leaf_paths(&value);
+        assert_eq!(
+            paths,
+            vec![
+                ("filter.max_age".into(), "1d".into()),
+                ("main.checkers".into(), "4".into()),
+                ("main.transfers".into(), "8".into()),
+            ]
+        );
+        assert_eq!(leaf_count(&value), 3);
+        let filtered = filter_by_paths(&value, &["main.transfers".into(), "missing".into()]);
+        assert_eq!(filtered["main"]["transfers"], 8);
+        assert!(filtered.get("filter").is_none());
+        assert!(filtered["main"].get("checkers").is_none());
+        assert!(flatten_leaf_paths(&json!({})).is_empty());
+        assert!(flatten_leaf_paths(&json!(null)).is_empty());
     }
 }
