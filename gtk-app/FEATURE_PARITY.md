@@ -485,6 +485,7 @@ This client is the GTK 4 + libadwaita rewrite of the Angular/Tauri desktop UI. I
 - Job detail uses one page scroll so identity fields are not clipped by competing transfer lists
 - Job detail puts identity + transfers first and statistics after, matching Angular overview/profile then activity
 - Deep links open Preferences, Remote Config, Onboarding, About, Logs, and Shortcuts (`--preferences [page]`, `--remote-config`, `--onboarding`, `#/preferences`, `#/remote-config/...`, `#/onboarding`, `#/about`, `#/logs`, `#/shortcuts`)
+- A second instance forwards those flags through GIO so `--about` / `--job` / `--preferences` activate the running app
 
 ## Still deepening toward pixel-level Angular parity
 
