@@ -384,6 +384,8 @@ mod tests {
             value: Value::Null,
             value_str: String::new(),
             examples: vec![],
+            provider: String::new(),
+            example_providers: vec![],
         }
     }
 

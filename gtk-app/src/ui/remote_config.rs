@@ -1412,6 +1412,25 @@ fn wire_profile_actions(
                     }
                 }),
                 "delete" => {
+                    let snap = ctx.snapshot.borrow();
+                    let usage = crate::jobs::profile_usage(
+                        &snap.jobs,
+                        &snap.mounts,
+                        &snap.serves,
+                        &remote,
+                        &current,
+                        op,
+                    );
+                    drop(snap);
+                    if usage.blocked() {
+                        let alert = adw::AlertDialog::new(
+                            Some("Profile is in use"),
+                            Some(&usage.summary()),
+                        );
+                        alert.add_response("ok", "OK");
+                        alert.present(Some(&parent));
+                        return;
+                    }
                     mutate_profiles(&ctx, &remote, op, helper, |meta| {
                         if let Some(op) = op {
                             let _ = meta.remove_profile(op, &current);

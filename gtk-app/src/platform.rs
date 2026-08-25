@@ -664,7 +664,10 @@ pub fn is_standalone_dialog() -> bool {
     STANDALONE_DIALOG.load(Ordering::SeqCst)
 }
 
-pub fn spawn_standalone_dialog(kind: &str, data: &serde_json::Value) -> Result<Child, String> {
+pub fn spawn_standalone_dialog(
+    kind: &str,
+    data: &serde_json::Value,
+) -> Result<(Child, PathBuf), String> {
     if !DIALOG_KINDS.contains(&kind) {
         return Err(format!("unknown dialog type: {kind}"));
     }
@@ -674,7 +677,7 @@ pub fn spawn_standalone_dialog(kind: &str, data: &serde_json::Value) -> Result<C
         sanitize_name(kind),
         chrono::Utc::now().timestamp_millis()
     ));
-    Command::new(exe)
+    let child = Command::new(exe)
         .arg("--dialog")
         .arg(kind)
         .arg("--dialog-data")
@@ -683,7 +686,13 @@ pub fn spawn_standalone_dialog(kind: &str, data: &serde_json::Value) -> Result<C
         .arg(&result)
         .stdin(Stdio::null())
         .spawn()
-        .map_err(|e| e.to_string())
+        .map_err(|e| e.to_string())?;
+    Ok((child, result))
+}
+
+pub fn read_dialog_result(path: &Path) -> Option<serde_json::Value> {
+    let text = std::fs::read_to_string(path).ok()?;
+    serde_json::from_str(&text).ok()
 }
 
 pub fn write_dialog_result(

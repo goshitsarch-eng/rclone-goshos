@@ -1436,8 +1436,7 @@ fn start_operation(ctx: &AppCtx, name: &str, op: OperationType, toast: &adw::Toa
 }
 
 fn default_mount_point(name: &str) -> String {
-    let base = dirs::home_dir().unwrap_or_else(|| std::path::PathBuf::from("/tmp"));
-    base.join("mnt").join(name).to_string_lossy().into_owned()
+    crate::path_inspection::suggest_default_mount_path(name, &crate::store::AppStore::default())
 }
 
 fn status_dot(mounted: bool, serving: bool, job: bool) -> String {

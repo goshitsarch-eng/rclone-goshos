@@ -43,6 +43,7 @@ mod ui;
 mod updater;
 mod user_templates;
 mod validators;
+mod value_mapper;
 mod vfs;
 mod watch;
 

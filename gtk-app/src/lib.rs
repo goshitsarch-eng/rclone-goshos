@@ -44,6 +44,7 @@ pub mod tray_menu;
 pub mod updater;
 pub mod user_templates;
 pub mod validators;
+pub mod value_mapper;
 pub mod vfs;
 pub mod watch;
 

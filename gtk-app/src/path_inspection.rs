@@ -1,7 +1,7 @@
 //! Mount / destination path inspection — mirrors Angular `PathInspectionService`.
 
 use crate::operations::OperationType;
-use crate::rclone::MountedRemote;
+use crate::rclone::{MountedRemote, RcClient};
 use crate::store::{AppStore, ProfileConfig};
 use std::path::{Path, PathBuf};
 
@@ -131,6 +131,17 @@ pub fn inspect_dest(
     op: OperationType,
     live_mounts: &[MountedRemote],
 ) -> PathStatus {
+    inspect_dest_ex(store, path, current_remote, op, live_mounts, None)
+}
+
+pub fn inspect_dest_ex(
+    store: &AppStore,
+    path: &str,
+    current_remote: &str,
+    op: OperationType,
+    live_mounts: &[MountedRemote],
+    client: Option<&RcClient>,
+) -> PathStatus {
     if path.trim().is_empty() {
         return PathStatus::Empty;
     }
@@ -146,7 +157,62 @@ pub fn inspect_dest(
     if Path::new(path).is_absolute() || path.starts_with("~/") {
         return inspect_local_path(path);
     }
+    if let Some(client) = client {
+        if let Some((fs, remote)) = crate::rclone::browse_target(path) {
+            return inspect_remote_path(client, &crate::rclone::remote_fs(&fs, ""), &remote);
+        }
+        if path.contains(':') {
+            let (name, rest) = path.split_once(':').unwrap();
+            return inspect_remote_path(client, &crate::rclone::remote_fs(name, ""), rest);
+        }
+    }
     PathStatus::Empty
+}
+
+pub fn inspect_remote_path(client: &RcClient, fs: &str, remote: &str) -> PathStatus {
+    match client.stat(fs, remote) {
+        Ok(Some(item)) if item.is_dir => match client.size(fs, remote) {
+            Ok(value) if value.get("count").and_then(|x| x.as_i64()).unwrap_or(0) > 0 => {
+                PathStatus::NonEmpty
+            }
+            _ => PathStatus::Empty,
+        },
+        Ok(Some(_)) => PathStatus::Invalid,
+        Ok(None) => PathStatus::WillCreate,
+        Err(_) => PathStatus::Empty,
+    }
+}
+
+/// Create a missing local (or remote) directory when inspection says it will be created.
+pub fn ensure_path(
+    status: &PathStatus,
+    path: &str,
+    client: Option<&RcClient>,
+) -> Result<(), String> {
+    if !matches!(status, PathStatus::WillCreate | PathStatus::Empty) {
+        return Ok(());
+    }
+    if path.trim().is_empty() {
+        return Ok(());
+    }
+    if Path::new(path).is_absolute() || path.starts_with("~/") || Path::new(path).exists() {
+        let expanded = normalize_mount_path(path);
+        if expanded.is_empty() {
+            return Ok(());
+        }
+        return std::fs::create_dir_all(&expanded).map_err(|e| e.to_string());
+    }
+    if let Some(client) = client {
+        if let Some((fs, remote)) = crate::rclone::browse_target(path) {
+            if !remote.is_empty() {
+                return client
+                    .mkdir(&crate::rclone::remote_fs(&fs, ""), &remote)
+                    .map(|_| ())
+                    .map_err(|e| e.to_string());
+            }
+        }
+    }
+    Ok(())
 }
 
 pub fn describe_status(status: &PathStatus) -> String {
@@ -162,8 +228,33 @@ pub fn describe_status(status: &PathStatus) -> String {
 }
 
 pub fn suggest_default_mount_path(remote: &str, store: &AppStore) -> String {
+    suggest_default_op_path(remote, OperationType::Mount, store, "")
+}
+
+/// Angular templates: `{home}/rclone-manager/{remote}` and `{remote}-bisync`.
+pub fn suggest_default_op_path(
+    remote: &str,
+    op: OperationType,
+    store: &AppStore,
+    template: &str,
+) -> String {
     let home = dirs::home_dir().unwrap_or_else(|| PathBuf::from("/tmp"));
-    let base = home.join("mnt").join(remote);
+    let suffix = if op == OperationType::Bisync {
+        "-bisync"
+    } else {
+        ""
+    };
+    let base = if template.trim().is_empty() {
+        home.join("rclone-manager")
+            .join(format!("{remote}{suffix}"))
+    } else {
+        PathBuf::from(
+            template
+                .replace("{home}", &home.to_string_lossy())
+                .replace("{remote}", remote)
+                .replace("{suffix}", suffix),
+        )
+    };
     let mut candidate = base.to_string_lossy().into_owned();
     let mut i = 2;
     while find_mount_collision(store, &candidate, remote, &[]).is_some() {
@@ -245,7 +336,7 @@ mod tests {
     fn suggests_unique_mount_path() {
         let taken = dirs::home_dir()
             .unwrap_or_else(|| PathBuf::from("/tmp"))
-            .join("mnt")
+            .join("rclone-manager")
             .join("drive");
         let store = store_with_mount("other", &taken.to_string_lossy());
         let suggested = suggest_default_mount_path("drive", &store);
@@ -253,6 +344,28 @@ mod tests {
             suggested.ends_with("drive-2") || suggested.contains("/drive-2"),
             "{suggested}"
         );
+        let bisync =
+            suggest_default_op_path("drive", OperationType::Bisync, &AppStore::default(), "");
+        assert!(bisync.contains("drive-bisync"), "{bisync}");
+        let custom = suggest_default_op_path(
+            "drive",
+            OperationType::Mount,
+            &AppStore::default(),
+            "{home}/mnt/{remote}",
+        );
+        assert!(custom.contains("/mnt/drive"), "{custom}");
+    }
+
+    #[test]
+    fn ensure_path_creates_local_dir() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("will-create");
+        assert_eq!(
+            inspect_local_path(&path.to_string_lossy()),
+            PathStatus::WillCreate
+        );
+        ensure_path(&PathStatus::WillCreate, &path.to_string_lossy(), None).unwrap();
+        assert!(path.is_dir());
     }
 
     #[test]

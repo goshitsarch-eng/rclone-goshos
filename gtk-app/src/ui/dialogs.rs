@@ -26,7 +26,26 @@ fn try_spawn_standalone(ctx: &AppCtx, kind: &str, data: serde_json::Value) -> bo
     if !ctx.settings.borrow().general.standalone_dialogs {
         return false;
     }
-    crate::platform::spawn_standalone_dialog(kind, &data).is_ok()
+    let Ok((_child, path)) = crate::platform::spawn_standalone_dialog(kind, &data) else {
+        return false;
+    };
+    let ctx = ctx.clone();
+    let mut ticks = 0u32;
+    glib::timeout_add_local(std::time::Duration::from_millis(400), move || {
+        ticks += 1;
+        if path.exists() {
+            if crate::platform::read_dialog_result(&path).is_some() {
+                ctx.refresh_runtime();
+                ctx.persist();
+            }
+            return glib::ControlFlow::Break;
+        }
+        if ticks > 300 {
+            return glib::ControlFlow::Break;
+        }
+        glib::ControlFlow::Continue
+    });
+    true
 }
 
 pub fn present_standalone(
@@ -613,6 +632,34 @@ pub fn preferences(parent: &impl IsA<gtk::Widget>, ctx: AppCtx) {
         });
     }
     c1.add(&metered_bw);
+    let mount_dir = adw::EntryRow::new();
+    mount_dir.set_title(&ctx.t_or(
+        "settings.core.default_mount_directory.label",
+        "Default mount directory ({home}/rclone-manager/{remote})",
+    ));
+    mount_dir.set_text(&ctx.settings.borrow().core.default_mount_directory);
+    {
+        let ctx = ctx.clone();
+        mount_dir.connect_changed(move |row| {
+            ctx.settings.borrow_mut().core.default_mount_directory = row.text().to_string();
+            ctx.persist();
+        });
+    }
+    c1.add(&mount_dir);
+    let bisync_dir = adw::EntryRow::new();
+    bisync_dir.set_title(&ctx.t_or(
+        "settings.core.default_bisync_directory.label",
+        "Default bisync directory ({home}/rclone-manager/{remote}-bisync)",
+    ));
+    bisync_dir.set_text(&ctx.settings.borrow().core.default_bisync_directory);
+    {
+        let ctx = ctx.clone();
+        bisync_dir.connect_changed(move |row| {
+            ctx.settings.borrow_mut().core.default_bisync_directory = row.text().to_string();
+            ctx.persist();
+        });
+    }
+    c1.add(&bisync_dir);
     let tray_items = adw::SpinRow::with_range(1.0, 40.0, 1.0);
     tray_items.set_title(&ctx.t_or("settings.core.max_tray_items.label", "Max tray items"));
     tray_items.set_value(ctx.settings.borrow().core.max_tray_items as f64);
@@ -2175,7 +2222,7 @@ pub fn rclone_flags(parent: &impl IsA<gtk::Widget>, ctx: AppCtx) {
             row.set_title("No flags in this category");
             group.add(&row);
         }
-        for (block, option) in options.into_iter().take(40) {
+        for (block, option) in options {
             let current_text = match &option.value {
                 serde_json::Value::Null => option.default_str.clone(),
                 serde_json::Value::String(s) => s.clone(),
@@ -3343,10 +3390,22 @@ pub fn start_operation(
         OperationType::Copyurl => "Destination fs",
         _ => "Destination",
     });
-    dst.set_text(&if op == OperationType::Mount {
-        crate::path_inspection::suggest_default_mount_path(remote, &ctx.store.borrow())
-    } else {
-        default_dest(remote, &rclone, op)
+    dst.set_text(&{
+        let template = if op == OperationType::Bisync {
+            ctx.settings.borrow().core.default_bisync_directory.clone()
+        } else {
+            ctx.settings.borrow().core.default_mount_directory.clone()
+        };
+        if op == OperationType::Mount || op == OperationType::Bisync {
+            crate::path_inspection::suggest_default_op_path(
+                remote,
+                op,
+                &ctx.store.borrow(),
+                &template,
+            )
+        } else {
+            default_dest(remote, &rclone, op)
+        }
     });
     let dst_kind = if op == OperationType::Mount {
         attach_path_picker(&ctx, &dst, crate::picker::FilePickerConfig::local_folders());

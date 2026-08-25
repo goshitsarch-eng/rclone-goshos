@@ -50,6 +50,10 @@ pub struct CoreSettings {
     pub active_backend: String,
     #[serde(default)]
     pub config_password: String,
+    #[serde(default)]
+    pub default_mount_directory: String,
+    #[serde(default)]
+    pub default_bisync_directory: String,
 }
 
 impl Default for CoreSettings {
@@ -70,6 +74,8 @@ impl Default for CoreSettings {
             extra_backends: vec![],
             active_backend: String::new(),
             config_password: String::new(),
+            default_mount_directory: String::new(),
+            default_bisync_directory: String::new(),
         }
     }
 }
@@ -359,6 +365,8 @@ mod tests {
         let loaded: AppSettings = serde_json::from_str(json).unwrap();
         assert_eq!(loaded.core.bandwidth_limit, "2M");
         assert!(loaded.core.metered_bandwidth_limit.is_empty());
+        assert!(loaded.core.default_mount_directory.is_empty());
+        assert!(loaded.core.default_bisync_directory.is_empty());
         assert!(loaded.runtime.flatpak_warn);
         assert!(loaded.nautilus.sidebar_drive_order.is_empty());
         assert!(loaded.nautilus.sidebar_hidden_drives.is_empty());

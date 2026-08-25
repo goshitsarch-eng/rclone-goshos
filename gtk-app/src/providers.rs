@@ -16,6 +16,8 @@ pub struct ProviderOption {
     pub value: serde_json::Value,
     pub value_str: String,
     pub examples: Vec<(String, String)>,
+    pub provider: String,
+    pub example_providers: Vec<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -93,6 +95,7 @@ fn parse_option(value: &Value) -> Option<ProviderOption> {
     if name.is_empty() {
         return None;
     }
+    let mut example_providers = Vec::new();
     let examples = value
         .get("Examples")
         .or_else(|| value.get("examples"))
@@ -111,6 +114,13 @@ fn parse_option(value: &Value) -> Option<ProviderOption> {
                         .and_then(|x| x.as_str())
                         .unwrap_or("")
                         .to_string();
+                    let provider = ex
+                        .get("Provider")
+                        .or_else(|| ex.get("provider"))
+                        .and_then(|x| x.as_str())
+                        .unwrap_or("")
+                        .to_string();
+                    example_providers.push(provider);
                     Some((val, help))
                 })
                 .collect()
@@ -172,6 +182,13 @@ fn parse_option(value: &Value) -> Option<ProviderOption> {
             .unwrap_or("")
             .to_string(),
         examples,
+        provider: value
+            .get("Provider")
+            .or_else(|| value.get("provider"))
+            .and_then(|x| x.as_str())
+            .unwrap_or("")
+            .to_string(),
+        example_providers,
         name,
     })
 }

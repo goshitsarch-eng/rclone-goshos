@@ -10,6 +10,10 @@ use crate::operations::OperationType;
 use crate::providers::{parse_providers, Provider, ProviderOption};
 use crate::rclone::remote_fs;
 use crate::store::{AppConfig, ProfileConfig, RemoteMeta};
+use crate::value_mapper::{
+    control_kind, filter_examples, human_to_machine, is_default_display, machine_to_human,
+    matches_provider_rule, ControlKind,
+};
 use adw::prelude::*;
 use gtk::prelude::*;
 use serde_json::{json, Value};
@@ -19,9 +23,73 @@ use std::rc::Rc;
 
 struct WizardState {
     providers: Vec<Provider>,
-    fields: HashMap<String, adw::EntryRow>,
+    fields: HashMap<String, FieldWidget>,
     flow: InteractiveFlowState,
     parameters: Value,
+}
+
+#[derive(Clone)]
+enum FieldWidget {
+    Entry(adw::EntryRow),
+    Switch(adw::SwitchRow),
+    Combo(adw::ComboRow, Rc<Vec<String>>),
+    Spin(adw::SpinRow),
+}
+
+impl FieldWidget {
+    fn add_to(&self, group: &adw::PreferencesGroup) {
+        match self {
+            Self::Entry(row) => group.add(row),
+            Self::Switch(row) => group.add(row),
+            Self::Combo(row, _) => group.add(row),
+            Self::Spin(row) => group.add(row),
+        }
+    }
+
+    fn remove_from(&self, group: &adw::PreferencesGroup) {
+        match self {
+            Self::Entry(row) => group.remove(row),
+            Self::Switch(row) => group.remove(row),
+            Self::Combo(row, _) => group.remove(row),
+            Self::Spin(row) => group.remove(row),
+        }
+    }
+
+    fn display_text(&self) -> String {
+        match self {
+            Self::Entry(row) => row.text().to_string(),
+            Self::Switch(row) => row.is_active().to_string(),
+            Self::Combo(row, values) => values
+                .get(row.selected() as usize)
+                .cloned()
+                .unwrap_or_default(),
+            Self::Spin(row) => {
+                let v = row.value();
+                if v.fract() == 0.0 {
+                    format!("{}", v as i64)
+                } else {
+                    v.to_string()
+                }
+            }
+        }
+    }
+
+    fn set_display_text(&self, text: &str) {
+        match self {
+            Self::Entry(row) => row.set_text(text),
+            Self::Switch(row) => row.set_active(text.eq_ignore_ascii_case("true")),
+            Self::Combo(row, values) => {
+                if let Some(idx) = values.iter().position(|v| v == text) {
+                    row.set_selected(idx as u32);
+                }
+            }
+            Self::Spin(row) => {
+                if let Ok(v) = text.parse::<f64>() {
+                    row.set_value(v);
+                }
+            }
+        }
+    }
 }
 
 pub fn present(
@@ -462,10 +530,10 @@ pub fn present(
             {
                 let fields = state.borrow().fields.clone();
                 for option in &provider.options {
-                    let value = fields
-                        .get(&option.name)
-                        .map(|row| row.text().to_string())
-                        .unwrap_or_default();
+                    let Some(widget) = fields.get(&option.name) else {
+                        continue;
+                    };
+                    let value = widget.display_text();
                     if let Err(e) = crate::validators::validate_option(option, &value) {
                         let err = adw::AlertDialog::new(Some("Invalid provider field"), Some(&e));
                         err.add_response("ok", "OK");
@@ -473,6 +541,17 @@ pub fn present(
                         return;
                     }
                 }
+            }
+            let mount_status = crate::path_inspection::inspect_local_path(&mount.text());
+            if let Err(e) = crate::path_inspection::ensure_path(
+                &mount_status,
+                &mount.text(),
+                ctx.client().as_ref(),
+            ) {
+                let err = adw::AlertDialog::new(Some("Could not create mount path"), Some(&e));
+                err.add_response("ok", "OK");
+                err.present(Some(&dialog));
+                return;
             }
             let mut params = collect_params(&state);
             if let Some(client) = ctx.client() {
@@ -576,33 +655,52 @@ fn rebuild_fields(
     include_advanced: bool,
 ) {
     for row in state.borrow().fields.values() {
-        basic.remove(row);
-        advanced.remove(row);
+        row.remove_from(basic);
+        row.remove_from(advanced);
     }
     state.borrow_mut().fields.clear();
     let Some(provider) = provider else {
         return;
     };
+    let vendor = current_vendor(state);
     for option in provider.basic_options() {
-        let row = option_row(parent, ctx, option);
-        basic.add(&row);
+        if !matches_provider_rule(&option.provider, &vendor) && !option.provider.is_empty() {
+            continue;
+        }
+        let row = option_row(parent, ctx, option, &vendor);
+        row.add_to(basic);
         state.borrow_mut().fields.insert(option.name.clone(), row);
     }
     if include_advanced {
         for option in provider.advanced_options() {
-            let row = option_row(parent, ctx, option);
-            advanced.add(&row);
+            if !matches_provider_rule(&option.provider, &vendor) && !option.provider.is_empty() {
+                continue;
+            }
+            let row = option_row(parent, ctx, option, &vendor);
+            row.add_to(advanced);
             state.borrow_mut().fields.insert(option.name.clone(), row);
         }
     }
+}
+
+fn current_vendor(state: &Rc<RefCell<WizardState>>) -> String {
+    for key in ["provider", "vendor"] {
+        if let Some(row) = state.borrow().fields.get(key) {
+            let text = row.display_text();
+            if !text.is_empty() {
+                return text;
+            }
+        }
+    }
+    String::new()
 }
 
 fn option_row(
     _parent: &impl IsA<gtk::Widget>,
     ctx: &AppCtx,
     option: &ProviderOption,
-) -> adw::EntryRow {
-    let row = adw::EntryRow::new();
+    vendor: &str,
+) -> FieldWidget {
     let title = if option.required {
         format!("{} *", option.name)
     } else if option.advanced {
@@ -610,50 +708,138 @@ fn option_row(
     } else {
         option.name.clone()
     };
-    row.set_title(&title);
-    if !option.help.is_empty() {
-        row.set_tooltip_text(Some(&option.help));
-    }
+    let examples = if vendor.is_empty() {
+        option.examples.clone()
+    } else {
+        filter_examples(&option.examples, &option.example_providers, vendor)
+    };
     let restrict = ctx.settings.borrow().general.restrict;
-    if option.is_password || (restrict && crate::restrict::is_sensitive_key(&option.name)) {
-        if let Some(child) = row.first_child() {
-            if let Ok(editable) = child.downcast::<gtk::Text>() {
-                editable.set_visibility(false);
+    let kind = control_kind(&option.type_name, option.exclusive, examples.len());
+    let initial = if !option.default_str.is_empty() {
+        option.default_str.clone()
+    } else if !option.value.is_null() {
+        machine_to_human(&option.value, &option.type_name, "")
+    } else {
+        examples.first().map(|(v, _)| v.clone()).unwrap_or_default()
+    };
+    match kind {
+        ControlKind::Bool => {
+            let row = adw::SwitchRow::new();
+            row.set_title(&title);
+            row.set_subtitle(&option.help);
+            row.set_active(initial.eq_ignore_ascii_case("true"));
+            FieldWidget::Switch(row)
+        }
+        ControlKind::Tristate => {
+            let values = Rc::new(vec![
+                "unset".to_string(),
+                "true".to_string(),
+                "false".to_string(),
+            ]);
+            let row = adw::ComboRow::new();
+            row.set_title(&title);
+            row.set_subtitle(&option.help);
+            row.set_model(Some(&gtk::StringList::new(&["unset", "true", "false"])));
+            if let Some(idx) = values.iter().position(|v| v.eq_ignore_ascii_case(&initial)) {
+                row.set_selected(idx as u32);
             }
+            FieldWidget::Combo(row, values)
         }
-        if restrict {
-            row.set_text("");
-            return row;
+        ControlKind::Select => {
+            let labels: Vec<String> = examples
+                .iter()
+                .map(|(v, h)| {
+                    if h.is_empty() {
+                        v.clone()
+                    } else {
+                        format!("{v} — {h}")
+                    }
+                })
+                .collect();
+            let values = Rc::new(examples.iter().map(|(v, _)| v.clone()).collect::<Vec<_>>());
+            let row = adw::ComboRow::new();
+            row.set_title(&title);
+            row.set_subtitle(&option.help);
+            let refs: Vec<&str> = labels.iter().map(|s| s.as_str()).collect();
+            row.set_model(Some(&gtk::StringList::new(&refs)));
+            if let Some(idx) = values.iter().position(|v| v == &initial) {
+                row.set_selected(idx as u32);
+            }
+            FieldWidget::Combo(row, values)
         }
-    }
-    if !option.default_str.is_empty() {
-        row.set_text(&option.default_str);
-    } else if let Some((example, _)) = option.examples.first() {
-        row.set_text(example);
-    }
-    if crate::media::is_path_field(&option.name, &option.help) {
-        super::dialogs::attach_path_picker(ctx, &row, crate::picker::FilePickerConfig::folders());
-        apply_path_usage(&row);
-        row.connect_changed(|row| apply_path_usage(row));
-    }
-    {
-        let option = option.clone();
-        row.connect_changed(move |row| {
-            match crate::validators::validate_option(&option, &row.text()) {
-                Ok(()) => {
-                    row.remove_css_class("error");
-                    if !option.help.is_empty() {
-                        row.set_tooltip_text(Some(&option.help));
+        ControlKind::Numeric => {
+            let row = adw::SpinRow::with_range(-1_000_000_000.0, 1_000_000_000.0, 1.0);
+            row.set_title(&title);
+            row.set_subtitle(&option.help);
+            if let Ok(v) = initial.parse::<f64>() {
+                row.set_value(v);
+            }
+            row.set_digits(if crate::value_mapper::is_float_type(&option.type_name) {
+                3
+            } else {
+                0
+            });
+            FieldWidget::Spin(row)
+        }
+        ControlKind::Input => {
+            let row = adw::EntryRow::new();
+            row.set_title(&title);
+            if !option.help.is_empty() {
+                row.set_tooltip_text(Some(&option.help));
+            }
+            if option.is_password || (restrict && crate::restrict::is_sensitive_key(&option.name)) {
+                if let Some(child) = row.first_child() {
+                    if let Ok(editable) = child.downcast::<gtk::Text>() {
+                        editable.set_visibility(false);
                     }
                 }
-                Err(msg) => {
-                    row.add_css_class("error");
-                    row.set_tooltip_text(Some(&msg));
+                if restrict {
+                    return FieldWidget::Entry(row);
                 }
+                let obscure = gtk::Button::from_icon_name("dialog-password-symbolic");
+                obscure.set_valign(gtk::Align::Center);
+                obscure.set_tooltip_text(Some("Obscure"));
+                let ctx = ctx.clone();
+                let target = row.clone();
+                obscure.connect_clicked(move |_| {
+                    if let Some(client) = ctx.client() {
+                        if let Ok(out) = client.obscure(&target.text()) {
+                            target.set_text(&out);
+                        }
+                    }
+                });
+                row.add_suffix(&obscure);
             }
-        });
+            row.set_text(&initial);
+            if crate::media::is_path_field(&option.name, &option.help) {
+                super::dialogs::attach_path_picker(
+                    ctx,
+                    &row,
+                    crate::picker::FilePickerConfig::folders(),
+                );
+                apply_path_usage(&row);
+                row.connect_changed(|row| apply_path_usage(row));
+            }
+            {
+                let option = option.clone();
+                row.connect_changed(move |row| {
+                    match crate::validators::validate_option(&option, &row.text()) {
+                        Ok(()) => {
+                            row.remove_css_class("error");
+                            if !option.help.is_empty() {
+                                row.set_tooltip_text(Some(&option.help));
+                            }
+                        }
+                        Err(msg) => {
+                            row.add_css_class("error");
+                            row.set_tooltip_text(Some(&msg));
+                        }
+                    }
+                });
+            }
+            FieldWidget::Entry(row)
+        }
     }
-    row
 }
 
 fn apply_path_usage(row: &adw::EntryRow) {
@@ -664,9 +850,25 @@ fn apply_path_usage(row: &adw::EntryRow) {
 }
 
 fn apply_dump_to_wizard_fields(state: &Rc<RefCell<WizardState>>, params: &Value) {
+    let type_by_name: HashMap<String, String> = state
+        .borrow()
+        .providers
+        .iter()
+        .flat_map(|p| {
+            p.options
+                .iter()
+                .map(|o| (o.name.clone(), o.type_name.clone()))
+        })
+        .collect();
     for (name, row) in state.borrow().fields.iter() {
-        if let Some(text) = crate::providers::dump_field_text(params, name) {
-            row.set_text(&text);
+        if let Some(raw) = params.get(name) {
+            let type_name = type_by_name
+                .get(name)
+                .map(String::as_str)
+                .unwrap_or("string");
+            row.set_display_text(&machine_to_human(raw, type_name, ""));
+        } else if let Some(text) = crate::providers::dump_field_text(params, name) {
+            row.set_display_text(&text);
         }
     }
 }
@@ -755,10 +957,21 @@ fn apply_existing_meta(
 }
 
 fn collect_params(state: &Rc<RefCell<WizardState>>) -> Value {
+    let options: HashMap<String, ProviderOption> = state
+        .borrow()
+        .providers
+        .iter()
+        .flat_map(|p| p.options.iter().cloned().map(|o| (o.name.clone(), o)))
+        .collect();
     let mut map = serde_json::Map::new();
     for (key, row) in state.borrow().fields.iter() {
-        let text = row.text().to_string();
-        if !text.is_empty() {
+        let text = row.display_text();
+        if let Some(option) = options.get(key) {
+            if is_default_display(&text, option) {
+                continue;
+            }
+            map.insert(key.clone(), human_to_machine(&text, &option.type_name));
+        } else if !text.is_empty() {
             map.insert(key.clone(), json!(text));
         }
     }

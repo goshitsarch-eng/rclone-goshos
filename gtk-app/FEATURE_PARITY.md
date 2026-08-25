@@ -202,6 +202,13 @@ This client is the GTK 4 + libadwaita rewrite of the Angular/Tauri desktop UI. I
 - Provider-field and remote-name validators (Angular `ValidatorRegistryService`)
 - Preparing-upload jobs appear immediately after `start_job` (status `preparing`)
 - Standalone dialog CLI (`--dialog TYPE --dialog-data JSON --dialog-result PATH`) and spawn when the setting is on
+- Typed provider controls (bool/tristate/select/numeric) plus rclone value mapper (`humanToMachine` / `machineToHuman`)
+- Provider `Examples[].Provider` filtering and per-password obscure
+- Remote dest path inspection via `operations/stat` + auto-mkdir for WillCreate paths
+- Profile in-use guards (block delete while jobs/mounts/serves are active)
+- Rclone flags editor lists the full `options/info` set (no 40-flag cap)
+- Standalone dialog result file is polled so the parent refreshes after close
+- Default mount/bisync directory templates (`{home}/rclone-manager/{remote}`)
 
 ## Still deepening toward pixel-level Angular parity
 
@@ -210,4 +217,4 @@ This client is the GTK 4 + libadwaita rewrite of the Angular/Tauri desktop UI. I
 - Live GUI session against rclone rcd (no display in this environment)
 - Native share portal / Android share intent (Linux uses `--share-intake` + Files banner)
 - Full UI string translation (most GTK labels still English)
-- Standalone dialog child-window result binding beyond the JSON result file
+- Preferences pending-restart batch and per-setting reset

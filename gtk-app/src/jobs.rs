@@ -182,9 +182,17 @@ pub fn default_source(remote: &str, rclone: &Value) -> String {
 
 pub fn default_dest(remote: &str, rclone: &Value, op: OperationType) -> String {
     first_path(&flatten_rclone(rclone), DEST_KEYS).unwrap_or_else(|| match op {
-        OperationType::Mount => crate::path_inspection::suggest_default_mount_path(
+        OperationType::Mount => crate::path_inspection::suggest_default_op_path(
             remote,
+            OperationType::Mount,
             &crate::store::AppStore::default(),
+            "",
+        ),
+        OperationType::Bisync => crate::path_inspection::suggest_default_op_path(
+            remote,
+            OperationType::Bisync,
+            &crate::store::AppStore::default(),
+            "",
         ),
         OperationType::Serve => "127.0.0.1:0".into(),
         _ => remote_fs(remote, ""),
@@ -533,6 +541,67 @@ pub fn find_active_mount<'a>(
     mounts
         .iter()
         .find(|m| m.fs == remote || m.fs == prefix || m.fs.starts_with(&prefix))
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct ProfileUsage {
+    pub jobs: usize,
+    pub mounts: usize,
+    pub serves: usize,
+}
+
+impl ProfileUsage {
+    pub fn blocked(&self) -> bool {
+        self.jobs + self.mounts + self.serves > 0
+    }
+
+    pub fn summary(&self) -> String {
+        format!(
+            "{} job(s), {} mount(s), {} serve(s) still using this profile",
+            self.jobs, self.mounts, self.serves
+        )
+    }
+}
+
+pub fn profile_usage(
+    jobs: &[JobInfo],
+    mounts: &[MountedRemote],
+    serves: &[ServeItem],
+    remote: &str,
+    profile: &str,
+    op: Option<OperationType>,
+) -> ProfileUsage {
+    let mut usage = ProfileUsage::default();
+    match op {
+        Some(op) => {
+            if find_active_job(jobs, remote, op, profile).is_some() {
+                usage.jobs = 1;
+            }
+            if op == OperationType::Mount && find_active_mount(mounts, remote).is_some() {
+                usage.mounts = 1;
+            }
+            if op == OperationType::Serve && find_active_serve(serves, remote).is_some() {
+                usage.serves = 1;
+            }
+        }
+        None => {
+            usage.jobs = jobs
+                .iter()
+                .filter(|job| {
+                    job_is_running(job)
+                        && job_belongs_to_remote(job, remote)
+                        && (job.profile.is_empty() || job.profile == profile)
+                })
+                .count();
+            if find_active_mount(mounts, remote).is_some() {
+                usage.mounts = 1;
+            }
+            if find_active_serve(serves, remote).is_some() {
+                usage.serves = 1;
+            }
+        }
+    }
+    usage
 }
 
 pub fn find_active_serve<'a>(serves: &'a [ServeItem], remote: &str) -> Option<&'a ServeItem> {
@@ -1382,6 +1451,18 @@ mod tests {
         let mut job = running_job(1, "drive", "sync", "default");
         job.origin = "quick-run".into();
         assert!(find_active_quick_run(&[job], &qr).is_some());
+        let usage = profile_usage(
+            &jobs,
+            &mounts,
+            &serves,
+            "drive",
+            "nightly",
+            Some(OperationType::Sync),
+        );
+        assert!(usage.blocked());
+        assert_eq!(usage.jobs, 1);
+        let idle = profile_usage(&[], &[], &[], "drive", "default", Some(OperationType::Sync));
+        assert!(!idle.blocked());
     }
 
     #[test]
