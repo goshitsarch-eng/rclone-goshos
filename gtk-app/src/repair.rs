@@ -33,6 +33,45 @@ pub fn fuse_available() -> bool {
         || which::which("fusermount").is_ok()
 }
 
+/// rclone 1.60 `mount` execs `fusermount`. Debian/Ubuntu fuse3 only ships `fusermount3`.
+pub fn fusermount_shim_script(fuse3: &Path) -> String {
+    format!("#!/bin/sh\nexec {} \"$@\"\n", fuse3.display())
+}
+
+pub fn path_with_shim(shim_dir: &Path, current: Option<&str>) -> String {
+    match current.filter(|s| !s.is_empty()) {
+        Some(existing) => format!("{}:{existing}", shim_dir.display()),
+        None => shim_dir.display().to_string(),
+    }
+}
+
+/// Write `config_dir/bin/fusermount` → `fusermount3` when the classic name is missing.
+pub fn ensure_fusermount_shim_dir() -> Option<PathBuf> {
+    if which::which("fusermount").is_ok() {
+        return None;
+    }
+    let fuse3 = which::which("fusermount3").ok()?;
+    let dir = AppSettings::config_dir().join("bin");
+    std::fs::create_dir_all(&dir).ok()?;
+    let shim = dir.join("fusermount");
+    std::fs::write(&shim, fusermount_shim_script(&fuse3)).ok()?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let _ = std::fs::set_permissions(&shim, std::fs::Permissions::from_mode(0o755));
+    }
+    Some(dir)
+}
+
+pub fn apply_fusermount_path(cmd: &mut std::process::Command) {
+    if let Some(dir) = ensure_fusermount_shim_dir() {
+        cmd.env(
+            "PATH",
+            path_with_shim(&dir, std::env::var("PATH").ok().as_deref()),
+        );
+    }
+}
+
 pub fn config_path_from_flags(flags: &[String]) -> Option<String> {
     flags.iter().find_map(|flag| {
         flag.strip_prefix("--config=")
@@ -272,6 +311,24 @@ pub fn banner_from_issues(issues: &[RepairIssue]) -> Option<&RepairIssue> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn fusermount_shim_script_execs_fuse3() {
+        let script = fusermount_shim_script(Path::new("/usr/bin/fusermount3"));
+        assert!(script.starts_with("#!/bin/sh"));
+        assert!(script.contains("exec /usr/bin/fusermount3 \"$@\""));
+    }
+
+    #[test]
+    fn path_with_shim_prepends_dir() {
+        let dir = Path::new("/tmp/rclone-manager-bin");
+        assert_eq!(
+            path_with_shim(dir, Some("/usr/bin:/bin")),
+            "/tmp/rclone-manager-bin:/usr/bin:/bin"
+        );
+        assert_eq!(path_with_shim(dir, None), "/tmp/rclone-manager-bin");
+        assert_eq!(path_with_shim(dir, Some("")), "/tmp/rclone-manager-bin");
+    }
 
     #[test]
     fn detects_missing_binary() {

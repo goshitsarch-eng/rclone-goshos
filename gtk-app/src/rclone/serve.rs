@@ -376,6 +376,7 @@ fn spawn_legacy_serve(
         cmd.env(key, value);
     }
     crate::security::apply_config_password_env(&mut cmd, &ctx.password);
+    crate::repair::apply_fusermount_path(&mut cmd);
     cmd.stdout(Stdio::null()).stderr(Stdio::null());
     let mut child = cmd
         .spawn()

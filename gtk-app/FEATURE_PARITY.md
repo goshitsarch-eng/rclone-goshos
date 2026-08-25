@@ -507,3 +507,4 @@ This client is the GTK 4 + libadwaita desktop UI. It talks to a local `rclone rc
 
 - Workflow builder (stub in both apps)
 - Pixel-level layouts vs Angular CSS (non-blocking for functional parity)
+- Live remotes verified (testdrive / dummyexport). Mount needs `fusermount` or the fuse3 shim.
