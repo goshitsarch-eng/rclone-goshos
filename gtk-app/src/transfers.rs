@@ -31,12 +31,8 @@ pub fn parse_transfer_row(item: &Value) -> TransferRow {
         .and_then(|x| x.as_str())
         .unwrap_or("transfer")
         .to_string();
-    let src = first_str(item, &["srcFs", "src", "group"])
-        .map(|s| join_fs_name(&s, &name))
-        .unwrap_or_else(|| name.clone());
-    let dst = first_str(item, &["dstFs", "dst"])
-        .map(|s| join_fs_name(&s, &name))
-        .unwrap_or_default();
+    let src = resolve_transfer_path(item, &["srcFs"], &["srcRemote"], &["src"], &name);
+    let dst = resolve_transfer_path(item, &["dstFs"], &["dstRemote"], &["dst"], &name);
     let percentage = item
         .get("percentage")
         .or_else(|| item.get("percentageComplete"))
@@ -120,6 +116,46 @@ fn first_str(item: &Value, keys: &[&str]) -> Option<String> {
         .map(|s| s.to_string())
 }
 
+/// Resolve a transfer side from rclone (`srcFs`+`srcRemote`) or a snapshot
+/// that already stored a complete `src`/`dst` path. Never treats `group` as a
+/// filesystem — that produced captions like `e.txt/e.txt`.
+fn resolve_transfer_path(
+    item: &Value,
+    fs_keys: &[&str],
+    remote_keys: &[&str],
+    path_keys: &[&str],
+    name: &str,
+) -> String {
+    let remote = first_str(item, remote_keys);
+    if let Some(fs) = first_str(item, fs_keys) {
+        return join_fs_name(&fs, remote.as_deref().unwrap_or(name));
+    }
+    if let Some(path) = first_str(item, path_keys) {
+        if path_already_complete(&path, name) {
+            return path;
+        }
+        return join_fs_name(&path, name);
+    }
+    name.to_string()
+}
+
+pub fn path_already_complete(path: &str, name: &str) -> bool {
+    if path.is_empty() {
+        return false;
+    }
+    if !name.is_empty()
+        && (path == name
+            || path.ends_with(&format!("/{name}"))
+            || path.ends_with(&format!("\\{name}")))
+    {
+        return true;
+    }
+    path.contains('/')
+        || path.contains('\\')
+        || crate::path_kind::is_windows_local_path(path)
+        || crate::path_kind::is_unc_path(path)
+}
+
 pub fn join_fs_name(fs: &str, name: &str) -> String {
     if name.is_empty() {
         return fs.to_string();
@@ -127,10 +163,14 @@ pub fn join_fs_name(fs: &str, name: &str) -> String {
     if fs.is_empty() || fs == "/" {
         return name.to_string();
     }
-    if name.contains(':') || name.starts_with('/') {
+    if name.contains(':')
+        || name.starts_with('/')
+        || crate::path_kind::is_windows_local_path(name)
+        || crate::path_kind::is_unc_path(name)
+    {
         return name.to_string();
     }
-    if fs.ends_with(':') || fs.ends_with('/') {
+    if fs.ends_with(':') || fs.ends_with('/') || fs.ends_with('\\') {
         format!("{fs}{name}")
     } else {
         format!("{fs}/{name}")
@@ -258,6 +298,38 @@ pub fn can_download_dest(dst: &str, job_type: &str, completed: bool) -> bool {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn snapshot_rows_keep_complete_paths() {
+        let row = parse_transfer_row(&json!({
+            "name": "e.txt",
+            "src": "/tmp/gtk-upload-test/e.txt",
+            "dst": "e.txt",
+            "size": 4
+        }));
+        assert_eq!(row.src, "/tmp/gtk-upload-test/e.txt");
+        assert_eq!(row.dst, "e.txt");
+        let grouped = parse_transfer_row(&json!({
+            "name": "e.txt",
+            "srcFs": "/",
+            "srcRemote": "/tmp/gtk-upload-test/e.txt",
+            "dstFs": "testdrive:",
+            "dstRemote": "e.txt",
+            "src": "/tmp/gtk-upload-test/e.txt",
+            "dst": "testdrive:e.txt"
+        }));
+        assert_eq!(grouped.src, "/tmp/gtk-upload-test/e.txt");
+        assert_eq!(grouped.dst, "testdrive:e.txt");
+        let windows = parse_transfer_row(&json!({
+            "name": "a.jpg",
+            "src": r"C:\Users\me\a.jpg",
+            "dst": r"D:\out\a.jpg"
+        }));
+        assert_eq!(windows.src, r"C:\Users\me\a.jpg");
+        assert_eq!(windows.dst, r"D:\out\a.jpg");
+        assert!(!path_already_complete("drive", "a.jpg"));
+        assert!(path_already_complete("/tmp/e.txt", "e.txt"));
+    }
 
     #[test]
     fn parses_transfer_and_joins_fs() {

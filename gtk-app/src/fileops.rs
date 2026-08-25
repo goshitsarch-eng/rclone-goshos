@@ -708,6 +708,36 @@ fn json_boolish(value: Option<&Value>) -> bool {
     }
 }
 
+/// Free and total bytes for a local path via `df` (Tauri `get_local_disk_usage`).
+pub fn local_path_disk_usage(path: &str) -> Option<(u64, u64)> {
+    let trimmed = path.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    let mut probe = std::path::PathBuf::from(trimmed);
+    while !probe.as_os_str().is_empty() && !probe.exists() {
+        if !probe.pop() {
+            break;
+        }
+    }
+    if probe.as_os_str().is_empty() {
+        return None;
+    }
+    let output = std::process::Command::new("df")
+        .args(["-B1", "--output=size,avail,target"])
+        .arg(&probe)
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let text = String::from_utf8(output.stdout).ok()?;
+    parse_df_output(&text)
+        .into_values()
+        .next()
+        .map(|(total, avail)| (avail, total))
+}
+
 /// Parse `df -B1 --output=size,avail,target` (header + rows).
 pub fn parse_df_output(text: &str) -> std::collections::HashMap<String, (u64, u64)> {
     let mut out = std::collections::HashMap::new();
@@ -1063,5 +1093,11 @@ mod tests {
         let df = parse_df_output("1B-blocks Avail Mounted on\n100 40 /\n200 80 /media/usb\n");
         assert_eq!(df["/"], (100, 40));
         assert_eq!(df["/media/usb"], (200, 80));
+        let usage = local_path_disk_usage("/tmp");
+        assert!(usage.is_some());
+        let (free, total) = usage.unwrap();
+        assert!(total > 0);
+        assert!(free <= total);
+        assert!(local_path_disk_usage("").is_none());
     }
 }

@@ -1690,18 +1690,24 @@ fn option_row(
                     &row,
                     crate::picker::FilePickerConfig::folders(),
                 );
-                apply_path_usage(&row);
-                row.connect_changed(|row| apply_path_usage(row));
+                let engine_os = ctx.engine_os();
+                apply_path_usage(&row, &engine_os, Some(&option.help));
+                {
+                    let engine_os = engine_os.clone();
+                    let help = option.help.clone();
+                    row.connect_changed(move |row| {
+                        apply_path_usage(row, &engine_os, Some(&help));
+                    });
+                }
             }
             {
                 let option = option.clone();
+                let engine_os = ctx.engine_os();
                 row.connect_changed(move |row| {
                     match crate::validators::validate_option(&option, &row.text()) {
                         Ok(()) => {
                             row.remove_css_class("error");
-                            if !option.help.is_empty() {
-                                row.set_tooltip_text(Some(&option.help));
-                            }
+                            apply_path_usage(row, &engine_os, Some(&option.help));
                         }
                         Err(msg) => {
                             row.add_css_class("error");
@@ -1715,10 +1721,31 @@ fn option_row(
     }
 }
 
-fn apply_path_usage(row: &adw::EntryRow) {
+fn apply_path_usage(row: &adw::EntryRow, engine_os: &str, help: Option<&str>) {
     let text = row.text().to_string();
-    if let Some(usage) = crate::media::local_path_usage(&text) {
-        row.set_tooltip_text(Some(&format!("{usage} — {}", text)));
+    let mut parts = Vec::new();
+    if let Some(help) = help.filter(|s| !s.is_empty()) {
+        parts.push(help.to_string());
+    }
+    if engine_os.eq_ignore_ascii_case(std::env::consts::OS) {
+        if let Some(usage) = crate::media::local_path_usage(&text) {
+            parts.push(usage);
+        }
+        if let Some((free, total)) = crate::fileops::local_path_disk_usage(&text) {
+            parts.push(format!(
+                "{} / {}",
+                crate::rclone::format_bytes(free as i64),
+                crate::rclone::format_bytes(total as i64)
+            ));
+        }
+    }
+    if parts.is_empty() {
+        return;
+    }
+    if text.is_empty() {
+        row.set_tooltip_text(Some(&parts.join(" · ")));
+    } else {
+        row.set_tooltip_text(Some(&format!("{} — {text}", parts.join(" · "))));
     }
 }
 

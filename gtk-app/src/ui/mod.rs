@@ -160,7 +160,11 @@ impl AppCtx {
     pub fn open_typed_path(&self, current_remote: &str, raw: &str) {
         let typed = crate::path_kind::parse_typed_path(raw, current_remote);
         if typed.kind == crate::path_kind::PathKind::Local {
-            let _ = open::that(&typed.path);
+            if self.engine_os().eq_ignore_ascii_case(std::env::consts::OS) {
+                let _ = open::that(&typed.path);
+                return;
+            }
+            self.request_browse("local", &typed.path);
             return;
         }
         self.request_browse(&typed.remote, &typed.path);
@@ -349,9 +353,17 @@ impl AppCtx {
             .clone()
             .unwrap_or_else(|| match config.mode {
                 crate::picker::PickerMode::Remote => String::new(),
-                _ => dirs::home_dir()
-                    .map(|p| p.to_string_lossy().into_owned())
-                    .unwrap_or_else(|| "/".into()),
+                _ => {
+                    if !self.engine_os().eq_ignore_ascii_case(std::env::consts::OS) {
+                        crate::path_kind::default_local_root(&self.engine_os())
+                    } else {
+                        dirs::home_dir()
+                            .map(|p| p.to_string_lossy().into_owned())
+                            .unwrap_or_else(|| {
+                                crate::path_kind::default_local_root(&self.engine_os())
+                            })
+                    }
+                }
             });
         let (remote, path) = if loc.is_empty() {
             ("local".into(), String::new())

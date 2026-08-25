@@ -1111,9 +1111,10 @@ fn start_app_update(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, toast: adw::Toa
         .as_ref()
         .and_then(|u| u.download_url.clone())
     else {
-        toast.add_toast(adw::Toast::new(
+        toast.add_toast(adw::Toast::new(&ctx.t_or(
+            "updates.noUpdateAvailable",
             "No download is available for this platform",
-        ));
+        )));
         return;
     };
     let Ok(exe) = std::env::current_exe() else {
@@ -1123,16 +1124,26 @@ fn start_app_update(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, toast: adw::Toa
         )));
         return;
     };
+    let installing = ctx.t_or(
+        "updates.confirmApply.title",
+        "Installing application update",
+    );
     run_download_job(
         parent,
         ctx,
         toast,
-        "Installing application update",
+        &installing,
         move |cancel, progress| crate::updater::install_app_update(&url, &exe, cancel, progress),
         |ctx, path, toast| {
-            toast.add_toast(adw::Toast::new(&format!("Installed {}", path.display())));
+            toast.add_toast(adw::Toast::new(&ctx.tf(
+                "updates.installSuccess",
+                &[("path", &path.display().to_string())],
+            )));
             if let Err(e) = crate::platform::relaunch() {
-                ctx.notify("Relaunch failed", &e);
+                ctx.notify(
+                    &ctx.tf("backendErrors.updater.relaunchFailed", &[("error", &e)]),
+                    "",
+                );
             } else {
                 std::process::exit(0);
             }
@@ -1144,18 +1155,19 @@ fn start_rclone_update(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, toast: adw::
     let dest = dirs::home_dir()
         .unwrap_or_else(|| std::path::PathBuf::from("."))
         .join(".local/bin");
+    let installing = ctx.t_or("repair.progress.installingRclone", "Installing rclone");
     run_download_job(
         parent,
         ctx,
         toast,
-        "Installing rclone",
+        &installing,
         move |cancel, progress| crate::updater::install_rclone_binary_ex(&dest, cancel, progress),
         |ctx, path, toast| {
             ctx.settings.borrow_mut().core.rclone_binary = path.to_string_lossy().into_owned();
             ctx.persist();
-            toast.add_toast(adw::Toast::new(&format!(
-                "Installed rclone to {}",
-                path.display()
+            toast.add_toast(adw::Toast::new(&ctx.t_or(
+                "updates.installSuccess",
+                "Update installed. Please restart the app.",
             )));
         },
     );
@@ -2970,25 +2982,48 @@ pub fn alerts(parent: &impl IsA<gtk::Widget>, ctx: AppCtx) {
     history.add_css_class("boxed-list");
     let search = gtk::SearchEntry::new();
     search.set_placeholder_text(Some(&ctx.t_or("alerts.search", "Search history")));
-    let severity =
-        gtk::DropDown::from_strings(&["All", "Critical", "High", "Average", "Warning", "Info"]);
-    let event_kind = gtk::DropDown::from_strings(&[
-        "All kinds",
-        "Job",
-        "Serve",
-        "Mount",
-        "Engine",
-        "Update",
-        "Automation",
-        "System",
+    let all = ctx.t("common.all");
+    let severity_critical = ctx.t("alerts.severityLevels.critical");
+    let severity_high = ctx.t("alerts.severityLevels.high");
+    let severity_average = ctx.t("alerts.severityLevels.average");
+    let severity_warning = ctx.t("alerts.severityLevels.warning");
+    let severity_info = ctx.t("alerts.severityLevels.info");
+    let severity = gtk::DropDown::from_strings(&[
+        all.as_str(),
+        severity_critical.as_str(),
+        severity_high.as_str(),
+        severity_average.as_str(),
+        severity_warning.as_str(),
+        severity_info.as_str(),
     ]);
-    let ack_state = gtk::DropDown::from_strings(&["All", "Open", "Acknowledged"]);
+    let all_kinds = ctx.t_or("alerts.rule.allEvents", "All kinds");
+    let event_job = ctx.t("alerts.events.job");
+    let event_serve = ctx.t("alerts.events.serve");
+    let event_mount = ctx.t("alerts.events.mount");
+    let event_engine = ctx.t("alerts.events.engine");
+    let event_update = ctx.t("alerts.events.update");
+    let event_automation = ctx.t("alerts.events.automation");
+    let event_system = ctx.t("alerts.events.system");
+    let event_kind = gtk::DropDown::from_strings(&[
+        all_kinds.as_str(),
+        event_job.as_str(),
+        event_serve.as_str(),
+        event_mount.as_str(),
+        event_engine.as_str(),
+        event_update.as_str(),
+        event_automation.as_str(),
+        event_system.as_str(),
+    ]);
+    let ack_open = ctx.t_or("alerts.unacknowledged", "Open");
+    let ack_done = ctx.t("common.acknowledge");
+    let ack_state =
+        gtk::DropDown::from_strings(&[all.as_str(), ack_open.as_str(), ack_done.as_str()]);
     let (remote_vals, profile_vals, backend_vals) = ctx.store.borrow().alert_filter_values();
-    let mut remote_labels = vec!["All remotes".to_string()];
+    let mut remote_labels = vec![ctx.t_or("alerts.rule.remoteFilter", "All remotes")];
     remote_labels.extend(remote_vals);
-    let mut profile_labels = vec!["All profiles".to_string()];
+    let mut profile_labels = vec![ctx.t_or("alerts.rule.profileFilter", "All profiles")];
     profile_labels.extend(profile_vals);
-    let mut backend_labels = vec!["All backends".to_string()];
+    let mut backend_labels = vec![ctx.t_or("alerts.rule.backendFilter", "All backends")];
     backend_labels.extend(backend_vals);
     let remote_refs: Vec<&str> = remote_labels.iter().map(|s| s.as_str()).collect();
     let profile_refs: Vec<&str> = profile_labels.iter().map(|s| s.as_str()).collect();
@@ -2996,7 +3031,7 @@ pub fn alerts(parent: &impl IsA<gtk::Widget>, ctx: AppCtx) {
     let remote_dd = gtk::DropDown::from_strings(&remote_refs);
     let profile_dd = gtk::DropDown::from_strings(&profile_refs);
     let backend_dd = gtk::DropDown::from_strings(&backend_refs);
-    let mut rule_labels = vec!["All rules".to_string()];
+    let mut rule_labels = vec![ctx.t_or("alerts.ruleLabel", "All rules")];
     rule_labels.extend(
         ctx.store
             .borrow()
@@ -3004,7 +3039,7 @@ pub fn alerts(parent: &impl IsA<gtk::Widget>, ctx: AppCtx) {
             .iter()
             .map(|rule| rule.id.clone()),
     );
-    let mut origin_labels = vec!["All origins".to_string()];
+    let mut origin_labels = vec![ctx.t_or("alerts.origins.title", "All origins")];
     for event in &ctx.store.borrow().alert_history {
         if !event.origin.is_empty() && !origin_labels.iter().any(|item| item == &event.origin) {
             origin_labels.push(event.origin.clone());
@@ -3982,9 +4017,12 @@ pub fn delete_remote(
         return;
     }
     let plan = crate::store::plan_delete_remote(name, &ctx.store.borrow(), &ctx.snapshot.borrow());
-    let dialog = adw::AlertDialog::new(Some("Delete remote"), Some(&plan.summary()));
-    dialog.add_response("cancel", "Cancel");
-    dialog.add_response("delete", "Delete");
+    let dialog = adw::AlertDialog::new(
+        Some(&ctx.t_or("home.deleteRemote.title", "Delete Remote")),
+        Some(&plan.summary()),
+    );
+    dialog.add_response("cancel", &ctx.t("common.cancel"));
+    dialog.add_response("delete", &ctx.t("common.delete"));
     dialog.set_response_appearance("delete", adw::ResponseAppearance::Destructive);
     let name = name.to_string();
     dialog.connect_response(None, move |_, response| {
@@ -9753,14 +9791,17 @@ pub(crate) fn attach_path_kind(
         other.as_str(),
     ])));
     let remote = current_remote.to_string();
+    let engine_os = ctx.engine_os();
     let kind = crate::path_kind::infer_path_kind(&row.text(), &remote);
     combo.set_selected(crate::path_kind::kind_index(kind));
     {
         let row = row.clone();
         let remote = remote.clone();
+        let engine_os = engine_os.clone();
         combo.connect_selected_notify(move |combo| {
             let kind = crate::path_kind::kind_from_index(combo.selected());
-            let rewritten = crate::path_kind::rewrite_path_for_kind(&row.text(), &remote, kind);
+            let rewritten =
+                crate::path_kind::rewrite_path_for_kind_os(&row.text(), &remote, kind, &engine_os);
             if rewritten != row.text().as_str() {
                 row.set_text(&rewritten);
             }

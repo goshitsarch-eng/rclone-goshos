@@ -464,6 +464,11 @@ This client is the GTK 4 + libadwaita rewrite of the Angular/Tauri desktop UI. I
 - Transfer-activity empty states use `shared.transferActivity.empty.*` hints
 - Path kinds treat Windows drive letters (`C:\`, `D:/`) and UNC `\\server\share` as local
 - Extra RC backends persist `os`/`arch` from `core/version` on Test; `AppCtx::engine_os()` exposes the active backend OS
+- Job-detail transfer captions use rclone `srcFs`/`srcRemote` (and snapshot equivalents) and do not re-join a basename onto an already-complete path
+- Path helpers match Angular `normalizeForPlatform` / `isTrulyLocalPath` / `splitLocalForStat`; pickers, Job Open, and path-kind rewrite honor `engine_os()`
+- Local Windows/UNC breadcrumbs keep `C:\` and `\\server\share` form
+- Wizard path fields show item count plus `df` free/total when the engine OS is this host
+- About/Updates and Delete Remote / Alerts filter chrome use existing i18n keys
 
 ## Still deepening toward pixel-level Angular parity
 

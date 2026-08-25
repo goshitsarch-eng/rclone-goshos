@@ -868,8 +868,12 @@ pub fn transfer_snapshot_from_items(items: &[crate::fileops::TransferItem]) -> V
                     .unwrap_or(item.src.as_str());
                 json!({
                     "name": name,
-                    "src": item.src,
-                    "dst": item.dst,
+                    "srcFs": item.src_fs,
+                    "srcRemote": item.src,
+                    "dstFs": item.dst_fs,
+                    "dstRemote": item.dst,
+                    "src": crate::transfers::join_fs_name(&item.src_fs, &item.src),
+                    "dst": crate::transfers::join_fs_name(&item.dst_fs, &item.dst),
                     "size": size,
                     "bytes": 0,
                     "percentage": 0
@@ -2878,6 +2882,26 @@ mod tests {
         decorate_job_transfers(&mut finished, &map, &[]);
         assert_eq!(finished.completed.as_array().unwrap().len(), 2);
         assert!(finished.transferring.as_array().unwrap().is_empty());
+    }
+
+    #[test]
+    fn snapshot_emits_rclone_src_dst_fields() {
+        let items = [crate::fileops::TransferItem {
+            src_fs: "/".into(),
+            src: "/tmp/gtk-upload-test/e.txt".into(),
+            dst_fs: "testdrive:".into(),
+            dst: "e.txt".into(),
+            cut: false,
+        }];
+        let snapshot = transfer_snapshot_from_items(&items);
+        let row = crate::transfers::parse_transfer_row(&snapshot[0]);
+        assert_eq!(snapshot[0]["srcFs"], "/");
+        assert_eq!(snapshot[0]["srcRemote"], "/tmp/gtk-upload-test/e.txt");
+        assert_eq!(snapshot[0]["dstFs"], "testdrive:");
+        assert_eq!(snapshot[0]["dstRemote"], "e.txt");
+        assert_eq!(row.src, "/tmp/gtk-upload-test/e.txt");
+        assert_eq!(row.dst, "testdrive:e.txt");
+        assert_ne!(row.dst, "e.txt/e.txt");
     }
 
     #[test]
