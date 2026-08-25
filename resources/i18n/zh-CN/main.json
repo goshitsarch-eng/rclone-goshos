@@ -2372,6 +2372,14 @@
       "size": "大小",
       "modified": "修改时间"
     },
+    "filters": {
+      "folders": "文件夹",
+      "images": "图片",
+      "videos": "视频",
+      "audio": "音频",
+      "documents": "文档",
+      "archives": "压缩包"
+    },
     "empty": {
       "noStarred": "暂无收藏文件",
       "folderEmpty": "文件夹为空"

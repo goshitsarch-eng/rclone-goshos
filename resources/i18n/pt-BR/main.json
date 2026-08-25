@@ -2372,6 +2372,14 @@
       "size": "Tamanho",
       "modified": "Modificado"
     },
+    "filters": {
+      "folders": "Pastas",
+      "images": "Imagens",
+      "videos": "Vídeos",
+      "audio": "Áudio",
+      "documents": "Documentos",
+      "archives": "Arquivos compactados"
+    },
     "empty": {
       "noStarred": "Arquivos Sem Estrela",
       "folderEmpty": "O diretório está vazio"

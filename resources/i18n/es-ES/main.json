@@ -2372,6 +2372,14 @@
       "size": "Tamaño",
       "modified": "Modificado"
     },
+    "filters": {
+      "folders": "Carpetas",
+      "images": "Imágenes",
+      "videos": "Vídeos",
+      "audio": "Audio",
+      "documents": "Documentos",
+      "archives": "Archivos"
+    },
     "empty": {
       "noStarred": "No hay archivos favoritos",
       "folderEmpty": "La carpeta está vacía"

@@ -4012,6 +4012,123 @@ pub fn item_order(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, on_done: Rc<dyn F
     dialog.present(Some(parent));
 }
 
+pub fn configure_sidebar(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, on_done: Rc<dyn Fn()>) {
+    let dialog = adw::Dialog::new();
+    dialog.set_title(&ctx.t_or("nautilus.sidebar.configureTitle", "Configure Sidebar Items"));
+    dialog.set_content_width(480);
+    dialog.set_content_height(520);
+    let hint = gtk::Label::new(Some(&ctx.t_or(
+        "nautilus.sidebar.configureDescription",
+        "Drag items to reorder them, or toggle the eye icon to hide or show drives and cloud remotes in the sidebar.",
+    )));
+    hint.set_wrap(true);
+    hint.add_css_class("dim-label");
+    hint.set_xalign(0.0);
+    let list = gtk::ListBox::new();
+    list.add_css_class("boxed-list");
+    let mut ids: Vec<String> = ctx.snapshot.borrow().local_disks.clone();
+    ids.extend(
+        ctx.snapshot
+            .borrow()
+            .remotes
+            .iter()
+            .map(|r| format!("{}:", r.name)),
+    );
+    let order = ctx.settings.borrow().nautilus.sidebar_drive_order.clone();
+    ids = crate::settings::sort_sidebar_ids(ids, &order);
+    let names = Rc::new(RefCell::new(ids));
+    let hidden = Rc::new(RefCell::new(
+        ctx.settings.borrow().nautilus.sidebar_hidden_drives.clone(),
+    ));
+    fn refill(
+        list: &gtk::ListBox,
+        names: &Rc<RefCell<Vec<String>>>,
+        hidden: &Rc<RefCell<Vec<String>>>,
+    ) {
+        while let Some(child) = list.first_child() {
+            list.remove(&child);
+        }
+        let current = names.borrow().clone();
+        for (idx, name) in current.iter().enumerate() {
+            let row = adw::SwitchRow::new();
+            row.set_title(name);
+            row.set_active(!hidden.borrow().iter().any(|n| n == name));
+            {
+                let hidden = hidden.clone();
+                let name = name.clone();
+                row.connect_active_notify(move |row| {
+                    let mut hidden = hidden.borrow_mut();
+                    hidden.retain(|n| n != &name);
+                    if !row.is_active() {
+                        hidden.push(name.clone());
+                    }
+                });
+            }
+            let up = gtk::Button::from_icon_name("go-up-symbolic");
+            up.set_valign(gtk::Align::Center);
+            up.set_sensitive(idx > 0);
+            let down = gtk::Button::from_icon_name("go-down-symbolic");
+            down.set_valign(gtk::Align::Center);
+            down.set_sensitive(idx + 1 < current.len());
+            {
+                let names = names.clone();
+                let hidden = hidden.clone();
+                let list = list.clone();
+                up.connect_clicked(move |_| {
+                    {
+                        let mut names = names.borrow_mut();
+                        if idx > 0 {
+                            names.swap(idx, idx - 1);
+                        }
+                    }
+                    refill(&list, &names, &hidden);
+                });
+            }
+            {
+                let names = names.clone();
+                let hidden = hidden.clone();
+                let list = list.clone();
+                down.connect_clicked(move |_| {
+                    {
+                        let mut names = names.borrow_mut();
+                        if idx + 1 < names.len() {
+                            names.swap(idx, idx + 1);
+                        }
+                    }
+                    refill(&list, &names, &hidden);
+                });
+            }
+            row.add_suffix(&up);
+            row.add_suffix(&down);
+            list.append(&row);
+        }
+    }
+    refill(&list, &names, &hidden);
+    let save = gtk::Button::with_label(&ctx.t("common.save"));
+    save.add_css_class("suggested-action");
+    {
+        let ctx = ctx.clone();
+        let dialog = dialog.clone();
+        save.connect_clicked(move |_| {
+            ctx.settings.borrow_mut().nautilus.sidebar_drive_order = names.borrow().clone();
+            ctx.settings.borrow_mut().nautilus.sidebar_hidden_drives = hidden.borrow().clone();
+            ctx.persist();
+            on_done();
+            dialog.close();
+        });
+    }
+    let box_ = gtk::Box::new(gtk::Orientation::Vertical, 8);
+    box_.set_margin_start(12);
+    box_.set_margin_end(12);
+    box_.set_margin_top(8);
+    box_.set_margin_bottom(12);
+    box_.append(&hint);
+    box_.append(&scrolled_list(&list));
+    box_.append(&save);
+    dialog.set_child(Some(&box_));
+    dialog.present(Some(parent));
+}
+
 fn scrolled_list(list: &gtk::ListBox) -> gtk::ScrolledWindow {
     let scroll = gtk::ScrolledWindow::new();
     scroll.set_vexpand(true);

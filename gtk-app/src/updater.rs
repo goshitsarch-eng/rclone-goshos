@@ -120,6 +120,41 @@ pub fn install_rclone_binary(dest_dir: &std::path::Path) -> Result<std::path::Pa
     Err("rclone binary not found in download archive".into())
 }
 
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct PendingUpdates {
+    pub app: Option<UpdateInfo>,
+    pub rclone: Option<UpdateInfo>,
+}
+
+impl PendingUpdates {
+    pub fn has_updates(&self) -> bool {
+        self.app.as_ref().is_some_and(|u| u.available)
+            || self.rclone.as_ref().is_some_and(|u| u.available)
+    }
+
+    pub fn banner_kind(&self) -> &'static str {
+        let app = self.app.as_ref().is_some_and(|u| u.available);
+        let rclone = self.rclone.as_ref().is_some_and(|u| u.available);
+        match (app, rclone) {
+            (true, true) => "all",
+            (true, false) => "app",
+            (false, true) => "rclone",
+            (false, false) => "none",
+        }
+    }
+}
+
+pub fn filter_skipped(info: Option<UpdateInfo>, skipped: &[String]) -> Option<UpdateInfo> {
+    info.filter(|u| {
+        u.available
+            && !skipped.iter().any(|s| {
+                normalize_version(s) == normalize_version(&u.latest)
+                    || s == &u.latest
+                    || s == &u.current
+            })
+    })
+}
+
 pub fn fetch_rclone_update(current: &str) -> Result<UpdateInfo, String> {
     let resp = ureq::get("https://downloads.rclone.org/version.txt")
         .set("User-Agent", "rclone-manager-gtk")
@@ -168,5 +203,23 @@ mod tests {
     #[test]
     fn linux_zip_url_is_official() {
         assert!(rclone_linux_zip_url().contains("downloads.rclone.org"));
+    }
+
+    #[test]
+    fn pending_updates_classify_banner() {
+        let app = UpdateInfo {
+            current: "0.3.2".into(),
+            latest: "v0.4.0".into(),
+            url: "https://example.com".into(),
+            available: true,
+        };
+        let pending = PendingUpdates {
+            app: Some(app.clone()),
+            rclone: None,
+        };
+        assert!(pending.has_updates());
+        assert_eq!(pending.banner_kind(), "app");
+        assert!(filter_skipped(Some(app.clone()), &["v0.4.0"]).is_none());
+        assert!(filter_skipped(Some(app), &["0.3.1"]).is_some());
     }
 }

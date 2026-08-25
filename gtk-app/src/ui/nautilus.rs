@@ -55,6 +55,7 @@ pub struct NautilusView {
     last_listing: Rc<RefCell<Vec<DirEntry>>>,
     picker_bar: gtk::Box,
     picker_label: gtk::Label,
+    filter_bar: gtk::Box,
 }
 
 impl NautilusView {
@@ -71,7 +72,9 @@ impl NautilusView {
         let forward = gtk::Button::from_icon_name("go-next-symbolic");
         forward.set_tooltip_text(Some(&ctx.t_or("common.continue", "Forward")));
         let up = gtk::Button::from_icon_name("go-up-symbolic");
-        up.set_tooltip_text(Some("Parent folder"));
+        up.set_tooltip_text(Some(
+            &ctx.t_or("nautilus.contextMenu.goUp", "Parent folder"),
+        ));
         let reload = gtk::Button::from_icon_name("view-refresh-symbolic");
         reload.set_tooltip_text(Some(&ctx.t_or("common.refresh", "Reload")));
         let path_entry = gtk::Entry::new();
@@ -95,21 +98,33 @@ impl NautilusView {
         path_stack.add_named(&search_entry, Some("search"));
         path_stack.set_visible_child_name("crumbs");
         let new_folder = gtk::Button::from_icon_name("folder-new-symbolic");
-        new_folder.set_tooltip_text(Some("New folder"));
+        new_folder.set_tooltip_text(Some(
+            &ctx.t_or("nautilus.contextMenu.newFolder", "New folder"),
+        ));
         let upload = gtk::Button::from_icon_name("document-send-symbolic");
-        upload.set_tooltip_text(Some("Upload files"));
+        upload.set_tooltip_text(Some(
+            &ctx.t_or("nautilus.contextMenu.uploadFiles", "Upload files"),
+        ));
         let layout = gtk::Button::from_icon_name("view-list-symbolic");
-        layout.set_tooltip_text(Some("Toggle list / grid"));
+        layout.set_tooltip_text(Some(
+            &ctx.t_or("nautilus.view.toggleLayout", "Toggle list / grid"),
+        ));
         let hidden_btn = gtk::Button::from_icon_name("view-conceal-symbolic");
-        hidden_btn.set_tooltip_text(Some("Toggle hidden files"));
+        hidden_btn.set_tooltip_text(Some(
+            &ctx.t_or("nautilus.view.showHidden", "Toggle hidden files"),
+        ));
         let sort_btn = gtk::Button::from_icon_name("view-sort-ascending-symbolic");
-        sort_btn.set_tooltip_text(Some("Sort listing"));
+        sort_btn.set_tooltip_text(Some(&ctx.t_or("nautilus.sort.label", "Sort listing")));
         let new_tab = gtk::Button::from_icon_name("tab-new-symbolic");
-        new_tab.set_tooltip_text(Some("New tab"));
+        new_tab.set_tooltip_text(Some(&ctx.t_or("nautilus.contextMenu.newTab", "New tab")));
         let split_btn = gtk::Button::from_icon_name("view-dual-symbolic");
-        split_btn.set_tooltip_text(Some("Toggle split view"));
+        split_btn.set_tooltip_text(Some(
+            &ctx.t_or("nautilus.contextMenu.toggleSplit", "Toggle split view"),
+        ));
         let star = gtk::Button::from_icon_name("starred-symbolic");
-        star.set_tooltip_text(Some("Bookmark this folder"));
+        star.set_tooltip_text(Some(
+            &ctx.t_or("nautilus.titles.bookmarks", "Bookmark this folder"),
+        ));
 
         toolbar.append(&back);
         toolbar.append(&forward);
@@ -187,17 +202,27 @@ impl NautilusView {
         picker_bar.set_margin_end(8);
         picker_bar.set_margin_bottom(4);
         picker_bar.set_visible(false);
-        let picker_label = gtk::Label::new(Some("Select a location"));
+        let picker_label = gtk::Label::new(Some(
+            &ctx.t_or("nautilus.titles.selectItems", "Select a location"),
+        ));
         picker_label.set_hexpand(true);
         picker_label.set_xalign(0.0);
         picker_bar.append(&picker_label);
-        let picker_cancel = gtk::Button::with_label("Cancel");
+        let picker_cancel = gtk::Button::with_label(&ctx.t("common.cancel"));
         picker_bar.append(&picker_cancel);
-        let picker_select = gtk::Button::with_label("Select");
+        let picker_select = gtk::Button::with_label(&ctx.t_or("common.ok", "Select"));
         picker_select.add_css_class("suggested-action");
         picker_bar.append(&picker_select);
 
+        let filter_bar = gtk::Box::new(gtk::Orientation::Horizontal, 4);
+        filter_bar.add_css_class("linked");
+        filter_bar.set_margin_start(8);
+        filter_bar.set_margin_end(8);
+        filter_bar.set_margin_bottom(4);
+        filter_bar.set_halign(gtk::Align::Start);
+
         root.append(&toolbar);
+        root.append(&filter_bar);
         root.append(&picker_bar);
         root.append(&split);
         root.append(&ops_scroll);
@@ -247,7 +272,9 @@ impl NautilusView {
             last_listing: Rc::new(RefCell::new(Vec::new())),
             picker_bar,
             picker_label,
+            filter_bar,
         };
+        view.refresh_type_filters();
 
         {
             let view = view.clone();
@@ -611,6 +638,57 @@ impl NautilusView {
         self.root.add_controller(controller);
     }
 
+    fn refresh_type_filters(&self) {
+        while let Some(child) = self.filter_bar.first_child() {
+            self.filter_bar.remove(&child);
+        }
+        let current = self.ctx.settings.borrow().nautilus.file_type_filter.clone();
+        let chips = [
+            ("all", self.ctx.t("common.all")),
+            (
+                "folders",
+                self.ctx.t_or("nautilus.filters.folders", "Folders"),
+            ),
+            ("images", self.ctx.t_or("nautilus.filters.images", "Images")),
+            ("videos", self.ctx.t_or("nautilus.filters.videos", "Videos")),
+            ("audio", self.ctx.t_or("nautilus.filters.audio", "Audio")),
+            (
+                "documents",
+                self.ctx.t_or("nautilus.filters.documents", "Documents"),
+            ),
+            (
+                "archives",
+                self.ctx.t_or("nautilus.filters.archives", "Archives"),
+            ),
+        ];
+        let mut group: Option<gtk::ToggleButton> = None;
+        for (id, label) in chips {
+            let btn = gtk::ToggleButton::with_label(&label);
+            if let Some(first) = &group {
+                btn.set_group(Some(first));
+            } else {
+                group = Some(btn.clone());
+            }
+            let active = (current.is_empty() && id == "all") || current == id;
+            btn.set_active(active);
+            let view = self.clone();
+            let id = id.to_string();
+            btn.connect_toggled(move |btn| {
+                if !btn.is_active() {
+                    return;
+                }
+                view.ctx.settings.borrow_mut().nautilus.file_type_filter = if id == "all" {
+                    String::new()
+                } else {
+                    id.clone()
+                };
+                view.ctx.persist();
+                view.reload();
+            });
+            self.filter_bar.append(&btn);
+        }
+    }
+
     fn reload_sidebar(&self) {
         while let Some(child) = self.sidebar.first_child() {
             self.sidebar.remove(&child);
@@ -626,11 +704,47 @@ impl NautilusView {
                 .as_ref()
                 .is_none_or(|cfg| crate::picker::is_location_allowed(loc, cfg))
         };
+        let hidden = self
+            .ctx
+            .settings
+            .borrow()
+            .nautilus
+            .sidebar_hidden_drives
+            .clone();
+        let order = self
+            .ctx
+            .settings
+            .borrow()
+            .nautilus
+            .sidebar_drive_order
+            .clone();
+        let configure = adw::ActionRow::new();
+        configure.set_title(
+            &self
+                .ctx
+                .t_or("nautilus.sidebar.configureTitle", "Configure Sidebar Items"),
+        );
+        configure.set_activatable(true);
+        configure.add_prefix(&gtk::Image::from_icon_name("emblem-system-symbolic"));
+        {
+            let view = self.clone();
+            configure.connect_activated(move |_| {
+                if let Some(win) = view.root.root().and_downcast::<gtk::Window>() {
+                    let view = view.clone();
+                    dialogs::configure_sidebar(
+                        &win,
+                        view.ctx.clone(),
+                        Rc::new(move || view.reload_sidebar()),
+                    );
+                }
+            });
+        }
+        self.sidebar.append(&configure);
         self.add_side_header(&self.ctx.t_or("nautilus.titles.starred", "Starred"));
         for star in &self.ctx.settings.borrow().nautilus.starred {
             if let Some(path) = star.get("path").and_then(|x| x.as_str()) {
-                if allowed(path) {
-                    self.add_side_row(path, path);
+                if allowed(path) && !crate::settings::sidebar_id_hidden(&hidden, path) {
+                    self.add_side_row(path, path, "starred-symbolic");
                 }
             }
         }
@@ -640,22 +754,41 @@ impl NautilusView {
                 mark.get("name").and_then(|x| x.as_str()),
                 mark.get("path").and_then(|x| x.as_str()),
             ) {
-                if allowed(path) {
-                    self.add_side_row(name, path);
+                if allowed(path) && !crate::settings::sidebar_id_hidden(&hidden, path) {
+                    self.add_side_row(name, path, "user-bookmarks-symbolic");
                 }
             }
         }
         self.add_side_header(&self.ctx.t_or("nautilus.titles.local", "Local"));
-        for disk in &self.ctx.snapshot.borrow().local_disks {
-            if allowed(disk) {
-                self.add_side_row(disk, disk);
+        let disks = crate::settings::sort_sidebar_ids(
+            self.ctx.snapshot.borrow().local_disks.clone(),
+            &order,
+        );
+        for disk in disks {
+            if allowed(&disk) && !crate::settings::sidebar_id_hidden(&hidden, &disk) {
+                self.add_side_row(&disk, &disk, "drive-harddisk-symbolic");
             }
         }
         self.add_side_header(&self.ctx.t_or("nautilus.titles.cloud", "Cloud remotes"));
-        for remote in &self.ctx.snapshot.borrow().remotes {
+        let mut remotes: Vec<_> = self.ctx.snapshot.borrow().remotes.clone();
+        remotes.sort_by_key(|r| {
+            let loc = format!("{}:", r.name);
+            order
+                .iter()
+                .position(|n| n == &loc || n == &r.name)
+                .unwrap_or(usize::MAX)
+        });
+        for remote in remotes {
             let loc = format!("{}:", remote.name);
-            if allowed(&loc) {
-                self.add_side_row(&remote.name, &loc);
+            if allowed(&loc)
+                && !crate::settings::sidebar_id_hidden(&hidden, &loc)
+                && !crate::settings::sidebar_id_hidden(&hidden, &remote.name)
+            {
+                self.add_side_row(
+                    &remote.name,
+                    &loc,
+                    crate::providers::provider_icon(&remote.r#type),
+                );
             }
         }
     }
@@ -667,10 +800,11 @@ impl NautilusView {
         self.sidebar.append(&row);
     }
 
-    fn add_side_row(&self, title: &str, target: &str) {
+    fn add_side_row(&self, title: &str, target: &str, icon: &str) {
         let row = adw::ActionRow::new();
         row.set_title(title);
         row.set_activatable(true);
+        row.add_prefix(&gtk::Image::from_icon_name(icon));
         let view = self.clone();
         let target = target.to_string();
         row.connect_activated(move |_| view.navigate_to(&target));
@@ -761,12 +895,18 @@ impl NautilusView {
         }
         if let Some(req) = self.ctx.pending_picker.borrow().as_ref() {
             let text = match req.config.selection {
-                crate::picker::PickerSelection::Folders => "Select a folder",
-                crate::picker::PickerSelection::Files => "Select a file",
-                crate::picker::PickerSelection::Both => "Select a file or folder",
+                crate::picker::PickerSelection::Folders => self
+                    .ctx
+                    .t_or("nautilus.titles.selectFolder", "Select a folder"),
+                crate::picker::PickerSelection::Files => {
+                    self.ctx.t_or("nautilus.titles.selectFile", "Select a file")
+                }
+                crate::picker::PickerSelection::Both => self
+                    .ctx
+                    .t_or("nautilus.titles.selectItems", "Select a file or folder"),
             };
             if self.picker_label.text().as_str() != text {
-                self.picker_label.set_text(text);
+                self.picker_label.set_text(&text);
             }
         }
     }
@@ -906,6 +1046,12 @@ impl NautilusView {
                 if !query.is_empty() {
                     entries.retain(|e| e.name.to_lowercase().contains(&query));
                 }
+                let type_filter = self.ctx.settings.borrow().nautilus.file_type_filter.clone();
+                if !type_filter.is_empty() && type_filter != "all" {
+                    entries.retain(|e| {
+                        FileTypeCategory::from_name(&e.name, e.is_dir).matches_filter(&type_filter)
+                    });
+                }
                 sort_entries(
                     &mut entries,
                     &self.ctx.settings.borrow().nautilus.sort_by,
@@ -943,23 +1089,60 @@ impl NautilusView {
             } else {
                 &self.list_right
             };
+            list.append(&self.column_header_row());
             for entry in entries {
                 list.append(&self.entry_row(entry.clone()));
             }
         }
     }
 
+    fn column_header_row(&self) -> adw::ActionRow {
+        let row = adw::ActionRow::new();
+        row.set_title(&self.ctx.t_or("nautilus.columns.name", "Name"));
+        row.set_activatable(false);
+        row.set_sensitive(false);
+        row.set_widget_name("column-header");
+        let size = gtk::Label::new(Some(&self.ctx.t_or("nautilus.columns.size", "Size")));
+        size.add_css_class("dim-label");
+        size.set_width_chars(10);
+        size.set_xalign(1.0);
+        let modified = gtk::Label::new(Some(
+            &self.ctx.t_or("nautilus.columns.modified", "Modified"),
+        ));
+        modified.add_css_class("dim-label");
+        modified.set_width_chars(18);
+        modified.set_xalign(1.0);
+        row.add_suffix(&size);
+        row.add_suffix(&modified);
+        row
+    }
+
     fn entry_row(&self, entry: DirEntry) -> adw::ActionRow {
         let row = adw::ActionRow::new();
         row.set_title(&entry.name);
+        row.set_widget_name(&entry.name);
         let category = FileTypeCategory::from_name(&entry.name, entry.is_dir);
         row.set_subtitle(&if entry.is_dir {
-            "Folder".into()
+            self.ctx.t_or("nautilus.selection.folder", "Folder")
         } else {
             format!("{} · {}", format_bytes(entry.size), entry.mod_time)
         });
         let icon = gtk::Image::from_icon_name(category.icon_name());
         row.add_prefix(&icon);
+        let size = gtk::Label::new(Some(&if entry.is_dir {
+            String::new()
+        } else {
+            format_bytes(entry.size)
+        }));
+        size.add_css_class("dim-label");
+        size.set_width_chars(10);
+        size.set_xalign(1.0);
+        let modified = gtk::Label::new(Some(&entry.mod_time));
+        modified.add_css_class("dim-label");
+        modified.set_width_chars(18);
+        modified.set_xalign(1.0);
+        row.add_suffix(&size);
+        row.add_suffix(&modified);
         row.set_activatable(true);
         row
     }
@@ -1298,6 +1481,12 @@ impl NautilusView {
         if let Ok(mut entries) = client.list_dir(&fs, &remote_path) {
             if !self.ctx.settings.borrow().nautilus.show_hidden {
                 entries.retain(|e| !e.name.starts_with('.'));
+            }
+            let type_filter = self.ctx.settings.borrow().nautilus.file_type_filter.clone();
+            if !type_filter.is_empty() && type_filter != "all" {
+                entries.retain(|e| {
+                    FileTypeCategory::from_name(&e.name, e.is_dir).matches_filter(&type_filter)
+                });
             }
             self.populate_entries(&entries, false);
         }
@@ -1751,53 +1940,162 @@ impl NautilusView {
                 FileTypeCategory::Archive
             )
         });
-        let mut items: Vec<(&str, &str)> = vec![
-            ("Open", "open"),
-            ("Open native", "native"),
-            ("Open in new tab", "tab"),
-            ("Refresh", "reload"),
-            ("Copy", "copy"),
-            ("Cut", "cut"),
-            ("Paste", "paste"),
-            ("Copy path", "copypath"),
+        let rename_label = if selected.len() > 1 {
+            self.ctx
+                .t_or("nautilus.contextMenu.renameMultiple", "Rename Multiple...")
+        } else {
+            self.ctx.t_or("nautilus.contextMenu.rename", "Rename")
+        };
+        let send_label = {
+            let registered =
+                crate::platform::is_send_to_registered(&current.remote, Some(&current.path));
+            if registered {
+                self.ctx.t_or(
+                    "nautilus.contextMenu.removeFromSendTo",
+                    "Remove from File Manager Menu",
+                )
+            } else {
+                self.ctx.t_or(
+                    "nautilus.contextMenu.addToSendTo",
+                    "Add to File Manager Menu",
+                )
+            }
+        };
+        let mut items: Vec<(String, &str)> = vec![
+            (self.ctx.t_or("nautilus.contextMenu.open", "Open"), "open"),
+            (
+                self.ctx
+                    .t_or("nautilus.contextMenu.openNative", "Open native"),
+                "native",
+            ),
+            (
+                self.ctx
+                    .t_or("nautilus.contextMenu.openNewTab", "Open in New Tab"),
+                "tab",
+            ),
+            (
+                self.ctx.t_or("nautilus.contextMenu.refresh", "Refresh"),
+                "reload",
+            ),
+            (self.ctx.t_or("nautilus.contextMenu.copy", "Copy"), "copy"),
+            (self.ctx.t_or("nautilus.contextMenu.cut", "Cut"), "cut"),
+            (
+                self.ctx.t_or("nautilus.contextMenu.paste", "Paste"),
+                "paste",
+            ),
+            (
+                self.ctx.t_or("nautilus.contextMenu.copyPath", "Copy Path"),
+                "copypath",
+            ),
         ];
         if public_ok {
-            items.push(("Copy public link", "public"));
+            items.push((
+                self.ctx
+                    .t_or("nautilus.contextMenu.copyPublicLink", "Copy Public Link"),
+                "public",
+            ));
         }
+        items.push((
+            self.ctx
+                .t_or("nautilus.contextMenu.copyUrl", "Copy URL into folder…"),
+            "copyurl",
+        ));
+        items.push((rename_label, "rename"));
         items.extend([
-            ("Copy URL into folder…", "copyurl"),
-            ("Rename", "rename"),
-            ("Delete", "delete"),
-            ("Properties", "props"),
-            ("Download…", "download"),
-            ("New folder", "mkdir"),
+            (
+                self.ctx.t_or("nautilus.contextMenu.delete", "Delete"),
+                "delete",
+            ),
+            (
+                self.ctx
+                    .t_or("nautilus.contextMenu.properties", "Properties"),
+                "props",
+            ),
+            (
+                self.ctx.t_or("nautilus.contextMenu.download", "Download…"),
+                "download",
+            ),
+            (
+                self.ctx
+                    .t_or("nautilus.contextMenu.newFolder", "New Folder"),
+                "mkdir",
+            ),
         ]);
         if !selected.is_empty() {
-            items.push(("New folder with selected", "mkdirsel"));
+            items.push((
+                self.ctx.t_or(
+                    "nautilus.contextMenu.createFolderWithItems",
+                    "New Folder with Selection...",
+                ),
+                "mkdirsel",
+            ));
         }
         items.extend([
-            ("Upload folder…", "uploaddir"),
-            ("Bookmark", "star"),
-            ("Create archive", "archive"),
+            (
+                self.ctx
+                    .t_or("nautilus.contextMenu.uploadFolder", "Upload Folder"),
+                "uploaddir",
+            ),
+            (
+                self.ctx.t_or("nautilus.contextMenu.bookmark", "Bookmark"),
+                "star",
+            ),
+            (
+                self.ctx.t_or("nautilus.contextMenu.compress", "Compress"),
+                "archive",
+            ),
         ]);
         if archive_selected {
-            items.push(("Browse archive contents", "archivelist"));
-            items.push(("Extract archive…", "extract"));
+            items.push((
+                self.ctx.t_or(
+                    "nautilus.contextMenu.browseArchive",
+                    "Browse archive contents",
+                ),
+                "archivelist",
+            ));
+            items.push((
+                self.ctx
+                    .t_or("nautilus.contextMenu.extract", "Extract archive…"),
+                "extract",
+            ));
         }
-        items.push(("Remove empty folders", "rmdirs"));
+        items.push((
+            self.ctx.t_or(
+                "nautilus.contextMenu.removeEmptyDirs",
+                "Remove empty folders",
+            ),
+            "rmdirs",
+        ));
         if cleanup_ok {
-            items.push(("Empty trash / cleanup", "cleanup"));
+            items.push((
+                self.ctx
+                    .t_or("nautilus.contextMenu.emptyTrash", "Empty Trash"),
+                "cleanup",
+            ));
         }
         items.extend([
-            ("Send to…", "sendto"),
-            ("Share…", "share"),
-            ("Undo", "undo"),
-            ("Redo", "redo"),
-            ("Paste from system clipboard", "syspaste"),
-            ("Detach tab", "detach"),
+            (send_label, "sendto"),
+            (
+                self.ctx.t_or("nautilus.contextMenu.share", "Share"),
+                "share",
+            ),
+            (self.ctx.t_or("nautilus.contextMenu.undo", "Undo"), "undo"),
+            (self.ctx.t_or("nautilus.contextMenu.redo", "Redo"), "redo"),
+            (
+                self.ctx.t_or(
+                    "nautilus.contextMenu.pasteSystem",
+                    "Paste from system clipboard",
+                ),
+                "syspaste",
+            ),
+            (
+                self.ctx
+                    .t_or("nautilus.contextMenu.detachTab", "Detach Tab"),
+                "detach",
+            ),
         ]);
         for (label, action) in items {
-            let btn = gtk::Button::with_label(label);
+            let btn = gtk::Button::with_label(&label);
             let view = self.clone();
             btn.connect_clicked(move |_| match action {
                 "open" => {
@@ -2257,9 +2555,15 @@ fn fs_remote(remote: &str, path: &str) -> (String, String) {
 }
 
 fn row_name(row: &gtk::ListBoxRow) -> Option<String> {
-    row.child()
-        .and_then(|child| child.downcast::<adw::ActionRow>().ok())
-        .map(|r| r.title().to_string())
+    let child = row.child()?.downcast::<adw::ActionRow>().ok()?;
+    if child.widget_name() == "column-header" {
+        return None;
+    }
+    let named = child.widget_name().to_string();
+    if !named.is_empty() && named != "AdwActionRow" {
+        return Some(named);
+    }
+    Some(child.title().to_string())
 }
 
 fn make_flow() -> gtk::FlowBox {

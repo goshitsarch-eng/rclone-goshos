@@ -184,6 +184,21 @@ pub struct ConfigStep {
     pub done: bool,
 }
 
+/// Adwaita symbolic icon for an rclone provider type (dashboard + Files sidebar).
+pub fn provider_icon(provider: &str) -> &'static str {
+    match provider.trim().to_ascii_lowercase().as_str() {
+        "local" | "memory" => "drive-harddisk-symbolic",
+        "s3" | "aws" | "b2" | "wasabi" | "minio" | "storj" | "swift" | "azureblob"
+        | "azurefiles" | "internetarchive" => "network-server-symbolic",
+        "ftp" | "sftp" | "http" | "webdav" | "hdfs" => "network-server-symbolic",
+        "crypt" => "security-high-symbolic",
+        "alias" | "combine" | "union" => "emblem-symbolic-link",
+        "cache" | "chunker" | "compress" | "hasher" => "package-x-generic-symbolic",
+        "" => "folder-remote-symbolic",
+        _ => "folder-remote-symbolic",
+    }
+}
+
 pub fn parse_config_step(value: &Value) -> ConfigStep {
     let state = value
         .get("State")
@@ -251,5 +266,14 @@ mod tests {
         assert_eq!(step.option.unwrap().name, "client_id");
         let done = parse_config_step(&json!({}));
         assert!(done.done);
+    }
+
+    #[test]
+    fn provider_icon_maps_known_types() {
+        assert_eq!(provider_icon("local"), "drive-harddisk-symbolic");
+        assert_eq!(provider_icon("S3"), "network-server-symbolic");
+        assert_eq!(provider_icon("crypt"), "security-high-symbolic");
+        assert_eq!(provider_icon("drive"), "folder-remote-symbolic");
+        assert_eq!(provider_icon(""), "folder-remote-symbolic");
     }
 }

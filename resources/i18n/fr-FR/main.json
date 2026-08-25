@@ -2372,6 +2372,14 @@
       "size": "Taille",
       "modified": "Modifié"
     },
+    "filters": {
+      "folders": "Dossiers",
+      "images": "Images",
+      "videos": "Vidéos",
+      "audio": "Audio",
+      "documents": "Documents",
+      "archives": "Archives"
+    },
     "empty": {
       "noStarred": "Aucun fichier favori",
       "folderEmpty": "Le dossier est vide"

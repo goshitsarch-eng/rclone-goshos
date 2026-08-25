@@ -2372,6 +2372,14 @@
       "size": "Boyut",
       "modified": "Değiştirilme"
     },
+    "filters": {
+      "folders": "Klasörler",
+      "images": "Görseller",
+      "videos": "Videolar",
+      "audio": "Ses",
+      "documents": "Belgeler",
+      "archives": "Arşivler"
+    },
     "empty": {
       "noStarred": "Yıldızlı Dosya Yok",
       "folderEmpty": "Klasör Boş"

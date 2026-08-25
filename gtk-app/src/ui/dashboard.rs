@@ -220,6 +220,10 @@ impl Dashboard {
             box_.set_margin_bottom(6);
             box_.set_margin_start(8);
             box_.set_margin_end(8);
+            let icon = gtk::Image::from_icon_name(crate::providers::provider_icon(&remote.r#type));
+            icon.set_pixel_size(16);
+            icon.set_tooltip_text(Some(&remote.r#type));
+            box_.append(&icon);
             let name = gtk::Label::new(Some(&if remote.hidden {
                 format!("{} (hidden)", remote.name)
             } else {
@@ -439,6 +443,9 @@ impl Dashboard {
                 remote.r#type,
                 remote_state_label(remote.mounted, remote.serving, remote.job_active),
                 if remote.hidden { " · hidden" } else { "" }
+            ));
+            row.add_prefix(&gtk::Image::from_icon_name(
+                crate::providers::provider_icon(&remote.r#type),
             ));
             if remote.hidden {
                 row.add_css_class("dim-label");
@@ -875,6 +882,11 @@ impl Dashboard {
         title.set_xalign(0.0);
         title.set_hexpand(true);
         header.append(&back);
+        if let Some(remote) = remote.as_ref() {
+            let icon = gtk::Image::from_icon_name(crate::providers::provider_icon(&remote.r#type));
+            icon.set_pixel_size(28);
+            header.append(&icon);
+        }
         header.append(&title);
         self.detail.append(&header);
 

@@ -86,9 +86,47 @@ pub fn present_main(app: &adw::Application, ctx: AppCtx) {
         Some(&ctx.t_or("titlebar.menu.detailedRemote", "Detailed Remote")),
         Some("win.remote-config"),
     );
-    add_menu.append(Some("New Quick Run"), Some("win.quick-run-new"));
+    add_menu.append(
+        Some(&ctx.t_or("titlebar.menu.quickRun", "New Quick Run")),
+        Some("win.quick-run-new"),
+    );
     add_btn.set_menu_model(Some(&add_menu));
     header.pack_start(&add_btn);
+
+    let conn_btn = gtk::Button::from_icon_name("network-offline-symbolic");
+    conn_btn.set_tooltip_text(Some(
+        &ctx.t_or("titlebar.internetStatus", "Internet connection status"),
+    ));
+    conn_btn.add_css_class("flat");
+    {
+        let ctx = ctx.clone();
+        let window = window.clone();
+        let conn_btn_sync = conn_btn.clone();
+        conn_btn.connect_clicked(move |_| {
+            ctx.refresh_connection();
+            sync_connection_button(&ctx, &conn_btn_sync);
+            let urls = ctx.settings.borrow().core.connection_check_urls.clone();
+            let results = crate::connection::check_links(&urls, 2);
+            let body = results
+                .iter()
+                .map(|r| {
+                    format!(
+                        "{} — {} ({})",
+                        r.url,
+                        if r.ok { "ok" } else { "fail" },
+                        r.detail
+                    )
+                })
+                .collect::<Vec<_>>()
+                .join("\n");
+            let alert =
+                adw::AlertDialog::new(Some(&crate::connection::summarize(&results)), Some(&body));
+            alert.add_response("ok", &ctx.t("common.ok"));
+            alert.present(Some(&window));
+        });
+    }
+    sync_connection_button(&ctx, &conn_btn);
+    header.pack_start(&conn_btn);
 
     let menu_btn = gtk::MenuButton::builder()
         .icon_name("open-menu-symbolic")
@@ -113,6 +151,7 @@ pub fn present_main(app: &adw::Application, ctx: AppCtx) {
                 ctx.persist();
                 update_banner(&ctx, &banner_ref, &banner_kind);
             }
+            BannerKind::Update => dialogs::about(&window, ctx.clone()),
             BannerKind::Metered | BannerKind::None => {}
         });
     }
@@ -141,11 +180,31 @@ pub fn present_main(app: &adw::Application, ctx: AppCtx) {
     view_stack.set_visible_child_name(default_view.as_str());
 
     let tray = super::tray::start(&ctx);
+    {
+        let ctx = ctx.clone();
+        let conn_btn = conn_btn.clone();
+        glib::timeout_add_local(std::time::Duration::from_millis(800), move || {
+            ctx.refresh_connection();
+            sync_connection_button(&ctx, &conn_btn);
+            glib::ControlFlow::Break
+        });
+    }
+    {
+        let ctx = ctx.clone();
+        let banner = banner.clone();
+        let banner_kind = banner_kind.clone();
+        glib::timeout_add_local(std::time::Duration::from_secs(4), move || {
+            ctx.refresh_updates();
+            update_banner(&ctx, &banner, &banner_kind);
+            glib::ControlFlow::Break
+        });
+    }
     let ctx_poll = ctx.clone();
     let dash_poll = dashboard.clone();
     let flow_poll = flow.clone();
     let banner_poll = banner.clone();
     let banner_kind_poll = banner_kind.clone();
+    let conn_btn_poll = conn_btn.clone();
     {
         let ctx_nav = ctx.clone();
         let stack_nav = view_stack.clone();
@@ -179,6 +238,13 @@ pub fn present_main(app: &adw::Application, ctx: AppCtx) {
         ctx_poll.refresh_runtime();
         dash_poll.refresh();
         flow_poll.refresh();
+        if ctx_poll.connection_stale(std::time::Duration::from_secs(300)) {
+            ctx_poll.refresh_connection();
+        }
+        if ctx_poll.updates_stale(std::time::Duration::from_secs(1800)) {
+            ctx_poll.refresh_updates();
+        }
+        sync_connection_button(&ctx_poll, &conn_btn_poll);
         update_banner(&ctx_poll, &banner_poll, &banner_kind_poll);
         if let Some(tray) = &tray {
             tray.drain(&ctx_poll);
@@ -228,29 +294,70 @@ fn app_menu(ctx: &AppCtx) -> gio::Menu {
         Some(&ctx.t_or("titlebar.menu.flags", "Rclone Flags")),
         Some("win.rclone-flags"),
     );
-    prefs.append(Some("Backends"), Some("win.backends"));
-    prefs.append(Some("Alerts"), Some("win.alerts"));
+    prefs.append(
+        Some(&ctx.t_or("titlebar.menu.backends", "Backends")),
+        Some("win.backends"),
+    );
+    prefs.append(
+        Some(&ctx.t_or("alerts.title", "Alerts")),
+        Some("win.alerts"),
+    );
     prefs.append(
         Some(&ctx.t_or("titlebar.menu.shortcuts", "Keyboard Shortcuts")),
         Some("win.shortcuts"),
     );
-    prefs.append(Some("Templates"), Some("win.templates"));
-    prefs.append(Some("Install rclone"), Some("win.install-rclone"));
-    prefs.append(Some("Remote order"), Some("win.item-order"));
-    prefs.append(Some("Maintenance / connectivity"), Some("win.preferences"));
+    prefs.append(
+        Some(&ctx.t_or("titlebar.menu.templates", "Templates")),
+        Some("win.templates"),
+    );
+    prefs.append(
+        Some(&ctx.t_or("titlebar.menu.installRclone", "Install rclone")),
+        Some("win.install-rclone"),
+    );
+    prefs.append(
+        Some(&ctx.t_or("titlebar.menu.remoteOrder", "Remote order")),
+        Some("win.item-order"),
+    );
     menu.append_section(None, &prefs);
 
     let tools = gio::Menu::new();
-    tools.append(Some("Open config folder"), Some("win.open-config"));
-    tools.append(Some("Open cache folder"), Some("win.open-cache"));
-    tools.append(Some("Open rclone log"), Some("win.open-log"));
-    tools.append(Some("Run GC"), Some("win.gc"));
-    tools.append(Some("Clear FS cache"), Some("win.fscache"));
-    tools.append(Some("Check connectivity"), Some("win.ping"));
-    menu.append_submenu(Some("Developer"), &tools);
+    tools.append(
+        Some(&ctx.t_or("titlebar.menu.openConfig", "Open config folder")),
+        Some("win.open-config"),
+    );
+    tools.append(
+        Some(&ctx.t_or("titlebar.menu.openCache", "Open cache folder")),
+        Some("win.open-cache"),
+    );
+    tools.append(
+        Some(&ctx.t_or("titlebar.menu.openLog", "Open rclone log")),
+        Some("win.open-log"),
+    );
+    tools.append(
+        Some(&ctx.t_or("titlebar.menu.runGc", "Run GC")),
+        Some("win.gc"),
+    );
+    tools.append(
+        Some(&ctx.t_or("titlebar.menu.clearFsCache", "Clear FS cache")),
+        Some("win.fscache"),
+    );
+    tools.append(
+        Some(&ctx.t_or("titlebar.menu.checkConnectivity", "Check connectivity")),
+        Some("win.ping"),
+    );
+    menu.append_submenu(
+        Some(&ctx.t_or("titlebar.menu.developer", "Developer")),
+        &tools,
+    );
 
     let views = gio::Menu::new();
-    views.append(Some("Main Menu"), Some("win.view::main_menu"));
+    views.append(
+        Some(&ctx.t_or(
+            "settings.general.default_view.options.main_menu",
+            "Main Menu",
+        )),
+        Some("win.view::main_menu"),
+    );
     views.append(
         Some(&ctx.t_or("titlebar.menu.fileBrowser", "File Browser")),
         Some("win.view::nautilus"),
@@ -274,7 +381,10 @@ fn app_menu(ctx: &AppCtx) -> gio::Menu {
         Some(&ctx.t_or("tray.stopAllServes", "Stop All Serves")),
         Some("win.stop-serves"),
     );
-    menu.append_submenu(Some("Tray actions"), &tray);
+    menu.append_submenu(
+        Some(&ctx.t_or("titlebar.menu.trayActions", "Tray actions")),
+        &tray,
+    );
 
     let about = gio::Menu::new();
     about.append(
@@ -676,6 +786,7 @@ enum BannerKind {
     Repair,
     Flatpak,
     Metered,
+    Update,
 }
 
 fn update_banner(ctx: &AppCtx, banner: &adw::Banner, kind: &Rc<std::cell::RefCell<BannerKind>>) {
@@ -711,8 +822,57 @@ fn update_banner(ctx: &AppCtx, banner: &adw::Banner, kind: &Rc<std::cell::RefCel
         *kind.borrow_mut() = BannerKind::Metered;
         return;
     }
+    let updates = ctx.updates.borrow().clone();
+    if updates.has_updates() {
+        let title = match updates.banner_kind() {
+            "all" => ctx.t_or(
+                "titlebar.updates.all",
+                "Application and Rclone updates available",
+            ),
+            "rclone" => ctx.t_or("titlebar.updates.rclone", "Rclone update available"),
+            _ => ctx.t_or("titlebar.updates.app", "Application update available"),
+        };
+        banner.set_title(&title);
+        banner.set_button_label(Some(&ctx.t_or("titlebar.menu.about", "About")));
+        banner.set_revealed(true);
+        *kind.borrow_mut() = BannerKind::Update;
+        return;
+    }
     banner.set_revealed(false);
     *kind.borrow_mut() = BannerKind::None;
+}
+
+fn sync_connection_button(ctx: &AppCtx, btn: &gtk::Button) {
+    match *ctx.connection.borrow() {
+        crate::connection::ConnectionStatus::Online => {
+            btn.set_visible(false);
+            btn.set_sensitive(true);
+        }
+        crate::connection::ConnectionStatus::Checking => {
+            btn.set_visible(true);
+            btn.set_sensitive(false);
+            btn.set_icon_name("view-refresh-symbolic");
+            btn.set_tooltip_text(Some(&ctx.t_or(
+                "titlebar.connection.checking",
+                "Checking internet connection...",
+            )));
+        }
+        crate::connection::ConnectionStatus::Offline => {
+            btn.set_visible(true);
+            btn.set_sensitive(true);
+            btn.set_icon_name("network-offline-symbolic");
+            let services = ctx.connection_detail.borrow().clone();
+            let tip = if services.is_empty() {
+                ctx.t_or(
+                    "titlebar.connection.offline",
+                    "Cannot connect to some services. Click to retry.",
+                )
+            } else {
+                ctx.tf("titlebar.connection.offline", &[("services", &services)])
+            };
+            btn.set_tooltip_text(Some(&tip));
+        }
+    }
 }
 
 #[allow(dead_code)]

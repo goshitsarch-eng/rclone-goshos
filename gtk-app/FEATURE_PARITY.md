@@ -126,6 +126,13 @@ This client is the GTK 4 + libadwaita rewrite of the Angular/Tauri desktop UI. I
 - Files breadcrumbs plus in-listing search (Ctrl+F), path edit (Ctrl+L)
 - Translated menus, Files chrome, tray labels, and key preference titles
 - Tray icon themes (system/color/mono/symbolic) and auto-update preference switches
+- Title-bar connectivity indicator (offline / checking) with click-to-retry
+- Update-available banner (app / rclone / both) opening About
+- Provider-type icons on dashboard remotes and Files cloud sidebar
+- Files list-view Name / Size / Modified column headers
+- Files type-filter chips (folders / images / videos / audio / documents / archives)
+- Files sidebar configure (hide / reorder local disks and remotes)
+- Files context menu i18n, including Rename Multiple when several items are selected
 
 ## Still deepening toward pixel-level Angular parity
 

@@ -2372,6 +2372,14 @@
       "size": "Размер",
       "modified": "Изменён"
     },
+    "filters": {
+      "folders": "Папки",
+      "images": "Изображения",
+      "videos": "Видео",
+      "audio": "Аудио",
+      "documents": "Документы",
+      "archives": "Архивы"
+    },
     "empty": {
       "noStarred": "В избранном нет файлов",
       "folderEmpty": "Папка пуста"

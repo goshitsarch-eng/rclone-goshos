@@ -151,6 +151,12 @@ pub struct NautilusSettings {
     pub sort_by: String,
     pub sort_desc: bool,
     pub icon_size: i32,
+    #[serde(default)]
+    pub sidebar_drive_order: Vec<String>,
+    #[serde(default)]
+    pub sidebar_hidden_drives: Vec<String>,
+    #[serde(default)]
+    pub file_type_filter: String,
 }
 
 impl NautilusSettings {
@@ -219,7 +225,20 @@ impl AppSettings {
     pub fn default_view(&self) -> MainView {
         MainView::parse(&self.general.default_view)
     }
+}
 
+pub fn sort_sidebar_ids(mut ids: Vec<String>, order: &[String]) -> Vec<String> {
+    if !order.is_empty() {
+        ids.sort_by_key(|id| order.iter().position(|n| n == id).unwrap_or(usize::MAX));
+    }
+    ids
+}
+
+pub fn sidebar_id_hidden(hidden: &[String], id: &str) -> bool {
+    hidden.iter().any(|h| h == id)
+}
+
+impl AppSettings {
     pub fn get_by_path(&self, path: &str) -> Option<serde_json::Value> {
         let value = serde_json::to_value(self).ok()?;
         let mut cur = &value;
@@ -306,5 +325,19 @@ mod tests {
         assert_eq!(loaded.core.bandwidth_limit, "2M");
         assert!(loaded.core.metered_bandwidth_limit.is_empty());
         assert!(loaded.runtime.flatpak_warn);
+        assert!(loaded.nautilus.sidebar_drive_order.is_empty());
+        assert!(loaded.nautilus.sidebar_hidden_drives.is_empty());
+        assert!(loaded.nautilus.file_type_filter.is_empty());
+    }
+
+    #[test]
+    fn sidebar_order_and_hidden() {
+        let ids = sort_sidebar_ids(
+            vec!["b:".into(), "a:".into(), "/home".into()],
+            &["/home".into(), "a:".into()],
+        );
+        assert_eq!(ids, vec!["/home", "a:", "b:"]);
+        assert!(sidebar_id_hidden(&["a:".into()], "a:"));
+        assert!(!sidebar_id_hidden(&["a:".into()], "b:"));
     }
 }

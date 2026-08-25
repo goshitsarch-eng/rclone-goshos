@@ -326,6 +326,19 @@ impl FileTypeCategory {
             Self::Binary => "application-x-executable-symbolic",
         }
     }
+
+    pub fn matches_filter(self, filter: &str) -> bool {
+        match filter.trim().to_ascii_lowercase().as_str() {
+            "" | "all" => true,
+            "folder" | "folders" | "directory" => self == Self::Directory,
+            "image" | "images" => self == Self::Image,
+            "video" | "videos" => self == Self::Video,
+            "audio" => self == Self::Audio,
+            "document" | "documents" => matches!(self, Self::Pdf | Self::Text),
+            "archive" | "archives" => self == Self::Archive,
+            _ => true,
+        }
+    }
 }
 
 #[cfg(test)]
@@ -395,6 +408,10 @@ mod tests {
             FileTypeCategory::from_name("blob.bin", false),
             FileTypeCategory::Binary
         );
+        assert!(FileTypeCategory::Image.matches_filter("images"));
+        assert!(!FileTypeCategory::Video.matches_filter("images"));
+        assert!(FileTypeCategory::Pdf.matches_filter("documents"));
+        assert!(FileTypeCategory::Text.matches_filter("all"));
     }
 
     #[test]

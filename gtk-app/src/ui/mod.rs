@@ -34,6 +34,11 @@ pub struct AppCtx {
     pub watch_hub: Rc<RefCell<crate::watch::WatchHub>>,
     pub fsinfo_cache: Rc<RefCell<HashMap<String, crate::rclone::FsInfo>>>,
     pub pending_picker: Rc<RefCell<Option<crate::picker::PickerRequest>>>,
+    pub connection: Rc<RefCell<crate::connection::ConnectionStatus>>,
+    pub connection_detail: Rc<RefCell<String>>,
+    pub last_connection_check: Rc<RefCell<Option<std::time::Instant>>>,
+    pub updates: Rc<RefCell<crate::updater::PendingUpdates>>,
+    pub last_update_check: Rc<RefCell<Option<std::time::Instant>>>,
 }
 
 impl AppCtx {
@@ -63,6 +68,11 @@ impl AppCtx {
             watch_hub: Rc::new(RefCell::new(crate::watch::WatchHub::new())),
             fsinfo_cache: Rc::new(RefCell::new(HashMap::new())),
             pending_picker: Rc::new(RefCell::new(None)),
+            connection: Rc::new(RefCell::new(crate::connection::ConnectionStatus::Checking)),
+            connection_detail: Rc::new(RefCell::new(String::new())),
+            last_connection_check: Rc::new(RefCell::new(Some(std::time::Instant::now()))),
+            updates: Rc::new(RefCell::new(crate::updater::PendingUpdates::default())),
+            last_update_check: Rc::new(RefCell::new(Some(std::time::Instant::now()))),
         };
         ctx.apply_remote_layout();
         {
@@ -95,6 +105,63 @@ impl AppCtx {
 
     pub fn t_or(&self, key: &str, fallback: &str) -> String {
         self.i18n.borrow().t_or(key, fallback)
+    }
+
+    pub fn tf(&self, key: &str, params: &[(&str, &str)]) -> String {
+        self.i18n.borrow().tf(key, params)
+    }
+
+    pub fn refresh_connection(&self) {
+        *self.connection.borrow_mut() = crate::connection::ConnectionStatus::Checking;
+        let urls = self.settings.borrow().core.connection_check_urls.clone();
+        let urls = if urls.is_empty() {
+            vec!["https://www.google.com".into()]
+        } else {
+            urls
+        };
+        let results = crate::connection::check_links(&urls, 2);
+        *self.connection.borrow_mut() = crate::connection::status_from_results(&results);
+        *self.connection_detail.borrow_mut() = crate::connection::failed_services(&results);
+        *self.last_connection_check.borrow_mut() = Some(std::time::Instant::now());
+    }
+
+    pub fn connection_stale(&self, max_age: std::time::Duration) -> bool {
+        self.last_connection_check
+            .borrow()
+            .is_none_or(|t| t.elapsed() > max_age)
+    }
+
+    pub fn refresh_updates(&self) {
+        let settings = self.settings.borrow().clone();
+        let mut pending = crate::updater::PendingUpdates::default();
+        if settings.runtime.app_auto_check_updates {
+            pending.app = crate::updater::filter_skipped(
+                crate::updater::fetch_app_update(env!("CARGO_PKG_VERSION")).ok(),
+                &settings.runtime.app_skipped_updates,
+            );
+        }
+        if settings.runtime.rclone_auto_check_updates {
+            let version = self
+                .engine
+                .borrow()
+                .as_ref()
+                .map(|e| e.version.clone())
+                .unwrap_or_default();
+            if !version.is_empty() {
+                pending.rclone = crate::updater::filter_skipped(
+                    crate::updater::fetch_rclone_update(&version).ok(),
+                    &settings.runtime.rclone_skipped_updates,
+                );
+            }
+        }
+        *self.updates.borrow_mut() = pending;
+        *self.last_update_check.borrow_mut() = Some(std::time::Instant::now());
+    }
+
+    pub fn updates_stale(&self, max_age: std::time::Duration) -> bool {
+        self.last_update_check
+            .borrow()
+            .is_none_or(|t| t.elapsed() > max_age)
     }
 
     pub fn translate_error(&self, message: &str) -> String {

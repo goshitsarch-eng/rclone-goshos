@@ -2372,6 +2372,14 @@
       "size": "サイズ",
       "modified": "更新日時"
     },
+    "filters": {
+      "folders": "フォルダー",
+      "images": "画像",
+      "videos": "動画",
+      "audio": "音声",
+      "documents": "ドキュメント",
+      "archives": "アーカイブ"
+    },
     "empty": {
       "noStarred": "スター付きファイルはありません",
       "folderEmpty": "フォルダは空です"
