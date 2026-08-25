@@ -6004,35 +6004,48 @@ pub fn job_detail(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, job_id: u64) {
             while let Some(child) = completed.first_child() {
                 completed.remove(&child);
             }
-            let live_status = ctx
-                .client()
-                .and_then(|client| client.job_status(job_id).ok());
-            let (mut job, status) = if let Some(status) = live_status {
+            let rc_job = ctx.client().and_then(|client| {
+                let status = client.job_status(job_id).ok()?;
+                if status.as_object().is_none_or(|obj| obj.is_empty()) {
+                    return None;
+                }
+                if status
+                    .get("error")
+                    .and_then(|value| value.as_str())
+                    .is_some()
+                    && status.get("finished").is_none()
+                {
+                    return None;
+                }
                 let group = status
                     .get("group")
                     .and_then(|x| x.as_str())
                     .map(|s| s.to_string())
                     .unwrap_or_else(|| format!("job/{job_id}"));
-                let stats = ctx
-                    .client()
-                    .and_then(|client| client.stats(Some(&group)).ok());
-                (job_from_status(job_id, &status, stats.as_ref()), status)
-            } else {
-                let stored = {
-                    let store = ctx.store.borrow();
-                    crate::jobs::find_stored_job(
-                        &ctx.snapshot.borrow().jobs,
-                        &store.job_history,
-                        &store.job_meta,
-                        job_id,
-                    )
-                };
-                let Some(stored) = stored else {
-                    return;
-                };
-                let status = crate::jobs::job_status_value(&stored);
-                (stored, status)
+                let stats = client.stats(Some(&group)).ok();
+                let job = job_from_status(job_id, &status, stats.as_ref());
+                Some((job, status))
+            });
+            let stored = {
+                let store = ctx.store.borrow();
+                crate::jobs::find_stored_job(
+                    &ctx.snapshot.borrow().jobs,
+                    &store.job_history,
+                    &store.job_meta,
+                    job_id,
+                )
             };
+            let Some(mut job) = crate::jobs::resolve_detail_job(
+                rc_job.as_ref().map(|(job, _)| job.clone()),
+                stored,
+            ) else {
+                return;
+            };
+            let status = rc_job
+                .as_ref()
+                .filter(|(job, _)| crate::jobs::is_managed_job(job))
+                .map(|(_, status)| status.clone())
+                .unwrap_or_else(|| crate::jobs::job_status_value(&job));
             let registry = ctx.store.borrow().job_meta.clone();
             let siblings = {
                 let store = ctx.store.borrow();
@@ -6042,18 +6055,24 @@ pub fn job_detail(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, job_id: u64) {
                 )
             };
             crate::jobs::decorate_job_transfers(&mut job, &registry, &siblings);
+            crate::jobs::finalize_history_job(&mut job);
             populate_opens(&job.src, &job.dst);
-            progress.set_fraction(job.progress);
+            let status_label = ctx.t_or(crate::jobs::job_status_key(&job.status), &job.status);
+            let duration_label = if job.duration > 0.0 {
+                format!("{:.1}s", job.duration)
+            } else {
+                "—".into()
+            };
+            progress.set_fraction(job.progress.clamp(0.0, 1.0));
             progress.set_text(Some(&format!(
-                "{}{} · {:.0}% · {:.1}s",
-                job.status,
+                "{}{} · {:.0}% · {duration_label}",
+                status_label,
                 if job.dry_run {
                     format!(" · {}", ctx.t_or("detailShared.jobs.dryRun", "Dry Run"))
                 } else {
                     String::new()
                 },
-                job.progress * 100.0,
-                job.duration
+                job.progress * 100.0
             )));
             let speed = crate::jobs::stats_f64(&job.stats, &["speed"]);
             let speed_avg = crate::jobs::stats_f64(&job.stats, &["speedAvg", "speedAverage"]);
@@ -6095,11 +6114,15 @@ pub fn job_detail(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, job_id: u64) {
                 ),
                 (
                     ctx.t_or("modals.jobDetail.fields.status", "Status"),
-                    job.status.clone(),
+                    ctx.t_or(crate::jobs::job_status_key(&job.status), &job.status),
                 ),
                 (
                     ctx.t_or("modals.jobDetail.fields.started", "Started"),
-                    job.start_time.format("%Y-%m-%d %H:%M:%S UTC").to_string(),
+                    if crate::jobs::has_known_start_time(&job) {
+                        job.start_time.format("%Y-%m-%d %H:%M:%S UTC").to_string()
+                    } else {
+                        "—".into()
+                    },
                 ),
                 (
                     ctx.t_or("modals.jobDetail.fields.finished", "Finished"),
@@ -6107,7 +6130,7 @@ pub fn job_detail(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, job_id: u64) {
                 ),
                 (
                     ctx.t_or("modals.jobDetail.fields.duration", "Duration"),
-                    format!("{:.1}s", job.duration),
+                    duration_label.clone(),
                 ),
                 (
                     ctx.t_or("modals.jobDetail.fields.executeId", "Execute ID"),
@@ -6120,7 +6143,7 @@ pub fn job_detail(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, job_id: u64) {
                 ),
                 (
                     ctx.t_or("modals.jobDetail.fields.origin", "Origin"),
-                    job.origin.clone(),
+                    ctx.t_or(crate::jobs::job_origin_key(&job.origin), &job.origin),
                 ),
                 (ctx.t_or("modals.jobDetail.fields.backend", "Backend"), {
                     ctx.store
@@ -6273,7 +6296,7 @@ pub fn job_detail(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, job_id: u64) {
             let results = crate::checks::visible_check_items(
                 crate::checks::parse_check_items(&check_source, &job.src, &job.dst)
                     .into_iter()
-                    .map(|item| crate::checks::with_job_id(item, job.id)),
+                    .map(|item| crate::checks::with_job(item, &job)),
                 &ctx.hidden_check_ids.borrow(),
                 &ctx.check_status_overrides.borrow(),
                 &query,
@@ -9457,7 +9480,20 @@ pub(super) fn check_result_row(
     let wrap = gtk::Box::new(gtk::Orientation::Vertical, 4);
     let row = adw::ActionRow::new();
     row.set_title(&item.name);
-    row.set_subtitle(&check_status_label(ctx, &item.status));
+    let status = check_status_label(ctx, &item.status);
+    let subtitle = if let Some(at) = item.completed_at {
+        let (key, count) = crate::checks::relative_time_parts(at, chrono::Utc::now());
+        let relative = if count == 0 {
+            ctx.t_or(key, "Just now")
+        } else {
+            ctx.tf(key, &[("count", &count.to_string())])
+        };
+        format!("{status} · {relative}")
+    } else {
+        status
+    };
+    row.set_subtitle(&subtitle);
+    row.add_css_class(&format!("check-{}", item.status.replace('_', "-")));
     if let Some(kind) = item.resolve_kind() {
         let resolve_label = if item.needs_overwrite_confirm() {
             ctx.t_or(

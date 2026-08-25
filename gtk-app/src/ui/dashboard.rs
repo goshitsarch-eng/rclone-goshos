@@ -1745,10 +1745,21 @@ impl Dashboard {
         } else {
             for job in remote_jobs {
                 let row = adw::ActionRow::new();
-                row.set_title(&format!("{} · {}", job.operation, job.status));
+                row.set_title(&format!(
+                    "{} · {}",
+                    job.operation,
+                    self.ctx
+                        .t_or(crate::jobs::job_status_key(&job.status), &job.status)
+                ));
                 row.set_subtitle(&format!(
                     "{:.0}% · {} · {}",
-                    job.progress * 100.0,
+                    if matches!(job.status.as_str(), "completed" | "failed" | "stopped")
+                        && job.progress <= 0.0
+                    {
+                        100.0
+                    } else {
+                        job.progress * 100.0
+                    },
                     crate::rclone::format_bytes(
                         job.stats.get("bytes").and_then(|x| x.as_i64()).unwrap_or(0)
                     ),
@@ -3339,7 +3350,7 @@ impl Dashboard {
                 check_items.extend(
                     crate::checks::parse_check_items(&source, &job.src, &job.dst)
                         .into_iter()
-                        .map(|item| crate::checks::with_job_id(item, job.id)),
+                        .map(|item| crate::checks::with_job(item, job)),
                 );
             }
         }

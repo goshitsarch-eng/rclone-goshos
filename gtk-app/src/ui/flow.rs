@@ -920,7 +920,7 @@ impl FlowView {
                 check_items.extend(
                     crate::checks::parse_check_items(&source, &job.src, &job.dst)
                         .into_iter()
-                        .map(|item| crate::checks::with_job_id(item, job.id)),
+                        .map(|item| crate::checks::with_job(item, job)),
                 );
             }
         }

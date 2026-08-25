@@ -478,6 +478,8 @@ This client is the GTK 4 + libadwaita rewrite of the Angular/Tauri desktop UI. I
 - Dashboard and Flow activity merge finished history (and meta-only snapshots) with live jobs
 - Check results honor the transfer search box, hide/override rows after delete, and link resolve copies to the parent check job
 - rclone 1.60 `job/list` noise is not written to history; leftover noise is dropped on store load
+- Job detail ignores unidentifiable RC `job/status` stubs and keeps reconstructed type/progress/origin from `job_meta`
+- Check results show localized status badges plus relative time when a parent job timestamp is known
 
 ## Still deepening toward pixel-level Angular parity
 

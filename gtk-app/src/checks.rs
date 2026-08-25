@@ -10,6 +10,7 @@ pub struct CheckResult {
     pub src_fs: String,
     pub dst_fs: String,
     pub job_id: Option<u64>,
+    pub completed_at: Option<chrono::DateTime<chrono::Utc>>,
 }
 
 impl CheckResult {
@@ -84,6 +85,7 @@ fn parse_one(item: &Value, fallback_src: &str, fallback_dst: &str) -> Option<Che
             .unwrap_or(fallback_dst)
             .to_string(),
         job_id: None,
+        completed_at: None,
     })
 }
 
@@ -111,6 +113,7 @@ fn parse_combined_line(line: &str, fallback_src: &str, fallback_dst: &str) -> Op
         src_fs: fallback_src.into(),
         dst_fs: fallback_dst.into(),
         job_id: None,
+        completed_at: None,
     })
 }
 
@@ -186,6 +189,41 @@ pub fn check_delete_outcome(status: &str, deleted_source: bool) -> CheckDeleteOu
 pub fn with_job_id(mut item: CheckResult, job_id: u64) -> CheckResult {
     item.job_id = Some(job_id);
     item
+}
+
+pub fn with_job(mut item: CheckResult, job: &crate::store::JobInfo) -> CheckResult {
+    item.job_id = Some(job.id);
+    if job.start_time.timestamp() > 0 {
+        item.completed_at = Some(job.start_time);
+    }
+    item
+}
+
+pub fn relative_time_parts(
+    then: chrono::DateTime<chrono::Utc>,
+    now: chrono::DateTime<chrono::Utc>,
+) -> (&'static str, i64) {
+    let secs = now.signed_duration_since(then).num_seconds().max(0);
+    if secs < 60 {
+        ("shared.transferActivity.time.justNow", 0)
+    } else if secs < 3600 {
+        ("shared.transferActivity.time.minutesAgo", secs / 60)
+    } else if secs < 86_400 {
+        ("shared.transferActivity.time.hoursAgo", secs / 3600)
+    } else {
+        ("shared.transferActivity.time.daysAgo", secs / 86_400)
+    }
+}
+
+pub fn check_status_key(status: &str) -> &'static str {
+    match status {
+        "missing_dst" => "shared.transferActivity.status.missingDst",
+        "missing_src" => "shared.transferActivity.status.missingSrc",
+        "differ" | "partial" => "shared.transferActivity.status.differ",
+        "checked" | "match" => "shared.transferActivity.status.checked",
+        "failed" | "error" => "shared.transferActivity.status.error",
+        _ => "shared.transferActivity.status.error",
+    }
 }
 
 pub fn visible_check_items(
@@ -275,6 +313,7 @@ mod tests {
             src_fs: "drive:".into(),
             dst_fs: "/tmp/out".into(),
             job_id: None,
+            completed_at: None,
         };
         assert_eq!(
             crate::transfers::join_fs_name(&item.src_fs, &item.name),
@@ -296,6 +335,7 @@ mod tests {
                 src_fs: "src:".into(),
                 dst_fs: "dst:".into(),
                 job_id: Some(9),
+                completed_at: None,
             },
             CheckResult {
                 name: "gone.txt".into(),
@@ -303,6 +343,7 @@ mod tests {
                 src_fs: "src:".into(),
                 dst_fs: "dst:".into(),
                 job_id: Some(9),
+                completed_at: None,
             },
             CheckResult {
                 name: "other.bin".into(),
@@ -310,6 +351,7 @@ mod tests {
                 src_fs: "src:".into(),
                 dst_fs: "dst:".into(),
                 job_id: Some(9),
+                completed_at: None,
             },
         ];
         let mut hidden = HashSet::new();
@@ -329,5 +371,17 @@ mod tests {
             CheckDeleteOutcome::Hide
         );
         assert_eq!(with_job_id(visible[0].clone(), 12).job_id, Some(12));
+        let now = chrono::DateTime::parse_from_rfc3339("2026-08-25T12:00:00Z")
+            .unwrap()
+            .with_timezone(&chrono::Utc);
+        let hour_ago = now - chrono::Duration::minutes(90);
+        assert_eq!(
+            relative_time_parts(hour_ago, now),
+            ("shared.transferActivity.time.hoursAgo", 1)
+        );
+        assert_eq!(
+            check_status_key("missing_dst"),
+            "shared.transferActivity.status.missingDst"
+        );
     }
 }

@@ -4404,9 +4404,20 @@ impl NautilusView {
     }
 
     fn ops_row(&self, job: &crate::store::JobInfo, live: bool) -> adw::ActionRow {
-        let percent = (job.progress * 100.0).round() as i32;
+        let percent = if matches!(job.status.as_str(), "completed" | "failed" | "stopped")
+            && job.progress <= 0.0
+        {
+            100
+        } else {
+            (job.progress * 100.0).round() as i32
+        };
         let row = adw::ActionRow::new();
-        row.set_title(&format!("{} · {}", job.operation, job.status));
+        row.set_title(&format!(
+            "{} · {}",
+            job.operation,
+            self.ctx
+                .t_or(crate::jobs::job_status_key(&job.status), &job.status)
+        ));
         let src = if job.src.is_empty() {
             job.remote.clone()
         } else {

@@ -852,10 +852,12 @@ pub fn find_job_by_id(live: &[JobInfo], history: &[JobInfo], id: u64) -> Option<
 }
 
 pub fn job_from_meta(id: u64, meta: &JobMeta) -> JobInfo {
-    let first = meta
+    let items = meta
         .transfer_snapshot
         .as_array()
-        .and_then(|items| items.first());
+        .cloned()
+        .unwrap_or_default();
+    let first = items.first();
     let src = first
         .and_then(|item| item.get("src"))
         .and_then(|value| value.as_str())
@@ -866,6 +868,12 @@ pub fn job_from_meta(id: u64, meta: &JobMeta) -> JobInfo {
         .and_then(|value| value.as_str())
         .unwrap_or_default()
         .to_string();
+    let total: u64 = items
+        .iter()
+        .filter_map(|item| item.get("size").and_then(|value| value.as_u64()))
+        .sum();
+    let count = items.len() as i64;
+    let snapshot = meta.transfer_snapshot.clone();
     let operation = match meta.origin.as_str() {
         "filemanager" | "files" | "check-resolve" => "copy",
         other if !other.is_empty() => other,
@@ -887,7 +895,7 @@ pub fn job_from_meta(id: u64, meta: &JobMeta) -> JobInfo {
         } else {
             meta.origin.clone()
         },
-        start_time: Utc::now(),
+        start_time: DateTime::<Utc>::UNIX_EPOCH,
         error: None,
         dry_run: false,
         src,
@@ -897,16 +905,104 @@ pub fn job_from_meta(id: u64, meta: &JobMeta) -> JobInfo {
         } else {
             meta.group.clone()
         },
-        stats: json!({}),
+        stats: json!({
+            "bytes": total,
+            "totalBytes": total,
+            "transfers": count,
+            "totalTransfers": count,
+            "completed": snapshot,
+        }),
         transferring: json!([]),
         duration: 0.0,
         progress: 1.0,
         output: json!({ "operation": operation, "origin": meta.origin }),
-        completed: json!([]),
+        completed: snapshot,
         parent_job_id: meta.parent_job_id,
     };
     apply_job_meta(&mut job, Some(meta));
     job
+}
+
+/// Prefer a real stored/history job over rclone 1.60 leftover `job/<id>` stubs.
+pub fn resolve_detail_job(rc_job: Option<JobInfo>, stored: Option<JobInfo>) -> Option<JobInfo> {
+    match (rc_job, stored) {
+        (Some(rc), Some(stored)) if is_managed_job(&rc) => Some(merge_rc_with_stored(rc, stored)),
+        (Some(rc), None) if is_managed_job(&rc) => Some(rc),
+        (_, stored) => stored,
+    }
+}
+
+fn merge_rc_with_stored(mut rc: JobInfo, stored: JobInfo) -> JobInfo {
+    if rc.src.is_empty() {
+        rc.src = stored.src;
+    }
+    if rc.dst.is_empty() {
+        rc.dst = stored.dst;
+    }
+    if rc.remote.is_empty() {
+        rc.remote = stored.remote;
+    }
+    if rc.operation.starts_with("job/") || rc.operation == "job" {
+        rc.operation = stored.operation;
+    }
+    if (rc.origin.is_empty() || rc.origin == "dashboard")
+        && !stored.origin.is_empty()
+        && stored.origin != "dashboard"
+    {
+        rc.origin = stored.origin;
+    }
+    if rc.progress <= 0.0 && stored.progress > 0.0 {
+        rc.progress = stored.progress;
+    }
+    if rc.duration <= 0.0 && stored.duration > 0.0 {
+        rc.duration = stored.duration;
+    }
+    if transfer_list_empty(&rc.completed) && !transfer_list_empty(&stored.completed) {
+        rc.completed = stored.completed;
+    }
+    rc
+}
+
+pub fn finalize_history_job(job: &mut JobInfo) {
+    if matches!(job.status.as_str(), "completed" | "failed" | "stopped") && job.progress <= 0.0 {
+        job.progress = 1.0;
+    }
+    let completed = job.completed.as_array().map(|rows| rows.len()).unwrap_or(0);
+    if completed == 0 {
+        return;
+    }
+    if let Some(obj) = job.stats.as_object_mut() {
+        obj.entry("transfers").or_insert(json!(completed as i64));
+        obj.entry("totalTransfers")
+            .or_insert(json!(completed as i64));
+        obj.entry("completed")
+            .or_insert_with(|| job.completed.clone());
+    }
+}
+
+pub fn job_status_key(status: &str) -> &'static str {
+    match status {
+        "running" => "detailShared.jobs.status.running",
+        "completed" => "detailShared.jobs.status.completed",
+        "failed" => "detailShared.jobs.status.failed",
+        "stopped" => "detailShared.jobs.status.stopped",
+        "preparing" | "starting" => "generalOverview.jobs.starting",
+        _ => "detailShared.jobs.status.unknown",
+    }
+}
+
+pub fn job_origin_key(origin: &str) -> &'static str {
+    match origin {
+        "dashboard" => "generalOverview.jobs.originDashboard",
+        "quickrun" | "quick-run" | "flow" => "generalOverview.jobs.originQuickRun",
+        "automation" => "generalOverview.jobs.originAutomation",
+        "filemanager" | "files" => "generalOverview.jobs.originFiles",
+        _ => "generalOverview.jobs.originManual",
+    }
+}
+
+pub fn has_known_start_time(job: &JobInfo) -> bool {
+    job.start_time.timestamp() > 0
 }
 
 pub fn find_stored_job(
@@ -3404,8 +3500,37 @@ mod tests {
         assert_eq!(restored.remote, "testdrive");
         assert_eq!(restored.origin, "filemanager");
         assert_eq!(restored.src, "/tmp/gtk-upload-test/k.txt");
+        assert_eq!(restored.operation, "copy");
+        assert!((restored.progress - 1.0).abs() < f64::EPSILON);
+        assert!(!has_known_start_time(&restored));
         let combined = history_with_meta(&history, &meta);
         assert!(combined.iter().any(|job| job.id == 186));
         assert!(combined.iter().any(|job| job.id == 2));
+        let noise = job_from_status(
+            186,
+            &json!({
+                "finished": true,
+                "success": true,
+                "group": "job/186",
+                "output": {}
+            }),
+            None,
+        );
+        assert!(!is_managed_job(&noise));
+        let resolved = resolve_detail_job(Some(noise), Some(restored.clone())).unwrap();
+        assert_eq!(resolved.operation, "copy");
+        assert_eq!(resolved.src, "/tmp/gtk-upload-test/k.txt");
+        let mut zero = restored.clone();
+        zero.progress = 0.0;
+        finalize_history_job(&mut zero);
+        assert!((zero.progress - 1.0).abs() < f64::EPSILON);
+        assert_eq!(
+            job_status_key("completed"),
+            "detailShared.jobs.status.completed"
+        );
+        assert_eq!(
+            job_origin_key("filemanager"),
+            "generalOverview.jobs.originFiles"
+        );
     }
 }
