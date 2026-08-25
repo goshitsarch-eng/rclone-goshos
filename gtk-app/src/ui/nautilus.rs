@@ -79,6 +79,8 @@ impl NautilusView {
         layout.set_tooltip_text(Some("Toggle list / grid"));
         let hidden_btn = gtk::Button::from_icon_name("view-conceal-symbolic");
         hidden_btn.set_tooltip_text(Some("Toggle hidden files"));
+        let sort_btn = gtk::Button::from_icon_name("view-sort-ascending-symbolic");
+        sort_btn.set_tooltip_text(Some("Sort listing"));
         let new_tab = gtk::Button::from_icon_name("tab-new-symbolic");
         new_tab.set_tooltip_text(Some("New tab"));
         let split_btn = gtk::Button::from_icon_name("view-dual-symbolic");
@@ -97,6 +99,7 @@ impl NautilusView {
         toolbar.append(&split_btn);
         toolbar.append(&star);
         toolbar.append(&layout);
+        toolbar.append(&sort_btn);
         toolbar.append(&hidden_btn);
 
         let split = adw::OverlaySplitView::new();
@@ -297,6 +300,10 @@ impl NautilusView {
             let view = view.clone();
             star.connect_clicked(move |_| view.add_bookmark());
         }
+        {
+            let view = view.clone();
+            sort_btn.connect_clicked(move |_| view.cycle_sort());
+        }
         view.attach_file_controllers(&view.list, false);
         view.attach_file_controllers(&view.list_right, false);
         view.attach_file_controllers(&view.grid, true);
@@ -313,6 +320,26 @@ impl NautilusView {
 
     fn is_grid(&self) -> bool {
         self.ctx.settings.borrow().nautilus.layout == "grid"
+    }
+
+    fn cycle_sort(&self) {
+        let next = match self.ctx.settings.borrow().nautilus.sort_by.as_str() {
+            "name" => "size",
+            "size" => "modified",
+            _ => "name",
+        };
+        if next == "name" {
+            let desc = self.ctx.settings.borrow().nautilus.sort_desc;
+            self.ctx.settings.borrow_mut().nautilus.sort_desc = !desc;
+        }
+        self.ctx.settings.borrow_mut().nautilus.sort_by = next.to_string();
+        self.ctx.persist();
+        let desc = self.ctx.settings.borrow().nautilus.sort_desc;
+        self.status.set_text(&format!(
+            "Sorted by {next}{}",
+            if desc { " (desc)" } else { "" }
+        ));
+        self.reload();
     }
 
     fn sync_layout(&self) {

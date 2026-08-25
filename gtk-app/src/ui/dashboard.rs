@@ -293,7 +293,7 @@ impl Dashboard {
         clear_box(&self.overview);
         let tab = *self.tab.borrow();
         let remotes = self.remotes_for_display();
-        let snap = self.ctx.snapshot.borrow();
+        let snap = self.ctx.snapshot.borrow().clone();
         let title = adw::StatusPage::new();
         title.set_icon_name(Some(tab.icon_name()));
         title.set_title(&self.ctx.t(tab.label_key()));
@@ -306,13 +306,10 @@ impl Dashboard {
         )));
         self.overview.append(&title);
 
-        self.overview.append(&section_label("Remotes"));
         let editing = *self.editing_layout.borrow();
         let layout_bar = gtk::Box::new(gtk::Orientation::Horizontal, 6);
         let edit_btn = gtk::Button::with_label(if editing { "Done" } else { "Edit layout" });
-        edit_btn.set_tooltip_text(Some(
-            "Show hidden remotes and reorder or hide cards on the overview",
-        ));
+        edit_btn.set_tooltip_text(Some("Hide or reorder remotes and overview panels"));
         {
             let dash = self.clone();
             edit_btn.connect_clicked(move |_| {
@@ -321,7 +318,7 @@ impl Dashboard {
                 dash.refresh();
             });
         }
-        let order_btn = gtk::Button::with_label("Reorder…");
+        let order_btn = gtk::Button::with_label("Reorder remotes…");
         order_btn.set_tooltip_text(Some("Open the remote order and visibility editor"));
         {
             let dash = self.clone();
@@ -334,9 +331,102 @@ impl Dashboard {
                 }
             });
         }
+        let reset = gtk::Button::with_label("Reset panels");
+        reset.set_tooltip_text(Some("Restore the default overview panel order"));
+        {
+            let dash = self.clone();
+            reset.connect_clicked(move |_| {
+                dash.ctx.settings.borrow_mut().runtime.dashboard_layout =
+                    serde_json::json!({ "order": [], "hidden": [] });
+                dash.ctx.persist();
+                dash.refresh();
+            });
+        }
         layout_bar.append(&edit_btn);
         layout_bar.append(&order_btn);
+        layout_bar.append(&reset);
         self.overview.append(&layout_bar);
+        let layout = crate::layout::PanelLayout::from_value(
+            &self.ctx.settings.borrow().runtime.dashboard_layout,
+        );
+        for (id, visible) in layout.resolve(crate::layout::DASHBOARD_PANELS) {
+            if !visible && !editing {
+                continue;
+            }
+            self.append_panel_chrome(&id);
+            match id.as_str() {
+                "remotes" => self.render_remotes_panel(&remotes, tab, editing),
+                "jobs" => self.render_jobs_panel(&snap),
+                "serves" => self.render_serves_panel(&snap),
+                "bandwidth" => self.render_bandwidth_panel(&snap),
+                "system" => self.render_system_panel(&snap),
+                "automations" => self.render_automations_panel(),
+                _ => {}
+            }
+        }
+    }
+
+    fn append_panel_chrome(&self, id: &str) {
+        let header = gtk::Box::new(gtk::Orientation::Horizontal, 6);
+        header.append(&section_label(crate::layout::panel_title(id)));
+        if *self.editing_layout.borrow() {
+            let hide = gtk::Button::from_icon_name("view-conceal-symbolic");
+            hide.set_tooltip_text(Some("Hide or show this panel"));
+            let up = gtk::Button::from_icon_name("go-up-symbolic");
+            up.set_tooltip_text(Some("Move panel up"));
+            let down = gtk::Button::from_icon_name("go-down-symbolic");
+            down.set_tooltip_text(Some("Move panel down"));
+            {
+                let dash = self.clone();
+                let id = id.to_string();
+                hide.connect_clicked(move |_| dash.toggle_panel(&id));
+            }
+            {
+                let dash = self.clone();
+                let id = id.to_string();
+                up.connect_clicked(move |_| dash.move_panel(&id, -1));
+            }
+            {
+                let dash = self.clone();
+                let id = id.to_string();
+                down.connect_clicked(move |_| dash.move_panel(&id, 1));
+            }
+            header.append(&hide);
+            header.append(&up);
+            header.append(&down);
+        }
+        self.overview.append(&header);
+    }
+
+    fn dashboard_layout(&self) -> crate::layout::PanelLayout {
+        crate::layout::PanelLayout::from_value(&self.ctx.settings.borrow().runtime.dashboard_layout)
+    }
+
+    fn write_dashboard_layout(&self, layout: crate::layout::PanelLayout) {
+        self.ctx.settings.borrow_mut().runtime.dashboard_layout = layout.to_value();
+        self.ctx.persist();
+        self.refresh();
+    }
+
+    fn toggle_panel(&self, id: &str) {
+        let mut layout = self.dashboard_layout();
+        layout.toggle_hidden(id);
+        self.write_dashboard_layout(layout);
+    }
+
+    fn move_panel(&self, id: &str, delta: isize) {
+        let mut layout = self.dashboard_layout();
+        layout.move_panel(id, delta, crate::layout::DASHBOARD_PANELS);
+        self.write_dashboard_layout(layout);
+    }
+
+    fn render_remotes_panel(
+        &self,
+        remotes: &[crate::store::RemoteInfo],
+        tab: AppTab,
+        editing: bool,
+    ) {
+        let detailed = self.ctx.settings.borrow().runtime.dashboard_card_variant == "detailed";
         let detailed = self.ctx.settings.borrow().runtime.dashboard_card_variant == "detailed";
         let list = gtk::ListBox::new();
         list.add_css_class("boxed-list");
@@ -490,8 +580,9 @@ impl Dashboard {
             }
         }
         self.overview.append(&list);
+    }
 
-        self.overview.append(&section_label("Jobs"));
+    fn render_jobs_panel(&self, snap: &crate::store::RuntimeSnapshot) {
         let jobs = gtk::ListBox::new();
         jobs.add_css_class("boxed-list");
         if snap.jobs.is_empty() {
@@ -531,8 +622,9 @@ impl Dashboard {
             }
         }
         self.overview.append(&jobs);
+    }
 
-        self.overview.append(&section_label("Serves"));
+    fn render_serves_panel(&self, snap: &crate::store::RuntimeSnapshot) {
         let serves = gtk::ListBox::new();
         serves.add_css_class("boxed-list");
         if snap.serves.is_empty() {
@@ -570,8 +662,9 @@ impl Dashboard {
             }
         }
         self.overview.append(&serves);
+    }
 
-        self.overview.append(&section_label("Bandwidth"));
+    fn render_bandwidth_panel(&self, snap: &crate::store::RuntimeSnapshot) {
         let bytes = snap
             .stats
             .get("bytes")
@@ -633,8 +726,9 @@ impl Dashboard {
         }
         custom.add_suffix(&apply);
         self.overview.append(&custom);
+    }
 
-        self.overview.append(&section_label("System"));
+    fn render_system_panel(&self, snap: &crate::store::RuntimeSnapshot) {
         let sys = gtk::ListBox::new();
         sys.add_css_class("boxed-list");
         let version = self
@@ -672,8 +766,9 @@ impl Dashboard {
         ));
         sys.append(&jobs_row);
         self.overview.append(&sys);
+    }
 
-        self.overview.append(&section_label("Automations"));
+    fn render_automations_panel(&self) {
         let autos = gtk::ListBox::new();
         autos.add_css_class("boxed-list");
         let records = crate::automation::collect(&self.ctx.store.borrow());
@@ -919,6 +1014,55 @@ impl Dashboard {
             usage.set_subtitle("Engine offline");
         }
         self.detail.append(&usage);
+
+        self.detail.append(&section_label("Activity"));
+        let activity = gtk::ListBox::new();
+        activity.add_css_class("boxed-list");
+        let remote_jobs: Vec<_> = snap
+            .jobs
+            .iter()
+            .filter(|j| j.remote == name)
+            .cloned()
+            .collect();
+        if remote_jobs.is_empty() {
+            let row = adw::ActionRow::new();
+            row.set_title("No active jobs for this remote");
+            activity.append(&row);
+        } else {
+            for job in remote_jobs {
+                let row = adw::ActionRow::new();
+                row.set_title(&format!("{} · {}", job.operation, job.status));
+                row.set_subtitle(&format!(
+                    "{:.0}% · {} · {}",
+                    job.progress * 100.0,
+                    crate::rclone::format_bytes(
+                        job.stats.get("bytes").and_then(|x| x.as_i64()).unwrap_or(0)
+                    ),
+                    job.profile
+                ));
+                let dash = self.clone();
+                let id = job.id;
+                row.connect_activated(move |_| {
+                    if let Some(win) = dash.root.root().and_downcast::<gtk::Window>() {
+                        dialogs::job_detail(&win, dash.ctx.clone(), id);
+                    }
+                });
+                activity.append(&row);
+            }
+        }
+        let remote_serves: Vec<_> = snap
+            .serves
+            .iter()
+            .filter(|s| s.fs.contains(&name))
+            .cloned()
+            .collect();
+        for serve in remote_serves {
+            let row = adw::ActionRow::new();
+            row.set_title(&format!("Serve · {}", serve.serve_type));
+            row.set_subtitle(&serve.addr);
+            activity.append(&row);
+        }
+        self.detail.append(&activity);
 
         self.detail.append(&section_label("VFS"));
         let vfs = gtk::Box::new(gtk::Orientation::Horizontal, 8);

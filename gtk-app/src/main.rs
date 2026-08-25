@@ -8,6 +8,7 @@ mod i18n;
 mod interactive;
 mod jobs;
 mod keyring;
+mod layout;
 mod media;
 mod mqtt;
 mod operations;

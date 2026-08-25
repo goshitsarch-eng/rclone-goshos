@@ -170,6 +170,115 @@ pub fn preferences(parent: &impl IsA<gtk::Widget>, ctx: AppCtx) {
         });
     }
     g1.add(&card_row);
+    let themes = ["system", "light", "dark"];
+    let theme_row = adw::ComboRow::new();
+    theme_row.set_title("Theme");
+    theme_row.set_model(Some(&gtk::StringList::new(&themes)));
+    if let Some(idx) = themes
+        .iter()
+        .position(|t| *t == ctx.settings.borrow().runtime.theme)
+    {
+        theme_row.set_selected(idx as u32);
+    }
+    {
+        let ctx = ctx.clone();
+        theme_row.connect_selected_notify(move |row| {
+            if let Some(v) = themes.get(row.selected() as usize) {
+                ctx.settings.borrow_mut().runtime.theme = (*v).to_string();
+                ctx.persist();
+                ctx.apply_theme();
+            }
+        });
+    }
+    g1.add(&theme_row);
+    let tray_themes = ["color", "symbolic"];
+    let tray_theme = adw::ComboRow::new();
+    tray_theme.set_title("Tray icon theme");
+    tray_theme.set_model(Some(&gtk::StringList::new(&tray_themes)));
+    if let Some(idx) = tray_themes
+        .iter()
+        .position(|t| *t == ctx.settings.borrow().general.tray_icon_theme)
+    {
+        tray_theme.set_selected(idx as u32);
+    }
+    {
+        let ctx = ctx.clone();
+        tray_theme.connect_selected_notify(move |row| {
+            if let Some(v) = tray_themes.get(row.selected() as usize) {
+                ctx.settings.borrow_mut().general.tray_icon_theme = (*v).to_string();
+                ctx.persist();
+            }
+        });
+    }
+    g1.add(&tray_theme);
+    let sorts = ["name", "size", "modified"];
+    let sort_row = adw::ComboRow::new();
+    sort_row.set_title("Files sort");
+    sort_row.set_subtitle("Default Nautilus listing sort");
+    sort_row.set_model(Some(&gtk::StringList::new(&sorts)));
+    if let Some(idx) = sorts
+        .iter()
+        .position(|s| *s == ctx.settings.borrow().nautilus.sort_by)
+    {
+        sort_row.set_selected(idx as u32);
+    }
+    {
+        let ctx = ctx.clone();
+        sort_row.connect_selected_notify(move |row| {
+            if let Some(v) = sorts.get(row.selected() as usize) {
+                ctx.settings.borrow_mut().nautilus.sort_by = (*v).to_string();
+                ctx.persist();
+            }
+        });
+    }
+    g1.add(&sort_row);
+    g1.add(&switch_row(
+        "Sort files descending",
+        ctx.settings.borrow().nautilus.sort_desc,
+        {
+            let ctx = ctx.clone();
+            move |v| ctx.settings.borrow_mut().nautilus.sort_desc = v
+        },
+    ));
+    let channels = ["stable", "beta"];
+    let app_ch = adw::ComboRow::new();
+    app_ch.set_title("App update channel");
+    app_ch.set_model(Some(&gtk::StringList::new(&channels)));
+    if let Some(idx) = channels
+        .iter()
+        .position(|c| *c == ctx.settings.borrow().runtime.app_update_channel)
+    {
+        app_ch.set_selected(idx as u32);
+    }
+    {
+        let ctx = ctx.clone();
+        app_ch.connect_selected_notify(move |row| {
+            if let Some(v) = channels.get(row.selected() as usize) {
+                ctx.settings.borrow_mut().runtime.app_update_channel = (*v).to_string();
+                ctx.persist();
+            }
+        });
+    }
+    g1.add(&app_ch);
+    let rclone_ch = adw::ComboRow::new();
+    rclone_ch.set_title("rclone update channel");
+    rclone_ch.set_model(Some(&gtk::StringList::new(&channels)));
+    if let Some(idx) = channels
+        .iter()
+        .position(|c| *c == ctx.settings.borrow().runtime.rclone_update_channel)
+    {
+        rclone_ch.set_selected(idx as u32);
+    }
+    {
+        let ctx = ctx.clone();
+        rclone_ch.connect_selected_notify(move |row| {
+            if let Some(v) = channels.get(row.selected() as usize) {
+                ctx.settings.borrow_mut().runtime.rclone_update_channel = (*v).to_string();
+                ctx.persist();
+            }
+        });
+    }
+    g1.add(&rclone_ch);
     g1.add(&switch_row(
         "JSON mode for flag editors",
         ctx.settings.borrow().runtime.show_json_mode,
@@ -198,6 +307,17 @@ pub fn preferences(parent: &impl IsA<gtk::Widget>, ctx: AppCtx) {
             ctx.persist();
         });
     }
+    let restart = gtk::Button::with_label("Restart rclone engine");
+    restart.set_tooltip_text(Some(
+        "Required after changing the binary, extra flags, or environment",
+    ));
+    {
+        let ctx = ctx.clone();
+        restart.connect_clicked(move |_| {
+            ctx.restart_engine();
+        });
+    }
+    c1.add(&restart);
     c1.add(&binary);
     let bw = adw::EntryRow::new();
     bw.set_title("Bandwidth limit");
@@ -1041,8 +1161,7 @@ pub fn backends(parent: &impl IsA<gtk::Widget>, ctx: AppCtx) {
         let ctx = ctx.clone();
         let parent = parent.clone();
         use_local.connect_clicked(move |_| {
-            ctx.settings.borrow_mut().core.active_backend = String::new();
-            ctx.persist();
+            ctx.switch_backend("local");
             backends(&parent, ctx.clone());
         });
     }
@@ -1124,8 +1243,7 @@ pub fn backends(parent: &impl IsA<gtk::Widget>, ctx: AppCtx) {
             let name = backend.name.clone();
             let parent = parent.clone();
             use_btn.connect_clicked(move |_| {
-                ctx.settings.borrow_mut().core.active_backend = name.clone();
-                ctx.persist();
+                ctx.switch_backend(&name);
                 backends(&parent, ctx.clone());
             });
         }
@@ -1421,6 +1539,28 @@ pub fn alerts(parent: &impl IsA<gtk::Widget>, ctx: AppCtx) {
             rule.action_ids.len(),
             if rule.enabled { "on" } else { "off" }
         ));
+        let enabled = gtk::Switch::new();
+        enabled.set_valign(gtk::Align::Center);
+        enabled.set_active(rule.enabled);
+        {
+            let ctx = ctx.clone();
+            let id = rule.id.clone();
+            enabled.connect_active_notify(move |sw| {
+                if let Some(rule) = ctx
+                    .store
+                    .borrow_mut()
+                    .alert_rules
+                    .iter_mut()
+                    .find(|r| r.id == id)
+                {
+                    if rule.enabled != sw.is_active() {
+                        rule.enabled = sw.is_active();
+                    }
+                }
+                ctx.persist();
+            });
+        }
+        row.add_suffix(&enabled);
         {
             let ctx = ctx.clone();
             let parent = parent.clone();

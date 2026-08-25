@@ -39,7 +39,7 @@ impl AppCtx {
         let settings = AppSettings::load();
         let store = AppStore::load();
         let i18n = I18n::load(&settings.general.language);
-        Self {
+        let ctx = Self {
             settings: Rc::new(RefCell::new(settings)),
             store: Rc::new(RefCell::new(store)),
             i18n: Rc::new(RefCell::new(i18n)),
@@ -51,7 +51,9 @@ impl AppCtx {
             inhibitor: Rc::new(RefCell::new(PowerInhibitor::new())),
             watch_mtimes: Rc::new(RefCell::new(HashMap::new())),
             watch_hub: Rc::new(RefCell::new(crate::watch::WatchHub::new())),
-        }
+        };
+        ctx.apply_remote_layout();
+        ctx
     }
 
     pub fn t(&self, key: &str) -> String {
@@ -67,8 +69,52 @@ impl AppCtx {
     }
 
     pub fn persist(&self) {
+        self.save_remote_layout();
         let _ = self.settings.borrow().save();
         let _ = self.store.borrow().save();
+    }
+
+    pub fn backend_key(&self) -> String {
+        crate::layout::backend_key(&self.settings.borrow().core.active_backend)
+    }
+
+    pub fn apply_remote_layout(&self) {
+        let key = self.backend_key();
+        let layout =
+            crate::layout::load_remote_layout(&self.settings.borrow().runtime.remote_layouts, &key);
+        if layout.order.is_empty() && layout.hidden.is_empty() {
+            return;
+        }
+        let mut store = self.store.borrow_mut();
+        store.remote_order = layout.order;
+        store.hidden_remotes = layout.hidden;
+    }
+
+    pub fn save_remote_layout(&self) {
+        let key = self.backend_key();
+        let store = self.store.borrow();
+        let layout = crate::layout::RemotesLayout {
+            order: store.remote_order.clone(),
+            hidden: store.hidden_remotes.clone(),
+        };
+        drop(store);
+        crate::layout::store_remote_layout(
+            &mut self.settings.borrow_mut().runtime.remote_layouts,
+            &key,
+            &layout,
+        );
+    }
+
+    pub fn switch_backend(&self, name: &str) {
+        self.save_remote_layout();
+        self.settings.borrow_mut().core.active_backend = if name == "local" {
+            String::new()
+        } else {
+            name.to_string()
+        };
+        self.apply_remote_layout();
+        self.persist();
+        self.refresh_runtime();
     }
 
     pub fn client(&self) -> Option<crate::rclone::RcClient> {

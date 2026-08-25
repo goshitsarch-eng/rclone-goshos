@@ -860,7 +860,7 @@ pub fn sort_entries(entries: &mut [DirEntry], sort_by: &str, desc: bool) {
         }
         let ord = match sort_by {
             "size" => a.size.cmp(&b.size),
-            "modified" => a.mod_time.cmp(&b.mod_time),
+            "modified" | "modtime" => a.mod_time.cmp(&b.mod_time),
             "type" => a.mime.cmp(&b.mime),
             _ => a.name.to_lowercase().cmp(&b.name.to_lowercase()),
         };

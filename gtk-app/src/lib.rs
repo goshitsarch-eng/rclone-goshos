@@ -10,6 +10,7 @@ pub mod i18n;
 pub mod interactive;
 pub mod jobs;
 pub mod keyring;
+pub mod layout;
 pub mod media;
 pub mod mqtt;
 pub mod operations;

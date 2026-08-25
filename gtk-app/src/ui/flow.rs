@@ -146,92 +146,108 @@ impl FlowView {
     }
 
     fn fill_overview(&self, runs: &[QuickRun]) {
+        let layout = crate::layout::PanelLayout::from_value(
+            &self.ctx.settings.borrow().runtime.quick_run_layout,
+        );
+        let visible = |id: &str| {
+            layout
+                .resolve(crate::layout::QUICK_RUN_PANELS)
+                .into_iter()
+                .any(|(panel, vis)| panel == id && vis)
+        };
+        let snap = self.ctx.snapshot.borrow().clone();
         let title = gtk::Label::new(Some("Quick Runs"));
         title.add_css_class("title-1");
         title.set_xalign(0.0);
         self.content.append(&title);
-        let list = gtk::ListBox::new();
-        list.add_css_class("boxed-list");
-        for qr in runs {
-            let row = adw::ActionRow::new();
-            row.set_title(&qr.name);
-            row.set_subtitle(&format!(
-                "{} · {} · {}",
-                qr.operation_type, qr.remote_name, qr.status
-            ));
-            let start = gtk::Button::from_icon_name("media-playback-start-symbolic");
-            start.set_valign(gtk::Align::Center);
-            {
-                let view = self.clone();
-                let qr = qr.clone();
-                start.connect_clicked(move |_| view.start_run(&qr));
-            }
-            row.add_suffix(&start);
-            list.append(&row);
-        }
-        self.content.append(&list);
-
-        self.content.append(&heading("Jobs"));
-        let jobs = gtk::ListBox::new();
-        jobs.add_css_class("boxed-list");
-        let snap = self.ctx.snapshot.borrow();
-        if snap.jobs.is_empty() {
-            let row = adw::ActionRow::new();
-            row.set_title("No active jobs");
-            jobs.append(&row);
-        } else {
-            for job in &snap.jobs {
+        if visible("quickRuns") {
+            let list = gtk::ListBox::new();
+            list.add_css_class("boxed-list");
+            for qr in runs {
                 let row = adw::ActionRow::new();
-                row.set_title(&format!("{} · {}", job.operation, job.remote));
-                row.set_subtitle(&format!("{} · {:.0}%", job.status, job.progress * 100.0));
-                let view = self.clone();
-                let id = job.id;
-                row.connect_activated(move |_| {
-                    if let Some(win) = view.root.root().and_downcast::<gtk::Window>() {
-                        dialogs::job_detail(&win, view.ctx.clone(), id);
-                    }
-                });
+                row.set_title(&qr.name);
+                row.set_subtitle(&format!(
+                    "{} · {} · {}",
+                    qr.operation_type, qr.remote_name, qr.status
+                ));
+                let start = gtk::Button::from_icon_name("media-playback-start-symbolic");
+                start.set_valign(gtk::Align::Center);
+                {
+                    let view = self.clone();
+                    let qr = qr.clone();
+                    start.connect_clicked(move |_| view.start_run(&qr));
+                }
+                row.add_suffix(&start);
+                list.append(&row);
+            }
+            self.content.append(&list);
+        }
+
+        if visible("jobs") {
+            self.content.append(&heading("Jobs"));
+            let jobs = gtk::ListBox::new();
+            jobs.add_css_class("boxed-list");
+            if snap.jobs.is_empty() {
+                let row = adw::ActionRow::new();
+                row.set_title("No active jobs");
                 jobs.append(&row);
+            } else {
+                for job in &snap.jobs {
+                    let row = adw::ActionRow::new();
+                    row.set_title(&format!("{} · {}", job.operation, job.remote));
+                    row.set_subtitle(&format!("{} · {:.0}%", job.status, job.progress * 100.0));
+                    let view = self.clone();
+                    let id = job.id;
+                    row.connect_activated(move |_| {
+                        if let Some(win) = view.root.root().and_downcast::<gtk::Window>() {
+                            dialogs::job_detail(&win, view.ctx.clone(), id);
+                        }
+                    });
+                    jobs.append(&row);
+                }
             }
+            self.content.append(&jobs);
         }
-        self.content.append(&jobs);
 
-        self.content.append(&heading("Serves"));
-        let serves = gtk::ListBox::new();
-        serves.add_css_class("boxed-list");
-        if snap.serves.is_empty() {
-            let row = adw::ActionRow::new();
-            row.set_title("No running serves");
-            serves.append(&row);
-        } else {
-            for serve in &snap.serves {
+        if visible("serves") {
+            self.content.append(&heading("Serves"));
+            let serves = gtk::ListBox::new();
+            serves.add_css_class("boxed-list");
+            if snap.serves.is_empty() {
                 let row = adw::ActionRow::new();
-                row.set_title(&format!("{} · {}", serve.serve_type, serve.fs));
-                row.set_subtitle(&serve.addr);
+                row.set_title("No running serves");
                 serves.append(&row);
+            } else {
+                for serve in &snap.serves {
+                    let row = adw::ActionRow::new();
+                    row.set_title(&format!("{} · {}", serve.serve_type, serve.fs));
+                    row.set_subtitle(&serve.addr);
+                    serves.append(&row);
+                }
             }
+            self.content.append(&serves);
         }
-        self.content.append(&serves);
-        drop(snap);
 
-        self.content.append(&heading("Automations"));
-        let autos = gtk::ListBox::new();
-        autos.add_css_class("boxed-list");
-        let records = crate::automation::collect(&self.ctx.store.borrow());
-        if records.is_empty() {
-            let row = adw::ActionRow::new();
-            row.set_title("No automations");
-            autos.append(&row);
-        } else {
-            for record in records.into_iter().take(8) {
-                let paused = self.ctx.store.borrow().is_automation_paused(&record.id);
+        if visible("automations") {
+            self.content.append(&heading("Automations"));
+            let autos = gtk::ListBox::new();
+            autos.add_css_class("boxed-list");
+            let records = crate::automation::collect(&self.ctx.store.borrow());
+            if records.is_empty() {
                 let row = adw::ActionRow::new();
-                row.set_title(&record.name);
-                row.set_subtitle(if paused { "paused" } else { "scheduled" });
+                row.set_title("No automations");
                 autos.append(&row);
+            } else {
+                for record in records.into_iter().take(8) {
+                    let paused = self.ctx.store.borrow().is_automation_paused(&record.id);
+                    let row = adw::ActionRow::new();
+                    row.set_title(&record.name);
+                    row.set_subtitle(if paused { "paused" } else { "scheduled" });
+                    autos.append(&row);
+                }
             }
+            self.content.append(&autos);
         }
-        self.content.append(&autos);
 
         let builder = adw::StatusPage::new();
         builder.set_icon_name(Some("applications-engineering-symbolic"));

@@ -94,6 +94,12 @@ This client is the GTK 4 + libadwaita rewrite of the Angular/Tauri desktop UI. I
 - Dashboard automation pause/resume without editing the profile
 - Job detail: completed transfers, check-result summary, filter, delete from history
 - Flow overview shows jobs, serves, and automations alongside quick-run cards
+- Per-backend remote order/visibility (`runtime.remote_layouts`)
+- Dashboard and Flow panel order/visibility (`runtime.dashboard_layout`, `quick_run_layout`)
+- Nautilus sort cycles name/size/modified (plus preferences defaults)
+- Preferences: theme, tray icon theme, update channels, engine restart
+- Alert rule enable/disable switches
+- Remote detail activity (jobs + serves)
 
 ## Still deepening toward pixel-level Angular parity
 
