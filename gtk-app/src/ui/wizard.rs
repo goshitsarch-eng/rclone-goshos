@@ -377,6 +377,12 @@ pub fn present(
                         }
                     }
                 }
+                if existing.is_none() {
+                    let vendor = params.get("vendor").and_then(|v| v.as_str());
+                    let presets =
+                        crate::presets::resolve_presets(&r#type, vendor, std::env::consts::OS);
+                    crate::presets::merge_remote_params(&mut params, &presets);
+                }
                 let result = if existing.is_some() || state.borrow().flow.is_active {
                     client.update_remote(&remote_name, params)
                 } else {
@@ -387,6 +393,7 @@ pub fn present(
                         persist_meta(
                             &ctx,
                             &remote_name,
+                            &r#type,
                             &mount.text(),
                             &src.text(),
                             &dst.text(),
@@ -607,6 +614,7 @@ fn apply_question_widgets(
 fn persist_meta(
     ctx: &AppCtx,
     remote_name: &str,
+    remote_type: &str,
     mount: &str,
     src: &str,
     dst: &str,
@@ -674,6 +682,10 @@ fn persist_meta(
             .or_default()
             .insert("default".into(), profile);
     }
+    crate::presets::apply_to_remote_meta(
+        &mut meta,
+        &crate::presets::resolve_presets(remote_type, None, std::env::consts::OS),
+    );
     ctx.store
         .borrow_mut()
         .remotes

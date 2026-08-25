@@ -182,12 +182,10 @@ pub fn default_source(remote: &str, rclone: &Value) -> String {
 
 pub fn default_dest(remote: &str, rclone: &Value, op: OperationType) -> String {
     first_path(&flatten_rclone(rclone), DEST_KEYS).unwrap_or_else(|| match op {
-        OperationType::Mount => dirs::home_dir()
-            .unwrap_or_else(|| std::path::PathBuf::from("/tmp"))
-            .join("mnt")
-            .join(remote)
-            .to_string_lossy()
-            .into_owned(),
+        OperationType::Mount => crate::path_inspection::suggest_default_mount_path(
+            remote,
+            &crate::store::AppStore::default(),
+        ),
         OperationType::Serve => "127.0.0.1:0".into(),
         _ => remote_fs(remote, ""),
     })

@@ -427,6 +427,16 @@ impl AlertRule {
         {
             return false;
         }
+        if !self.backend_filter.is_empty()
+            && !self.backend_filter.iter().any(|b| b == &event.backend)
+        {
+            return false;
+        }
+        if !self.profile_filter.is_empty()
+            && !self.profile_filter.iter().any(|p| p == &event.profile)
+        {
+            return false;
+        }
         if let Some(last) = self.last_fired {
             if self.cooldown_secs > 0 {
                 let elapsed = (Utc::now() - last).num_seconds();
@@ -469,6 +479,10 @@ pub struct AlertEvent {
     pub body: String,
     pub remote: String,
     pub origin: String,
+    #[serde(default)]
+    pub backend: String,
+    #[serde(default)]
+    pub profile: String,
     pub created_at: DateTime<Utc>,
     pub acknowledged: bool,
 }
@@ -483,6 +497,8 @@ impl AlertEvent {
             body,
             remote: String::new(),
             origin: "dashboard".into(),
+            backend: String::new(),
+            profile: String::new(),
             created_at: Utc::now(),
             acknowledged: false,
         }
@@ -688,6 +704,28 @@ impl AppStore {
         self.job_history.retain(|job| job.id != id);
     }
 
+    pub fn remote_names(&self) -> Vec<String> {
+        let mut names: Vec<String> = self.remotes.keys().cloned().collect();
+        names.extend(self.remote_order.iter().cloned());
+        names.sort();
+        names.dedup();
+        names
+    }
+
+    pub fn apply_delete_remote(&mut self, name: &str) {
+        self.remotes.remove(name);
+        self.quick_runs.retain(|run| run.remote_name != name);
+        self.job_history.retain(|job| job.remote != name);
+        self.remote_order.retain(|n| n != name);
+        self.hidden_remotes.retain(|n| n != name);
+        self.logs.remove(name);
+        let markers = [format!("remote:{name}:"), format!(":{name}:")];
+        self.automation_paused
+            .retain(|id| !markers.iter().any(|m| id.contains(m.as_str())));
+        self.automation_last_run
+            .retain(|id, _| !markers.iter().any(|m| id.contains(m.as_str())));
+    }
+
     pub fn push_log(&mut self, remote: &str, line: String) {
         self.logs.entry(remote.to_string()).or_default().push(line);
         if let Some(lines) = self.logs.get_mut(remote) {
@@ -852,6 +890,140 @@ pub fn render_template(template: &str, event: &AlertEvent) -> String {
         .replace("{{kind}}", event.kind.as_str())
         .replace("{{remote}}", &event.remote)
         .replace("{{origin}}", &event.origin)
+        .replace("{{backend}}", &event.backend)
+        .replace("{{profile}}", &event.profile)
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct DeleteRemotePlan {
+    pub name: String,
+    pub mounts: Vec<String>,
+    pub serves: Vec<String>,
+    pub jobs: Vec<u64>,
+    pub quick_runs: Vec<String>,
+    pub automations: Vec<String>,
+    pub job_history: usize,
+}
+
+impl DeleteRemotePlan {
+    pub fn summary(&self) -> String {
+        format!(
+            "Delete {}?\n\nWill stop {} mounts, {} serves, and {} jobs.\nRemove {} quick runs, {} automations, and {} history entries.",
+            self.name,
+            self.mounts.len(),
+            self.serves.len(),
+            self.jobs.len(),
+            self.quick_runs.len(),
+            self.automations.len(),
+            self.job_history
+        )
+    }
+}
+
+pub fn fs_belongs_to_remote(fs: &str, name: &str) -> bool {
+    fs == name || fs == format!("{name}:") || fs.starts_with(&format!("{name}:"))
+}
+
+pub fn plan_delete_remote(
+    name: &str,
+    store: &AppStore,
+    snap: &RuntimeSnapshot,
+) -> DeleteRemotePlan {
+    let mounts = snap
+        .mounts
+        .iter()
+        .filter(|m| fs_belongs_to_remote(&m.fs, name))
+        .map(|m| m.mount_point.clone())
+        .collect();
+    let serves = snap
+        .serves
+        .iter()
+        .filter(|s| fs_belongs_to_remote(&s.fs, name))
+        .map(|s| s.id.clone())
+        .collect();
+    let jobs = snap
+        .jobs
+        .iter()
+        .filter(|j| j.remote == name && (j.status == "running" || j.status == "active"))
+        .map(|j| j.id)
+        .collect();
+    let quick_runs = store
+        .quick_runs
+        .iter()
+        .filter(|run| run.remote_name == name)
+        .map(|run| run.name.clone())
+        .collect();
+    let automations: Vec<String> = store
+        .automation_paused
+        .iter()
+        .chain(store.automation_last_run.keys())
+        .filter(|id| id.contains(&format!("remote:{name}:")) || id.contains(&format!(":{name}:")))
+        .cloned()
+        .collect();
+    let job_history = store
+        .job_history
+        .iter()
+        .filter(|j| j.remote == name)
+        .count();
+    DeleteRemotePlan {
+        name: name.to_string(),
+        mounts,
+        serves,
+        jobs,
+        quick_runs,
+        automations,
+        job_history,
+    }
+}
+
+pub fn unique_remote_name(existing: &[String], base: &str) -> String {
+    let stem = base
+        .trim_end_matches(|c: char| c.is_ascii_digit())
+        .trim_end_matches('-');
+    let stem = if stem.is_empty() { base } else { stem };
+    if !existing.iter().any(|n| n == stem) {
+        return stem.to_string();
+    }
+    for i in 2..1000 {
+        let candidate = format!("{stem}-{i}");
+        if !existing.iter().any(|n| n == &candidate) {
+            return candidate;
+        }
+    }
+    format!("{stem}-copy")
+}
+
+pub fn rewrite_remote_refs(value: &mut Value, from: &str, to: &str) {
+    let needle = format!("{from}:");
+    let replacement = format!("{to}:");
+    match value {
+        Value::String(s) => {
+            if s.starts_with(&needle) {
+                *s = s.replacen(&needle, &replacement, 1);
+            }
+        }
+        Value::Array(arr) => {
+            for item in arr {
+                rewrite_remote_refs(item, from, to);
+            }
+        }
+        Value::Object(map) => {
+            for item in map.values_mut() {
+                rewrite_remote_refs(item, from, to);
+            }
+        }
+        _ => {}
+    }
+}
+
+pub fn clone_remote_meta(store: &AppStore, from: &str, to: &str) -> Option<RemoteMeta> {
+    let mut meta = store.remotes.get(from)?.clone();
+    for profiles in meta.profiles.values_mut() {
+        for profile in profiles.values_mut() {
+            rewrite_remote_refs(&mut profile.rclone, from, to);
+        }
+    }
+    Some(meta)
 }
 
 pub fn build_remote_infos(
@@ -958,6 +1130,16 @@ mod tests {
         assert!(rule.matches(&event));
         event.kind = AlertEventKind::Mount;
         assert!(!rule.matches(&event));
+        event.kind = AlertEventKind::Job;
+        rule.backend_filter = vec!["local".into()];
+        event.backend = "extra".into();
+        assert!(!rule.matches(&event));
+        event.backend = "local".into();
+        rule.profile_filter = vec!["nightly".into()];
+        event.profile = "default".into();
+        assert!(!rule.matches(&event));
+        event.profile = "nightly".into();
+        assert!(rule.matches(&event));
     }
 
     #[test]
@@ -1122,5 +1304,115 @@ mod tests {
         assert!(store.seed_alert_defaults(false));
         assert!(!store.alert_actions[0].enabled);
         assert!(!store.alert_rules[0].enabled);
+    }
+
+    #[test]
+    fn plans_and_applies_remote_delete() {
+        let mut store = AppStore::default();
+        store.remotes.insert("drive".into(), RemoteMeta::default());
+        store.quick_runs.push(QuickRun::new(
+            "Nightly".into(),
+            OperationType::Sync,
+            "drive".into(),
+        ));
+        store.job_history.push(JobInfo {
+            id: 1,
+            operation: "sync".into(),
+            remote: "drive".into(),
+            profile: "default".into(),
+            status: "completed".into(),
+            origin: "dashboard".into(),
+            start_time: Utc::now(),
+            error: None,
+            dry_run: false,
+            src: "drive:a".into(),
+            dst: "/tmp".into(),
+            group: "job/1".into(),
+            stats: json!({}),
+            transferring: json!([]),
+            duration: 0.0,
+            progress: 0.0,
+            output: json!({}),
+            completed: json!([]),
+        });
+        store.remote_order = vec!["drive".into(), "photos".into()];
+        store
+            .automation_last_run
+            .insert("remote:drive:sync:default".into(), Utc::now());
+        let snap = RuntimeSnapshot {
+            mounts: vec![MountedRemote {
+                fs: "drive:Photos".into(),
+                mount_point: "/mnt/drive".into(),
+            }],
+            serves: vec![ServeItem {
+                id: "s1".into(),
+                addr: "127.0.0.1:8080".into(),
+                fs: "drive:".into(),
+                serve_type: "http".into(),
+            }],
+            jobs: vec![JobInfo {
+                id: 9,
+                operation: "sync".into(),
+                remote: "drive".into(),
+                profile: "default".into(),
+                status: "running".into(),
+                origin: "dashboard".into(),
+                start_time: Utc::now(),
+                error: None,
+                dry_run: false,
+                src: String::new(),
+                dst: String::new(),
+                group: "job/9".into(),
+                stats: json!({}),
+                transferring: json!([]),
+                duration: 0.0,
+                progress: 0.0,
+                output: json!({}),
+                completed: json!([]),
+            }],
+            ..RuntimeSnapshot::default()
+        };
+        let plan = plan_delete_remote("drive", &store, &snap);
+        assert_eq!(plan.mounts, vec!["/mnt/drive"]);
+        assert_eq!(plan.serves, vec!["s1"]);
+        assert_eq!(plan.jobs, vec![9]);
+        assert_eq!(plan.quick_runs, vec!["Nightly"]);
+        assert_eq!(plan.job_history, 1);
+        assert!(plan.summary().contains("Delete drive"));
+        store.apply_delete_remote("drive");
+        assert!(!store.remotes.contains_key("drive"));
+        assert!(store.quick_runs.is_empty());
+        assert!(store.job_history.is_empty());
+        assert_eq!(store.remote_order, vec!["photos"]);
+        assert!(store.automation_last_run.is_empty());
+    }
+
+    #[test]
+    fn clones_remote_meta_and_rewrites_paths() {
+        let mut store = AppStore::default();
+        let mut meta = RemoteMeta::default();
+        meta.upsert_profile(
+            OperationType::Sync,
+            ProfileConfig {
+                name: "default".into(),
+                rclone: json!({ "srcFs": "drive:Photos", "dstFs": "/tmp" }),
+                ..ProfileConfig::default()
+            },
+        );
+        store.remotes.insert("drive".into(), meta);
+        store
+            .remotes
+            .insert("drive-2".into(), RemoteMeta::default());
+        let names = store.remote_names();
+        assert_eq!(unique_remote_name(&names, "drive-2"), "drive-3");
+        assert_eq!(unique_remote_name(&["drive".into()], "drive"), "drive-2");
+        let cloned = clone_remote_meta(&store, "drive", "photos").unwrap();
+        assert_eq!(
+            cloned
+                .get_profile(OperationType::Sync, "default")
+                .unwrap()
+                .rclone["srcFs"],
+            "photos:Photos"
+        );
     }
 }

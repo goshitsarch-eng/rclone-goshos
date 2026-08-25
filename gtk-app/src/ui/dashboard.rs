@@ -961,7 +961,7 @@ impl Dashboard {
                 }
                 "clone" => {
                     if let Some(win) = dash.root.root().and_downcast::<gtk::Window>() {
-                        dialogs::remote_config(&win, ctx.clone(), Some(name.clone()), {
+                        dialogs::clone_remote(&win, ctx.clone(), &name, {
                             let dash = dash.clone();
                             let ctx = ctx.clone();
                             Rc::new(move || {

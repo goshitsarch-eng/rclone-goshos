@@ -1824,8 +1824,37 @@ pub fn start_operation(
         OperationType::Copyurl => "Destination fs",
         _ => "Destination",
     });
-    dst.set_text(&default_dest(remote, &rclone, op));
+    dst.set_text(&if op == OperationType::Mount {
+        crate::path_inspection::suggest_default_mount_path(remote, &ctx.store.borrow())
+    } else {
+        default_dest(remote, &rclone, op)
+    });
     attach_folder_picker(parent, &dst);
+    let dest_status = gtk::Label::new(None);
+    dest_status.add_css_class("dim-label");
+    dest_status.set_xalign(0.0);
+    dest_status.set_wrap(true);
+    dest_status.set_visible(matches!(
+        op,
+        OperationType::Mount | OperationType::Sync | OperationType::Copy | OperationType::Bisync
+    ));
+    {
+        let dest_status = dest_status.clone();
+        let ctx = ctx.clone();
+        let remote = remote.to_string();
+        let refresh_status = move |path: &str| {
+            let status = crate::path_inspection::inspect_dest(
+                &ctx.store.borrow(),
+                path,
+                &remote,
+                op,
+                &ctx.snapshot.borrow().mounts,
+            );
+            dest_status.set_text(&crate::path_inspection::describe_status(&status));
+        };
+        refresh_status(&dst.text());
+        dst.connect_changed(move |row| refresh_status(&row.text()));
+    }
     let serve = adw::ComboRow::new();
     serve.set_title("Serve type");
     serve.set_model(Some(&gtk::StringList::new(&OperationType::SERVE_TYPES)));
@@ -2083,6 +2112,12 @@ pub fn start_operation(
         identity.add(&add_row);
     }
     identity.add(&dst);
+    identity.add(&{
+        let row = adw::ActionRow::new();
+        row.set_title("Path check");
+        row.add_suffix(&dest_status);
+        row
+    });
     identity.add(&serve);
     identity.add(&vfs_row);
     identity.add(&filter_row);
@@ -2106,12 +2141,8 @@ pub fn delete_remote(
     name: &str,
     on_done: Rc<dyn Fn()>,
 ) {
-    let dialog = adw::AlertDialog::new(
-        Some("Delete remote"),
-        Some(&format!(
-            "Delete {name}? Active mounts, serves, and jobs will be stopped."
-        )),
-    );
+    let plan = crate::store::plan_delete_remote(name, &ctx.store.borrow(), &ctx.snapshot.borrow());
+    let dialog = adw::AlertDialog::new(Some("Delete remote"), Some(&plan.summary()));
     dialog.add_response("cancel", "Cancel");
     dialog.add_response("delete", "Delete");
     dialog.set_response_appearance("delete", adw::ResponseAppearance::Destructive);
@@ -2119,14 +2150,59 @@ pub fn delete_remote(
     dialog.connect_response(None, move |_, response| {
         if response == "delete" {
             if let Some(client) = ctx.client() {
+                for mount in &plan.mounts {
+                    let _ = client.unmount(mount);
+                }
+                for serve in &plan.serves {
+                    let _ = client.serve_stop(serve);
+                }
+                for job in &plan.jobs {
+                    let _ = client.job_stop(*job);
+                }
                 let _ = client.delete_remote(&name);
             }
-            ctx.store.borrow_mut().remotes.remove(&name);
+            ctx.store.borrow_mut().apply_delete_remote(&name);
             ctx.persist();
+            ctx.refresh_runtime();
             on_done();
         }
     });
     dialog.present(Some(parent));
+}
+
+pub fn clone_remote(
+    parent: &impl IsA<gtk::Widget>,
+    ctx: AppCtx,
+    name: &str,
+    on_done: Rc<dyn Fn()>,
+) {
+    let existing = ctx.store.borrow().remote_names();
+    let new_name = crate::store::unique_remote_name(&existing, name);
+    let Some(meta) = crate::store::clone_remote_meta(&ctx.store.borrow(), name, &new_name) else {
+        let toast = adw::AlertDialog::new(
+            Some("Clone failed"),
+            Some("No saved settings were found for this remote."),
+        );
+        toast.add_response("ok", "OK");
+        toast.present(Some(parent));
+        return;
+    };
+    if let Some(client) = ctx.client() {
+        if let Err(e) = client.clone_remote_config(name, &new_name) {
+            let toast = adw::AlertDialog::new(Some("Clone failed"), Some(&e.to_string()));
+            toast.add_response("ok", "OK");
+            toast.present(Some(parent));
+            return;
+        }
+    }
+    {
+        let mut store = ctx.store.borrow_mut();
+        store.remotes.insert(new_name.clone(), meta);
+        store.ensure_remote_order(&[new_name.clone()]);
+    }
+    ctx.persist();
+    ctx.refresh_runtime();
+    remote_config(parent, ctx, Some(new_name), on_done);
 }
 
 pub fn quick_run_editor(
@@ -4058,6 +4134,22 @@ fn alert_rule_editor(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, existing_id: O
             .map(|r| r.remote_filter.join(", "))
             .unwrap_or_default(),
     );
+    let backends = adw::EntryRow::new();
+    backends.set_title("Backend filter (comma-separated)");
+    backends.set_text(
+        &existing
+            .as_ref()
+            .map(|r| r.backend_filter.join(", "))
+            .unwrap_or_default(),
+    );
+    let profiles = adw::EntryRow::new();
+    profiles.set_title("Profile filter (comma-separated)");
+    profiles.set_text(
+        &existing
+            .as_ref()
+            .map(|r| r.profile_filter.join(", "))
+            .unwrap_or_default(),
+    );
     let origins = adw::EntryRow::new();
     origins.set_title("Origin filter (comma-separated)");
     origins.set_text(
@@ -4117,6 +4209,8 @@ fn alert_rule_editor(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, existing_id: O
         let severity = severity.clone();
         let cooldown = cooldown.clone();
         let remotes = remotes.clone();
+        let backends = backends.clone();
+        let profiles = profiles.clone();
         let origins = origins.clone();
         save.connect_clicked(move |_| {
             let mut rule = existing_id
@@ -4141,6 +4235,8 @@ fn alert_rule_editor(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, existing_id: O
             );
             rule.cooldown_secs = cooldown.text().parse().unwrap_or(0);
             rule.remote_filter = split_csv(&remotes.text());
+            rule.backend_filter = split_csv(&backends.text());
+            rule.profile_filter = split_csv(&profiles.text());
             rule.origin_filter = split_csv(&origins.text());
             rule.event_filter = event_switches
                 .iter()
@@ -4188,6 +4284,8 @@ fn alert_rule_editor(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, existing_id: O
     general.add(&severity);
     general.add(&cooldown);
     general.add(&remotes);
+    general.add(&backends);
+    general.add(&profiles);
     general.add(&origins);
     page.add(&general);
     let events = adw::PreferencesGroup::new();

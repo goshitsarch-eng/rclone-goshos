@@ -111,6 +111,12 @@ This client is the GTK 4 + libadwaita rewrite of the Angular/Tauri desktop UI. I
 - Download save-as from the viewer and Nautilus
 - Uploads start as tracked `copyfile` jobs
 - `job/stopgroup` when closing Remote About
+- Delete remote stops mounts/serves/jobs and purges quick runs, automations, and history
+- True remote clone (unique name, rewritten paths, rclone.conf copy)
+- Provider / family / OS presets applied on wizard create
+- Mount and local dest path inspection with collision warnings
+- Alert rules honor backend and profile filters
+- Title-bar banner surfaces the highest-priority repair diagnosis
 
 ## Still deepening toward pixel-level Angular parity
 

@@ -228,6 +228,31 @@ impl RcClient {
         self.call("config/delete", json!({ "name": name }))
     }
 
+    pub fn clone_remote_config(&self, from: &str, to: &str) -> Result<Value, RcError> {
+        let dump = self.dump_config()?;
+        let Some(section) = dump.get(from).cloned() else {
+            return Err(RcError::message(format!(
+                "source remote {from} is not in rclone.conf"
+            )));
+        };
+        let r#type = section
+            .get("type")
+            .and_then(|x| x.as_str())
+            .unwrap_or_default()
+            .to_string();
+        if r#type.is_empty() {
+            return Err(RcError::message(format!(
+                "source remote {from} has no type"
+            )));
+        }
+        let mut params = section;
+        if let Some(obj) = params.as_object_mut() {
+            obj.remove("type");
+            obj.remove("name");
+        }
+        self.create_remote(to, &r#type, params)
+    }
+
     pub fn obscure(&self, value: &str) -> Result<String, RcError> {
         let v = self.call("core/obscure", json!({ "clear": value }))?;
         Ok(v.get("obscured")

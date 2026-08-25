@@ -8,7 +8,7 @@ use std::path::Path;
 /// Oldest rclone the GTK client expects (matches typical RC `options/info` surface).
 pub const MIN_RCLONE_VERSION: &str = "1.65.0";
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RepairKind {
     MissingBinary,
     VersionTooOld,
@@ -117,6 +117,23 @@ pub fn diagnose(
     issues
 }
 
+pub fn banner_from_issues(issues: &[RepairIssue]) -> Option<&RepairIssue> {
+    const ORDER: &[RepairKind] = &[
+        RepairKind::MissingBinary,
+        RepairKind::PasswordRequired,
+        RepairKind::EngineUnreachable,
+        RepairKind::VersionTooOld,
+        RepairKind::FuseMissing,
+        RepairKind::ConfigUnreadable,
+    ];
+    for kind in ORDER {
+        if let Some(issue) = issues.iter().find(|i| i.kind == *kind) {
+            return Some(issue);
+        }
+    }
+    issues.first()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -156,5 +173,28 @@ mod tests {
         assert!(looks_like_password_error("Failed to decrypt config"));
         assert!(looks_like_password_error("password required"));
         assert!(!looks_like_password_error("connection refused"));
+    }
+
+    #[test]
+    fn banner_prefers_missing_binary() {
+        let issues = vec![
+            RepairIssue {
+                kind: RepairKind::FuseMissing,
+                title: "fuse".into(),
+                detail: String::new(),
+                action: String::new(),
+            },
+            RepairIssue {
+                kind: RepairKind::MissingBinary,
+                title: "binary".into(),
+                detail: String::new(),
+                action: String::new(),
+            },
+        ];
+        assert_eq!(
+            banner_from_issues(&issues).map(|i| i.kind),
+            Some(RepairKind::MissingBinary)
+        );
+        assert!(banner_from_issues(&[]).is_none());
     }
 }

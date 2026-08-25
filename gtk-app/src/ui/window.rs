@@ -603,10 +603,17 @@ fn install_shortcuts(window: &adw::ApplicationWindow) {
 }
 
 fn update_banner(ctx: &AppCtx, banner: &adw::Banner) {
-    if !ctx.engine_ready() {
-        banner.set_title(
-            "Rclone engine is not running. Install rclone or set a custom binary in Preferences.",
-        );
+    let settings = ctx.settings.borrow().clone();
+    let version = ctx.client().and_then(|c| c.version().ok());
+    let issues = crate::repair::diagnose(
+        &settings,
+        ctx.engine_ready(),
+        ctx.client().as_ref(),
+        version.as_deref(),
+    );
+    if let Some(issue) = crate::repair::banner_from_issues(&issues) {
+        banner.set_title(&format!("{} — {}", issue.title, issue.detail));
+        banner.set_button_label(Some(&issue.action));
         banner.set_revealed(true);
     } else {
         banner.set_revealed(false);

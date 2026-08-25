@@ -408,6 +408,8 @@ fn notify_job_changes(
                     .unwrap_or_else(|| "rclone job failed".into()),
             );
             event.origin = job.origin.clone();
+            event.remote = job.remote.clone();
+            event.profile = job.profile.clone();
             ctx.store.borrow_mut().record_event(event);
             dirty = true;
         }
