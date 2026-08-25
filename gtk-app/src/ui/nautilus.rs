@@ -4358,7 +4358,7 @@ impl NautilusView {
         while let Some(child) = self.ops.first_child() {
             self.ops.remove(&child);
         }
-        let jobs: Vec<_> = self
+        let mut jobs: Vec<_> = self
             .ctx
             .snapshot
             .borrow()
@@ -4390,20 +4390,32 @@ impl NautilusView {
             self.ops.append(&row);
             return;
         }
+        let registry = self.ctx.store.borrow().job_meta.clone();
+        let siblings = {
+            let store = self.ctx.store.borrow();
+            crate::jobs::merge_job_lists(
+                &jobs,
+                &crate::jobs::history_with_meta(&store.job_history, &store.job_meta),
+            )
+        };
+        for job in &mut jobs {
+            crate::jobs::decorate_job_transfers(job, &registry, &siblings);
+        }
         for job in &jobs {
             self.ops.append(&self.ops_row(job, true));
         }
         let running_ids: std::collections::HashSet<u64> = jobs.iter().map(|j| j.id).collect();
-        for job in history
-            .iter()
+        for mut job in history
+            .into_iter()
             .filter(|j| !running_ids.contains(&j.id))
             .take(12)
         {
-            self.ops.append(&self.ops_row(job, false));
+            crate::jobs::decorate_job_transfers(&mut job, &registry, &siblings);
+            self.ops.append(&self.ops_row(&job, false));
         }
     }
 
-    fn ops_row(&self, job: &crate::store::JobInfo, live: bool) -> adw::ActionRow {
+    fn ops_row(&self, job: &crate::store::JobInfo, live: bool) -> adw::ExpanderRow {
         let percent = if matches!(job.status.as_str(), "completed" | "failed" | "stopped")
             && job.progress <= 0.0
         {
@@ -4411,7 +4423,7 @@ impl NautilusView {
         } else {
             (job.progress * 100.0).round() as i32
         };
-        let row = adw::ActionRow::new();
+        let row = adw::ExpanderRow::new();
         row.set_title(&format!(
             "{} · {}",
             job.operation,
@@ -4431,7 +4443,6 @@ impl NautilusView {
             crate::rclone::format_bytes(total),
             id = job.id
         ));
-        row.set_activatable(true);
         if live && (job.status == "running" || job.status == "preparing") {
             let bar = gtk::ProgressBar::new();
             bar.set_fraction(job.progress.clamp(0.0, 1.0));
@@ -4441,16 +4452,48 @@ impl NautilusView {
             bar.set_width_request(96);
             row.add_suffix(&bar);
         }
+        let (speed, eta) = crate::jobs::job_speed_eta(job);
+        let speed_row = adw::ActionRow::new();
+        speed_row.set_title(&self.ctx.t_or("modals.jobDetail.fields.speed", "Speed"));
+        speed_row.set_subtitle(&format!(
+            "{speed} · {} {eta}",
+            self.ctx.t_or("modals.jobDetail.fields.eta", "ETA")
+        ));
+        row.add_row(&speed_row);
+        let previews = crate::jobs::job_transfer_previews(job, 6);
+        if previews.is_empty() {
+            let empty = adw::ActionRow::new();
+            empty.set_title(&self.ctx.t_or(
+                "shared.transferActivity.empty.noActive",
+                "No active transfers",
+            ));
+            row.add_row(&empty);
+        } else {
+            for (name, detail) in previews {
+                let child = adw::ActionRow::new();
+                child.set_title(&name);
+                child.set_subtitle(&detail);
+                row.add_row(&child);
+            }
+        }
+        let details = adw::ActionRow::new();
+        details.set_title(
+            &self
+                .ctx
+                .t_or("modals.jobDetail.sections.overview", "Job details"),
+        );
+        details.set_activatable(true);
         {
             let ctx = self.ctx.clone();
             let id = job.id;
             let view = self.clone();
-            row.connect_activated(move |_| {
+            details.connect_activated(move |_| {
                 if let Some(win) = view.root.root().and_downcast::<gtk::Window>() {
                     dialogs::job_detail(&win, ctx.clone(), id);
                 }
             });
         }
+        row.add_row(&details);
         if live && matches!(job.status.as_str(), "running" | "preparing" | "starting") {
             let stop = gtk::Button::from_icon_name("media-playback-stop-symbolic");
             stop.set_valign(gtk::Align::Center);

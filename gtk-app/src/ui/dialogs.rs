@@ -3268,46 +3268,123 @@ pub fn alerts(parent: &impl IsA<gtk::Widget>, ctx: AppCtx) {
 
     let rules = gtk::ListBox::new();
     rules.add_css_class("boxed-list");
-    for rule in ctx.store.borrow().alert_rules.clone() {
-        let row = adw::ActionRow::new();
-        row.set_title(&rule.name);
-        row.set_subtitle(&format!(
-            "min {} · {} actions · {}",
-            rule.severity_min.as_str(),
-            rule.action_ids.len(),
-            if rule.enabled { "on" } else { "off" }
-        ));
-        let enabled = gtk::Switch::new();
-        enabled.set_valign(gtk::Align::Center);
-        enabled.set_active(rule.enabled);
-        {
-            let ctx = ctx.clone();
-            let id = rule.id.clone();
-            enabled.connect_active_notify(move |sw| {
-                if let Some(rule) = ctx
-                    .store
-                    .borrow_mut()
-                    .alert_rules
-                    .iter_mut()
-                    .find(|r| r.id == id)
-                {
-                    if rule.enabled != sw.is_active() {
-                        rule.enabled = sw.is_active();
-                    }
+    let rules_search = gtk::SearchEntry::new();
+    rules_search.set_placeholder_text(Some(&ctx.t_or("alerts.rules", "Search rules")));
+    let fill_rules_cell: Rc<RefCell<Rc<dyn Fn()>>> = Rc::new(RefCell::new(Rc::new(|| {})));
+    let fill_rules: Rc<dyn Fn()> = {
+        let rules = rules.clone();
+        let rules_search = rules_search.clone();
+        let ctx = ctx.clone();
+        let parent = parent.clone();
+        let fill_rules_cell = fill_rules_cell.clone();
+        Rc::new(move || {
+            while let Some(child) = rules.first_child() {
+                rules.remove(&child);
+            }
+            let query = rules_search.text().to_string();
+            let enabled_lbl = ctx.t_or("alerts.enabled", "Enabled");
+            let disabled_lbl = ctx.t_or("common.off", "Disabled");
+            let mut shown = 0;
+            for rule in ctx.store.borrow().alert_rules.clone() {
+                if !crate::store::alert_rule_matches(&rule, &query) {
+                    continue;
                 }
-                ctx.persist();
-            });
-        }
-        row.add_suffix(&enabled);
-        {
-            let ctx = ctx.clone();
-            let parent = parent.clone();
-            let id = rule.id.clone();
-            row.connect_activated(move |_| {
-                alert_rule_editor(&parent, ctx.clone(), Some(id.clone()));
-            });
-        }
-        rules.append(&row);
+                let row = adw::ActionRow::new();
+                row.set_title(&rule.name);
+                row.set_activatable(true);
+                let state = if rule.enabled {
+                    enabled_lbl.as_str()
+                } else {
+                    disabled_lbl.as_str()
+                };
+                row.set_subtitle(&format!(
+                    "{} · {} {} · {state}",
+                    ctx.t_or(
+                        &format!("alerts.severityLevels.{}", rule.severity_min.as_str()),
+                        rule.severity_min.as_str(),
+                    ),
+                    rule.action_ids.len(),
+                    ctx.t_or("alerts.actions", "actions"),
+                ));
+                let enabled = gtk::Switch::new();
+                enabled.set_valign(gtk::Align::Center);
+                enabled.set_active(rule.enabled);
+                enabled.set_tooltip_text(Some(&ctx.t_or("alerts.enabled", "Enabled")));
+                {
+                    let ctx = ctx.clone();
+                    let id = rule.id.clone();
+                    enabled.connect_active_notify(move |sw| {
+                        {
+                            if let Some(rule) = ctx
+                                .store
+                                .borrow_mut()
+                                .alert_rules
+                                .iter_mut()
+                                .find(|item| item.id == id)
+                            {
+                                if rule.enabled != sw.is_active() {
+                                    rule.enabled = sw.is_active();
+                                }
+                            }
+                        }
+                        ctx.persist();
+                    });
+                }
+                let delete = gtk::Button::from_icon_name("user-trash-symbolic");
+                delete.set_valign(gtk::Align::Center);
+                delete.set_tooltip_text(Some(&ctx.t_or("common.delete", "Delete")));
+                {
+                    let ctx = ctx.clone();
+                    let parent = parent.clone();
+                    let id = rule.id.clone();
+                    let fill_rules_cell = fill_rules_cell.clone();
+                    delete.connect_clicked(move |_| {
+                        confirm_alert_delete(
+                            &parent,
+                            &ctx,
+                            &ctx.t_or("common.delete", "Delete"),
+                            &ctx.t_or(
+                                "alerts.deleteRuleConfirm",
+                                "Are you sure you want to delete this alert rule?",
+                            ),
+                            {
+                                let ctx = ctx.clone();
+                                let id = id.clone();
+                                let fill_rules_cell = fill_rules_cell.clone();
+                                move || {
+                                    ctx.store.borrow_mut().remove_alert_rule(&id);
+                                    ctx.persist();
+                                    fill_rules_cell.borrow().clone()();
+                                }
+                            },
+                        );
+                    });
+                }
+                {
+                    let ctx = ctx.clone();
+                    let parent = parent.clone();
+                    let id = rule.id.clone();
+                    row.connect_activated(move |_| {
+                        alert_rule_editor(&parent, ctx.clone(), Some(id.clone()));
+                    });
+                }
+                row.add_suffix(&enabled);
+                row.add_suffix(&delete);
+                rules.append(&row);
+                shown += 1;
+            }
+            if shown == 0 {
+                let row = adw::ActionRow::new();
+                row.set_title(&ctx.t_or("alerts.noRules", "No alert rules"));
+                rules.append(&row);
+            }
+        })
+    };
+    *fill_rules_cell.borrow_mut() = fill_rules.clone();
+    fill_rules();
+    {
+        let fill_rules = fill_rules.clone();
+        rules_search.connect_search_changed(move |_| fill_rules());
     }
     let add_rule = gtk::Button::with_label(&ctx.t_or("alerts.addRule", "Add rule"));
     {
@@ -3318,6 +3395,7 @@ pub fn alerts(parent: &impl IsA<gtk::Widget>, ctx: AppCtx) {
         });
     }
     let rules_box = gtk::Box::new(gtk::Orientation::Vertical, 8);
+    rules_box.append(&rules_search);
     rules_box.append(&scrolled_list(&rules));
     rules_box.append(&add_rule);
     let rules_title = ctx.t_or("alerts.rules", "Rules");
@@ -3325,19 +3403,131 @@ pub fn alerts(parent: &impl IsA<gtk::Widget>, ctx: AppCtx) {
 
     let actions = gtk::ListBox::new();
     actions.add_css_class("boxed-list");
-    for action in ctx.store.borrow().alert_actions.clone() {
-        let row = adw::ActionRow::new();
-        row.set_title(&action.name);
-        row.set_subtitle(&action.kind);
-        {
-            let ctx = ctx.clone();
-            let parent = parent.clone();
-            let id = action.id.clone();
-            row.connect_activated(move |_| {
-                alert_action_editor(&parent, ctx.clone(), Some(id.clone()));
-            });
-        }
-        actions.append(&row);
+    let actions_search = gtk::SearchEntry::new();
+    actions_search.set_placeholder_text(Some(&ctx.t_or("alerts.actions", "Search actions")));
+    let fill_actions_cell: Rc<RefCell<Rc<dyn Fn()>>> = Rc::new(RefCell::new(Rc::new(|| {})));
+    let fill_actions: Rc<dyn Fn()> = {
+        let actions = actions.clone();
+        let actions_search = actions_search.clone();
+        let ctx = ctx.clone();
+        let parent = parent.clone();
+        let fill_actions_cell = fill_actions_cell.clone();
+        Rc::new(move || {
+            while let Some(child) = actions.first_child() {
+                actions.remove(&child);
+            }
+            let query = actions_search.text().to_string();
+            let enabled_lbl = ctx.t_or("alerts.enabled", "Enabled");
+            let disabled_lbl = ctx.t_or("common.off", "Disabled");
+            let mut shown = 0;
+            for action in ctx.store.borrow().alert_actions.clone() {
+                if !crate::store::alert_action_matches(&action, &query) {
+                    continue;
+                }
+                let row = adw::ActionRow::new();
+                row.set_title(&action.name);
+                row.set_activatable(true);
+                let kind_label = ctx.t_or(
+                    &format!("alerts.action.{}", action.kind),
+                    action.kind.as_str(),
+                );
+                let state = if action.enabled {
+                    enabled_lbl.as_str()
+                } else {
+                    disabled_lbl.as_str()
+                };
+                row.set_subtitle(&format!("{kind_label} · {state}"));
+                let enabled = gtk::Switch::new();
+                enabled.set_valign(gtk::Align::Center);
+                enabled.set_active(action.enabled);
+                enabled.set_tooltip_text(Some(&ctx.t_or("alerts.enabled", "Enabled")));
+                {
+                    let ctx = ctx.clone();
+                    let id = action.id.clone();
+                    enabled.connect_active_notify(move |sw| {
+                        {
+                            if let Some(action) = ctx
+                                .store
+                                .borrow_mut()
+                                .alert_actions
+                                .iter_mut()
+                                .find(|item| item.id == id)
+                            {
+                                if action.enabled != sw.is_active() {
+                                    action.enabled = sw.is_active();
+                                }
+                            }
+                        }
+                        ctx.persist();
+                    });
+                }
+                let test = gtk::Button::from_icon_name("media-playback-start-symbolic");
+                test.set_valign(gtk::Align::Center);
+                test.set_tooltip_text(Some(&ctx.t_or("alerts.testAction", "Test action")));
+                {
+                    let ctx = ctx.clone();
+                    let parent = parent.clone();
+                    let action = action.clone();
+                    test.connect_clicked(move |_| {
+                        test_alert_action(&parent, &ctx, &action);
+                    });
+                }
+                let delete = gtk::Button::from_icon_name("user-trash-symbolic");
+                delete.set_valign(gtk::Align::Center);
+                delete.set_tooltip_text(Some(&ctx.t_or("common.delete", "Delete")));
+                {
+                    let ctx = ctx.clone();
+                    let parent = parent.clone();
+                    let id = action.id.clone();
+                    let fill_actions_cell = fill_actions_cell.clone();
+                    delete.connect_clicked(move |_| {
+                        confirm_alert_delete(
+                            &parent,
+                            &ctx,
+                            &ctx.t_or("common.delete", "Delete"),
+                            &ctx.t_or(
+                                "alerts.deleteActionConfirm",
+                                "Are you sure you want to delete this action?",
+                            ),
+                            {
+                                let ctx = ctx.clone();
+                                let id = id.clone();
+                                let fill_actions_cell = fill_actions_cell.clone();
+                                move || {
+                                    ctx.store.borrow_mut().remove_alert_action(&id);
+                                    ctx.persist();
+                                    fill_actions_cell.borrow().clone()();
+                                }
+                            },
+                        );
+                    });
+                }
+                {
+                    let ctx = ctx.clone();
+                    let parent = parent.clone();
+                    let id = action.id.clone();
+                    row.connect_activated(move |_| {
+                        alert_action_editor(&parent, ctx.clone(), Some(id.clone()));
+                    });
+                }
+                row.add_suffix(&enabled);
+                row.add_suffix(&test);
+                row.add_suffix(&delete);
+                actions.append(&row);
+                shown += 1;
+            }
+            if shown == 0 {
+                let row = adw::ActionRow::new();
+                row.set_title(&ctx.t_or("alerts.noActions", "No alert actions"));
+                actions.append(&row);
+            }
+        })
+    };
+    *fill_actions_cell.borrow_mut() = fill_actions.clone();
+    fill_actions();
+    {
+        let fill_actions = fill_actions.clone();
+        actions_search.connect_search_changed(move |_| fill_actions());
     }
     let add_action = gtk::Button::with_label(&ctx.t_or("alerts.addAction", "Add action"));
     {
@@ -3348,6 +3538,7 @@ pub fn alerts(parent: &impl IsA<gtk::Widget>, ctx: AppCtx) {
         });
     }
     let actions_box = gtk::Box::new(gtk::Orientation::Vertical, 8);
+    actions_box.append(&actions_search);
     actions_box.append(&scrolled_list(&actions));
     actions_box.append(&add_action);
     let actions_title = ctx.t_or("alerts.actions", "Actions");
@@ -3360,13 +3551,51 @@ pub fn alerts(parent: &impl IsA<gtk::Widget>, ctx: AppCtx) {
     box_.append(&stack);
     dialog.set_child(Some(&box_));
     present_window_or_dialog(parent, &ctx, &dialog);
-    let _ = AlertSeverity::Info;
-    let _ = AlertEvent::new(
+}
+
+fn confirm_alert_delete(
+    parent: &impl IsA<gtk::Widget>,
+    ctx: &AppCtx,
+    title: &str,
+    body: &str,
+    on_ok: impl Fn() + 'static,
+) {
+    let dialog = adw::AlertDialog::new(Some(title), Some(body));
+    dialog.add_response("cancel", &ctx.t("common.cancel"));
+    dialog.add_response("delete", &ctx.t("common.delete"));
+    dialog.set_response_appearance("delete", adw::ResponseAppearance::Destructive);
+    dialog.connect_response(None, move |_, response| {
+        if response == "delete" {
+            on_ok();
+        }
+    });
+    dialog.present(Some(parent));
+}
+
+fn test_alert_action(parent: &impl IsA<gtk::Widget>, ctx: &AppCtx, action: &AlertAction) {
+    let mut event = AlertEvent::new(
         AlertEventKind::System,
         AlertSeverity::Info,
-        String::new(),
-        String::new(),
+        ctx.t_or("alerts.testAction", "Test action"),
+        format!("{} · {}", action.name, action.kind),
     );
+    event.remote = ctx
+        .selected_remote
+        .borrow()
+        .clone()
+        .unwrap_or_else(|| "local".into());
+    event.profile = "default".into();
+    event.origin = "test".into();
+    crate::store::dispatch_action(action, &event);
+    let toast = adw::AlertDialog::new(
+        Some(&ctx.t_or("alerts.testAction", "Test action")),
+        Some(&ctx.t_or(
+            "alerts.testActionSuccess",
+            "Alert action test completed successfully.",
+        )),
+    );
+    toast.add_response("ok", &ctx.t("common.ok"));
+    toast.present(Some(parent));
 }
 
 pub fn quick_add_remote(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, on_done: Rc<dyn Fn()>) {
@@ -11592,8 +11821,11 @@ fn alert_action_editor(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, existing_id:
             event.origin = "test".into();
             crate::store::dispatch_action(&action, &event);
             let toast = adw::AlertDialog::new(
-                Some("Test sent"),
-                Some("The action was invoked with a sample event."),
+                Some(&ctx.t_or("alerts.testAction", "Test action")),
+                Some(&ctx.t_or(
+                    "alerts.testActionSuccess",
+                    "Alert action test completed successfully.",
+                )),
             );
             toast.add_response("ok", &ctx.t_or("common.ok", "OK"));
             toast.present(Some(&parent));

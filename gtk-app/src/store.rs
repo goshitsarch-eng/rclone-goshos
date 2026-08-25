@@ -1445,6 +1445,36 @@ impl AppStore {
             self.alert_history.truncate(500);
         }
     }
+
+    pub fn remove_alert_rule(&mut self, id: &str) {
+        self.alert_rules.retain(|rule| rule.id != id);
+    }
+
+    pub fn remove_alert_action(&mut self, id: &str) {
+        self.alert_actions.retain(|action| action.id != id);
+        for rule in &mut self.alert_rules {
+            rule.action_ids.retain(|action_id| action_id != id);
+        }
+    }
+}
+
+pub fn alert_rule_matches(rule: &AlertRule, query: &str) -> bool {
+    let severity = rule.severity_min.as_str();
+    let state = if rule.enabled {
+        "enabled on"
+    } else {
+        "disabled off"
+    };
+    crate::pref_search::any_field_matches(&[&rule.name, &rule.id, severity, state], query)
+}
+
+pub fn alert_action_matches(action: &AlertAction, query: &str) -> bool {
+    let state = if action.enabled {
+        "enabled on"
+    } else {
+        "disabled off"
+    };
+    crate::pref_search::any_field_matches(&[&action.name, &action.id, &action.kind, state], query)
 }
 
 pub fn dispatch_action(action: &AlertAction, event: &AlertEvent) {
@@ -2276,6 +2306,16 @@ mod tests {
         );
         assert!(store.alert_rules[0].auto_acknowledge);
         assert!(!store.seed_alert_defaults(false));
+        assert!(alert_rule_matches(&store.alert_rules[0], "default"));
+        assert!(alert_rule_matches(&store.alert_rules[0], ""));
+        assert!(!alert_rule_matches(&store.alert_rules[0], "webhook"));
+        assert!(alert_action_matches(&store.alert_actions[0], "toast"));
+        assert!(alert_action_matches(&store.alert_actions[0], "enabled"));
+        store.remove_alert_action(&store.alert_actions[0].id.clone());
+        assert!(store.alert_actions.is_empty());
+        assert!(store.alert_rules[0].action_ids.is_empty());
+        store.remove_alert_rule(&store.alert_rules[0].id.clone());
+        assert!(store.alert_rules.is_empty());
         store.alert_actions.clear();
         store.alert_rules.clear();
         assert!(store.seed_alert_defaults(false));

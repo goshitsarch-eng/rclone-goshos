@@ -996,6 +996,31 @@ pub fn format_job_speed(bytes_per_sec: f64) -> String {
     }
 }
 
+pub fn job_speed_eta(job: &JobInfo) -> (String, String) {
+    let speed = stats_f64(&job.stats, &["speed"]);
+    let eta = stats_f64(&job.stats, &["eta", "etaSeconds"]);
+    (
+        format_job_speed(speed),
+        crate::rclone::format_eta_seconds(eta.round() as i64),
+    )
+}
+
+/// Name + percent/speed subtitle for the Files ops expander.
+pub fn job_transfer_previews(job: &JobInfo, limit: usize) -> Vec<(String, String)> {
+    let Some(items) = job.transferring.as_array() else {
+        return Vec::new();
+    };
+    items
+        .iter()
+        .take(limit)
+        .map(|item| {
+            let row = crate::transfers::parse_transfer_row(item);
+            let speed = format_job_speed(row.speed);
+            (row.name, format!("{}% · {speed}", row.percentage.max(0)))
+        })
+        .collect()
+}
+
 pub fn job_status_key(status: &str) -> &'static str {
     match status {
         "running" => "detailShared.jobs.status.running",
@@ -3580,6 +3605,15 @@ mod tests {
         assert_eq!(restored.completed[0]["percentage"], 100);
         assert_eq!(format_job_speed(0.0), "—");
         assert!(format_job_speed(1024.0).contains("KiB"));
+        let mut preview = restored.clone();
+        preview.stats = json!({ "speed": 2048.0, "eta": 90.0 });
+        preview.transferring = json!([{ "name": "a.bin", "percentage": 40, "speed": 1024.0 }]);
+        let (speed, eta) = job_speed_eta(&preview);
+        assert!(speed.contains("KiB"));
+        assert!(eta.contains("1m"));
+        let previews = job_transfer_previews(&preview, 4);
+        assert_eq!(previews[0].0, "a.bin");
+        assert!(previews[0].1.contains("40%"));
         assert!((restored.progress - 1.0).abs() < f64::EPSILON);
         assert!(!has_known_start_time(&restored));
         let combined = history_with_meta(&history, &meta);

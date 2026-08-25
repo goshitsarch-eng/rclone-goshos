@@ -500,11 +500,11 @@ This client is the GTK 4 + libadwaita desktop UI. It talks to a local `rclone rc
 - Template capture lists every flattened flag key with select/deselect all, optional remote source, and a description field
 - Template manager rows show key counts and open an edit/rename/JSON dialog
 - Remote-config sidenav can filter pages by label or alias (mount, vfs, …)
+- Alerts Rules/Actions lists support search, enable toggles, test, and delete-with-confirm
+- Files ops panel expands a job inline (speed/ETA, transferring files) with a details row
 
 ## Still deepening
 
 - Workflow builder (stub in both apps)
-- Alerts Rules/Actions list search + test/toggle/delete chrome
-- Files ops panel inline job drill-down
 - Remaining dialogs/Files English labels (core chrome now localized)
 - Pixel-level layouts and leftover English `t_or` fallbacks
