@@ -895,8 +895,12 @@ impl FlowView {
             .filter(|job| crate::jobs::is_overview_job(job) && job.remote == name)
             .cloned()
             .collect();
+        self.append_transfers(&self.content, &jobs);
+    }
+
+    fn append_transfers(&self, host: &gtk::Box, jobs: &[crate::store::JobInfo]) {
         let mut rows = Vec::new();
-        for job in &jobs {
+        for job in jobs {
             if let Some(arr) = job.transferring.as_array() {
                 for item in arr {
                     rows.push((
@@ -924,7 +928,7 @@ impl FlowView {
         }
         rows.truncate(12);
         let mut check_items = Vec::new();
-        for job in &jobs {
+        for job in jobs {
             if crate::checks::is_check_operation(&job.operation) {
                 let source = crate::checks::check_source_from_job(&job.stats, &job.output);
                 check_items.extend(crate::checks::parse_check_items(
@@ -946,14 +950,14 @@ impl FlowView {
             self.ctx
                 .t_or("shared.transferActivity.title", "Transfer Activity")
         };
-        self.content.append(&self.heading(&title));
+        host.append(&self.heading(&title));
         if !check_items.is_empty() {
             let list = gtk::ListBox::new();
             list.add_css_class("boxed-list");
             for item in check_items {
                 list.append(&dialogs::check_result_row(&self.ctx, &item, &self.root));
             }
-            self.content.append(&list);
+            host.append(&list);
         }
         if rows.is_empty() {
             return;
@@ -989,7 +993,7 @@ impl FlowView {
             ));
             list.append(&item);
         }
-        self.content.append(&list);
+        host.append(&list);
     }
 
     fn append_remote_automations(&self, name: &str) {
@@ -1374,6 +1378,9 @@ impl FlowView {
         }
         self.content.append(&remote_btn);
 
+        let monitoring = gtk::Box::new(gtk::Orientation::Vertical, 12);
+        let configuration = gtk::Box::new(gtk::Orientation::Vertical, 12);
+
         let (src, dst) = qr.paths();
         let paths = adw::ActionRow::new();
         paths.set_title(&self.ctx.t_or("modals.jobDetail.sections.paths", "Paths"));
@@ -1382,7 +1389,7 @@ impl FlowView {
             src.unwrap_or_else(|| "—".into()),
             dst.unwrap_or_else(|| "—".into())
         ));
-        self.content.append(&paths);
+        monitoring.append(&paths);
 
         let dry = adw::SwitchRow::new();
         dry.set_title(&self.ctx.t_or("dashboard.appDetail.dryRun", "Dry run"));
@@ -1413,39 +1420,90 @@ impl FlowView {
                 ctx.persist();
             });
         }
-        self.content.append(&dry);
+        monitoring.append(&dry);
 
-        let tray = adw::SwitchRow::new();
-        tray.set_title(&self.ctx.t_or("flow.quickRun.showInTray", "Show in tray"));
-        tray.set_active(qr.show_on_tray);
-        {
-            let ctx = self.ctx.clone();
-            let id = qr.id.clone();
-            tray.connect_active_notify(move |row| {
-                if let Some(run) = ctx
-                    .store
-                    .borrow_mut()
-                    .quick_runs
-                    .iter_mut()
-                    .find(|q| q.id == id)
-                {
-                    run.show_on_tray = row.is_active();
-                }
-                ctx.persist();
-            });
+        if qr.operation_type == crate::operations::OperationType::Bisync {
+            let resync = adw::SwitchRow::new();
+            resync.set_title(&self.ctx.t_or("dashboard.appDetail.resync", "Resync"));
+            resync.set_subtitle(&self.ctx.t_or(
+                "dashboard.appDetail.resyncActive",
+                "Force a bisync resync on the next start",
+            ));
+            resync.set_active(crate::jobs::is_resync(&qr.config.rclone));
+            {
+                let ctx = self.ctx.clone();
+                let id = qr.id.clone();
+                resync.connect_active_notify(move |row| {
+                    if let Some(run) = ctx
+                        .store
+                        .borrow_mut()
+                        .quick_runs
+                        .iter_mut()
+                        .find(|q| q.id == id)
+                    {
+                        let dry = crate::jobs::is_dry_run(&run.config.rclone);
+                        crate::jobs::apply_session_flags(
+                            &mut run.config.rclone,
+                            dry,
+                            row.is_active(),
+                        );
+                    }
+                    ctx.persist();
+                });
+            }
+            monitoring.append(&resync);
         }
-        self.content.append(&tray);
 
-        self.content.append(
-            &self.heading(
-                &self
-                    .ctx
-                    .t_or("flow.quickRun.detail.configuration", "Configuration"),
-            ),
-        );
-        let config_value = serde_json::to_value(&qr.config).unwrap_or(serde_json::json!({}));
-        self.content
-            .append(&dialogs::settings_list(&self.ctx, &config_value, 24));
+        if qr.config.app.cron_enabled && !qr.config.app.cron_expression.is_empty() {
+            let row = adw::ActionRow::new();
+            row.set_title(&self.ctx.t_or("flow.quickRun.badges.scheduled", "Scheduled"));
+            row.set_subtitle(&crate::rclone::describe_cron_i18n(
+                &qr.config.app.cron_expression,
+                &self.ctx.i18n.borrow(),
+            ));
+            monitoring.append(&row);
+        }
+        if qr.config.app.watch_enabled {
+            let row = adw::ActionRow::new();
+            row.set_title(&self.ctx.t_or(
+                "automation.monitoring.realtimeSchedule",
+                "Real-time File Watcher",
+            ));
+            let mut subtitle = format!(
+                "{}: {} {}",
+                self.ctx
+                    .t_or("automation.monitoring.debounce", "Debounce Delay"),
+                qr.config.app.watch_delay,
+                self.ctx.t_or("automation.monitoring.seconds", "seconds")
+            );
+            if qr.config.app.watch_changed_only {
+                subtitle.push_str(" · ");
+                subtitle.push_str(&self.ctx.t_or(
+                    "automation.monitoring.changedOnlyShort",
+                    "Changed files only",
+                ));
+            }
+            row.set_subtitle(&subtitle);
+            monitoring.append(&row);
+        }
+
+        let run_actions = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+        let start = gtk::Button::with_label(&self.ctx.t_or("flow.quickRun.actions.start", "Start"));
+        let stop = gtk::Button::with_label(&self.ctx.t_or("flow.quickRun.actions.stop", "Stop"));
+        start.add_css_class("suggested-action");
+        {
+            let view = self.clone();
+            let qr = qr.clone();
+            start.connect_clicked(move |_| view.start_run(&qr));
+        }
+        {
+            let view = self.clone();
+            let qr = qr.clone();
+            stop.connect_clicked(move |_| view.stop_run(&qr));
+        }
+        run_actions.append(&start);
+        run_actions.append(&stop);
+        monitoring.append(&run_actions);
 
         if let Some(job) = qr.last_job_id.and_then(|id| {
             self.ctx
@@ -1520,8 +1578,9 @@ impl FlowView {
             let buttons = gtk::Box::new(gtk::Orientation::Horizontal, 8);
             buttons.append(&open);
             buttons.append(&logs);
-            self.content.append(&stats);
-            self.content.append(&buttons);
+            monitoring.append(&stats);
+            monitoring.append(&buttons);
+            self.append_transfers(&monitoring, std::slice::from_ref(&job));
         } else {
             let logs = gtk::Button::with_label(&self.ctx.t_or("logs.title", "View logs"));
             {
@@ -1533,26 +1592,58 @@ impl FlowView {
                     }
                 });
             }
-            self.content.append(&logs);
+            monitoring.append(&logs);
         }
 
+        if qr.operation_type.supports_vfs() {
+            let vfs = gtk::Button::with_label(&self.ctx.t_or("remote.vfsPanel", "VFS panel"));
+            {
+                let view = self.clone();
+                let remote = qr.remote_name.clone();
+                vfs.connect_clicked(move |_| {
+                    if let Some(win) = view.root.root().and_downcast::<gtk::Window>() {
+                        dialogs::vfs_control(&win, view.ctx.clone(), &remote, view.toast.clone());
+                    }
+                });
+            }
+            monitoring.append(&vfs);
+        }
+
+        let tray = adw::SwitchRow::new();
+        tray.set_title(&self.ctx.t_or("flow.quickRun.showInTray", "Show in tray"));
+        tray.set_active(qr.show_on_tray);
+        {
+            let ctx = self.ctx.clone();
+            let id = qr.id.clone();
+            tray.connect_active_notify(move |row| {
+                if let Some(run) = ctx
+                    .store
+                    .borrow_mut()
+                    .quick_runs
+                    .iter_mut()
+                    .find(|q| q.id == id)
+                {
+                    run.show_on_tray = row.is_active();
+                }
+                ctx.persist();
+            });
+        }
+        configuration.append(&tray);
+        configuration.append(
+            &self.heading(
+                &self
+                    .ctx
+                    .t_or("flow.quickRun.detail.configuration", "Configuration"),
+            ),
+        );
+        let config_value = serde_json::to_value(&qr.config).unwrap_or(serde_json::json!({}));
+        configuration.append(&dialogs::settings_list(&self.ctx, &config_value, 24));
+
         let actions = gtk::Box::new(gtk::Orientation::Horizontal, 8);
-        let start = gtk::Button::with_label(&self.ctx.t_or("flow.quickRun.actions.start", "Start"));
-        let stop = gtk::Button::with_label(&self.ctx.t_or("flow.quickRun.actions.stop", "Stop"));
         let edit = gtk::Button::with_label(&self.ctx.t_or("common.edit", "Edit"));
         let dup = gtk::Button::with_label(&self.ctx.t_or("common.duplicate", "Duplicate"));
         let delete = gtk::Button::with_label(&self.ctx.t_or("common.delete", "Delete"));
         delete.add_css_class("destructive-action");
-        {
-            let view = self.clone();
-            let qr = qr.clone();
-            start.connect_clicked(move |_| view.start_run(&qr));
-        }
-        {
-            let view = self.clone();
-            let qr = qr.clone();
-            stop.connect_clicked(move |_| view.stop_run(&qr));
-        }
         {
             let view = self.clone();
             let qr = qr.clone();
@@ -1597,12 +1688,32 @@ impl FlowView {
                 view.refresh();
             });
         }
-        actions.append(&start);
-        actions.append(&stop);
         actions.append(&edit);
         actions.append(&dup);
         actions.append(&delete);
-        self.content.append(&actions);
+        configuration.append(&actions);
+
+        let stack = adw::ViewStack::new();
+        stack.set_vhomogeneous(false);
+        stack.add_titled(
+            &monitoring,
+            Some("monitoring"),
+            &self
+                .ctx
+                .t_or("dashboard.appDetail.monitoring", "Monitoring"),
+        );
+        stack.add_titled(
+            &configuration,
+            Some("configuration"),
+            &self
+                .ctx
+                .t_or("dashboard.appDetail.configuration", "Configuration"),
+        );
+        let switcher = adw::ViewSwitcher::new();
+        switcher.set_stack(Some(&stack));
+        switcher.set_policy(adw::ViewSwitcherPolicy::Wide);
+        self.content.append(&switcher);
+        self.content.append(&stack);
     }
 
     fn start_run(&self, qr: &QuickRun) {

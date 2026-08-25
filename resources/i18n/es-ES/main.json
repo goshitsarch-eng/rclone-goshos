@@ -190,7 +190,8 @@
     "options": "Options",
     "jsonObject": "JSON object",
     "additionalSource": "Additional source",
-    "autoStart": "Auto-start mount / jobs"
+    "autoStart": "Auto-start mount / jobs",
+    "guidance": "Guidance"
   },
   "validators": {
     "integer": "Debe ser un entero válido",
@@ -1525,7 +1526,8 @@
           "other": "{{count}} minutos"
         }
       },
-      "cronPlaceholder": "Introduzca una expresión cron (ej. 0 0 * * *)"
+      "cronPlaceholder": "Introduzca una expresión cron (ej. 0 0 * * *)",
+      "copyUrlFilename": "Filename (optional)"
     },
     "cronPresets": {
       "daily-9am": {
@@ -1935,7 +1937,8 @@
       "activity": "Activity"
     },
     "quickRuns": {
-      "empty": "No quick runs"
+      "empty": "No quick runs",
+      "createForRemote": "Create quick run for this remote"
     },
     "settings": {
       "empty": "No saved profile settings"
@@ -2333,7 +2336,8 @@
       "status": {
         "notTested": "Conexión no probada",
         "connected": "Conectado",
-        "error": "Error: {{message}}"
+        "error": "Error: {{message}}",
+        "failed": "Connection failed"
       },
       "notifications": {
         "switchFailed": "Error al cambiar: {{message}}",
@@ -3180,7 +3184,8 @@
         "unmounted": "Desmontado",
         "mounted": "Montado",
         "active": "Activo",
-        "inactive": "Inactivo"
+        "inactive": "Inactivo",
+        "serving": "Serving"
       }
     },
     "remoteCard": {
@@ -3521,7 +3526,8 @@
         "noRunsForRemote": "No hay ejecuciones rápidas configuradas para {{remote}}.",
         "createForRemote": "Crear ejecución rápida para {{remote}}"
       },
-      "showInTray": "Show in tray"
+      "showInTray": "Show in tray",
+      "openRemote": "Open remote detail"
     },
     "tabs": {
       "quickRun": "Ejecución rápida",

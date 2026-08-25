@@ -190,7 +190,8 @@
     "options": "Options",
     "jsonObject": "JSON object",
     "additionalSource": "Additional source",
-    "autoStart": "Auto-start mount / jobs"
+    "autoStart": "Auto-start mount / jobs",
+    "guidance": "Guidance"
   },
   "validators": {
     "integer": "必须为有效的整数",
@@ -1525,7 +1526,8 @@
           "other": "{{count}} 分钟"
         }
       },
-      "cronPlaceholder": "输入 cron 表达式（例如 0 0 * * *）"
+      "cronPlaceholder": "输入 cron 表达式（例如 0 0 * * *）",
+      "copyUrlFilename": "Filename (optional)"
     },
     "cronPresets": {
       "daily-9am": {
@@ -1935,7 +1937,8 @@
       "activity": "Activity"
     },
     "quickRuns": {
-      "empty": "No quick runs"
+      "empty": "No quick runs",
+      "createForRemote": "Create quick run for this remote"
     },
     "settings": {
       "empty": "No saved profile settings"
@@ -2333,7 +2336,8 @@
       "status": {
         "notTested": "连接未测试",
         "connected": "已连接",
-        "error": "错误：{{message}}"
+        "error": "错误：{{message}}",
+        "failed": "Connection failed"
       },
       "notifications": {
         "switchFailed": "切换失败：{{message}}",
@@ -3180,7 +3184,8 @@
         "unmounted": "未挂载",
         "mounted": "已挂载",
         "active": "活动",
-        "inactive": "未活动"
+        "inactive": "未活动",
+        "serving": "Serving"
       }
     },
     "remoteCard": {
@@ -3521,7 +3526,8 @@
         "noRunsForRemote": "未为 {{remote}} 配置快速运行。",
         "createForRemote": "为 {{remote}} 创建快速运行"
       },
-      "showInTray": "Show in tray"
+      "showInTray": "Show in tray",
+      "openRemote": "Open remote detail"
     },
     "tabs": {
       "quickRun": "快速运行",

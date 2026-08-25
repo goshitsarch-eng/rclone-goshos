@@ -131,8 +131,8 @@ fn present_ex(
     on_done: Rc<dyn Fn()>,
 ) {
     let dialog = adw::Dialog::new();
-    let title = if existing.is_some() {
-        ctx.t_or("modals.remoteConfig.title", "Remote Configuration")
+    let title = if let Some(name) = existing.as_deref() {
+        ctx.tf("modals.remoteConfig.title.edit", &[("target", name)])
     } else {
         ctx.t_or("wizards.remoteConfig.quickAdd", "Add Remote")
     };

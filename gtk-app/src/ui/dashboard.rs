@@ -2428,6 +2428,19 @@ impl Dashboard {
                     }
                 }
             }
+            for kind in ["vfs", "filter", "backend", "runtime"] {
+                for helper in meta.helper_names(kind) {
+                    if let Some(value) = meta.helper_profile(kind, &helper) {
+                        for (key, display) in crate::restrict::flatten_settings(
+                            &format!("{kind}.{helper}"),
+                            &value,
+                            restrict,
+                        ) {
+                            rows.push((key, display));
+                        }
+                    }
+                }
+            }
         }
         rows.truncate(24);
         if rows.is_empty() {

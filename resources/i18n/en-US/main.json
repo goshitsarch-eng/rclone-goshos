@@ -116,6 +116,7 @@
       "willCreate": "Folder will be created after remote creation.",
       "checking": "Checking path..."
     },
+    "guidance": "Guidance",
     "vfs": "VFS",
     "vfsMetadataDirs": "Metadata dirs",
     "vfsMetadataFiles": "Metadata files",
@@ -1432,6 +1433,7 @@
       "otherRemotes": "Other Remotes",
       "enterDestPath": "Enter destination path...",
       "enterDownloadUrl": "Enter download URL (e.g., https://example.com/file.zip)",
+      "copyUrlFilename": "Filename (optional)",
       "copyUrlCustomFilenamePlaceholder": "Auto filename (optional)",
       "copyUrlFileSettingsWarning": "Custom filenames are set individually per URL row above. Any row with an empty filename will use auto-determined names.",
       "urlLabel": "URL",
@@ -1941,7 +1943,8 @@
       "activity": "Activity"
     },
     "quickRuns": {
-      "empty": "No quick runs"
+      "empty": "No quick runs",
+      "createForRemote": "Create quick run for this remote"
     },
     "settings": {
       "empty": "No saved profile settings"
@@ -2339,6 +2342,7 @@
       "status": {
         "notTested": "Connection not tested",
         "connected": "Connected",
+        "failed": "Connection failed",
         "error": "Error: {{message}}"
       },
       "notifications": {
@@ -3191,7 +3195,8 @@
         "unmounted": "Unmounted",
         "mounted": "Mounted",
         "active": "Active",
-        "inactive": "Inactive"
+        "inactive": "Inactive",
+        "serving": "Serving"
       }
     },
     "remoteCard": {
@@ -3486,6 +3491,7 @@
     "quickRun": {
       "title": "Quick Runs",
       "new": "New Quick Run",
+      "openRemote": "Open remote detail",
       "actions": {
         "start": "Start",
         "stop": "Stop"

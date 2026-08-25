@@ -190,7 +190,8 @@
     "options": "Options",
     "jsonObject": "JSON object",
     "additionalSource": "Additional source",
-    "autoStart": "Auto-start mount / jobs"
+    "autoStart": "Auto-start mount / jobs",
+    "guidance": "Guidance"
   },
   "validators": {
     "integer": "Geçerli bir tam sayı olmalıdır",
@@ -1525,7 +1526,8 @@
           "other": "{{count}} dakika"
         }
       },
-      "cronPlaceholder": "Bir cron ifadesi girin (ör. 0 0 * * *)"
+      "cronPlaceholder": "Bir cron ifadesi girin (ör. 0 0 * * *)",
+      "copyUrlFilename": "Filename (optional)"
     },
     "cronPresets": {
       "daily-9am": {
@@ -1935,7 +1937,8 @@
       "activity": "Activity"
     },
     "quickRuns": {
-      "empty": "No quick runs"
+      "empty": "No quick runs",
+      "createForRemote": "Create quick run for this remote"
     },
     "settings": {
       "empty": "No saved profile settings"
@@ -2333,7 +2336,8 @@
       "status": {
         "notTested": "Bağlantı test edilmedi",
         "connected": "Bağlandı",
-        "error": "Hata: {{message}}"
+        "error": "Hata: {{message}}",
+        "failed": "Connection failed"
       },
       "notifications": {
         "switchFailed": "Değiştirme başarısız: {{message}}",
@@ -3180,7 +3184,8 @@
         "unmounted": "Bağlı Olmayan",
         "mounted": "Bağlı",
         "active": "Aktif",
-        "inactive": "Pasif"
+        "inactive": "Pasif",
+        "serving": "Serving"
       }
     },
     "remoteCard": {
@@ -3521,7 +3526,8 @@
         "noRunsForRemote": "{{remote}} için yapılandırılmış hızlı işlem yok.",
         "createForRemote": "{{remote}} için Hızlı İşlem Oluştur"
       },
-      "showInTray": "Show in tray"
+      "showInTray": "Show in tray",
+      "openRemote": "Open remote detail"
     },
     "tabs": {
       "quickRun": "Hızlı Çalıştırma",

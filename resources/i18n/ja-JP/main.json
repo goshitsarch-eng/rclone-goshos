@@ -190,7 +190,8 @@
     "options": "Options",
     "jsonObject": "JSON object",
     "additionalSource": "Additional source",
-    "autoStart": "Auto-start mount / jobs"
+    "autoStart": "Auto-start mount / jobs",
+    "guidance": "Guidance"
   },
   "validators": {
     "integer": "有効な整数を入力してください",
@@ -1525,7 +1526,8 @@
           "other": "{{count}} 分"
         }
       },
-      "cronPlaceholder": "Cron式を入力してください (例: 0 0 * * *)"
+      "cronPlaceholder": "Cron式を入力してください (例: 0 0 * * *)",
+      "copyUrlFilename": "Filename (optional)"
     },
     "cronPresets": {
       "daily-9am": {
@@ -1935,7 +1937,8 @@
       "activity": "Activity"
     },
     "quickRuns": {
-      "empty": "No quick runs"
+      "empty": "No quick runs",
+      "createForRemote": "Create quick run for this remote"
     },
     "settings": {
       "empty": "No saved profile settings"
@@ -2333,7 +2336,8 @@
       "status": {
         "notTested": "接続未テスト",
         "connected": "接続済み",
-        "error": "エラー: {{message}}"
+        "error": "エラー: {{message}}",
+        "failed": "Connection failed"
       },
       "notifications": {
         "switchFailed": "切り替えに失敗しました: {{message}}",
@@ -3180,7 +3184,8 @@
         "unmounted": "未マウント",
         "mounted": "マウント済み",
         "active": "アクティブ",
-        "inactive": "非アクティブ"
+        "inactive": "非アクティブ",
+        "serving": "Serving"
       }
     },
     "remoteCard": {
@@ -3521,7 +3526,8 @@
         "noRunsForRemote": "{{remote}} 用のクイック実行は設定されていません。",
         "createForRemote": "{{remote}} のクイック実行を作成"
       },
-      "showInTray": "Show in tray"
+      "showInTray": "Show in tray",
+      "openRemote": "Open remote detail"
     },
     "tabs": {
       "quickRun": "クイック実行",

@@ -1544,7 +1544,7 @@ struct ProfileSwitcher {
 fn profile_switcher(ctx: &AppCtx, names: &[String], selected: &str) -> ProfileSwitcher {
     let names = Rc::new(RefCell::new(names.to_vec()));
     let combo = adw::ComboRow::new();
-    combo.set_title(&ctx.t_or("modals.remoteConfig.profile", "Profile"));
+    combo.set_title(&ctx.t_or("modals.remoteConfig.profile.label", "Profile"));
     refresh_combo(&combo, &names.borrow());
     if let Some(idx) = names.borrow().iter().position(|n| n == selected) {
         combo.set_selected(idx as u32);

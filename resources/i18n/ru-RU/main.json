@@ -190,7 +190,8 @@
     "options": "Options",
     "jsonObject": "JSON object",
     "additionalSource": "Additional source",
-    "autoStart": "Auto-start mount / jobs"
+    "autoStart": "Auto-start mount / jobs",
+    "guidance": "Guidance"
   },
   "validators": {
     "integer": "Введите корректное целое число",
@@ -1525,7 +1526,8 @@
           "other": "{{count}} мин"
         }
       },
-      "cronPlaceholder": "Введите cron-выражение, например 0 0 * * *"
+      "cronPlaceholder": "Введите cron-выражение, например 0 0 * * *",
+      "copyUrlFilename": "Filename (optional)"
     },
     "cronPresets": {
       "daily-9am": {
@@ -1935,7 +1937,8 @@
       "activity": "Activity"
     },
     "quickRuns": {
-      "empty": "No quick runs"
+      "empty": "No quick runs",
+      "createForRemote": "Create quick run for this remote"
     },
     "settings": {
       "empty": "No saved profile settings"
@@ -2333,7 +2336,8 @@
       "status": {
         "notTested": "Подключение не проверено",
         "connected": "Подключено",
-        "error": "Ошибка: {{message}}"
+        "error": "Ошибка: {{message}}",
+        "failed": "Connection failed"
       },
       "notifications": {
         "switchFailed": "Не удалось переключиться: {{message}}",
@@ -3180,7 +3184,8 @@
         "unmounted": "Не подключено",
         "mounted": "Подключено",
         "active": "Активно",
-        "inactive": "Неактивно"
+        "inactive": "Неактивно",
+        "serving": "Serving"
       }
     },
     "remoteCard": {
@@ -3521,7 +3526,8 @@
         "noRunsForRemote": "Для {{remote}} не настроено быстрых запусков.",
         "createForRemote": "Создать быстрый запуск для {{remote}}"
       },
-      "showInTray": "Show in tray"
+      "showInTray": "Show in tray",
+      "openRemote": "Open remote detail"
     },
     "tabs": {
       "quickRun": "Быстрый запуск",
