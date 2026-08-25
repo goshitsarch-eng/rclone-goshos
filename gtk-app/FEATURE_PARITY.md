@@ -392,6 +392,11 @@ This client is the GTK 4 + libadwaita rewrite of the Angular/Tauri desktop UI. I
 - Standalone Files window from `--browse`, `#/nautilus/`, `/nautilus/`, and `--standalone` (also `--standalone=flow` / `=main`)
 - Operation guidance banners on remote-config and Quick Run (watch/local, copyurl, core command, mixed sources)
 - Quick Add uses a dedicated Operations step (mount/sync/copy/bisync/move/serve) with folder pickers before authorize
+- GApplication command-line forwards `--browse`, Send-to, share-intake, and deep links to the running instance (no duplicate main window)
+- Copyurl profiles persist multiple URLs plus optional per-URL filenames
+- Multi-source profile starts are grouped (`parent_job_id`) like file-manager uploads
+- Bisync static flags include recover/resilient/workdir/backup dirs; copyurl `autoFilename` and delete `rmdirs`
+- Standalone dialogs cover Quick Add, Quick Run, properties, About remote, export, templates, delete, shortcuts, and archive create
 
 ## Still deepening toward pixel-level Angular parity
 

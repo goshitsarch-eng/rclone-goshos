@@ -10,10 +10,19 @@ use crate::rclone::engine::RcloneEngine;
 use adw::prelude::*;
 use gtk::prelude::*;
 use gtk::{gio, glib};
-use std::cell::Cell;
+use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
+thread_local! {
+    static RUNNING: RefCell<Option<AppCtx>> = const { RefCell::new(None) };
+}
+
 pub fn activate(app: &adw::Application) {
+    if let Some(ctx) = RUNNING.with(|running| running.borrow().clone()) {
+        handle_reentry(app, &ctx);
+        return;
+    }
+
     let ctx = AppCtx::new();
     ctx.apply_theme();
 
@@ -27,7 +36,7 @@ pub fn activate(app: &adw::Application) {
     ctx.apply_persisted_options();
     ctx.refresh_runtime();
 
-    let args: Vec<String> = std::env::args().collect();
+    let args = crate::cli::launch_args();
     if let Some(req) = crate::platform::parse_dialog_args(&args) {
         dialogs::present_standalone(app, ctx, req);
         return;
@@ -38,16 +47,100 @@ pub fn activate(app: &adw::Application) {
         return;
     }
 
+    apply_launch(app, &ctx, &args, true);
+    RUNNING.with(|running| *running.borrow_mut() = Some(ctx));
+}
+
+fn handle_reentry(app: &adw::Application, ctx: &AppCtx) {
+    let args = crate::cli::launch_args();
+    if let Some(req) = crate::platform::parse_dialog_args(&args) {
+        dialogs::present_standalone(app, ctx.clone(), req);
+        return;
+    }
+    apply_launch(app, ctx, &args, false);
+}
+
+fn apply_launch(app: &adw::Application, ctx: &AppCtx, args: &[String], first: bool) {
+    if let Some(send) = crate::platform::parse_send_to_args(args) {
+        upload_send_to(ctx, &send);
+    }
     let standalone_dialogs = ctx.settings.borrow().general.standalone_dialogs;
-    let launch = crate::navigation::parse_launch_args(&args, standalone_dialogs);
+    let launch = crate::navigation::parse_launch_args(args, standalone_dialogs);
     if let Some(launch) = &launch {
         ctx.request_nav(launch.target.clone());
     }
-    let hide_main = crate::cli::start_hidden() || launch.as_ref().is_some_and(|l| l.standalone);
-    present_main_with(app, ctx.clone(), hide_main);
-    if let Some(launch) = launch.filter(|l| l.standalone) {
-        present_standalone_workspace(app, &ctx, &launch.target);
+    if !ctx.store.borrow().pending_share_paths.is_empty() && launch.is_none() {
+        ctx.request_nav(NavTarget::Files {
+            remote: "local".into(),
+            path: String::new(),
+        });
     }
+    if first {
+        let hide_main = crate::cli::start_hidden() || launch.as_ref().is_some_and(|l| l.standalone);
+        present_main_with(app, ctx.clone(), hide_main);
+    } else {
+        ctx.request_show();
+        for window in app.windows() {
+            window.present();
+        }
+    }
+    if let Some(launch) = launch.filter(|l| l.standalone) {
+        present_standalone_workspace(app, ctx, &launch.target);
+    }
+}
+
+fn upload_send_to(ctx: &AppCtx, send: &crate::platform::SendToArgs) {
+    let Some(client) = ctx.client() else {
+        log::error!("rclone engine is not available for Send-to");
+        return;
+    };
+    let dest_fs = crate::rclone::remote_fs(&send.remote, &send.path);
+    let mut ids = Vec::new();
+    for file in &send.files {
+        let name = file
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("upload");
+        let dest = if send.path.is_empty() {
+            name.to_string()
+        } else {
+            format!("{}/{}", send.path.trim_end_matches('/'), name)
+        };
+        match crate::jobs::start_request(
+            &client,
+            &crate::jobs::JobRequest::Async {
+                endpoint: "operations/copyfile",
+                params: serde_json::json!({
+                    "srcFs": "/",
+                    "srcRemote": file.to_string_lossy(),
+                    "dstFs": dest_fs,
+                    "dstRemote": dest,
+                    "_group": format!("send-to-{}", send.remote),
+                }),
+            },
+        ) {
+            Ok(id) => {
+                if let Some(parsed) = crate::jobs::parse_started_ids(&id).first() {
+                    ids.push(*parsed);
+                }
+            }
+            Err(e) => log::error!("Send-to failed for {}: {e}", file.display()),
+        }
+    }
+    crate::jobs::remember_grouped(
+        &mut ctx.store.borrow_mut().job_meta,
+        &ids,
+        crate::store::JobMeta {
+            origin: "filemanager".into(),
+            profile: "default".into(),
+            remote: send.remote.clone(),
+            backend: ctx.backend_key(),
+            ..Default::default()
+        },
+    );
+    ctx.request_browse(&send.remote, &send.path);
+    ctx.request_show();
+    ctx.refresh_runtime();
 }
 
 pub fn present_main(app: &adw::Application, ctx: AppCtx) {

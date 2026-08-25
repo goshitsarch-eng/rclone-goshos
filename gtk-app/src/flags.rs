@@ -279,8 +279,38 @@ pub fn static_flags_for(op: OperationType) -> Vec<FlagOption> {
             string_flag("compare", "size,modtime,checksum"),
             string_flag("conflictLoser", "num, pathname, or delete"),
             string_flag("conflictResolve", "none, path1, path2, newer, …"),
+            string_flag("conflictSuffix", "Suffix when renaming a conflict loser."),
+            bool_flag(
+                "createEmptySrcDirs",
+                "Sync creation and deletion of empty directories.",
+            ),
+            bool_flag(
+                "removeEmptyDirs",
+                "Remove empty directories at the final cleanup step.",
+            ),
+            bool_flag(
+                "recover",
+                "Automatically recover from interruptions without --resync.",
+            ),
+            bool_flag(
+                "resilient",
+                "Allow future runs to retry after less-serious errors.",
+            ),
+            string_flag("workdir", "Custom bisync working directory."),
+            string_flag("backupDir1", "--backup-dir for Path1."),
+            string_flag("backupDir2", "--backup-dir for Path2."),
+            bool_flag("noCleanup", "Retain working files."),
+            string_flag("checkSync", "true, false, or only."),
+            string_flag("maxLock", "Expire lock files older than this (e.g. 2m)."),
         ],
-        _ => Vec::new(),
+        OperationType::Copyurl => vec![bool_flag(
+            "autoFilename",
+            "Get the filename from the URL or headers if destination is a directory.",
+        )],
+        OperationType::Delete => vec![bool_flag(
+            "rmdirs",
+            "Remove empty directories after deleting files.",
+        )],
     }
 }
 
@@ -605,6 +635,15 @@ mod tests {
         assert_eq!(flag_category_for_op(OperationType::Serve), None);
         assert!(!static_flags_for(OperationType::Serve).is_empty());
         assert!(!static_flags_for(OperationType::Archivecreate).is_empty());
+        assert!(static_flags_for(OperationType::Copyurl)
+            .iter()
+            .any(|f| f.field_name == "autoFilename"));
+        assert!(static_flags_for(OperationType::Delete)
+            .iter()
+            .any(|f| f.field_name == "rmdirs"));
+        assert!(static_flags_for(OperationType::Bisync)
+            .iter()
+            .any(|f| f.field_name == "recover"));
     }
 
     #[test]

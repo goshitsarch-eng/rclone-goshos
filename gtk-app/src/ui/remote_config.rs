@@ -730,16 +730,52 @@ fn operation_page(
         ctx.t_or("remoteConfig.source", "Source")
     };
     src.set_title(&src_title);
-    src.set_text(&default_source(remote, &rclone));
+    let copyurl_keys: &[&str] = &["url", "srcFs", "source"];
+    let listed = if op == OperationType::Copyurl {
+        path_list(&rclone, copyurl_keys)
+    } else {
+        path_list(&rclone, SOURCE_KEYS)
+    };
+    if let Some(first) = listed.first() {
+        src.set_text(first);
+    } else {
+        src.set_text(&default_source(remote, &rclone));
+    }
     if op != OperationType::Copyurl {
         dialogs::attach_path_picker(&ctx, &src, crate::picker::FilePickerConfig::folders());
     }
     let extra_sources: Rc<RefCell<Vec<adw::EntryRow>>> = Rc::new(RefCell::new(Vec::new()));
-    let more = path_list(&rclone, SOURCE_KEYS);
-    if more.len() > 1 {
-        for extra in more.iter().skip(1) {
-            let row = extra_source_row(&ctx, extra);
+    if listed.len() > 1 {
+        for extra in listed.iter().skip(1) {
+            let row = extra_source_row(&ctx, extra, op != OperationType::Copyurl);
             extra_sources.borrow_mut().push(row);
+        }
+    }
+    let saved_filenames: Vec<String> = rclone
+        .get("filenames")
+        .and_then(|v| v.as_array())
+        .map(|arr| {
+            arr.iter()
+                .map(|v| v.as_str().unwrap_or("").to_string())
+                .collect()
+        })
+        .unwrap_or_default();
+    let url_filename = adw::EntryRow::new();
+    url_filename.set_title(&ctx.t_or(
+        "wizards.appOperation.copyUrlFilename",
+        "Filename (optional)",
+    ));
+    if let Some(name) = saved_filenames.first() {
+        url_filename.set_text(name);
+    }
+    url_filename.set_visible(op == OperationType::Copyurl);
+    let extra_filenames: Rc<RefCell<Vec<adw::EntryRow>>> = Rc::new(RefCell::new(Vec::new()));
+    if op == OperationType::Copyurl {
+        for name in saved_filenames.iter().skip(1) {
+            extra_filenames.borrow_mut().push(filename_row(&ctx, name));
+        }
+        while extra_filenames.borrow().len() < extra_sources.borrow().len() {
+            extra_filenames.borrow_mut().push(filename_row(&ctx, ""));
         }
     }
     let dst = adw::EntryRow::new();
@@ -909,23 +945,34 @@ fn operation_page(
         identity.add(kind);
     }
     identity.add(&src);
-    for row in extra_sources.borrow().iter() {
+    identity.add(&url_filename);
+    for (idx, row) in extra_sources.borrow().iter().enumerate() {
         identity.add(row);
+        if let Some(name) = extra_filenames.borrow().get(idx) {
+            identity.add(name);
+        }
     }
     if op.supports_multi_source() {
         let add_src = gtk::Button::with_label(&ctx.t_or("remoteConfig.addSource", "Add source"));
         let extra_sources = extra_sources.clone();
+        let extra_filenames = extra_filenames.clone();
         let identity_for_add = identity.clone();
         let ctx_add = ctx.clone();
         let refresh_guidance = refresh_guidance.clone();
+        let is_copyurl = op == OperationType::Copyurl;
         add_src.connect_clicked(move |_| {
-            let row = extra_source_row(&ctx_add, "");
+            let row = extra_source_row(&ctx_add, "", !is_copyurl);
             {
                 let refresh_guidance = refresh_guidance.clone();
                 row.connect_changed(move |_| refresh_guidance());
             }
             identity_for_add.add(&row);
             extra_sources.borrow_mut().push(row);
+            if is_copyurl {
+                let name = filename_row(&ctx_add, "");
+                identity_for_add.add(&name);
+                extra_filenames.borrow_mut().push(name);
+            }
             refresh_guidance();
         });
         let add_row = adw::ActionRow::new();
@@ -1176,6 +1223,8 @@ fn operation_page(
         let dst = dst.clone();
         let serve = serve.clone();
         let extra_sources = extra_sources.clone();
+        let extra_filenames = extra_filenames.clone();
+        let url_filename = url_filename.clone();
         let auto_start = auto_start.clone();
         let cron_enabled = cron_enabled.clone();
         let cron = cron.clone();
@@ -1260,6 +1309,14 @@ fn operation_page(
                     .into_iter()
                     .map(|s| crate::path_kind::resolve_job_path(&s, &remote))
                     .collect();
+            } else {
+                let mut names = vec![url_filename.text().to_string()];
+                for row in extra_filenames.borrow().iter() {
+                    names.push(row.text().to_string());
+                }
+                if names.iter().any(|s| !s.is_empty()) {
+                    flags.insert("filenames".into(), json!(names));
+                }
             }
             let dest = if matches!(op, OperationType::Serve | OperationType::Delete) {
                 dst.text().to_string()
@@ -1746,11 +1803,23 @@ fn refresh_combo(combo: &adw::ComboRow, names: &[String]) {
     combo.set_model(Some(&gtk::StringList::new(&refs)));
 }
 
-fn extra_source_row(ctx: &AppCtx, value: &str) -> adw::EntryRow {
+fn extra_source_row(ctx: &AppCtx, value: &str, pick_folders: bool) -> adw::EntryRow {
     let row = adw::EntryRow::new();
     row.set_title(&ctx.t_or("remoteConfig.additionalSource", "Additional source"));
     row.set_text(value);
-    dialogs::attach_path_picker(ctx, &row, crate::picker::FilePickerConfig::folders());
+    if pick_folders {
+        dialogs::attach_path_picker(ctx, &row, crate::picker::FilePickerConfig::folders());
+    }
+    row
+}
+
+fn filename_row(ctx: &AppCtx, value: &str) -> adw::EntryRow {
+    let row = adw::EntryRow::new();
+    row.set_title(&ctx.t_or(
+        "wizards.appOperation.copyUrlFilename",
+        "Filename (optional)",
+    ));
+    row.set_text(value);
     row
 }
 

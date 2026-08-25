@@ -2,8 +2,10 @@
 
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Mutex;
 
 static START_HIDDEN: AtomicBool = AtomicBool::new(false);
+static LAUNCH_ARGS: Mutex<Vec<String>> = Mutex::new(Vec::new());
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct CliArgs {
@@ -82,6 +84,23 @@ pub fn start_hidden() -> bool {
     START_HIDDEN.load(Ordering::SeqCst)
 }
 
+pub fn set_launch_args(args: Vec<String>) {
+    *LAUNCH_ARGS.lock().unwrap_or_else(|e| e.into_inner()) = args;
+}
+
+/// Args from `GApplication` command-line, or `std::env::args()` on first launch.
+pub fn launch_args() -> Vec<String> {
+    let stored = LAUNCH_ARGS
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .clone();
+    if stored.is_empty() {
+        std::env::args().collect()
+    } else {
+        stored
+    }
+}
+
 /// CLI path wins, then a non-empty environment value, then `fallback`.
 pub fn resolve_override(
     cli: Option<&Path>,
@@ -147,5 +166,15 @@ mod tests {
             Some(PathBuf::from("/def"))
         );
         assert_eq!(resolve_override(None, None, None), None);
+    }
+
+    #[test]
+    fn launch_args_prefer_stored() {
+        set_launch_args(vec!["app".into(), "--browse".into(), "drive:".into()]);
+        assert_eq!(
+            launch_args(),
+            vec!["app".to_string(), "--browse".into(), "drive:".into()]
+        );
+        set_launch_args(Vec::new());
     }
 }

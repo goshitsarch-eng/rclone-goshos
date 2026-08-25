@@ -248,8 +248,15 @@ pub fn assemble_rclone(
             }
         }
         OperationType::Copyurl => {
-            if let Some(source) = filtered.first() {
-                obj.insert("url".into(), json!(source));
+            match filtered.as_slice() {
+                [] => {}
+                [one] => {
+                    obj.insert("url".into(), json!(one));
+                }
+                many => {
+                    obj.insert("url".into(), json!(many));
+                    obj.insert("srcFs".into(), json!(many));
+                }
             }
             if !dest.is_empty() {
                 obj.insert("dstFs".into(), json!(dest));
@@ -713,7 +720,12 @@ pub fn start_profile(
         obj.insert("origin".into(), json!(origin));
     }
     let dest = default_dest(remote, &rclone, op);
-    let mut sources = path_list(&rclone, SOURCE_KEYS);
+    let source_keys: &[&str] = if op == OperationType::Copyurl {
+        &["url", "srcFs", "source"]
+    } else {
+        SOURCE_KEYS
+    };
+    let mut sources = path_list(&rclone, source_keys);
     if sources.is_empty() {
         let fallback = default_source(remote, &rclone);
         if !fallback.is_empty() {
@@ -726,9 +738,31 @@ pub fn start_profile(
     if sources.is_empty() {
         sources.push(String::new());
     }
+    let filenames: Vec<String> = rclone
+        .get("filenames")
+        .and_then(|v| v.as_array())
+        .map(|arr| {
+            arr.iter()
+                .map(|v| v.as_str().unwrap_or("").to_string())
+                .collect()
+        })
+        .unwrap_or_default();
     let mut ids = Vec::new();
-    for source in sources {
-        let request = build_job_params(op, remote, &source, &dest, &rclone)?;
+    for (index, source) in sources.into_iter().enumerate() {
+        let mut item = rclone.clone();
+        if op == OperationType::Copyurl {
+            if let Some(name) = filenames
+                .get(index)
+                .map(String::as_str)
+                .filter(|s| !s.is_empty())
+            {
+                if let Some(obj) = item.as_object_mut() {
+                    obj.insert("filename".into(), json!(name));
+                    obj.insert("autoFilename".into(), json!(false));
+                }
+            }
+        }
+        let request = build_job_params(op, remote, &source, &dest, &item)?;
         ids.push(start_request(client, &request).map_err(|e| e.to_string())?);
     }
     Ok(ids.join(", "))
@@ -749,9 +783,8 @@ pub fn parse_started_ids(result: &str) -> Vec<u64> {
 }
 
 pub fn remember_started(map: &mut HashMap<u64, JobMeta>, result: &str, meta: JobMeta) {
-    for id in parse_started_ids(result) {
-        map.insert(id, meta.clone());
-    }
+    let ids = parse_started_ids(result);
+    remember_grouped(map, &ids, meta);
 }
 
 pub fn rename_jobs_profile(jobs: &mut [JobInfo], remote: &str, from: &str, to: &str) -> usize {
@@ -2323,6 +2356,26 @@ mod tests {
         );
         assert_eq!(serve["addr"], "127.0.0.1:8080");
         assert_eq!(serve["type"], "webdav");
+        let copyurl = assemble_rclone(
+            OperationType::Copyurl,
+            &[
+                "https://example.com/a.txt".into(),
+                "https://example.com/b.txt".into(),
+            ],
+            "drive:Inbox",
+            Map::new(),
+        );
+        assert_eq!(
+            copyurl["url"],
+            json!(["https://example.com/a.txt", "https://example.com/b.txt"])
+        );
+        assert_eq!(
+            path_list(&copyurl, &["url", "srcFs", "source"]),
+            vec![
+                "https://example.com/a.txt".to_string(),
+                "https://example.com/b.txt".into()
+            ]
+        );
         let empty = assemble_rclone(OperationType::Delete, &[], "", Map::new());
         assert!(empty.as_object().unwrap().is_empty());
     }

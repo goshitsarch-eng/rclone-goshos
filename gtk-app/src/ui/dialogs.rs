@@ -883,6 +883,9 @@ fn run_progress_job<T, F, OnOk>(
 }
 
 pub fn shortcuts(parent: &impl IsA<gtk::Widget>, ctx: &AppCtx) {
+    if try_spawn_standalone(ctx, "keyboard-shortcuts", serde_json::json!({})) {
+        return;
+    }
     let dialog = adw::Dialog::new();
     dialog.set_title(&ctx.t_or("shortcuts.title", "Keyboard Shortcuts"));
     dialog.set_content_width(560);
@@ -3070,6 +3073,9 @@ pub fn alerts(parent: &impl IsA<gtk::Widget>, ctx: AppCtx) {
 }
 
 pub fn quick_add_remote(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, on_done: Rc<dyn Fn()>) {
+    if try_spawn_standalone(&ctx, "quick-add-remote", serde_json::json!({})) {
+        return;
+    }
     super::wizard::present_quick_add(parent, ctx, on_done);
 }
 
@@ -3707,6 +3713,9 @@ pub fn delete_remote(
     name: &str,
     on_done: Rc<dyn Fn()>,
 ) {
+    if try_spawn_standalone(&ctx, "delete-remote", serde_json::json!({ "remote": name })) {
+        return;
+    }
     let plan = crate::store::plan_delete_remote(name, &ctx.store.borrow(), &ctx.snapshot.borrow());
     let dialog = adw::AlertDialog::new(Some("Delete remote"), Some(&plan.summary()));
     dialog.add_response("cancel", "Cancel");
@@ -3777,6 +3786,9 @@ pub fn quick_run_editor(
     existing: Option<QuickRun>,
     on_done: Rc<dyn Fn()>,
 ) {
+    if try_spawn_standalone(&ctx, "quick-run-editor", serde_json::json!({})) {
+        return;
+    }
     let dialog = adw::Dialog::new();
     dialog.set_title(&if existing.is_some() {
         ctx.t_or("flow.quickRun.editor.editTitle", "Edit Quick Run")
@@ -4241,6 +4253,13 @@ pub fn export_backup(
     toast: adw::ToastOverlay,
     remote: Option<&str>,
 ) {
+    if try_spawn_standalone(
+        &ctx,
+        "export",
+        serde_json::json!({ "remote": remote.unwrap_or_default() }),
+    ) {
+        return;
+    }
     let dialog = adw::Dialog::new();
     dialog.set_title(&ctx.t_or("modals.export.title", "Export backup"));
     dialog.set_content_width(480);
@@ -4654,6 +4673,13 @@ pub fn properties(
     path: &str,
     name: &str,
 ) {
+    if try_spawn_standalone(
+        &ctx,
+        "properties",
+        serde_json::json!({ "remote": remote, "path": path, "name": name }),
+    ) {
+        return;
+    }
     let dialog = adw::Dialog::new();
     dialog.set_title(&ctx.t_or("fileBrowser.properties.title", "Properties"));
     dialog.set_content_width(520);
@@ -6816,6 +6842,13 @@ fn metadata_item_row(ctx: &AppCtx, key: &str, meta: &serde_json::Value) -> adw::
 }
 
 pub fn remote_about(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, remote: &str) {
+    if try_spawn_standalone(
+        &ctx,
+        "remote-about",
+        serde_json::json!({ "remote": remote }),
+    ) {
+        return;
+    }
     let dialog = adw::Dialog::new();
     dialog.set_title(&format!(
         "{} {remote}",
@@ -7041,6 +7074,9 @@ pub(crate) fn download_file(
 }
 
 pub fn templates(parent: &impl IsA<gtk::Widget>, ctx: AppCtx) {
+    if try_spawn_standalone(&ctx, "template-manager", serde_json::json!({})) {
+        return;
+    }
     let dialog = adw::Dialog::new();
     dialog.set_title(&ctx.t_or("titlebar.menu.templates", "Templates"));
     dialog.set_content_width(560);
@@ -7160,6 +7196,13 @@ pub fn archive_create(
     path: &str,
     names: &[String],
 ) {
+    if try_spawn_standalone(
+        &ctx,
+        "archive-create",
+        serde_json::json!({ "remote": remote, "path": path, "name": names.join(",") }),
+    ) {
+        return;
+    }
     let dialog = adw::Dialog::new();
     dialog.set_title(&ctx.t_or("nautilus.modals.archiveCreate.title", "Create archive"));
     let default_name = if names.len() == 1 {
