@@ -1936,7 +1936,8 @@
       "pid": "rclone PID",
       "groups": "Job groups",
       "memory": "Memory",
-      "activity": "Activity"
+      "activity": "Activity",
+      "activitySummary": "{{jobs}} running jobs · {{mounts}} mounts · {{serves}} serves"
     },
     "quickRuns": {
       "empty": "No quick runs",
@@ -2050,6 +2051,7 @@
     },
     "about": {
       "title": "このアプリについて",
+      "appName": "Rclone Manager",
       "aboutApp": "アプリについて",
       "details": "詳細情報",
       "aboutRclone": "Rcloneについて",
@@ -2100,6 +2102,7 @@
       "killSuccess": "Rcloneプロセスを正常に終了しました",
       "killFailed": "Rcloneプロセスの終了に失敗しました",
       "noProcessToKill": "終了対象のRcloneプロセスはありません",
+      "killRclone": "rclone エンジンを終了",
       "updateSettingFailed": "設定の更新に失敗しました",
       "channelStable": "安定版 (Stable)",
       "channelBeta": "ベータ版 (Beta)",
@@ -2152,7 +2155,9 @@
       "entries": "有効なエントリ数",
       "clear": "消去",
       "cacheCleared": "キャッシュを正常に消去しました",
-      "cacheClearFailed": "キャッシュの消去に失敗しました"
+      "cacheClearFailed": "キャッシュの消去に失敗しました",
+      "appUpdateAvailable": "App update {{version}} available",
+      "rcloneUpdateAvailableMsg": "rclone update {{version}} available"
     },
     "logs": {
       "fetchError": "アプリログの取得に失敗しました。",
@@ -2821,6 +2826,15 @@
       "nothingToUndo": "元に戻す操作はありません",
       "nothingToRedo": "やり直す操作はありません",
       "cannotUndo": "この操作は元に戻せません",
+      "selectValid": "続行するには有効な項目を選択してください",
+      "selectNewFolderItems": "新しいフォルダに移動する項目を選択",
+      "selectToDownload": "ダウンロードするファイルを選択",
+      "selectToShare": "共有するファイルを選択",
+      "noPublicLink": "リモートから公開リンクが返りませんでした",
+      "rmdirsDone": "空のディレクトリを削除しました",
+      "cleanupStarted": "このリモートのクリーンアップを開始しました",
+      "selectArchive": "展開するアーカイブを選択",
+      "shareOpened": "ファイルのシステム共有を開きました",
       "redoComplete": "やり直しました",
       "copyUrlStarted": "URLからダウンロード中...",
       "getPublicLinkStarted": "公開リンクを生成中...",
@@ -2847,6 +2861,8 @@
       "showInTray": "トレイメニューに表示",
       "viewLogs": "ログを表示",
       "cloneRemote": "リモートを複製",
+      "cloneFailed": "クローンに失敗しました",
+      "cloneNoSettings": "このリモートの保存済み設定が見つかりません。",
       "exportConfig": "設定をエクスポート",
       "resetSettings": "設定をリセット",
       "deleteRemote": "リモートを削除"
@@ -2956,14 +2972,24 @@
       "lastError": "最後のエラー:",
       "runningJobs": "実行中のジョブ",
       "starting": "開始中...",
-      "noRunning": "現在実行中のアクティブなジョブはありません。"
+      "noRunning": "現在実行中のアクティブなジョブはありません。",
+      "originDashboard": "Dashboard",
+      "originQuickRun": "Quick Run",
+      "originAutomation": "Automation",
+      "originFiles": "Files",
+      "originManual": "Manual"
     },
     "automations": {
       "activeCount": "{{active}} 有効 / 全 {{total}} 件",
       "noScheduled": "自動化はありません",
       "noConfigured": "自動化が設定されていません。Cronスケジュールやリアルタイムファイル監視を伴う操作を設定して自動化を作成してください。",
       "nextRun": "次回実行:",
-      "title": "Automations"
+      "title": "Automations",
+      "watchEvery": "Watch every {{seconds}}s",
+      "changedOnly": "changed only",
+      "paused": "paused",
+      "pauseResume": "Pause or resume this automation",
+      "runNow": "Run now"
     },
     "serves": {
       "activeCount": "{{count}} 件の実行中の公開サーバー",

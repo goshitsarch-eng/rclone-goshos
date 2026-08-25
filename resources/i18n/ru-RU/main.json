@@ -1936,7 +1936,8 @@
       "pid": "rclone PID",
       "groups": "Job groups",
       "memory": "Memory",
-      "activity": "Activity"
+      "activity": "Activity",
+      "activitySummary": "{{jobs}} running jobs · {{mounts}} mounts · {{serves}} serves"
     },
     "quickRuns": {
       "empty": "No quick runs",
@@ -2050,6 +2051,7 @@
     },
     "about": {
       "title": "О программе",
+      "appName": "Rclone Manager",
       "aboutApp": "О приложении",
       "details": "Подробности",
       "aboutRclone": "О Rclone",
@@ -2100,6 +2102,7 @@
       "killSuccess": "Процесс Rclone успешно завершён",
       "killFailed": "Не удалось завершить процесс rclone",
       "noProcessToKill": "Нет запущенного процесса rclone",
+      "killRclone": "Остановить движок rclone",
       "updateSettingFailed": "Не удалось изменить настройку",
       "channelStable": "Стабильный",
       "channelBeta": "Бета",
@@ -2152,7 +2155,9 @@
       "entries": "Активные записи",
       "clear": "Очистить",
       "cacheCleared": "Кэш успешно очищен",
-      "cacheClearFailed": "Не удалось очистить кэш"
+      "cacheClearFailed": "Не удалось очистить кэш",
+      "appUpdateAvailable": "App update {{version}} available",
+      "rcloneUpdateAvailableMsg": "rclone update {{version}} available"
     },
     "logs": {
       "fetchError": "Не удалось получить журналы приложения.",
@@ -2821,6 +2826,15 @@
       "nothingToUndo": "Нечего отменять",
       "nothingToRedo": "Нечего повторять",
       "cannotUndo": "Это действие нельзя отменить",
+      "selectValid": "Выберите допустимый элемент, чтобы продолжить",
+      "selectNewFolderItems": "Выберите элементы для перемещения в новую папку",
+      "selectToDownload": "Выберите файл для скачивания",
+      "selectToShare": "Выберите файл для общего доступа",
+      "noPublicLink": "Удалённое хранилище не вернуло публичную ссылку",
+      "rmdirsDone": "Пустые каталоги удалены",
+      "cleanupStarted": "Очистка этого удалённого хранилища запущена",
+      "selectArchive": "Выберите архив для распаковки",
+      "shareOpened": "Открыт системный общий доступ для файла",
       "redoComplete": "Действие повторено",
       "copyUrlStarted": "Загрузка по URL...",
       "getPublicLinkStarted": "Создание публичной ссылки...",
@@ -2847,6 +2861,8 @@
       "showInTray": "Показывать в меню трея",
       "viewLogs": "Открыть журналы",
       "cloneRemote": "Клонировать подключение",
+      "cloneFailed": "Клонирование не удалось",
+      "cloneNoSettings": "Для этого удалённого хранилища не найдены сохранённые настройки.",
       "exportConfig": "Экспортировать конфигурацию",
       "resetSettings": "Сбросить настройки",
       "deleteRemote": "Удалить подключение"
@@ -2956,14 +2972,24 @@
       "lastError": "Последняя ошибка:",
       "runningJobs": "Выполняемые задания",
       "starting": "Запуск...",
-      "noRunning": "Сейчас нет выполняемых заданий."
+      "noRunning": "Сейчас нет выполняемых заданий.",
+      "originDashboard": "Dashboard",
+      "originQuickRun": "Quick Run",
+      "originAutomation": "Automation",
+      "originFiles": "Files",
+      "originManual": "Manual"
     },
     "automations": {
       "activeCount": "Активно: {{active}} из {{total}}",
       "noScheduled": "Нет автоматизаций",
       "noConfigured": "Автоматизации не настроены. Настройте операцию с cron-расписанием или мониторингом файлов в реальном времени.",
       "nextRun": "Следующий запуск:",
-      "title": "Automations"
+      "title": "Automations",
+      "watchEvery": "Watch every {{seconds}}s",
+      "changedOnly": "changed only",
+      "paused": "paused",
+      "pauseResume": "Pause or resume this automation",
+      "runNow": "Run now"
     },
     "serves": {
       "activeCount": "Активных серверов: {{count}}{{s}}",

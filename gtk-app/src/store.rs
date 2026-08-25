@@ -292,17 +292,30 @@ pub struct JobInfo {
     pub parent_job_id: Option<u64>,
 }
 
-/// Local start-time metadata for a job id (not persisted).
-#[derive(Debug, Clone, Default)]
+/// Local start-time metadata for a job id (persisted so grouped transfer
+/// snapshots survive restart).
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct JobMeta {
+    #[serde(default)]
     pub origin: String,
+    #[serde(default)]
     pub profile: String,
+    #[serde(default)]
     pub remote: String,
+    #[serde(default)]
     pub backend: String,
+    #[serde(default)]
     pub quick_run_id: String,
+    #[serde(default)]
     pub execute_id: String,
+    #[serde(default)]
     pub parent_job_id: Option<u64>,
+    #[serde(default)]
     pub target: String,
+    #[serde(default)]
+    pub group: String,
+    #[serde(default)]
+    pub transfer_snapshot: Value,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
@@ -909,7 +922,7 @@ pub struct AppStore {
     pub automation_paused: Vec<String>,
     #[serde(default)]
     pub pending_share_paths: Vec<String>,
-    #[serde(default, skip)]
+    #[serde(default)]
     pub job_meta: HashMap<u64, JobMeta>,
     #[serde(default, skip)]
     pub notifications_enabled: bool,
@@ -927,7 +940,43 @@ impl AppStore {
             Self::default()
         };
         store.seed_alert_defaults(true);
+        let before: HashMap<u64, String> = store
+            .job_history
+            .iter()
+            .map(|job| (job.id, job.status.clone()))
+            .collect();
+        store.finalize_stale_preparing();
+        store.job_history.retain(crate::jobs::is_managed_job);
+        if store.job_history.len() != before.len()
+            || store.job_history.iter().any(|job| {
+                before
+                    .get(&job.id)
+                    .is_some_and(|status| status != &job.status)
+            })
+        {
+            let _ = store.save();
+        }
         store
+    }
+
+    /// Preparing rows from a previous process cannot be live; keep their
+    /// snapshots but do not re-inject them as in-progress after restart.
+    pub fn finalize_stale_preparing(&mut self) {
+        let has_snapshot = |id: u64| {
+            self.job_meta.get(&id).is_some_and(|meta| {
+                meta.transfer_snapshot
+                    .as_array()
+                    .is_some_and(|arr| !arr.is_empty())
+            })
+        };
+        for job in &mut self.job_history {
+            if job.status != "preparing" && job.status != "starting" {
+                continue;
+            }
+            let done =
+                !job.completed.as_array().is_some_and(|arr| arr.is_empty()) || has_snapshot(job.id);
+            job.status = if done { "completed" } else { "failed" }.into();
+        }
     }
 
     pub fn seed_alert_defaults(&mut self, notifications_on: bool) -> bool {
@@ -1045,11 +1094,35 @@ impl AppStore {
     }
 
     pub fn remember_job(&mut self, job: JobInfo) {
+        if !crate::jobs::is_managed_job(&job) {
+            return;
+        }
         self.job_history.retain(|existing| existing.id != job.id);
         self.job_history.insert(0, job);
         if self.job_history.len() > 80 {
             self.job_history.truncate(80);
         }
+        self.prune_job_meta();
+    }
+
+    pub fn prune_job_meta(&mut self) {
+        if self.job_meta.len() <= 200 {
+            let history: std::collections::HashSet<u64> =
+                self.job_history.iter().map(|job| job.id).collect();
+            if self.job_meta.len() <= history.len().saturating_add(120) {
+                return;
+            }
+        }
+        let history: std::collections::HashSet<u64> =
+            self.job_history.iter().map(|job| job.id).collect();
+        let mut ids: Vec<u64> = self.job_meta.keys().copied().collect();
+        ids.sort_unstable();
+        ids.reverse();
+        let mut keep = history;
+        for id in ids.into_iter().take(200) {
+            keep.insert(id);
+        }
+        self.job_meta.retain(|id, _| keep.contains(id));
     }
 
     pub fn update_job_stats(&mut self, jobid: u64, stats: Value) -> bool {
@@ -2087,6 +2160,106 @@ mod tests {
         assert_eq!(store.job_history[0].transferring[0]["name"], "a.txt");
         assert_eq!(store.job_history[0].status, "preparing");
         assert!(!store.update_job_stats(99, json!({})));
+        store.remember_job(JobInfo {
+            id: 540356,
+            operation: "job/540356".into(),
+            remote: String::new(),
+            profile: "default".into(),
+            status: "completed".into(),
+            origin: "dashboard".into(),
+            start_time: Utc::now(),
+            error: None,
+            dry_run: false,
+            src: String::new(),
+            dst: String::new(),
+            group: "job/540356".into(),
+            stats: json!({}),
+            transferring: json!([]),
+            duration: 0.0,
+            progress: 1.0,
+            output: json!({}),
+            completed: json!([]),
+            parent_job_id: None,
+        });
+        assert!(store.job_history.iter().all(|job| job.id != 540356));
+    }
+
+    #[test]
+    fn job_meta_survives_store_json() {
+        let mut store = AppStore::default();
+        store.job_meta.insert(
+            3,
+            JobMeta {
+                origin: "filemanager".into(),
+                group: "filemanager-upload/abc".into(),
+                transfer_snapshot: json!([{ "name": "a.txt", "src": "/tmp/a.txt" }]),
+                ..Default::default()
+            },
+        );
+        let text = serde_json::to_string(&store).unwrap();
+        let loaded: AppStore = serde_json::from_str(&text).unwrap();
+        assert_eq!(loaded.job_meta[&3].group, "filemanager-upload/abc");
+        assert_eq!(
+            loaded.job_meta[&3].transfer_snapshot[0]["src"],
+            "/tmp/a.txt"
+        );
+    }
+
+    #[test]
+    fn finalizes_preparing_jobs_from_previous_session() {
+        let mut store = AppStore::default();
+        store.job_meta.insert(
+            4,
+            JobMeta {
+                transfer_snapshot: json!([{ "name": "k.txt" }]),
+                ..Default::default()
+            },
+        );
+        store.job_history.push(JobInfo {
+            id: 4,
+            operation: "upload".into(),
+            remote: "testdrive".into(),
+            profile: "default".into(),
+            status: "preparing".into(),
+            origin: "filemanager".into(),
+            start_time: Utc::now(),
+            error: None,
+            dry_run: false,
+            src: "/tmp/k.txt".into(),
+            dst: "k.txt".into(),
+            group: "filemanager-upload/x".into(),
+            stats: json!({}),
+            transferring: json!([]),
+            duration: 0.0,
+            progress: 0.0,
+            output: json!({}),
+            completed: json!([]),
+            parent_job_id: None,
+        });
+        store.job_history.push(JobInfo {
+            id: 5,
+            operation: "upload".into(),
+            remote: "testdrive".into(),
+            profile: "default".into(),
+            status: "starting".into(),
+            origin: "filemanager".into(),
+            start_time: Utc::now(),
+            error: None,
+            dry_run: false,
+            src: String::new(),
+            dst: String::new(),
+            group: String::new(),
+            stats: json!({}),
+            transferring: json!([]),
+            duration: 0.0,
+            progress: 0.0,
+            output: json!({}),
+            completed: json!([]),
+            parent_job_id: None,
+        });
+        store.finalize_stale_preparing();
+        assert_eq!(store.job_history[0].status, "completed");
+        assert_eq!(store.job_history[1].status, "failed");
     }
 
     #[test]
@@ -2530,6 +2703,7 @@ mod tests {
                 execute_id: "exec-7".into(),
                 parent_job_id: None,
                 target: String::new(),
+                ..Default::default()
             },
         );
         store.job_history.push(JobInfo {

@@ -161,6 +161,10 @@ impl PrefsSession {
 }
 
 pub fn present(parent: &impl IsA<gtk::Widget>, ctx: AppCtx) {
+    present_page(parent, ctx, None);
+}
+
+pub fn present_page(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, page: Option<&str>) {
     let session = PrefsSession::new(ctx.clone());
     let dialog = adw::PreferencesDialog::new();
     dialog.set_title(&ctx.t_or("titlebar.menu.preferences", "Preferences"));
@@ -184,6 +188,7 @@ pub fn present(parent: &impl IsA<gtk::Widget>, ctx: AppCtx) {
     session.banner_row.add_suffix(&save);
 
     let general = adw::PreferencesPage::new();
+    general.set_name(Some("general"));
     general.set_title(&ctx.t_or("modals.preferences.tabs.general", "General"));
     general.set_icon_name(Some("preferences-system-symbolic"));
     let g1 = adw::PreferencesGroup::new();
@@ -313,6 +318,48 @@ pub fn present(parent: &impl IsA<gtk::Widget>, ctx: AppCtx) {
     add_combo(
         &session,
         &g1,
+        "nautilus.view.toggleLayout",
+        "Files layout",
+        "nautilus.layout",
+        &["list", "grid"],
+        None,
+        |_| {},
+    );
+    add_switch(
+        &session,
+        &g1,
+        "nautilus.view.showHidden",
+        "Show Hidden Files",
+        "nautilus.show_hidden",
+        |_, _| {},
+    );
+    add_int_combo(
+        &session,
+        &g1,
+        "nautilus.view.iconSize",
+        "List icon size",
+        "nautilus.icon_size",
+        &[16, 24, 32, 48],
+    );
+    add_int_combo(
+        &session,
+        &g1,
+        "nautilus.view.larger",
+        "Grid icon size",
+        "nautilus.grid_icon_size",
+        &[48, 64, 96, 128, 192, 256],
+    );
+    add_switch(
+        &session,
+        &g1,
+        "settings.runtime.flatpak_warn.label",
+        "Flatpak Warning Shown",
+        "runtime.flatpak_warn",
+        |_, _| {},
+    );
+    add_combo(
+        &session,
+        &g1,
         "settings.runtime.app_update_channel.label",
         "App update channel",
         "runtime.app_update_channel",
@@ -359,6 +406,7 @@ pub fn present(parent: &impl IsA<gtk::Widget>, ctx: AppCtx) {
     general.add(&g1);
 
     let core = adw::PreferencesPage::new();
+    core.set_name(Some("core"));
     core.set_title(&ctx.t_or("modals.preferences.tabs.core", "Core"));
     core.set_icon_name(Some("application-x-executable-symbolic"));
     let c1 = adw::PreferencesGroup::new();
@@ -505,11 +553,13 @@ pub fn present(parent: &impl IsA<gtk::Widget>, ctx: AppCtx) {
     core.add(&c1);
 
     let security = adw::PreferencesPage::new();
+    security.set_name(Some("security"));
     security.set_title(&ctx.t_or("modals.backend.security.encrypted", "Security"));
     security.set_icon_name(Some("security-high-symbolic"));
     add_security_page(&session, &security, parent);
 
     let dev = adw::PreferencesPage::new();
+    dev.set_name(Some("developer"));
     dev.set_title(&ctx.t_or("modals.preferences.tabs.developer", "Developer"));
     dev.set_icon_name(Some("applications-engineering-symbolic"));
     add_developer_page(&session, &dev, parent);
@@ -518,6 +568,9 @@ pub fn present(parent: &impl IsA<gtk::Widget>, ctx: AppCtx) {
     dialog.add(&core);
     dialog.add(&security);
     dialog.add(&dev);
+    if let Some(name) = page.filter(|name| !name.is_empty()) {
+        dialog.set_visible_page_name(name);
+    }
     dialog.present(Some(parent));
 }
 
@@ -707,6 +760,65 @@ fn add_combo(
                 .and_then(|v| v.as_str().map(|s| s.to_string()))
                 .unwrap_or_default();
             if let Some(idx) = options.iter().position(|item| *item == text) {
+                row.set_selected(idx as u32);
+            }
+        });
+    }
+    group.add(&row);
+}
+
+fn add_int_combo(
+    session: &PrefsSession,
+    group: &adw::PreferencesGroup,
+    key: &str,
+    fallback: &str,
+    path: &'static str,
+    options: &'static [i64],
+) {
+    let labels: Vec<String> = options.iter().map(|n| n.to_string()).collect();
+    let refs: Vec<&str> = labels.iter().map(|s| s.as_str()).collect();
+    let current = session
+        .ctx
+        .settings
+        .borrow()
+        .get_by_path(path)
+        .and_then(|v| v.as_i64())
+        .unwrap_or(options.first().copied().unwrap_or(0));
+    let row = adw::ComboRow::new();
+    row.set_title(&session.ctx.t_or(key, fallback));
+    row.set_model(Some(&gtk::StringList::new(&refs)));
+    if let Some(idx) = options.iter().position(|item| *item == current) {
+        row.set_selected(idx as u32);
+    }
+    {
+        let session = session.clone();
+        row.connect_selected_notify(move |row| {
+            if session.suppress.get() {
+                return;
+            }
+            if let Some(value) = options.get(row.selected() as usize) {
+                session.commit(path, json!(value));
+            }
+        });
+    }
+    let row_reset = row.clone();
+    row.add_suffix(&session.reset_button(path, move |value| {
+        let n = value.as_i64().unwrap_or(0);
+        if let Some(idx) = options.iter().position(|item| *item == n) {
+            row_reset.set_selected(idx as u32);
+        }
+    }));
+    {
+        let row = row.clone();
+        let ctx = session.ctx.clone();
+        session.remember_restorer(path, move || {
+            let n = ctx
+                .settings
+                .borrow()
+                .get_by_path(path)
+                .and_then(|v| v.as_i64())
+                .unwrap_or(0);
+            if let Some(idx) = options.iter().position(|item| *item == n) {
                 row.set_selected(idx as u32);
             }
         });

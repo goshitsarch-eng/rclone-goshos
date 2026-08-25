@@ -439,6 +439,58 @@ This client is the GTK 4 + libadwaita rewrite of the Angular/Tauri desktop UI. I
 - Repair banner with a password diagnosis opens the unlock sheet instead of the full repair dialog
 - Shared serve cards (copy URL/ID, Open, option count, Stop) on dashboard overview, remote Serve monitoring, and Flow
 - Files undo/redo/copy toasts, tray tooltip, engine-offline, and memory-stats labels use i18n keys
+- About System page: quit rclone engine, FS-cache entry count / clear, Flatpak/portable update instructions
+- Preferences: Files layout, hidden files, list/grid icon sizes, and Flatpak warning toggle
+- Tray Quick Run labels use translated Start/Stop verbs plus the run name (no English prefix parsing)
+- Files toasts, clone-failed alerts, file-viewer Open native / Preview, and helper Save profile use i18n keys
+- Serve start falls back to a local `rclone serve` process when `serve/start` is missing (rclone < 1.64). `core/command serve` is not used — it can panic rcd on 1.60. List/stop merge the process registry. Serve can start without a saved profile (same as Mount).
+- Serve profiles honor `type` / `serveType` / `addr` (default HTTP) and pass extra flags through RC or CLI
+- Overview Job Information matches Angular: aggregate progress/ETA, speed/transfers/checks/errors, and per-job captions with stop
+- Transfer activity rows show preparing/finalizing/error badges, bytes/speed/ETA, and a progress bar
+- Browse opens a mounted folder in the OS file manager (or a Quick Run src/dst); transfer Open uses typed-path routing
+- About update strings are i18n and use the same skipped-filtered pending state as Updates; skipped versions have Restore; wiki + rclone.org links
+- Dashboard hidden/activity/automation watch-pause labels use i18n; job origins use translated pills
+- CLI import preview/classify matches Angular: tokenize, verb/path/macro detection, mapped vs unknown flags, source/dest import, profile new/override/patch. Common flags classify without `options/info` (rclone <1.64)
+- About Details shows OS/arch, mode, release channel, and Debug tools
+- Ctrl+Shift+M / Ctrl+Shift+S force-reconcile mounts and serves from rclone RC (errors surface as toasts)
+- Files OS uploads (picker, drop `FileList`, clipboard, share-intake) start as one grouped `copyfile` job (`_group`), including mixed files + folders
+- `--share-intake` only queues paths after that flag (does not swallow `--browse` remotes)
+- Files local-disk sidebar uses Angular `LocalDrive` labels: Home / File System i18n, lsblk volume names, removable icons, space/fstype tooltips, Windows/`/sdcard` path normalization
+- Wizard OAuth continuation and save-failed alerts use `wizards.remoteConfig.*` / `settings.remoteSaveFailed`; remote-config helper steps, presets, JSON help, and profile-in-use warnings use i18n keys
+- Grouped file-manager jobs hydrate `transferring` / `completed` rows from the start snapshot and child job status so Job detail and transfer activity stay populated on rclone 1.60
+- Job detail reapplies that snapshot after live `job/status` (rclone 1.60 copyfile stats omit per-file rows)
+- Send-to uses the same grouped `collect_local_upload_items` path as Files uploads
+- Dashboard / Flow remote activity lists only overview jobs (hides grouped children)
+- Transfer-activity empty states use `shared.transferActivity.empty.*` hints
+- Path kinds treat Windows drive letters (`C:\`, `D:/`) and UNC `\\server\share` as local
+- Extra RC backends persist `os`/`arch` from `core/version` on Test; `AppCtx::engine_os()` exposes the active backend OS
+- Job-detail transfer captions use rclone `srcFs`/`srcRemote` (and snapshot equivalents) and do not re-join a basename onto an already-complete path
+- Path helpers match Angular `normalizeForPlatform` / `isTrulyLocalPath` / `splitLocalForStat`; pickers, Job Open, and path-kind rewrite honor `engine_os()`
+- Local Windows/UNC breadcrumbs keep `C:\` and `\\server\share` form
+- Wizard path fields show item count plus `df` free/total when the engine OS is this host
+- About/Updates and Delete Remote / Alerts filter chrome use existing i18n keys
+- Destination path inspection uses rclone `operations/stat` + `splitLocalForStat` when the engine OS differs or the path is Windows/UNC
+- Preparing jobs expire after 120s, skip when the same group is already live, and finalize as failed if they disappear from RC
+- `job_meta` (transfer snapshots, execute IDs, groups) is persisted in `store.json` so Job detail rows survive restart
+- Preparing/starting rows from a previous process are finalized on store load so they are not re-injected as live jobs
+- Onboarding Import opens the same restore-preview flow as the menu Import action
+- Job detail falls back to `job_history` / `job_meta` when rclone no longer has the job id (restart, new rcd)
+- Dashboard and Flow activity merge finished history (and meta-only snapshots) with live jobs
+- Check results honor the transfer search box, hide/override rows after delete, and link resolve copies to the parent check job
+- rclone 1.60 `job/list` noise is not written to history; leftover noise is dropped on store load
+- Job detail ignores unidentifiable RC `job/status` stubs and keeps reconstructed type/progress/origin from `job_meta`
+- Check results show localized status badges plus relative time when a parent job timestamp is known
+- Reconstructed completed transfers fill `bytes` from snapshot `size` (no more `0 B / 3 B` after restart)
+- Job detail shows Origin / Profile / Backend / Group with Type / Status, and `—` for unknown speed
+- Job detail uses one page scroll so identity fields are not clipped by competing transfer lists
+- Job detail puts identity + transfers first and statistics after, matching Angular overview/profile then activity
+- Deep links open Preferences, Remote Config, Onboarding, About, Logs, and Shortcuts (`--preferences [page]`, `--remote-config`, `--onboarding`, `#/preferences`, `#/remote-config/...`, `#/onboarding`, `#/about`, `#/logs`, `#/shortcuts`)
+- A second instance forwards those flags through GIO so `--about` / `--job` / `--preferences` activate the running app
+- Cron builder weekday dropdown (Mon–Sun / weekdays / weekends), i18n advanced field placeholders, and Your Schedule + next-run + timezone preview
+- Cron builder lives in an expander row instead of an ActionRow suffix so the preview is readable
+- Quick Run guidance banners remove tracked rows instead of Adwaita's internal PreferencesGroup box
+- Check-result rows show status icons, icon resolve actions, and resolve progress as preparing or bytes/size/ETA
+- Path picker Browse tooltip uses `common.browse`
 
 ## Still deepening toward pixel-level Angular parity
 

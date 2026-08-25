@@ -405,6 +405,399 @@ fn copy_dir(src: &std::path::Path, dst: &std::path::Path) -> std::io::Result<()>
 
 pub const ENGINE_OFFLINE: &str = "Rclone engine is offline";
 
+fn dest_child(dest_dir: &str, name: &str) -> String {
+    let dest = dest_dir.trim_matches('/');
+    if dest.is_empty() {
+        name.to_string()
+    } else {
+        format!("{dest}/{name}")
+    }
+}
+
+/// Walk local files and folders into copyfile transfer items that share one group.
+pub fn collect_local_upload_items(
+    paths: &[std::path::PathBuf],
+    dest_fs: &str,
+    dest_dir: &str,
+) -> Result<Vec<TransferItem>, String> {
+    let mut items = Vec::new();
+    for path in paths {
+        let name = path
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("upload")
+            .to_string();
+        let dest = dest_child(dest_dir, &name);
+        if path.is_dir() {
+            collect_local_dir(path, dest_fs, &dest, &mut items)?;
+        } else if path.is_file() {
+            items.push(TransferItem {
+                src_fs: "/".into(),
+                src: path.to_string_lossy().into_owned(),
+                dst_fs: dest_fs.to_string(),
+                dst: dest,
+                cut: false,
+            });
+        }
+    }
+    Ok(items)
+}
+
+fn collect_local_dir(
+    local: &std::path::Path,
+    dest_fs: &str,
+    dest_dir: &str,
+    items: &mut Vec<TransferItem>,
+) -> Result<(), String> {
+    let entries = std::fs::read_dir(local).map_err(|e| e.to_string())?;
+    for entry in entries.flatten() {
+        let path = entry.path();
+        let name = path
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("item")
+            .to_string();
+        let dest = dest_child(dest_dir, &name);
+        if path.is_dir() {
+            collect_local_dir(&path, dest_fs, &dest, items)?;
+        } else if path.is_file() {
+            items.push(TransferItem {
+                src_fs: "/".into(),
+                src: path.to_string_lossy().into_owned(),
+                dst_fs: dest_fs.to_string(),
+                dst: dest,
+                cut: false,
+            });
+        }
+    }
+    Ok(())
+}
+
+pub fn upload_dest_dirs(items: &[TransferItem]) -> Vec<(String, String)> {
+    let mut dirs = std::collections::BTreeSet::new();
+    for item in items {
+        if let Some((parent, _)) = item.dst.rsplit_once('/') {
+            if !parent.is_empty() {
+                dirs.insert((item.dst_fs.clone(), parent.to_string()));
+            }
+        }
+    }
+    dirs.into_iter().collect()
+}
+
+/// Volume metadata from lsblk / df, keyed by mount point.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct VolumeInfo {
+    pub label: String,
+    pub file_system: String,
+    pub is_removable: bool,
+    pub total_space: u64,
+    pub available_space: u64,
+}
+
+/// Local sidebar drive matching Angular `LocalDrive`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LocalDrive {
+    pub path: String,
+    pub label: String,
+    pub label_is_key: bool,
+    pub show_name: bool,
+    pub is_removable: bool,
+    pub total_space: u64,
+    pub available_space: u64,
+    pub file_system: String,
+}
+
+impl LocalDrive {
+    pub fn title(&self, t_or: impl Fn(&str, &str) -> String) -> String {
+        if self.label_is_key {
+            let fallback = match self.label.as_str() {
+                "titlebar.home" => "Home",
+                "nautilus.titles.fileSystem" => "File System",
+                _ => "Local Disk",
+            };
+            t_or(&self.label, fallback)
+        } else {
+            self.label.clone()
+        }
+    }
+
+    pub fn subtitle(&self) -> Option<String> {
+        if self.show_name {
+            Some(self.path.clone())
+        } else {
+            None
+        }
+    }
+}
+
+pub fn normalize_drive_path(path: &str) -> String {
+    let mut p = path.replace('\\', "/");
+    if p.len() == 2 && p.ends_with(':') && p.chars().next().is_some_and(|c| c.is_ascii_alphabetic())
+    {
+        p.push('/');
+    }
+    if p == "/sdcard" {
+        p = "/storage/emulated/0".into();
+    } else if let Some(suffix) = p.strip_prefix("/sdcard/") {
+        p = format!("/storage/emulated/0/{suffix}");
+    }
+    p
+}
+
+pub fn is_windows_root(path: &str) -> bool {
+    let p = path.trim_end_matches(['/', '\\']);
+    p.len() == 2 && p.ends_with(':') && p.chars().next().is_some_and(|c| c.is_ascii_alphabetic())
+}
+
+pub fn is_home_directory(path: &str, home: Option<&str>) -> bool {
+    let clean = normalize_drive_path(path);
+    let clean = clean.trim_end_matches('/');
+    if let Some(home) = home {
+        let home = normalize_drive_path(home);
+        let home = home.trim_end_matches('/');
+        if !home.is_empty() && clean.eq_ignore_ascii_case(home) {
+            return true;
+        }
+    }
+    let parts: Vec<&str> = clean.split('/').filter(|s| !s.is_empty()).collect();
+    matches!(parts.as_slice(), ["home", _] | ["Users", _])
+}
+
+/// Sidebar label for a local disk path (Home / File system / last component).
+pub fn local_disk_label(path: &str, home: Option<&str>) -> String {
+    let normalized = normalize_drive_path(path);
+    let trimmed = normalized.trim_end_matches('/');
+    if trimmed.is_empty() || trimmed == "/" || is_windows_root(&normalized) {
+        return "File System".into();
+    }
+    if is_home_directory(&normalized, home) {
+        return "Home".into();
+    }
+    trimmed
+        .rsplit('/')
+        .find(|part| !part.is_empty())
+        .unwrap_or(trimmed)
+        .to_string()
+}
+
+pub fn lookup_volume<'a>(
+    volumes: &'a std::collections::HashMap<String, VolumeInfo>,
+    path: &str,
+) -> Option<&'a VolumeInfo> {
+    let normalized = normalize_drive_path(path);
+    volumes
+        .get(&normalized)
+        .or_else(|| volumes.get(path))
+        .or_else(|| {
+            if normalized.ends_with('/') {
+                volumes.get(normalized.trim_end_matches('/'))
+            } else {
+                volumes.get(&format!("{normalized}/"))
+            }
+        })
+}
+
+pub fn build_local_drive(
+    path: &str,
+    home: Option<&str>,
+    volume: Option<&VolumeInfo>,
+) -> LocalDrive {
+    let normalized = normalize_drive_path(path);
+    let is_home = is_home_directory(&normalized, home);
+    let is_root = {
+        let trimmed = normalized.trim_end_matches('/');
+        trimmed.is_empty() || trimmed == "/" || is_windows_root(&normalized)
+    };
+    let (label, label_is_key, show_name) = if is_home {
+        ("titlebar.home".into(), true, false)
+    } else if is_root {
+        ("nautilus.titles.fileSystem".into(), true, false)
+    } else if let Some(volume) = volume {
+        if !volume.label.is_empty() {
+            (volume.label.clone(), false, true)
+        } else {
+            let raw = local_disk_label(&normalized, home);
+            (raw, false, false)
+        }
+    } else {
+        let raw = local_disk_label(&normalized, home);
+        (raw, false, false)
+    };
+    LocalDrive {
+        path: if normalized.is_empty() {
+            "/".into()
+        } else {
+            normalized
+        },
+        label,
+        label_is_key,
+        show_name,
+        is_removable: volume.is_some_and(|v| v.is_removable),
+        total_space: volume.map(|v| v.total_space).unwrap_or(0),
+        available_space: volume.map(|v| v.available_space).unwrap_or(0),
+        file_system: volume.map(|v| v.file_system.clone()).unwrap_or_default(),
+    }
+}
+
+pub fn parse_lsblk_json(text: &str) -> std::collections::HashMap<String, VolumeInfo> {
+    let mut out = std::collections::HashMap::new();
+    let Ok(value) = serde_json::from_str::<Value>(text) else {
+        return out;
+    };
+    if let Some(devices) = value.get("blockdevices").and_then(|v| v.as_array()) {
+        walk_lsblk(devices, &mut out);
+    }
+    out
+}
+
+fn walk_lsblk(devices: &[Value], out: &mut std::collections::HashMap<String, VolumeInfo>) {
+    for dev in devices {
+        let label = json_string(dev.get("label"));
+        let file_system = json_string(dev.get("fstype"));
+        let is_removable = json_boolish(dev.get("rm"));
+        for mount in lsblk_mounts(dev) {
+            out.entry(normalize_drive_path(&mount))
+                .or_insert(VolumeInfo {
+                    label: label.clone(),
+                    file_system: file_system.clone(),
+                    is_removable,
+                    total_space: 0,
+                    available_space: 0,
+                });
+        }
+        if let Some(children) = dev.get("children").and_then(|v| v.as_array()) {
+            walk_lsblk(children, out);
+        }
+    }
+}
+
+fn lsblk_mounts(dev: &Value) -> Vec<String> {
+    let mut mounts = Vec::new();
+    if let Some(mount) = dev.get("mountpoint").and_then(|v| v.as_str()) {
+        if !mount.is_empty() && mount != "null" {
+            mounts.push(mount.to_string());
+        }
+    }
+    if let Some(arr) = dev.get("mountpoints").and_then(|v| v.as_array()) {
+        for value in arr {
+            if let Some(mount) = value.as_str() {
+                if !mount.is_empty() && mount != "null" {
+                    mounts.push(mount.to_string());
+                }
+            }
+        }
+    }
+    mounts
+}
+
+fn json_string(value: Option<&Value>) -> String {
+    match value {
+        Some(Value::String(s)) if s != "null" => s.clone(),
+        Some(Value::Number(n)) => n.to_string(),
+        _ => String::new(),
+    }
+}
+
+fn json_boolish(value: Option<&Value>) -> bool {
+    match value {
+        Some(Value::Bool(b)) => *b,
+        Some(Value::Number(n)) => n.as_i64() == Some(1),
+        Some(Value::String(s)) => s == "1" || s.eq_ignore_ascii_case("true"),
+        _ => false,
+    }
+}
+
+/// Free and total bytes for a local path via `df` (Tauri `get_local_disk_usage`).
+pub fn local_path_disk_usage(path: &str) -> Option<(u64, u64)> {
+    let trimmed = path.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    let mut probe = std::path::PathBuf::from(trimmed);
+    while !probe.as_os_str().is_empty() && !probe.exists() {
+        if !probe.pop() {
+            break;
+        }
+    }
+    if probe.as_os_str().is_empty() {
+        return None;
+    }
+    let output = std::process::Command::new("df")
+        .args(["-B1", "--output=size,avail,target"])
+        .arg(&probe)
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let text = String::from_utf8(output.stdout).ok()?;
+    parse_df_output(&text)
+        .into_values()
+        .next()
+        .map(|(total, avail)| (avail, total))
+}
+
+/// Parse `df -B1 --output=size,avail,target` (header + rows).
+pub fn parse_df_output(text: &str) -> std::collections::HashMap<String, (u64, u64)> {
+    let mut out = std::collections::HashMap::new();
+    for (idx, line) in text.lines().enumerate() {
+        if idx == 0 {
+            continue;
+        }
+        let mut parts = line.split_whitespace();
+        let Some(size) = parts.next().and_then(|s| s.parse::<u64>().ok()) else {
+            continue;
+        };
+        let Some(avail) = parts.next().and_then(|s| s.parse::<u64>().ok()) else {
+            continue;
+        };
+        let target: String = parts.collect::<Vec<_>>().join(" ");
+        if !target.is_empty() {
+            out.insert(normalize_drive_path(&target), (size, avail));
+        }
+    }
+    out
+}
+
+fn probe_volume_map() -> std::collections::HashMap<String, VolumeInfo> {
+    let mut volumes = std::process::Command::new("lsblk")
+        .args(["-J", "-o", "NAME,LABEL,FSTYPE,MOUNTPOINT,RM"])
+        .output()
+        .ok()
+        .and_then(|out| String::from_utf8(out.stdout).ok())
+        .map(|text| parse_lsblk_json(&text))
+        .unwrap_or_default();
+    if let Some(df) = std::process::Command::new("df")
+        .args(["-B1", "--output=size,avail,target"])
+        .output()
+        .ok()
+        .and_then(|out| String::from_utf8(out.stdout).ok())
+    {
+        for (mount, (total, available)) in parse_df_output(&df) {
+            let entry = volumes.entry(mount).or_default();
+            entry.total_space = total;
+            entry.available_space = available;
+        }
+    }
+    volumes
+}
+
+/// Enrich rclone `core/disks` paths with lsblk labels, space, and removable flags.
+pub fn collect_local_drives(paths: &[String]) -> Vec<LocalDrive> {
+    let home = dirs::home_dir().map(|p| p.to_string_lossy().into_owned());
+    let volumes = probe_volume_map();
+    let mut seen = std::collections::BTreeSet::new();
+    let mut drives = Vec::new();
+    for path in paths {
+        let drive = build_local_drive(path, home.as_deref(), lookup_volume(&volumes, path));
+        if seen.insert(drive.path.clone()) {
+            drives.push(drive);
+        }
+    }
+    drives
+}
+
 pub fn is_local_open_target(remote: &str) -> bool {
     remote.is_empty() || remote == "local"
 }
@@ -596,5 +989,115 @@ mod tests {
         assert_eq!(join_fs_path("alias:", "docs/a"), "alias:docs/a");
         assert!(matches!(file.file_op(None), FileOp::Delete { .. }));
         assert!(matches!(file_rn.file_op(), FileOp::Rename { .. }));
+    }
+
+    #[test]
+    fn collects_mixed_local_uploads_into_one_item_list() {
+        let dir = tempfile::tempdir().unwrap();
+        let a = dir.path().join("a.txt");
+        let nested = dir.path().join("folder");
+        std::fs::create_dir(&nested).unwrap();
+        std::fs::write(&a, "one").unwrap();
+        std::fs::write(nested.join("b.txt"), "two").unwrap();
+        let items = collect_local_upload_items(&[a.clone(), nested.clone()], "testdrive:", "Inbox")
+            .unwrap();
+        assert_eq!(items.len(), 2);
+        assert!(items
+            .iter()
+            .all(|item| item.dst_fs == "testdrive:" && !item.cut));
+        let dests: Vec<_> = items.iter().map(|item| item.dst.as_str()).collect();
+        assert!(dests.contains(&"Inbox/a.txt"));
+        assert!(dests.contains(&"Inbox/folder/b.txt"));
+        let dirs = upload_dest_dirs(&items);
+        assert!(dirs
+            .iter()
+            .any(|(fs, path)| fs == "testdrive:" && path == "Inbox"));
+        assert!(dirs
+            .iter()
+            .any(|(fs, path)| fs == "testdrive:" && path == "Inbox/folder"));
+    }
+
+    #[test]
+    fn labels_local_disks() {
+        assert_eq!(local_disk_label("/", None), "File System");
+        assert_eq!(local_disk_label("/home/me", Some("/home/me")), "Home");
+        assert_eq!(local_disk_label("/media/usb", None), "usb");
+        assert_eq!(local_disk_label("", None), "File System");
+        assert_eq!(local_disk_label("C:\\", None), "File System");
+        assert_eq!(
+            local_disk_label("C:/Users/me", Some("C:\\Users\\me")),
+            "Home"
+        );
+        assert_eq!(
+            normalize_drive_path("/sdcard/DCIM"),
+            "/storage/emulated/0/DCIM"
+        );
+        assert!(is_windows_root("D:"));
+        assert!(is_home_directory("/Users/ada", None));
+    }
+
+    #[test]
+    fn builds_local_drives_from_volume_metadata() {
+        let usb = VolumeInfo {
+            label: "BACKUP".into(),
+            file_system: "exfat".into(),
+            is_removable: true,
+            total_space: 1000,
+            available_space: 400,
+        };
+        let drive = build_local_drive("/media/usb", None, Some(&usb));
+        assert_eq!(drive.label, "BACKUP");
+        assert!(drive.show_name && drive.is_removable);
+        assert_eq!(drive.file_system, "exfat");
+        let home = build_local_drive("/home/me", Some("/home/me"), None);
+        assert_eq!(home.label, "titlebar.home");
+        assert!(home.label_is_key);
+        let root = build_local_drive("/", None, None);
+        assert_eq!(root.label, "nautilus.titles.fileSystem");
+        assert_eq!(
+            root.title(|key, fallback| {
+                assert_eq!(key, "nautilus.titles.fileSystem");
+                fallback.to_string()
+            }),
+            "File System"
+        );
+    }
+
+    #[test]
+    fn parses_lsblk_and_df_output() {
+        let lsblk = r#"{
+            "blockdevices": [
+                {
+                    "name": "sda",
+                    "mountpoint": "/",
+                    "label": null,
+                    "fstype": "ext4",
+                    "rm": false,
+                    "children": [
+                        {
+                            "name": "sdb1",
+                            "mountpoints": ["/media/usb"],
+                            "label": "BACKUP",
+                            "fstype": "exfat",
+                            "rm": "1"
+                        }
+                    ]
+                }
+            ]
+        }"#;
+        let volumes = parse_lsblk_json(lsblk);
+        assert_eq!(volumes["/"].file_system, "ext4");
+        assert!(!volumes["/"].is_removable);
+        assert_eq!(volumes["/media/usb"].label, "BACKUP");
+        assert!(volumes["/media/usb"].is_removable);
+        let df = parse_df_output("1B-blocks Avail Mounted on\n100 40 /\n200 80 /media/usb\n");
+        assert_eq!(df["/"], (100, 40));
+        assert_eq!(df["/media/usb"], (200, 80));
+        let usage = local_path_disk_usage("/tmp");
+        assert!(usage.is_some());
+        let (free, total) = usage.unwrap();
+        assert!(total > 0);
+        assert!(free <= total);
+        assert!(local_path_disk_usage("").is_none());
     }
 }

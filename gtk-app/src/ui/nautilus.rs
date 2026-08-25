@@ -1061,13 +1061,21 @@ impl NautilusView {
         }
         widget.add_controller(gesture);
 
-        let drop = gtk::DropTarget::new(gio::File::static_type(), gtk::gdk::DragAction::COPY);
+        let drop = gtk::DropTarget::new(
+            gtk::gdk::FileList::static_type(),
+            gtk::gdk::DragAction::COPY,
+        );
         {
             let view = self.clone();
             drop.connect_drop(move |_, value, _, _| {
-                if let Ok(file) = value.get::<gio::File>() {
-                    if let Some(path) = file.path() {
-                        view.upload_local_path(&path);
+                if let Ok(list) = value.get::<gtk::gdk::FileList>() {
+                    let paths: Vec<std::path::PathBuf> = list
+                        .files()
+                        .into_iter()
+                        .filter_map(|file| file.path())
+                        .collect();
+                    if !paths.is_empty() {
+                        view.upload_local_paths(&paths);
                         return true;
                     }
                 }
@@ -1438,7 +1446,12 @@ impl NautilusView {
                 let transfers = crate::dnd::transfer_items(items, &dest, move_items);
                 match crate::fileops::start_grouped_transfers(&client, &transfers, "filemanager") {
                     Ok((group, ids)) => {
-                        self.remember_file_jobs(&ids, "filemanager");
+                        self.remember_file_jobs_ex(
+                            &ids,
+                            "filemanager",
+                            &group,
+                            crate::jobs::transfer_snapshot_from_items(&transfers),
+                        );
                         for item in &transfers {
                             self.push_undo(item.file_op().encode());
                         }
@@ -1691,9 +1704,9 @@ impl NautilusView {
             std::mem::take(&mut store.pending_share_paths)
         };
         self.ctx.persist();
-        for path in paths {
-            self.upload_local_path(std::path::Path::new(&path));
-        }
+        let paths: Vec<std::path::PathBuf> =
+            paths.into_iter().map(std::path::PathBuf::from).collect();
+        self.upload_local_paths(&paths);
         self.refresh_share_banner();
     }
 
@@ -1838,9 +1851,33 @@ impl NautilusView {
             self.ctx.snapshot.borrow().local_disks.clone(),
             &order,
         );
-        for disk in disks {
-            if allowed(&disk) && !crate::settings::sidebar_id_hidden(&hidden, &disk) {
-                self.add_side_row(&disk, &disk, "drive-harddisk-symbolic", SideKind::Local);
+        for drive in crate::fileops::collect_local_drives(&disks) {
+            if allowed(&drive.path) && !crate::settings::sidebar_id_hidden(&hidden, &drive.path) {
+                let title = drive.title(|key, fallback| self.ctx.t_or(key, fallback));
+                let icon = if drive.is_removable {
+                    "media-removable-symbolic"
+                } else {
+                    "drive-harddisk-symbolic"
+                };
+                let mut tooltip = drive.path.clone();
+                if drive.total_space > 0 {
+                    tooltip = format!(
+                        "{tooltip} — {} / {}",
+                        crate::rclone::format_bytes(drive.available_space as i64),
+                        crate::rclone::format_bytes(drive.total_space as i64)
+                    );
+                }
+                if !drive.file_system.is_empty() {
+                    tooltip = format!("{tooltip} ({})", drive.file_system);
+                }
+                self.add_side_disk_row(
+                    &title,
+                    &drive.path,
+                    icon,
+                    SideKind::Local,
+                    drive.subtitle().as_deref(),
+                    Some(&tooltip),
+                );
             }
         }
         self.add_side_header(&self.ctx.t_or("nautilus.titles.cloud", "Cloud remotes"));
@@ -1876,8 +1913,26 @@ impl NautilusView {
     }
 
     fn add_side_row(&self, title: &str, target: &str, icon: &str, kind: SideKind) {
+        self.add_side_disk_row(title, target, icon, kind, None, None);
+    }
+
+    fn add_side_disk_row(
+        &self,
+        title: &str,
+        target: &str,
+        icon: &str,
+        kind: SideKind,
+        subtitle: Option<&str>,
+        tooltip: Option<&str>,
+    ) {
         let row = adw::ActionRow::new();
         row.set_title(title);
+        if let Some(subtitle) = subtitle {
+            row.set_subtitle(subtitle);
+        }
+        if let Some(tooltip) = tooltip {
+            row.set_tooltip_text(Some(tooltip));
+        }
         row.set_activatable(true);
         row.add_prefix(&gtk::Image::from_icon_name(icon));
         let view = self.clone();
@@ -2248,8 +2303,10 @@ impl NautilusView {
         if !cancelled && !crate::picker::can_confirm_selection(dirs, files, &req.config) {
             *self.ctx.pending_picker.borrow_mut() = Some(req);
             self.picker_bar.set_visible(true);
-            self.toast
-                .add_toast(adw::Toast::new("Select a valid item to continue"));
+            self.toast.add_toast(adw::Toast::new(&self.ctx.t_or(
+                "nautilus.notifications.selectValid",
+                "Select a valid item to continue",
+            )));
             return;
         }
         self.picker_bar.set_visible(false);
@@ -2650,8 +2707,10 @@ impl NautilusView {
     fn mkdir_with_selected(&self) {
         let names = self.selected_names();
         if names.is_empty() {
-            self.toast
-                .add_toast(adw::Toast::new("Select items to move into a new folder"));
+            self.toast.add_toast(adw::Toast::new(&self.ctx.t_or(
+                "nautilus.notifications.selectNewFolderItems",
+                "Select items to move into a new folder",
+            )));
             return;
         }
         let Some(win) = self.root.root().and_downcast::<gtk::Window>() else {
@@ -2728,8 +2787,10 @@ impl NautilusView {
 
     fn download_selected(&self) {
         let Some(name) = self.selected_name() else {
-            self.toast
-                .add_toast(adw::Toast::new("Select a file to download"));
+            self.toast.add_toast(adw::Toast::new(&self.ctx.t_or(
+                "nautilus.notifications.selectToDownload",
+                "Select a file to download",
+            )));
             return;
         };
         let Some(win) = self.root.root().and_downcast::<gtk::Window>() else {
@@ -2794,95 +2855,121 @@ impl NautilusView {
             None::<gio::Cancellable>.as_ref(),
             move |result| {
                 if let Ok(files) = result {
+                    let mut paths = Vec::new();
                     for i in 0..files.n_items() {
                         if let Some(file) =
                             files.item(i).and_then(|o| o.downcast::<gio::File>().ok())
                         {
                             if let Some(path) = file.path() {
-                                view.upload_local_path(&path);
+                                paths.push(path);
                             }
                         }
                     }
+                    view.upload_local_paths(&paths);
                 }
             },
         );
     }
 
-    fn upload_local_path(&self, path: &std::path::Path) {
+    fn upload_local_paths(&self, paths: &[std::path::PathBuf]) {
+        if paths.is_empty() {
+            return;
+        }
         let Some(client) = self.ctx.client() else {
             return;
         };
         let current = self.current.borrow().clone();
-        let name = path
-            .file_name()
-            .and_then(|n| n.to_str())
-            .unwrap_or("upload")
-            .to_string();
-        let dst = join_remote_path(&current.path, &name);
-        let dst_fs = if current.remote == "local" {
-            "/".into()
-        } else {
-            remote_fs(&current.remote, "")
+        let (dest_fs, dest_dir) = fs_remote(&current.remote, &current.path);
+        let items = match crate::fileops::collect_local_upload_items(paths, &dest_fs, &dest_dir) {
+            Ok(items) => items,
+            Err(e) => {
+                self.toast.add_toast(adw::Toast::new(&e));
+                return;
+            }
         };
-        let dst_remote = if current.remote == "local" {
-            dst.trim_start_matches('/').to_string()
-        } else {
-            dst
-        };
-        match client.start_job(
-            "operations/copyfile",
-            serde_json::json!({
-                "srcFs": "/",
-                "srcRemote": path.to_string_lossy(),
-                "dstFs": dst_fs,
-                "dstRemote": dst_remote
-            }),
-        ) {
-            Ok(id) => {
-                let bytes = std::fs::metadata(path).map(|m| m.len()).unwrap_or(0);
-                let preparing = crate::jobs::preparing_job(
-                    id,
-                    &current.remote,
-                    &path.to_string_lossy(),
-                    &dst_remote,
-                    1,
-                    bytes,
+        if items.is_empty() {
+            return;
+        }
+        for (fs, path) in crate::fileops::upload_dest_dirs(&items) {
+            let _ = client.mkdir(&fs, &path);
+        }
+        match crate::fileops::start_grouped_transfers(&client, &items, "filemanager-upload") {
+            Ok((group, ids)) => {
+                self.remember_file_jobs_ex(
+                    &ids,
+                    "filemanager",
+                    &group,
+                    crate::jobs::transfer_snapshot_from_items(&items),
                 );
-                let transferring = serde_json::json!([{
-                    "name": name,
-                    "size": bytes,
-                    "bytes": 0
-                }]);
-                self.ctx.store.borrow_mut().remember_job(preparing.clone());
-                self.ctx.store.borrow_mut().update_job_stats(
-                    id,
-                    crate::jobs::preparing_progress_stats(0, bytes, 0, 1, transferring),
-                );
-                if let Some(job) = self
-                    .ctx
-                    .store
-                    .borrow()
-                    .job_history
-                    .iter()
-                    .find(|j| j.id == id)
-                {
-                    self.ctx.snapshot.borrow_mut().jobs.insert(0, job.clone());
-                } else {
-                    self.ctx.snapshot.borrow_mut().jobs.insert(0, preparing);
-                }
-                self.push_undo(
-                    crate::fileops::FileOp::Upload {
-                        fs: dst_fs,
-                        path: dst_remote,
+                if let Some(id) = ids.first().copied() {
+                    let bytes: u64 = items
+                        .iter()
+                        .map(|item| std::fs::metadata(&item.src).map(|m| m.len()).unwrap_or(0))
+                        .sum();
+                    let preparing = crate::jobs::preparing_job(
+                        id,
+                        &current.remote,
+                        &items
+                            .first()
+                            .map(|item| item.src.clone())
+                            .unwrap_or_default(),
+                        &current.path,
+                        items.len() as u64,
+                        bytes,
+                    );
+                    let transferring = serde_json::json!(items
+                        .iter()
+                        .map(|item| {
+                            let size = std::fs::metadata(&item.src).map(|m| m.len()).unwrap_or(0);
+                            serde_json::json!({
+                                "name": item.src,
+                                "size": size,
+                                "bytes": 0
+                            })
+                        })
+                        .collect::<Vec<_>>());
+                    self.ctx.store.borrow_mut().remember_job(preparing.clone());
+                    self.ctx.persist();
+                    self.ctx.store.borrow_mut().update_job_stats(
+                        id,
+                        crate::jobs::preparing_progress_stats(
+                            0,
+                            bytes,
+                            0,
+                            items.len() as u64,
+                            transferring,
+                        ),
+                    );
+                    if let Some(job) = self
+                        .ctx
+                        .store
+                        .borrow()
+                        .job_history
+                        .iter()
+                        .find(|j| j.id == id)
+                    {
+                        self.ctx.snapshot.borrow_mut().jobs.insert(0, job.clone());
+                    } else {
+                        self.ctx.snapshot.borrow_mut().jobs.insert(0, preparing);
                     }
-                    .encode(),
-                );
+                }
+                for item in &items {
+                    self.push_undo(
+                        crate::fileops::FileOp::Upload {
+                            fs: item.dst_fs.clone(),
+                            path: item.dst.clone(),
+                        }
+                        .encode(),
+                    );
+                }
                 self.ctx.refresh_runtime();
                 self.reload();
-                self.toast
-                    .add_toast(adw::Toast::new(&format!("Upload job #{id} · {name}")));
+                self.toast.add_toast(adw::Toast::new(&self.ctx.tf(
+                    "nautilus.notifications.uploadStarted",
+                    &[("count", &items.len().to_string())],
+                )));
             }
-            Err(e) => self.toast.add_toast(adw::Toast::new(&e.to_string())),
+            Err(e) => self.toast.add_toast(adw::Toast::new(&e)),
         }
     }
 
@@ -3063,16 +3150,15 @@ impl NautilusView {
                 move |result| {
                     if let Ok(value) = result {
                         if let Ok(list) = value.get::<gtk::gdk::FileList>() {
-                            for file in list.files() {
-                                if let Some(path) = file.path() {
-                                    if path.is_dir() {
-                                        view.upload_local_tree(&path);
-                                    } else if path.is_file() {
-                                        view.upload_local_path(&path);
-                                    }
-                                }
+                            let paths: Vec<std::path::PathBuf> = list
+                                .files()
+                                .into_iter()
+                                .filter_map(|file| file.path())
+                                .collect();
+                            if !paths.is_empty() {
+                                view.upload_local_paths(&paths);
+                                return;
                             }
-                            return;
                         }
                     }
                     view.paste_clipboard_text();
@@ -3091,6 +3177,7 @@ impl NautilusView {
             let Ok(Some(text)) = result else {
                 return;
             };
+            let mut paths = Vec::new();
             for line in text.lines() {
                 let raw = line.trim();
                 if raw.is_empty() {
@@ -3105,12 +3192,11 @@ impl NautilusView {
                 } else {
                     std::path::PathBuf::from(raw)
                 };
-                if path.is_dir() {
-                    view.upload_local_tree(&path);
-                } else if path.is_file() {
-                    view.upload_local_path(&path);
+                if path.exists() {
+                    paths.push(path);
                 }
             }
+            view.upload_local_paths(&paths);
         });
     }
 
@@ -3359,7 +3445,12 @@ impl NautilusView {
             .collect();
         match crate::fileops::start_grouped_transfers(&client, &transfers, "filemanager") {
             Ok((group, ids)) => {
-                self.remember_file_jobs(&ids, "filemanager");
+                self.remember_file_jobs_ex(
+                    &ids,
+                    "filemanager",
+                    &group,
+                    crate::jobs::transfer_snapshot_from_items(&transfers),
+                );
                 for item in &transfers {
                     self.push_undo(item.file_op().encode());
                 }
@@ -3997,8 +4088,10 @@ impl NautilusView {
 
     fn copy_public_link(&self) {
         let Some(name) = self.selected_name() else {
-            self.toast
-                .add_toast(adw::Toast::new("Select a file to share"));
+            self.toast.add_toast(adw::Toast::new(&self.ctx.t_or(
+                "nautilus.notifications.selectToShare",
+                "Select a file to share",
+            )));
             return;
         };
         let Some(client) = self.ctx.client() else {
@@ -4009,9 +4102,10 @@ impl NautilusView {
         let (fs, remote) = fs_remote(&current.remote, &path);
         match client.public_link(&fs, &remote) {
             Ok(url) if !url.is_empty() => self.copy_text(&url),
-            Ok(_) => self
-                .toast
-                .add_toast(adw::Toast::new("Remote did not return a public link")),
+            Ok(_) => self.toast.add_toast(adw::Toast::new(&self.ctx.t_or(
+                "nautilus.notifications.noPublicLink",
+                "Remote did not return a public link",
+            ))),
             Err(e) => self.toast.add_toast(adw::Toast::new(&e.to_string())),
         }
     }
@@ -4050,129 +4144,11 @@ impl NautilusView {
             move |result| {
                 if let Ok(file) = result {
                     if let Some(path) = file.path() {
-                        view.upload_local_tree(&path);
+                        view.upload_local_paths(&[path]);
                     }
                 }
             },
         );
-    }
-
-    fn upload_local_tree(&self, root: &std::path::Path) {
-        let name = root
-            .file_name()
-            .and_then(|n| n.to_str())
-            .unwrap_or("upload")
-            .to_string();
-        let current = self.current.borrow().clone();
-        let dest = join_remote_path(&current.path, &name);
-        match self.upload_tree_into(root, &dest) {
-            Ok(count) => {
-                self.reload();
-                self.toast
-                    .add_toast(adw::Toast::new(&format!("Uploaded {count} items")));
-            }
-            Err(e) => self.toast.add_toast(adw::Toast::new(&e)),
-        }
-    }
-
-    fn upload_tree_into(&self, local: &std::path::Path, dest_dir: &str) -> Result<usize, String> {
-        let Some(client) = self.ctx.client() else {
-            return Err(self.ctx.t_or("common.engineOffline", "Engine offline"));
-        };
-        let current = self.current.borrow().clone();
-        let mut items = Vec::new();
-        self.collect_upload_items(&client, &current.remote, local, dest_dir, &mut items)?;
-        if items.is_empty() {
-            return Ok(0);
-        }
-        let (_, ids) =
-            crate::fileops::start_grouped_transfers(&client, &items, "filemanager-upload")?;
-        self.remember_file_jobs(&ids, "filemanager");
-        if let Some(id) = ids.first().copied() {
-            let bytes: u64 = items
-                .iter()
-                .map(|item| std::fs::metadata(&item.src).map(|m| m.len()).unwrap_or(0))
-                .sum();
-            let preparing = crate::jobs::preparing_job(
-                id,
-                &current.remote,
-                &local.to_string_lossy(),
-                dest_dir,
-                items.len() as u64,
-                bytes,
-            );
-            let transferring = serde_json::json!(items
-                .iter()
-                .map(|item| {
-                    let size = std::fs::metadata(&item.src).map(|m| m.len()).unwrap_or(0);
-                    serde_json::json!({
-                        "name": item.src,
-                        "size": size,
-                        "bytes": 0
-                    })
-                })
-                .collect::<Vec<_>>());
-            self.ctx.store.borrow_mut().remember_job(preparing.clone());
-            self.ctx.store.borrow_mut().update_job_stats(
-                id,
-                crate::jobs::preparing_progress_stats(
-                    0,
-                    bytes,
-                    0,
-                    items.len() as u64,
-                    transferring,
-                ),
-            );
-            if let Some(job) = self
-                .ctx
-                .store
-                .borrow()
-                .job_history
-                .iter()
-                .find(|j| j.id == id)
-            {
-                self.ctx.snapshot.borrow_mut().jobs.insert(0, job.clone());
-            } else {
-                self.ctx.snapshot.borrow_mut().jobs.insert(0, preparing);
-            }
-        }
-        self.ctx.refresh_runtime();
-        Ok(ids.len())
-    }
-
-    fn collect_upload_items(
-        &self,
-        client: &crate::rclone::RcClient,
-        remote: &str,
-        local: &std::path::Path,
-        dest_dir: &str,
-        items: &mut Vec<crate::fileops::TransferItem>,
-    ) -> Result<(), String> {
-        let (fs, remote_path) = fs_remote(remote, dest_dir);
-        let _ = client.mkdir(&fs, &remote_path);
-        let entries = std::fs::read_dir(local).map_err(|e| e.to_string())?;
-        for entry in entries.flatten() {
-            let path = entry.path();
-            let name = path
-                .file_name()
-                .and_then(|n| n.to_str())
-                .unwrap_or("item")
-                .to_string();
-            let dest = join_remote_path(dest_dir, &name);
-            if path.is_dir() {
-                self.collect_upload_items(client, remote, &path, &dest, items)?;
-            } else {
-                let (dst_fs, dst_remote) = fs_remote(remote, &dest);
-                items.push(crate::fileops::TransferItem {
-                    src_fs: "/".into(),
-                    src: path.to_string_lossy().into_owned(),
-                    dst_fs,
-                    dst: dst_remote,
-                    cut: false,
-                });
-            }
-        }
-        Ok(())
     }
 
     fn remove_empty_dirs(&self) {
@@ -4188,8 +4164,10 @@ impl NautilusView {
         match client.rmdirs(&fs, &remote) {
             Ok(_) => {
                 self.reload();
-                self.toast
-                    .add_toast(adw::Toast::new("Removed empty directories"));
+                self.toast.add_toast(adw::Toast::new(&self.ctx.t_or(
+                    "nautilus.notifications.rmdirsDone",
+                    "Removed empty directories",
+                )));
             }
             Err(e) => self.toast.add_toast(adw::Toast::new(&e.to_string())),
         }
@@ -4207,17 +4185,20 @@ impl NautilusView {
             Some(remote.as_str())
         };
         match client.cleanup(&fs, remote_opt) {
-            Ok(_) => self
-                .toast
-                .add_toast(adw::Toast::new("Cleanup started for this remote")),
+            Ok(_) => self.toast.add_toast(adw::Toast::new(&self.ctx.t_or(
+                "nautilus.notifications.cleanupStarted",
+                "Cleanup started for this remote",
+            ))),
             Err(e) => self.toast.add_toast(adw::Toast::new(&e.to_string())),
         }
     }
 
     fn extract_selected(&self) {
         let Some(name) = self.selected_name() else {
-            self.toast
-                .add_toast(adw::Toast::new("Select an archive to extract"));
+            self.toast.add_toast(adw::Toast::new(&self.ctx.t_or(
+                "nautilus.notifications.selectArchive",
+                "Select an archive to extract",
+            )));
             return;
         };
         let Some(win) = self.root.root().and_downcast::<gtk::Window>() else {
@@ -4259,17 +4240,20 @@ impl NautilusView {
 
     fn share_selected(&self) {
         let Some(name) = self.selected_name() else {
-            self.toast
-                .add_toast(adw::Toast::new("Select a file to share"));
+            self.toast.add_toast(adw::Toast::new(&self.ctx.t_or(
+                "nautilus.notifications.selectToShare",
+                "Select a file to share",
+            )));
             return;
         };
         let current = self.current.borrow().clone();
         let path = join_remote_path(&current.path, &name);
         if current.remote == "local" {
             match crate::platform::share_file(std::path::Path::new(&path)) {
-                Ok(()) => self
-                    .toast
-                    .add_toast(adw::Toast::new("Opened system share for the file")),
+                Ok(()) => self.toast.add_toast(adw::Toast::new(&self.ctx.t_or(
+                    "nautilus.notifications.shareOpened",
+                    "Opened system share for the file",
+                ))),
                 Err(e) => self.toast.add_toast(adw::Toast::new(&e)),
             }
             return;
@@ -4281,9 +4265,10 @@ impl NautilusView {
         let dest = std::env::temp_dir().join(&name);
         match client.copy_file(&fs, &remote, "/", &dest.to_string_lossy()) {
             Ok(_) => match crate::platform::share_file(&dest) {
-                Ok(()) => self
-                    .toast
-                    .add_toast(adw::Toast::new("Opened system share for the file")),
+                Ok(()) => self.toast.add_toast(adw::Toast::new(&self.ctx.t_or(
+                    "nautilus.notifications.shareOpened",
+                    "Opened system share for the file",
+                ))),
                 Err(e) => self.toast.add_toast(adw::Toast::new(&e)),
             },
             Err(e) => self.toast.add_toast(adw::Toast::new(&e.to_string())),
@@ -4342,6 +4327,16 @@ impl NautilusView {
     }
 
     fn remember_file_jobs(&self, ids: &[u64], origin: &str) {
+        self.remember_file_jobs_ex(ids, origin, "", serde_json::json!([]));
+    }
+
+    fn remember_file_jobs_ex(
+        &self,
+        ids: &[u64],
+        origin: &str,
+        group: &str,
+        snapshot: serde_json::Value,
+    ) {
         let remote = self.current.borrow().remote.clone();
         crate::jobs::remember_grouped(
             &mut self.ctx.store.borrow_mut().job_meta,
@@ -4351,6 +4346,8 @@ impl NautilusView {
                 profile: "default".into(),
                 remote,
                 backend: self.ctx.backend_key(),
+                group: group.into(),
+                transfer_snapshot: snapshot,
                 ..Default::default()
             },
         );
@@ -4373,18 +4370,16 @@ impl NautilusView {
             })
             .cloned()
             .collect();
-        let history: Vec<_> = self
-            .ctx
-            .store
-            .borrow()
-            .job_history
-            .iter()
-            .filter(|job| {
-                crate::jobs::is_overview_job(job)
-                    && crate::jobs::origin_matches(&job.origin, "filemanager")
-            })
-            .cloned()
-            .collect();
+        let history: Vec<_> = {
+            let store = self.ctx.store.borrow();
+            crate::jobs::history_with_meta(&store.job_history, &store.job_meta)
+                .into_iter()
+                .filter(|job| {
+                    crate::jobs::is_overview_job(job)
+                        && crate::jobs::origin_matches(&job.origin, "filemanager")
+                })
+                .collect()
+        };
         if jobs.is_empty() && history.is_empty() {
             let row = adw::ActionRow::new();
             row.set_title(
@@ -4409,9 +4404,20 @@ impl NautilusView {
     }
 
     fn ops_row(&self, job: &crate::store::JobInfo, live: bool) -> adw::ActionRow {
-        let percent = (job.progress * 100.0).round() as i32;
+        let percent = if matches!(job.status.as_str(), "completed" | "failed" | "stopped")
+            && job.progress <= 0.0
+        {
+            100
+        } else {
+            (job.progress * 100.0).round() as i32
+        };
         let row = adw::ActionRow::new();
-        row.set_title(&format!("{} · {}", job.operation, job.status));
+        row.set_title(&format!(
+            "{} · {}",
+            job.operation,
+            self.ctx
+                .t_or(crate::jobs::job_status_key(&job.status), &job.status)
+        ));
         let src = if job.src.is_empty() {
             job.remote.clone()
         } else {

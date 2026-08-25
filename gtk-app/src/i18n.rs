@@ -416,6 +416,10 @@ mod tests {
             "tray.tooltipSubtitle",
             "nautilus.notifications.nothingToUndo",
             "nautilus.titles.editPath",
+            "nautilus.notifications.selectValid",
+            "home.options.cloneFailed",
+            "modals.about.killRclone",
+            "modals.about.backendCache",
         ] {
             assert!(i18n.has(key), "missing i18n key {key}");
         }

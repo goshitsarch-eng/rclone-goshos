@@ -396,39 +396,25 @@ impl FlowView {
                     );
                 }
                 "jobs" => {
-                    let jobs = gtk::ListBox::new();
-                    jobs.add_css_class("boxed-list");
-                    if snap.jobs.is_empty() {
-                        let row = adw::ActionRow::new();
-                        row.set_title(
-                            &self
-                                .ctx
-                                .t_or("generalOverview.jobs.noActive", "No active jobs"),
-                        );
-                        jobs.append(&row);
-                    } else {
-                        for job in &snap.jobs {
-                            let row = adw::ActionRow::new();
-                            row.set_title(&format!("{} · {}", job.operation, job.remote));
-                            row.set_subtitle(&format!(
-                                "{} · {:.0}%",
-                                job.status,
-                                job.progress * 100.0
-                            ));
-                            let ctx = self.ctx.clone();
-                            let job = job.clone();
-                            row.connect_activated(move |_| {
-                                ctx.request_nav(NavTarget::for_job(&job));
-                            });
-                            jobs.append(&row);
-                        }
-                    }
+                    let filtered: Vec<_> = snap
+                        .jobs
+                        .iter()
+                        .filter(|job| crate::jobs::is_overview_job(job))
+                        .cloned()
+                        .collect();
+                    let view = self.clone();
+                    let panel = super::job_panels::overview_jobs_panel(
+                        &self.ctx,
+                        &filtered,
+                        &snap.stats,
+                        move || view.refresh(),
+                    );
                     self.append_expandable(
                         "jobs",
                         &self
                             .ctx
                             .t_or("generalOverview.panels.jobs", "Job Information"),
-                        &jobs,
+                        &panel,
                     );
                 }
                 "serves" => {
@@ -886,12 +872,15 @@ impl FlowView {
     }
 
     fn append_transfer_activity(&self, name: &str, snap: &crate::store::RuntimeSnapshot) {
-        let jobs: Vec<_> = snap
-            .jobs
-            .iter()
-            .filter(|job| crate::jobs::is_overview_job(job) && job.remote == name)
-            .cloned()
-            .collect();
+        let jobs = {
+            let store = self.ctx.store.borrow();
+            crate::jobs::merge_overview_jobs(
+                &snap.jobs,
+                &crate::jobs::history_with_meta(&store.job_history, &store.job_meta),
+                name,
+                None,
+            )
+        };
         self.append_transfers(&self.content, &jobs);
     }
 
@@ -917,7 +906,7 @@ impl FlowView {
                 for item in source {
                     rows.push((
                         job.operation.clone(),
-                        crate::transfers::parse_transfer_row(item),
+                        crate::transfers::parse_completed_transfer_row(item),
                         true,
                     ));
                 }
@@ -928,9 +917,11 @@ impl FlowView {
         for job in jobs {
             if crate::checks::is_check_operation(&job.operation) {
                 let source = crate::checks::check_source_from_job(&job.stats, &job.output);
-                check_items.extend(crate::checks::parse_check_items(
-                    &source, &job.src, &job.dst,
-                ));
+                check_items.extend(
+                    crate::checks::parse_check_items(&source, &job.src, &job.dst)
+                        .into_iter()
+                        .map(|item| crate::checks::with_job(item, job)),
+                );
             }
         }
         check_items.truncate(40);
@@ -949,12 +940,20 @@ impl FlowView {
         };
         host.append(&self.heading(&title));
         if !check_items.is_empty() {
-            let list = gtk::ListBox::new();
-            list.add_css_class("boxed-list");
-            for item in check_items {
-                list.append(&dialogs::check_result_row(&self.ctx, &item, &self.root));
+            let check_items = crate::checks::visible_check_items(
+                check_items,
+                &self.ctx.hidden_check_ids.borrow(),
+                &self.ctx.check_status_overrides.borrow(),
+                "",
+            );
+            if !check_items.is_empty() {
+                let list = gtk::ListBox::new();
+                list.add_css_class("boxed-list");
+                for item in check_items {
+                    list.append(&dialogs::check_result_row(&self.ctx, &item, &self.root));
+                }
+                host.append(&list);
             }
-            host.append(&list);
         }
         if rows.is_empty() {
             return;
@@ -987,6 +986,7 @@ impl FlowView {
                 &row,
                 &operation,
                 completed,
+                None,
             ));
             list.append(&item);
         }
@@ -1157,7 +1157,7 @@ impl FlowView {
         {
             let ctx = self.ctx.clone();
             let remote = name.to_string();
-            browse.connect_clicked(move |_| ctx.request_browse(&remote, ""));
+            browse.connect_clicked(move |_| ctx.browse_remote_home(&remote));
         }
         let configure = gtk::Button::with_label(&self.ctx.t_or(
             "dashboard.generalDetail.editConfiguration",
@@ -1194,7 +1194,7 @@ impl FlowView {
         let jobs: Vec<_> = snap
             .jobs
             .iter()
-            .filter(|j| j.remote == name)
+            .filter(|j| j.remote == name && crate::jobs::is_overview_job(j))
             .cloned()
             .collect();
         if jobs.is_empty() {

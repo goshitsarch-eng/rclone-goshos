@@ -700,35 +700,80 @@ impl RcClient {
     }
 
     pub fn serve_start(&self, serve_type: &str, fs: &str, addr: &str) -> Result<Value, RcError> {
-        self.call(
-            "serve/start",
-            json!({
-                "type": serve_type,
-                "fs": fs,
-                "addr": addr
-            }),
-        )
+        self.serve_start_ex(serve_type, fs, addr, &json!({}))
+    }
+
+    pub fn serve_start_ex(
+        &self,
+        serve_type: &str,
+        fs: &str,
+        addr: &str,
+        extra: &Value,
+    ) -> Result<Value, RcError> {
+        let addr = super::serve::resolve_listen_addr(addr);
+        let payload = super::serve::merge_serve_payload(serve_type, fs, &addr, extra);
+        match self.call("serve/start", payload) {
+            Ok(value) => {
+                let id = value.get("id").and_then(|v| v.as_str()).unwrap_or_default();
+                let listen = value.get("addr").and_then(|v| v.as_str()).unwrap_or(&addr);
+                Ok(super::serve::serve_start_response(id, listen))
+            }
+            Err(err) if looks_missing_endpoint(&err) => {
+                super::serve::start_serve_fallback(self, serve_type, fs, &addr, extra, err)
+            }
+            Err(err) => Err(err),
+        }
     }
 
     pub fn serve_stop(&self, id: &str) -> Result<Value, RcError> {
-        self.call("serve/stop", json!({ "id": id }))
+        if super::serve::stop_legacy_serve(Some(self), id) {
+            return Ok(json!({ "id": id }));
+        }
+        match self.call("serve/stop", json!({ "id": id })) {
+            Ok(value) => Ok(value),
+            Err(err) if looks_missing_endpoint(&err) => {
+                if let Some(jobid) = super::serve::parse_fallback_job_id(id) {
+                    self.job_stop(jobid)
+                } else {
+                    Err(err)
+                }
+            }
+            Err(err) => Err(err),
+        }
     }
 
     pub fn serve_stop_all(&self) -> Result<Value, RcError> {
-        self.call("serve/stopall", json!({}))
+        super::serve::shutdown_legacy(Some(self));
+        match self.call("serve/stopall", json!({})) {
+            Ok(value) => Ok(value),
+            Err(err) if looks_missing_endpoint(&err) => Ok(json!({ "ok": true })),
+            Err(err) => Err(err),
+        }
     }
 
     pub fn serve_list(&self) -> Result<Vec<ServeItem>, RcError> {
-        let v = self.call("serve/list", json!({}))?;
-        let list = v
-            .get("list")
-            .and_then(|x| x.as_array())
-            .cloned()
-            .unwrap_or_default();
-        Ok(list
-            .iter()
-            .filter_map(|item| ServeItem::from_rc(item))
-            .collect())
+        let legacy = super::serve::reap_legacy_serves(Some(self));
+        match self.call("serve/list", json!({})) {
+            Ok(value) => {
+                let list = value
+                    .get("list")
+                    .and_then(|x| x.as_array())
+                    .cloned()
+                    .unwrap_or_default();
+                let mut items: Vec<ServeItem> = list
+                    .iter()
+                    .filter_map(|item| ServeItem::from_rc(item))
+                    .collect();
+                for item in legacy {
+                    if !items.iter().any(|existing| existing.id == item.id) {
+                        items.push(item);
+                    }
+                }
+                Ok(items)
+            }
+            Err(err) if looks_missing_endpoint(&err) || !legacy.is_empty() => Ok(legacy),
+            Err(err) => Err(err),
+        }
     }
 
     pub fn vfs_list(&self) -> Result<Value, RcError> {
@@ -1330,6 +1375,21 @@ pub fn parse_batch_results(value: &Value) -> Vec<Value> {
         .unwrap_or_default()
 }
 
+/// Count entries from `fscache/entries` (array, `{entries:[…]}`, or `{count:n}`).
+pub fn parse_fscache_entry_count(value: &Value) -> usize {
+    if let Some(n) = value.get("count").and_then(|v| v.as_u64()) {
+        return n as usize;
+    }
+    if let Some(arr) = value
+        .get("entries")
+        .and_then(|v| v.as_array())
+        .or_else(|| value.as_array())
+    {
+        return arr.len();
+    }
+    0
+}
+
 pub fn parse_named_list(value: &Value, keys: &[&str]) -> Vec<String> {
     for key in keys {
         if let Some(arr) = value.get(*key).and_then(|v| v.as_array()) {
@@ -1779,6 +1839,24 @@ pub fn nanoseconds_to_duration(ns: i64) -> String {
     }
 }
 
+pub fn format_eta_seconds(seconds: i64) -> String {
+    if seconds <= 0 {
+        return "—".into();
+    }
+    let hours = seconds / 3600;
+    let minutes = (seconds % 3600) / 60;
+    let secs = seconds % 60;
+    let mut parts = Vec::new();
+    if hours > 0 {
+        parts.push(format!("{hours}h"));
+    }
+    if minutes > 0 || hours > 0 {
+        parts.push(format!("{minutes}m"));
+    }
+    parts.push(format!("{secs}s"));
+    parts.join(" ")
+}
+
 pub fn format_bytes(bytes: i64) -> String {
     if bytes < 0 {
         return "—".into();
@@ -1852,10 +1930,25 @@ mod tests {
     }
 
     #[test]
+    fn parses_fscache_entry_count() {
+        assert_eq!(parse_fscache_entry_count(&json!({ "count": 4 })), 4);
+        assert_eq!(
+            parse_fscache_entry_count(&json!({ "entries": ["a", "b"] })),
+            2
+        );
+        assert_eq!(parse_fscache_entry_count(&json!(["x", "y", "z"])), 3);
+        assert_eq!(parse_fscache_entry_count(&json!({})), 0);
+    }
+
+    #[test]
     fn format_bytes_units() {
         assert_eq!(format_bytes(512), "512 B");
         assert_eq!(format_bytes(1536), "1.5 KiB");
         assert_eq!(format_bytes(-1), "—");
+        assert_eq!(format_eta_seconds(0), "—");
+        assert_eq!(format_eta_seconds(12), "12s");
+        assert_eq!(format_eta_seconds(75), "1m 15s");
+        assert_eq!(format_eta_seconds(3661), "1h 1m 1s");
     }
 
     #[test]

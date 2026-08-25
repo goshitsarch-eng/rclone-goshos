@@ -110,6 +110,10 @@ pub struct BackendEntry {
     pub config_path: String,
     #[serde(default)]
     pub config_password: String,
+    #[serde(default)]
+    pub os: String,
+    #[serde(default)]
+    pub arch: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

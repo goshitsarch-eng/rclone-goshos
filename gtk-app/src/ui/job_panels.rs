@@ -1,8 +1,11 @@
 use super::AppCtx;
-use crate::jobs::{format_seconds, stats_f64, stats_i64};
+use crate::jobs::{format_seconds, job_transfer_caption, overview_job_stats, stats_f64, stats_i64};
+use crate::navigation::NavTarget;
+use crate::rclone::format_bytes;
 use crate::store::JobInfo;
 use adw::prelude::*;
 use chrono::{Local, Utc};
+use serde_json::Value;
 
 pub fn job_info_group(ctx: &AppCtx, job: &JobInfo) -> adw::PreferencesGroup {
     let group = adw::PreferencesGroup::new();
@@ -164,6 +167,194 @@ pub fn empty_stats_group(ctx: &AppCtx) -> adw::PreferencesGroup {
         "Statistics will be shown when an operation is running",
     )));
     group
+}
+
+pub fn overview_jobs_panel(
+    ctx: &AppCtx,
+    jobs: &[JobInfo],
+    core_stats: &Value,
+    on_changed: impl Fn() + Clone + 'static,
+) -> gtk::Box {
+    let root = gtk::Box::new(gtk::Orientation::Vertical, 10);
+    let stats = overview_job_stats(jobs, core_stats);
+    let header = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+    let count = if stats.active > 0 {
+        ctx.tf(
+            "generalOverview.jobs.activeCount",
+            &[
+                ("count", &stats.active.to_string()),
+                ("s", if stats.active == 1 { "" } else { "s" }),
+            ],
+        )
+    } else {
+        ctx.t_or("generalOverview.jobs.noActive", "No active jobs")
+    };
+    let badge = gtk::Label::new(Some(&count));
+    badge.add_css_class("dim-label");
+    badge.set_xalign(0.0);
+    badge.set_hexpand(true);
+    header.append(&badge);
+    root.append(&header);
+
+    if stats.total_bytes > 0 || stats.bytes > 0 {
+        root.append(&progress_block(
+            &ctx.t_or("generalOverview.jobs.progress", "Progress"),
+            &format!(
+                "{:.0}% · {} {} {}",
+                stats.completion_pct(),
+                format_bytes(stats.bytes),
+                ctx.t_or("generalOverview.jobs.of", "of"),
+                format_bytes(stats.total_bytes)
+            ),
+            stats.completion_pct() / 100.0,
+        ));
+        root.append(&progress_block(
+            &ctx.t_or("generalOverview.jobs.eta", "ETA"),
+            &format_seconds(stats.eta),
+            if stats.eta > 0.0 {
+                (stats.completion_pct() / 100.0).clamp(0.0, 1.0)
+            } else {
+                0.0
+            },
+        ));
+    }
+
+    let grid = adw::PreferencesGroup::new();
+    for (title, value, error) in [
+        (
+            ctx.t_or("generalOverview.jobs.speed", "Transfer Speed"),
+            format!("{}/s", format_bytes(stats.speed.round() as i64)),
+            false,
+        ),
+        (
+            ctx.t_or("generalOverview.jobs.transfers", "Transfers"),
+            format!("{}/{}", stats.transfers, stats.total_transfers),
+            false,
+        ),
+        (
+            ctx.t_or("generalOverview.jobs.checks", "Checks"),
+            format!("{}/{}", stats.checks, stats.total_checks),
+            false,
+        ),
+        (
+            ctx.t_or("generalOverview.jobs.errors", "Errors"),
+            stats.errors.to_string(),
+            stats.errors > 0,
+        ),
+        (
+            ctx.t_or("generalOverview.jobs.deletes", "Deletes"),
+            stats.deletes.to_string(),
+            false,
+        ),
+        (
+            ctx.t_or("generalOverview.jobs.renames", "Renames"),
+            stats.renames.to_string(),
+            false,
+        ),
+        (
+            ctx.t_or("generalOverview.jobs.serverCopies", "Server Copies"),
+            stats.server_side_copies.to_string(),
+            false,
+        ),
+        (
+            ctx.t_or("generalOverview.jobs.serverMoves", "Server Moves"),
+            stats.server_side_moves.to_string(),
+            false,
+        ),
+    ] {
+        let row = adw::ActionRow::new();
+        row.set_title(&title);
+        row.set_subtitle(&value);
+        if error {
+            row.add_css_class("error");
+        }
+        grid.add(&row);
+    }
+    if !stats.last_error.is_empty() {
+        let row = adw::ActionRow::new();
+        row.set_title(&ctx.t_or("generalOverview.jobs.lastError", "Last Error"));
+        row.set_subtitle(&stats.last_error);
+        row.add_css_class("error");
+        grid.add(&row);
+    }
+    root.append(&grid);
+
+    let list = gtk::ListBox::new();
+    list.add_css_class("boxed-list");
+    let running: Vec<_> = jobs
+        .iter()
+        .filter(|job| crate::jobs::job_is_running(job) || crate::jobs::job_is_pending(job))
+        .cloned()
+        .collect();
+    if running.is_empty() {
+        let row = adw::ActionRow::new();
+        row.set_title(&ctx.t_or(
+            "generalOverview.jobs.noRunning",
+            "No active jobs are currently running.",
+        ));
+        list.append(&row);
+    } else {
+        let heading = gtk::Label::new(Some(
+            &ctx.t_or("generalOverview.jobs.runningJobs", "Running Jobs"),
+        ));
+        heading.add_css_class("heading");
+        heading.set_xalign(0.0);
+        root.append(&heading);
+        for job in &running {
+            let row = adw::ActionRow::new();
+            row.set_title(&format!("{} · {}", job.operation, job.remote));
+            let origin = ctx.t_or(
+                crate::jobs::origin_label_key(&job.origin),
+                if job.origin.is_empty() {
+                    "Dashboard"
+                } else {
+                    job.origin.as_str()
+                },
+            );
+            let caption = job_transfer_caption(job);
+            let subtitle = if caption.is_empty() {
+                format!("{} · {} · {}", job.status, job.profile, origin)
+            } else {
+                format!(
+                    "{} · {} · {} · {}",
+                    job.status, job.profile, origin, caption
+                )
+            };
+            row.set_subtitle(&subtitle);
+            let bar = gtk::ProgressBar::new();
+            bar.set_fraction(job.progress.clamp(0.0, 1.0));
+            bar.set_valign(gtk::Align::Center);
+            bar.set_hexpand(true);
+            bar.set_width_request(96);
+            row.add_suffix(&bar);
+            let stop = gtk::Button::from_icon_name("media-playback-stop-symbolic");
+            stop.set_valign(gtk::Align::Center);
+            stop.set_tooltip_text(Some(&ctx.t_or("detailShared.jobs.actions.stop", "Stop")));
+            {
+                let ctx = ctx.clone();
+                let id = job.id;
+                let on_changed = on_changed.clone();
+                stop.connect_clicked(move |_| {
+                    if let Some(c) = ctx.client() {
+                        let _ = c.job_stop(id);
+                        ctx.refresh_runtime();
+                        on_changed();
+                    }
+                });
+            }
+            row.add_suffix(&stop);
+            {
+                let job = job.clone();
+                let ctx = ctx.clone();
+                row.connect_activated(move |_| {
+                    ctx.request_nav(NavTarget::for_job(&job));
+                });
+            }
+            list.append(&row);
+        }
+    }
+    root.append(&list);
+    root
 }
 
 fn progress_block(title: &str, value: &str, fraction: f64) -> gtk::Box {

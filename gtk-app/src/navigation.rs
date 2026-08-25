@@ -6,14 +6,40 @@ use crate::store::JobInfo;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum NavTarget {
-    Dashboard { tab: AppTab, remote: Option<String> },
-    Files { remote: String, path: String },
-    Flow { quick_run: Option<String> },
-    Job { id: u64 },
-    Serve { id: String },
-    Automation { id: String },
+    Dashboard {
+        tab: AppTab,
+        remote: Option<String>,
+    },
+    Files {
+        remote: String,
+        path: String,
+    },
+    Flow {
+        quick_run: Option<String>,
+    },
+    Job {
+        id: u64,
+    },
+    Serve {
+        id: String,
+    },
+    Automation {
+        id: String,
+    },
     Updates,
     Alerts,
+    Preferences {
+        page: Option<String>,
+    },
+    RemoteConfig {
+        remote: String,
+        step: Option<String>,
+        profile: Option<String>,
+    },
+    Onboarding,
+    About,
+    Logs,
+    Shortcuts,
 }
 
 impl NavTarget {
@@ -170,6 +196,8 @@ pub fn parse_launch_args(args: &[String], standalone_dialogs: bool) -> Option<La
     let mut tab = AppTab::General;
     let mut remote = None;
     let mut target = None;
+    let mut config_step = None;
+    let mut config_profile = None;
     for (idx, arg) in args.iter().enumerate() {
         let value = args.get(idx + 1).cloned();
         match arg.as_str() {
@@ -225,6 +253,32 @@ pub fn parse_launch_args(args: &[String], standalone_dialogs: bool) -> Option<La
             }
             "--updates" => target = Some(NavTarget::Updates),
             "--alerts" => target = Some(NavTarget::Alerts),
+            "--preferences" | "--settings" => {
+                target = Some(NavTarget::Preferences {
+                    page: value
+                        .filter(|v| !v.is_empty() && !v.starts_with('-'))
+                        .and_then(|page| normalize_prefs_page(&page)),
+                });
+            }
+            "--onboarding" => target = Some(NavTarget::Onboarding),
+            "--about" => target = Some(NavTarget::About),
+            "--logs" => target = Some(NavTarget::Logs),
+            "--shortcuts" => target = Some(NavTarget::Shortcuts),
+            "--remote-config" => {
+                if let Some(name) = value.filter(|v| !v.is_empty() && !v.starts_with('-')) {
+                    target = Some(NavTarget::RemoteConfig {
+                        remote: name,
+                        step: None,
+                        profile: None,
+                    });
+                }
+            }
+            "--step" => {
+                config_step = value.filter(|v| !v.is_empty() && !v.starts_with('-'));
+            }
+            "--profile" => {
+                config_profile = value.filter(|v| !v.is_empty() && !v.starts_with('-'));
+            }
             other if idx > 0 && !other.starts_with("--") => {
                 if let Some(parsed) = parse_route_url(other) {
                     return Some(LaunchRequest {
@@ -239,6 +293,14 @@ pub fn parse_launch_args(args: &[String], standalone_dialogs: bool) -> Option<La
                 }
             }
             _ => {}
+        }
+    }
+    if let Some(NavTarget::RemoteConfig { step, profile, .. }) = target.as_mut() {
+        if step.is_none() {
+            *step = config_step;
+        }
+        if profile.is_none() {
+            *profile = config_profile;
         }
     }
     if target.is_none() {
@@ -299,7 +361,44 @@ pub fn parse_route_url(input: &str) -> Option<NavTarget> {
             .map(|id| NavTarget::Automation { id }),
         "updates" => Some(NavTarget::Updates),
         "alerts" => Some(NavTarget::Alerts),
+        "preferences" | "settings" => Some(NavTarget::Preferences {
+            page: parts
+                .next()
+                .map(decode_segment)
+                .and_then(|page| normalize_prefs_page(&page)),
+        }),
+        "remote-config" | "remoteconfig" => {
+            let remote = parts
+                .next()
+                .map(decode_segment)
+                .and_then(|name| nonempty(&name))?;
+            Some(NavTarget::RemoteConfig {
+                remote,
+                step: parts
+                    .next()
+                    .map(decode_segment)
+                    .and_then(|step| nonempty(&step)),
+                profile: parts
+                    .next()
+                    .map(decode_segment)
+                    .and_then(|profile| nonempty(&profile)),
+            })
+        }
+        "onboarding" => Some(NavTarget::Onboarding),
+        "about" => Some(NavTarget::About),
+        "logs" => Some(NavTarget::Logs),
+        "shortcuts" | "keyboard-shortcuts" => Some(NavTarget::Shortcuts),
         _ => None,
+    }
+}
+
+pub fn normalize_prefs_page(page: &str) -> Option<String> {
+    match page {
+        "general" | "appearance" => Some("general".into()),
+        "core" | "engine" => Some("core".into()),
+        "security" => Some("security".into()),
+        "developer" | "dev" => Some("developer".into()),
+        other => nonempty(other),
     }
 }
 
@@ -563,6 +662,33 @@ mod tests {
         assert_eq!(parse_route_url("#/updates"), Some(NavTarget::Updates));
         assert_eq!(parse_route_url("#/alerts"), Some(NavTarget::Alerts));
         assert_eq!(
+            parse_route_url("#/preferences/developer"),
+            Some(NavTarget::Preferences {
+                page: Some("developer".into()),
+            })
+        );
+        assert_eq!(
+            parse_route_url("#/settings/core"),
+            Some(NavTarget::Preferences {
+                page: Some("core".into()),
+            })
+        );
+        assert_eq!(
+            parse_route_url("#/remote-config/testdrive/sync/nightly"),
+            Some(NavTarget::RemoteConfig {
+                remote: "testdrive".into(),
+                step: Some("sync".into()),
+                profile: Some("nightly".into()),
+            })
+        );
+        assert_eq!(parse_route_url("#/onboarding"), Some(NavTarget::Onboarding));
+        assert_eq!(parse_route_url("#/about"), Some(NavTarget::About));
+        assert_eq!(parse_route_url("#/logs"), Some(NavTarget::Logs));
+        assert_eq!(
+            parse_route_url("#/keyboard-shortcuts"),
+            Some(NavTarget::Shortcuts)
+        );
+        assert_eq!(
             parse_route_url("#/nautilus/gdrive/Photos"),
             Some(NavTarget::Files {
                 remote: "gdrive".into(),
@@ -703,6 +829,53 @@ mod tests {
             updates,
             Some(LaunchRequest {
                 target: NavTarget::Updates,
+                standalone: false,
+            })
+        );
+        let prefs = parse_launch_args(&["app".into(), "--preferences".into(), "dev".into()], false);
+        assert_eq!(
+            prefs,
+            Some(LaunchRequest {
+                target: NavTarget::Preferences {
+                    page: Some("developer".into()),
+                },
+                standalone: false,
+            })
+        );
+        let config = parse_launch_args(
+            &[
+                "app".into(),
+                "--remote-config".into(),
+                "testdrive".into(),
+                "--step".into(),
+                "sync".into(),
+                "--profile".into(),
+                "nightly".into(),
+            ],
+            false,
+        );
+        assert_eq!(
+            config,
+            Some(LaunchRequest {
+                target: NavTarget::RemoteConfig {
+                    remote: "testdrive".into(),
+                    step: Some("sync".into()),
+                    profile: Some("nightly".into()),
+                },
+                standalone: false,
+            })
+        );
+        assert_eq!(
+            parse_launch_args(&["app".into(), "--onboarding".into()], false),
+            Some(LaunchRequest {
+                target: NavTarget::Onboarding,
+                standalone: false,
+            })
+        );
+        assert_eq!(
+            parse_launch_args(&["app".into(), "--about".into()], false),
+            Some(LaunchRequest {
+                target: NavTarget::About,
                 standalone: false,
             })
         );

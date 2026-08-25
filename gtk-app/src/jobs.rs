@@ -2,11 +2,11 @@
 //! `start_profile_batch` / `parse_common_config`.
 
 use crate::operations::OperationType;
-use crate::rclone::{remote_fs, MountedRemote, RcClient, RcError, ServeItem};
+use crate::rclone::{format_bytes, remote_fs, MountedRemote, RcClient, RcError, ServeItem};
 use crate::store::{quick_run_paths, JobInfo, JobMeta, ProfileConfig, QuickRun, RemoteMeta};
 use chrono::{DateTime, Utc};
 use serde_json::{json, Map, Value};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 pub const SOURCE_KEYS: &[&str] = &["source", "srcFs", "path1", "fs"];
 pub const DEST_KEYS: &[&str] = &["dest", "dstFs", "path2", "mountPoint"];
@@ -346,19 +346,26 @@ pub fn build_job_params(
             })
         }
         OperationType::Serve => {
-            let serve_type = obj
-                .get("type")
-                .and_then(|v| v.as_str())
-                .unwrap_or("webdav")
+            let flat = flatten_rclone(rclone);
+            let serve_type = ["type", "serveType"]
+                .iter()
+                .find_map(|key| flat.get(*key).and_then(|v| v.as_str()))
+                .filter(|s| !s.is_empty())
+                .unwrap_or("http")
                 .to_string();
-            let addr = if dest.is_empty() {
-                obj.get("addr")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("127.0.0.1:0")
-                    .to_string()
-            } else {
-                dest.to_string()
-            };
+            let addr = flat
+                .get("addr")
+                .and_then(|v| v.as_str())
+                .filter(|s| !s.is_empty())
+                .map(ToString::to_string)
+                .or_else(|| {
+                    if dest.is_empty() {
+                        None
+                    } else {
+                        Some(dest.to_string())
+                    }
+                })
+                .unwrap_or_else(|| "127.0.0.1:0".into());
             Ok(JobRequest::Serve {
                 serve_type,
                 fs: if source.is_empty() {
@@ -367,6 +374,7 @@ pub fn build_job_params(
                     source.to_string()
                 },
                 addr,
+                extra: body.clone(),
             })
         }
         OperationType::Delete => {
@@ -536,6 +544,7 @@ pub enum JobRequest {
         serve_type: String,
         fs: String,
         addr: String,
+        extra: Value,
     },
 }
 
@@ -566,9 +575,11 @@ pub fn start_request(client: &RcClient, request: &JobRequest) -> Result<String, 
             serve_type,
             fs,
             addr,
-        } => client.serve_start(serve_type, fs, addr).map(|v| {
-            v.get("addr")
+            extra,
+        } => client.serve_start_ex(serve_type, fs, addr, extra).map(|v| {
+            v.get("id")
                 .and_then(|x| x.as_str())
+                .or_else(|| v.get("addr").and_then(|x| x.as_str()))
                 .unwrap_or(addr)
                 .to_string()
         }),
@@ -654,7 +665,7 @@ pub fn merge_options_block(obj: &mut Map<String, Value>, block: &str, opts: &Val
 /// Angular remote-card `hasNoProfiles`: start is disabled unless a profile exists.
 /// Mount still offers the default mount-point fallback used by `toggle_mount`.
 pub fn allows_unconfigured_start(op: OperationType) -> bool {
-    matches!(op, OperationType::Mount)
+    matches!(op, OperationType::Mount | OperationType::Serve)
 }
 
 pub fn preferred_mount_profile(meta: Option<&RemoteMeta>) -> Option<ProfileConfig> {
@@ -676,6 +687,16 @@ pub fn preferred_mount_profile_name(meta: Option<&RemoteMeta>) -> String {
         .map(|profile| profile.name)
         .filter(|name| !name.is_empty())
         .unwrap_or_else(|| "default".into())
+}
+
+pub fn origin_label_key(origin: &str) -> &'static str {
+    match origin.trim().to_ascii_lowercase().as_str() {
+        "quick-run" | "quickrun" | "flow" => "generalOverview.jobs.originQuickRun",
+        "automation" | "autostart" => "generalOverview.jobs.originAutomation",
+        "filemanager" | "files" | "nautilus" => "generalOverview.jobs.originFiles",
+        "dashboard" | "" => "generalOverview.jobs.originDashboard",
+        _ => "generalOverview.jobs.originManual",
+    }
 }
 
 pub fn origin_matches(origin: &str, filter: &str) -> bool {
@@ -814,10 +835,256 @@ pub fn apply_job_meta(job: &mut JobInfo, meta: Option<&JobMeta>) {
     if job.parent_job_id.is_none() {
         job.parent_job_id = meta.parent_job_id;
     }
+    if !meta.group.is_empty() && (job.group.is_empty() || job.group.starts_with("job/")) {
+        job.group = meta.group.clone();
+    }
 }
 
 pub fn is_overview_job(job: &JobInfo) -> bool {
     job.parent_job_id.is_none()
+}
+
+pub fn find_job_by_id(live: &[JobInfo], history: &[JobInfo], id: u64) -> Option<JobInfo> {
+    live.iter()
+        .find(|job| job.id == id)
+        .or_else(|| history.iter().find(|job| job.id == id))
+        .cloned()
+}
+
+pub fn job_from_meta(id: u64, meta: &JobMeta) -> JobInfo {
+    let items = meta
+        .transfer_snapshot
+        .as_array()
+        .cloned()
+        .unwrap_or_default();
+    let first = items.first();
+    let src = first
+        .and_then(|item| item.get("src"))
+        .and_then(|value| value.as_str())
+        .unwrap_or_default()
+        .to_string();
+    let dst = first
+        .and_then(|item| item.get("dst"))
+        .and_then(|value| value.as_str())
+        .unwrap_or_default()
+        .to_string();
+    let total: u64 = items
+        .iter()
+        .filter_map(|item| item.get("size").and_then(|value| value.as_u64()))
+        .sum();
+    let count = items.len() as i64;
+    let snapshot = meta.transfer_snapshot.clone();
+    let operation = match meta.origin.as_str() {
+        "filemanager" | "files" | "check-resolve" => "copy",
+        other if !other.is_empty() => other,
+        _ => "job",
+    }
+    .to_string();
+    let mut job = JobInfo {
+        id,
+        operation: operation.clone(),
+        remote: meta.remote.clone(),
+        profile: if meta.profile.is_empty() {
+            "default".into()
+        } else {
+            meta.profile.clone()
+        },
+        status: "completed".into(),
+        origin: if meta.origin.is_empty() {
+            "dashboard".into()
+        } else {
+            meta.origin.clone()
+        },
+        start_time: DateTime::<Utc>::UNIX_EPOCH,
+        error: None,
+        dry_run: false,
+        src,
+        dst,
+        group: if meta.group.is_empty() {
+            format!("job/{id}")
+        } else {
+            meta.group.clone()
+        },
+        stats: json!({
+            "bytes": total,
+            "totalBytes": total,
+            "transfers": count,
+            "totalTransfers": count,
+            "completed": finalize_completed_list(&snapshot),
+        }),
+        transferring: json!([]),
+        duration: 0.0,
+        progress: 1.0,
+        output: json!({ "operation": operation, "origin": meta.origin }),
+        completed: finalize_completed_list(&snapshot),
+        parent_job_id: meta.parent_job_id,
+    };
+    apply_job_meta(&mut job, Some(meta));
+    job
+}
+
+/// Prefer a real stored/history job over rclone 1.60 leftover `job/<id>` stubs.
+pub fn resolve_detail_job(rc_job: Option<JobInfo>, stored: Option<JobInfo>) -> Option<JobInfo> {
+    match (rc_job, stored) {
+        (Some(rc), Some(stored)) if is_managed_job(&rc) => Some(merge_rc_with_stored(rc, stored)),
+        (Some(rc), None) if is_managed_job(&rc) => Some(rc),
+        (_, stored) => stored,
+    }
+}
+
+fn merge_rc_with_stored(mut rc: JobInfo, stored: JobInfo) -> JobInfo {
+    if rc.src.is_empty() {
+        rc.src = stored.src;
+    }
+    if rc.dst.is_empty() {
+        rc.dst = stored.dst;
+    }
+    if rc.remote.is_empty() {
+        rc.remote = stored.remote;
+    }
+    if rc.operation.starts_with("job/") || rc.operation == "job" {
+        rc.operation = stored.operation;
+    }
+    if (rc.origin.is_empty() || rc.origin == "dashboard")
+        && !stored.origin.is_empty()
+        && stored.origin != "dashboard"
+    {
+        rc.origin = stored.origin;
+    }
+    if rc.progress <= 0.0 && stored.progress > 0.0 {
+        rc.progress = stored.progress;
+    }
+    if rc.duration <= 0.0 && stored.duration > 0.0 {
+        rc.duration = stored.duration;
+    }
+    if (transfer_list_empty(&rc.completed) || completed_needs_sizes(&rc.completed))
+        && !transfer_list_empty(&stored.completed)
+    {
+        rc.completed = stored.completed;
+    }
+    rc
+}
+
+pub fn finalize_history_job(job: &mut JobInfo) {
+    if matches!(job.status.as_str(), "completed" | "failed" | "stopped") && job.progress <= 0.0 {
+        job.progress = 1.0;
+    }
+    if completed_needs_sizes(&job.completed) {
+        job.completed = finalize_completed_list(&job.completed);
+    }
+    let completed = job.completed.as_array().map(|rows| rows.len()).unwrap_or(0);
+    if completed == 0 {
+        return;
+    }
+    if let Some(obj) = job.stats.as_object_mut() {
+        obj.entry("transfers").or_insert(json!(completed as i64));
+        obj.entry("totalTransfers")
+            .or_insert(json!(completed as i64));
+        if completed_needs_sizes(obj.get("completed").unwrap_or(&Value::Null))
+            || !obj.contains_key("completed")
+        {
+            obj.insert("completed".into(), job.completed.clone());
+        }
+    }
+}
+
+pub fn format_job_speed(bytes_per_sec: f64) -> String {
+    if bytes_per_sec <= 0.0 {
+        "—".into()
+    } else {
+        format!("{}/s", format_bytes(bytes_per_sec.round() as i64))
+    }
+}
+
+pub fn job_status_key(status: &str) -> &'static str {
+    match status {
+        "running" => "detailShared.jobs.status.running",
+        "completed" => "detailShared.jobs.status.completed",
+        "failed" => "detailShared.jobs.status.failed",
+        "stopped" => "detailShared.jobs.status.stopped",
+        "preparing" | "starting" => "generalOverview.jobs.starting",
+        _ => "detailShared.jobs.status.unknown",
+    }
+}
+
+pub fn job_origin_key(origin: &str) -> &'static str {
+    match origin {
+        "dashboard" => "generalOverview.jobs.originDashboard",
+        "quickrun" | "quick-run" | "flow" => "generalOverview.jobs.originQuickRun",
+        "automation" => "generalOverview.jobs.originAutomation",
+        "filemanager" | "files" => "generalOverview.jobs.originFiles",
+        _ => "generalOverview.jobs.originManual",
+    }
+}
+
+pub fn has_known_start_time(job: &JobInfo) -> bool {
+    job.start_time.timestamp() > 0
+}
+
+pub fn find_stored_job(
+    live: &[JobInfo],
+    history: &[JobInfo],
+    meta: &HashMap<u64, JobMeta>,
+    id: u64,
+) -> Option<JobInfo> {
+    find_job_by_id(live, history, id).or_else(|| meta.get(&id).map(|item| job_from_meta(id, item)))
+}
+
+pub fn history_with_meta(history: &[JobInfo], meta: &HashMap<u64, JobMeta>) -> Vec<JobInfo> {
+    let extra: Vec<JobInfo> = meta
+        .iter()
+        .filter(|(id, _)| history.iter().all(|job| job.id != **id))
+        .map(|(id, item)| job_from_meta(*id, item))
+        .collect();
+    merge_job_lists(history, &extra)
+}
+
+pub fn merge_job_lists(live: &[JobInfo], history: &[JobInfo]) -> Vec<JobInfo> {
+    let mut out = live.to_vec();
+    let ids: HashSet<u64> = out.iter().map(|job| job.id).collect();
+    for job in history {
+        if !ids.contains(&job.id) {
+            out.push(job.clone());
+        }
+    }
+    out
+}
+
+pub fn merge_overview_jobs(
+    live: &[JobInfo],
+    history: &[JobInfo],
+    remote: &str,
+    profile: Option<&str>,
+) -> Vec<JobInfo> {
+    let matches = |job: &JobInfo| {
+        is_overview_job(job)
+            && job.remote == remote
+            && profile.is_none_or(|wanted| {
+                job.profile == wanted || job.profile.is_empty() || job.profile == "default"
+            })
+    };
+    let mut out: Vec<JobInfo> = live.iter().filter(|job| matches(job)).cloned().collect();
+    let ids: HashSet<u64> = out.iter().map(|job| job.id).collect();
+    for job in history
+        .iter()
+        .filter(|job| matches(job) && !ids.contains(&job.id))
+    {
+        out.push(job.clone());
+    }
+    out.sort_by(|a, b| b.start_time.cmp(&a.start_time).then(b.id.cmp(&a.id)));
+    out
+}
+
+pub fn job_status_value(job: &JobInfo) -> Value {
+    json!({
+        "group": job.group,
+        "duration": job.duration,
+        "startTime": job.start_time.to_rfc3339(),
+        "output": job.output,
+        "finished": !job_is_running(job) && !job_is_pending(job),
+        "success": job.status == "completed",
+        "error": job.error,
+    })
 }
 
 pub fn remember_grouped(map: &mut HashMap<u64, JobMeta>, ids: &[u64], meta: JobMeta) {
@@ -828,6 +1095,255 @@ pub fn remember_grouped(map: &mut HashMap<u64, JobMeta>, ids: &[u64], meta: JobM
             item.parent_job_id = parent;
         }
         map.insert(*id, item);
+    }
+}
+
+pub fn transfer_snapshot_from_items(items: &[crate::fileops::TransferItem]) -> Value {
+    Value::Array(
+        items
+            .iter()
+            .map(|item| {
+                let size = std::fs::metadata(&item.src).map(|m| m.len()).unwrap_or(0);
+                let name = item
+                    .src
+                    .rsplit(['/', '\\'])
+                    .next()
+                    .unwrap_or(item.src.as_str());
+                json!({
+                    "name": name,
+                    "srcFs": item.src_fs,
+                    "srcRemote": item.src,
+                    "dstFs": item.dst_fs,
+                    "dstRemote": item.dst,
+                    "src": crate::transfers::join_fs_name(&item.src_fs, &item.src),
+                    "dst": crate::transfers::join_fs_name(&item.dst_fs, &item.dst),
+                    "size": size,
+                    "bytes": 0,
+                    "percentage": 0
+                })
+            })
+            .collect(),
+    )
+}
+
+fn transfer_list_empty(value: &Value) -> bool {
+    value.as_array().map(|arr| arr.is_empty()).unwrap_or(true)
+}
+
+fn transfer_row_size(item: &Value) -> u64 {
+    item.get("size")
+        .and_then(|value| value.as_u64())
+        .unwrap_or(0)
+}
+
+fn transfer_row_bytes(item: &Value) -> u64 {
+    item.get("bytes")
+        .or_else(|| item.get("bytesSoFar"))
+        .and_then(|value| value.as_u64())
+        .unwrap_or(0)
+}
+
+fn completed_needs_sizes(value: &Value) -> bool {
+    value.as_array().is_some_and(|arr| {
+        arr.iter()
+            .any(|item| transfer_row_size(item) > 0 && transfer_row_bytes(item) == 0)
+    })
+}
+
+fn finalize_completed_item(item: &Value) -> Value {
+    let size = transfer_row_size(item);
+    let bytes = transfer_row_bytes(item);
+    let mut item = item.clone();
+    if let Some(obj) = item.as_object_mut() {
+        if size > 0 && bytes == 0 {
+            obj.insert("bytes".into(), json!(size));
+            obj.insert("percentage".into(), json!(100));
+        } else if size > 0 && bytes >= size {
+            obj.insert("percentage".into(), json!(100));
+        }
+    }
+    item
+}
+
+fn finalize_completed_list(value: &Value) -> Value {
+    match value {
+        Value::Array(arr) => Value::Array(arr.iter().map(finalize_completed_item).collect()),
+        other => finalize_completed_item(other),
+    }
+}
+
+fn child_bytes(job: &JobInfo, size: u64, done: bool) -> u64 {
+    job.stats
+        .get("bytes")
+        .and_then(|value| value.as_u64())
+        .filter(|&bytes| bytes > 0)
+        .unwrap_or(if done { size } else { 0 })
+}
+
+fn child_finished(status: &str) -> bool {
+    matches!(status, "completed" | "failed")
+}
+
+/// Fill empty `transferring` / `completed` lists on grouped overview jobs from
+/// the start-time snapshot and child job statuses (rclone 1.60 `copyfile` jobs
+/// often omit per-file `core/stats` transferring rows).
+pub fn hydrate_grouped_transfers(jobs: &mut [JobInfo], meta: &HashMap<u64, JobMeta>) {
+    let mut children: HashMap<u64, Vec<usize>> = HashMap::new();
+    for (idx, job) in jobs.iter().enumerate() {
+        if let Some(parent) = job.parent_job_id {
+            children.entry(parent).or_default().push(idx);
+        }
+    }
+    let parents: Vec<usize> = jobs
+        .iter()
+        .enumerate()
+        .filter(|(_, job)| job.parent_job_id.is_none())
+        .map(|(idx, _)| idx)
+        .collect();
+    for parent_idx in parents {
+        let parent_id = jobs[parent_idx].id;
+        let empty_active = transfer_list_empty(&jobs[parent_idx].transferring);
+        let empty_done = transfer_list_empty(&jobs[parent_idx].completed);
+        let needs_sizes = completed_needs_sizes(&jobs[parent_idx].completed);
+        if !empty_active && !empty_done && !needs_sizes {
+            continue;
+        }
+        let snapshot = meta
+            .get(&parent_id)
+            .map(|item| item.transfer_snapshot.clone())
+            .unwrap_or(json!([]));
+        let child_idxs = children.get(&parent_id).cloned().unwrap_or_default();
+        if let Some(arr) = snapshot.as_array() {
+            if !arr.is_empty() {
+                let parent_done = child_finished(&jobs[parent_idx].status);
+                let children_done = !child_idxs.is_empty()
+                    && child_idxs.len() >= arr.len()
+                    && child_idxs
+                        .iter()
+                        .all(|&idx| child_finished(&jobs[idx].status));
+                let all_done = parent_done || children_done;
+                let mut transferring = Vec::new();
+                let mut completed = Vec::new();
+                for item in arr {
+                    let src = item
+                        .get("src")
+                        .or_else(|| item.get("name"))
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("");
+                    let matching = child_idxs.iter().copied().find(|&idx| {
+                        jobs[idx].src == src
+                            || jobs[idx].src.ends_with(src)
+                            || (!src.is_empty() && src.ends_with(&jobs[idx].src))
+                    });
+                    let size = item.get("size").and_then(|v| v.as_u64()).unwrap_or(0);
+                    let (done, bytes) = if let Some(idx) = matching {
+                        let done = child_finished(&jobs[idx].status);
+                        (done, child_bytes(&jobs[idx], size, done))
+                    } else {
+                        (all_done, if all_done { size } else { 0 })
+                    };
+                    let mut row = item.clone();
+                    if let Some(obj) = row.as_object_mut() {
+                        obj.insert("bytes".into(), json!(bytes));
+                        obj.insert("percentage".into(), json!(if done { 100 } else { 0 }));
+                    }
+                    if done {
+                        completed.push(row);
+                    } else {
+                        transferring.push(row);
+                    }
+                }
+                apply_hydrated_rows(
+                    &mut jobs[parent_idx],
+                    empty_active,
+                    empty_done,
+                    needs_sizes,
+                    transferring,
+                    completed,
+                );
+                continue;
+            }
+        }
+        if child_idxs.is_empty() {
+            continue;
+        }
+        let mut transferring = Vec::new();
+        let mut completed = Vec::new();
+        for idx in child_idxs {
+            let size = jobs[idx]
+                .stats
+                .get("totalBytes")
+                .or_else(|| jobs[idx].stats.get("size"))
+                .and_then(|v| v.as_u64())
+                .unwrap_or(0);
+            let done = child_finished(&jobs[idx].status);
+            let bytes = child_bytes(&jobs[idx], size, done);
+            let row = json!({
+                "name": jobs[idx].src,
+                "src": jobs[idx].src,
+                "dst": jobs[idx].dst,
+                "size": size,
+                "bytes": bytes,
+                "percentage": if done { 100 } else { 0 }
+            });
+            if child_finished(&jobs[idx].status) {
+                completed.push(row);
+            } else {
+                transferring.push(row);
+            }
+        }
+        apply_hydrated_rows(
+            &mut jobs[parent_idx],
+            empty_active,
+            empty_done,
+            needs_sizes,
+            transferring,
+            completed,
+        );
+    }
+}
+
+/// Apply registry metadata and hydrate transfer rows for a single job
+/// (Job detail re-fetches RC status and would otherwise drop the snapshot).
+pub fn decorate_job_transfers(
+    job: &mut JobInfo,
+    meta: &HashMap<u64, JobMeta>,
+    siblings: &[JobInfo],
+) {
+    apply_job_meta(job, meta.get(&job.id));
+    let mut jobs: Vec<JobInfo> = siblings
+        .iter()
+        .filter(|item| item.id != job.id)
+        .cloned()
+        .collect();
+    jobs.insert(0, job.clone());
+    hydrate_grouped_transfers(&mut jobs, meta);
+    if let Some(updated) = jobs.into_iter().find(|item| item.id == job.id) {
+        *job = updated;
+    }
+}
+
+fn apply_hydrated_rows(
+    job: &mut JobInfo,
+    empty_active: bool,
+    empty_done: bool,
+    needs_sizes: bool,
+    transferring: Vec<Value>,
+    completed: Vec<Value>,
+) {
+    if empty_active {
+        job.transferring = Value::Array(transferring);
+    }
+    if empty_done || needs_sizes {
+        job.completed = finalize_completed_list(&Value::Array(completed));
+    }
+    if let Some(obj) = job.stats.as_object_mut() {
+        if empty_active {
+            obj.insert("transferring".into(), job.transferring.clone());
+        }
+        if empty_done || needs_sizes {
+            obj.insert("completed".into(), job.completed.clone());
+        }
     }
 }
 
@@ -851,6 +1367,8 @@ pub fn job_meta_for(
         execute_id: uuid::Uuid::new_v4().to_string(),
         parent_job_id: None,
         target: String::new(),
+        group: String::new(),
+        transfer_snapshot: json!([]),
     }
 }
 
@@ -1250,26 +1768,7 @@ pub fn merge_completed_transfers(stats: &mut Value, transferred: &Value) {
 }
 
 pub fn parse_cli_flags(cli: &str) -> Map<String, Value> {
-    let mut map = Map::new();
-    let tokens: Vec<&str> = cli.split_whitespace().collect();
-    let mut i = 0;
-    while i < tokens.len() {
-        let token = tokens[i].trim_start_matches('-');
-        if token.is_empty() {
-            i += 1;
-            continue;
-        }
-        if let Some((k, v)) = token.split_once('=') {
-            map.insert(k.replace('-', "_"), json!(v));
-        } else if i + 1 < tokens.len() && !tokens[i + 1].starts_with('-') {
-            map.insert(token.replace('-', "_"), json!(tokens[i + 1]));
-            i += 1;
-        } else {
-            map.insert(token.replace('-', "_"), json!(true));
-        }
-        i += 1;
-    }
-    map
+    crate::cli_import::parsed_to_flag_map(&crate::cli_import::parse(cli, &Default::default()))
 }
 
 pub fn job_from_status(jobid: u64, status: &Value, stats: Option<&Value>) -> JobInfo {
@@ -1477,14 +1976,47 @@ pub fn preparing_progress_stats(
 }
 
 /// Keep preparing uploads in the live list until rclone reports the same job id.
+pub const PREPARING_TTL_SECS: i64 = 120;
+
 pub fn merge_preparing_jobs(live: Vec<JobInfo>, history: &[JobInfo]) -> Vec<JobInfo> {
     let mut out = live;
+    let now = Utc::now();
     for job in history {
-        if job.status == "preparing" && !out.iter().any(|j| j.id == job.id) {
-            out.insert(0, job.clone());
+        if job.status != "preparing" && job.status != "starting" {
+            continue;
         }
+        if out.iter().any(|j| j.id == job.id) {
+            continue;
+        }
+        if !job.group.is_empty()
+            && out
+                .iter()
+                .any(|j| !j.group.is_empty() && j.group == job.group)
+        {
+            continue;
+        }
+        let age = now.signed_duration_since(job.start_time).num_seconds();
+        if age > PREPARING_TTL_SECS {
+            continue;
+        }
+        out.insert(0, job.clone());
     }
     out
+}
+
+pub fn finalize_dropped_job(job: &JobInfo) -> JobInfo {
+    let mut finished = job.clone();
+    match finished.status.as_str() {
+        "running" => finished.status = "completed".into(),
+        "preparing" | "starting" => {
+            finished.status = "failed".into();
+            if finished.error.is_none() {
+                finished.error = Some("Job disappeared before rclone reported it".into());
+            }
+        }
+        _ => {}
+    }
+    finished
 }
 
 /// Parses raw text output from `operations/cryptcheck` into structured JSON.
@@ -1648,6 +2180,83 @@ pub fn apply_cryptcheck_outcome(job: &mut JobInfo) {
     if let Some(obj) = job.output.as_object_mut() {
         obj.insert("cryptcheck".into(), parsed);
     }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct OverviewJobStats {
+    pub bytes: i64,
+    pub total_bytes: i64,
+    pub speed: f64,
+    pub eta: f64,
+    pub errors: i64,
+    pub transfers: i64,
+    pub total_transfers: i64,
+    pub checks: i64,
+    pub total_checks: i64,
+    pub deletes: i64,
+    pub renames: i64,
+    pub server_side_copies: i64,
+    pub server_side_moves: i64,
+    pub last_error: String,
+    pub active: usize,
+}
+
+impl OverviewJobStats {
+    pub fn completion_pct(&self) -> f64 {
+        if self.total_bytes > 0 {
+            ((self.bytes as f64 / self.total_bytes as f64) * 100.0).clamp(0.0, 100.0)
+        } else {
+            0.0
+        }
+    }
+}
+
+pub fn overview_job_stats(jobs: &[JobInfo], core_stats: &Value) -> OverviewJobStats {
+    OverviewJobStats {
+        bytes: stats_i64(core_stats, &["bytes"]),
+        total_bytes: stats_i64(core_stats, &["totalBytes"]),
+        speed: stats_f64(core_stats, &["speed"]),
+        eta: stats_f64(core_stats, &["eta"]),
+        errors: stats_i64(core_stats, &["errors"]),
+        transfers: stats_i64(core_stats, &["transfers"]),
+        total_transfers: stats_i64(core_stats, &["totalTransfers"]),
+        checks: stats_i64(core_stats, &["checks"]),
+        total_checks: stats_i64(core_stats, &["totalChecks"]),
+        deletes: stats_i64(core_stats, &["deletes"]),
+        renames: stats_i64(core_stats, &["renames"]),
+        server_side_copies: stats_i64(core_stats, &["serverSideCopies"]),
+        server_side_moves: stats_i64(core_stats, &["serverSideMoves"]),
+        last_error: core_stats
+            .get("lastError")
+            .and_then(|v| v.as_str())
+            .unwrap_or_default()
+            .to_string(),
+        active: jobs
+            .iter()
+            .filter(|job| job_is_running(job) || job_is_pending(job))
+            .count(),
+    }
+}
+
+pub fn job_transfer_caption(job: &JobInfo) -> String {
+    let bytes = stats_i64(&job.stats, &["bytes"]);
+    let total = stats_i64(&job.stats, &["totalBytes"]);
+    let speed = stats_f64(&job.stats, &["speed"]);
+    let eta = stats_f64(&job.stats, &["eta"]);
+    let size = if total > 0 {
+        format!("{} / {}", format_bytes(bytes), format_bytes(total))
+    } else {
+        format_bytes(bytes)
+    };
+    let mut parts = vec![size];
+    if speed > 0.0 {
+        parts.push(format!("{}/s", format_bytes(speed.round() as i64)));
+    }
+    let eta_s = format_seconds(eta);
+    if eta_s != "—" {
+        parts.push(eta_s);
+    }
+    parts.join(" · ")
 }
 
 pub fn progress_from_stats(stats: &Value) -> f64 {
@@ -2094,6 +2703,7 @@ mod tests {
                 execute_id: "exec-9".into(),
                 parent_job_id: None,
                 target: String::new(),
+                ..Default::default()
             },
         );
         let mut job = running_job(9, "", "sync", "default");
@@ -2260,9 +2870,18 @@ mod tests {
             &jobs,
             false
         ));
+        assert_eq!(
+            origin_label_key("quick-run"),
+            "generalOverview.jobs.originQuickRun"
+        );
+        assert_eq!(origin_label_key(""), "generalOverview.jobs.originDashboard");
+        assert_eq!(
+            origin_label_key("filemanager"),
+            "generalOverview.jobs.originFiles"
+        );
         assert!(allows_unconfigured_start(OperationType::Mount));
+        assert!(allows_unconfigured_start(OperationType::Serve));
         assert!(!allows_unconfigured_start(OperationType::Sync));
-        assert!(!allows_unconfigured_start(OperationType::Serve));
         assert!(!allows_unconfigured_start(OperationType::Copy));
         assert_eq!(
             find_active_job(&jobs, "drive", OperationType::Sync, "nightly").map(|j| j.id),
@@ -2532,16 +3151,104 @@ mod tests {
                 status: "running".into(),
                 ..preparing.clone()
             }],
-            &[preparing],
+            &[preparing.clone()],
         );
         assert_eq!(already.len(), 1);
         assert_eq!(already[0].status, "running");
+        let mut stale = preparing.clone();
+        stale.start_time = Utc::now() - chrono::Duration::seconds(PREPARING_TTL_SECS + 5);
+        let expired = merge_preparing_jobs(live.clone(), &[stale]);
+        assert_eq!(expired.len(), 1);
+        assert_eq!(expired[0].id, 1);
+        let mut grouped = preparing.clone();
+        grouped.group = "filemanager-upload/abc".into();
+        let mut live_group = running_job(2, "drive", "upload", "default");
+        live_group.group = "filemanager-upload/abc".into();
+        let skipped = merge_preparing_jobs(vec![live_group], &[grouped]);
+        assert_eq!(skipped.len(), 1);
+        let dropped = finalize_dropped_job(&preparing);
+        assert_eq!(dropped.status, "failed");
+        assert!(dropped.error.is_some());
         let from_stats = job_from_status(
             4,
             &json!({ "finished": false, "success": false, "output": { "operation": "upload" } }),
             Some(&json!({ "preparing": true, "bytes": 0 })),
         );
         assert_eq!(from_stats.status, "preparing");
+    }
+
+    #[test]
+    fn hydrates_grouped_transfer_rows_from_snapshot_and_children() {
+        let snapshot = json!([
+            { "name": "a.txt", "src": "/tmp/a.txt", "dst": "Inbox/a.txt", "size": 4, "bytes": 0 },
+            { "name": "b.txt", "src": "/tmp/b.txt", "dst": "Inbox/b.txt", "size": 4, "bytes": 0 }
+        ]);
+        let mut map = HashMap::new();
+        remember_grouped(
+            &mut map,
+            &[20, 21],
+            JobMeta {
+                origin: "filemanager".into(),
+                group: "filemanager-upload/abc".into(),
+                transfer_snapshot: snapshot,
+                ..Default::default()
+            },
+        );
+        let mut parent = preparing_job(20, "testdrive", "/tmp/a.txt", "Inbox", 2, 8);
+        parent.transferring = json!([]);
+        parent.completed = json!([]);
+        let mut child = running_job(21, "testdrive", "upload", "default");
+        child.src = "/tmp/b.txt".into();
+        child.dst = "Inbox/b.txt".into();
+        child.status = "completed".into();
+        child.parent_job_id = Some(20);
+        let mut jobs = vec![parent, child];
+        apply_job_meta(&mut jobs[0], map.get(&20));
+        apply_job_meta(&mut jobs[1], map.get(&21));
+        hydrate_grouped_transfers(&mut jobs, &map);
+        assert_eq!(jobs[0].transferring.as_array().unwrap().len(), 1);
+        assert_eq!(jobs[0].completed.as_array().unwrap().len(), 1);
+        assert_eq!(jobs[0].completed[0]["name"], "b.txt");
+        assert_eq!(jobs[0].transferring[0]["name"], "a.txt");
+        assert_eq!(jobs[0].group, "filemanager-upload/abc");
+        let mut finished = preparing_job(20, "testdrive", "/tmp/a.txt", "Inbox", 2, 8);
+        finished.status = "completed".into();
+        finished.transferring = json!([]);
+        finished.completed = json!([]);
+        decorate_job_transfers(&mut finished, &map, &[]);
+        assert_eq!(finished.completed.as_array().unwrap().len(), 2);
+        assert!(finished.transferring.as_array().unwrap().is_empty());
+        assert_eq!(finished.completed[0]["bytes"], 4);
+        assert_eq!(finished.completed[1]["bytes"], 4);
+        let mut stale = finished.clone();
+        stale.completed = json!([
+            { "name": "a.txt", "src": "/tmp/a.txt", "dst": "Inbox/a.txt", "size": 4, "bytes": 0 },
+            { "name": "b.txt", "src": "/tmp/b.txt", "dst": "Inbox/b.txt", "size": 4, "bytes": 0 }
+        ]);
+        hydrate_grouped_transfers(&mut [stale.clone()], &map);
+        decorate_job_transfers(&mut stale, &map, &[]);
+        assert_eq!(stale.completed[0]["bytes"], 4);
+        assert_eq!(stale.completed[1]["percentage"], 100);
+    }
+
+    #[test]
+    fn snapshot_emits_rclone_src_dst_fields() {
+        let items = [crate::fileops::TransferItem {
+            src_fs: "/".into(),
+            src: "/tmp/gtk-upload-test/e.txt".into(),
+            dst_fs: "testdrive:".into(),
+            dst: "e.txt".into(),
+            cut: false,
+        }];
+        let snapshot = transfer_snapshot_from_items(&items);
+        let row = crate::transfers::parse_transfer_row(&snapshot[0]);
+        assert_eq!(snapshot[0]["srcFs"], "/");
+        assert_eq!(snapshot[0]["srcRemote"], "/tmp/gtk-upload-test/e.txt");
+        assert_eq!(snapshot[0]["dstFs"], "testdrive:");
+        assert_eq!(snapshot[0]["dstRemote"], "e.txt");
+        assert_eq!(row.src, "/tmp/gtk-upload-test/e.txt");
+        assert_eq!(row.dst, "testdrive:e.txt");
+        assert_ne!(row.dst, "e.txt/e.txt");
     }
 
     #[test]
@@ -2712,5 +3419,197 @@ mod tests {
         );
         assert_eq!(jobs[0].profile, "weekly");
         assert_eq!(jobs[1].profile, "nightly");
+    }
+
+    #[test]
+    fn builds_serve_from_profile_type_and_addr() {
+        let req = build_job_params(
+            OperationType::Serve,
+            "testdrive",
+            "testdrive:pub",
+            "127.0.0.1:0",
+            &json!({
+                "type": "http",
+                "addr": "127.0.0.1:18080",
+                "readOnly": true,
+                "origin": "dashboard"
+            }),
+        )
+        .unwrap();
+        match req {
+            JobRequest::Serve {
+                serve_type,
+                fs,
+                addr,
+                extra,
+            } => {
+                assert_eq!(serve_type, "http");
+                assert_eq!(fs, "testdrive:pub");
+                assert_eq!(addr, "127.0.0.1:18080");
+                assert_eq!(extra["readOnly"], true);
+                assert_eq!(extra["origin"], "dashboard");
+            }
+            other => panic!("expected serve, got {other:?}"),
+        }
+        let fallback =
+            build_job_params(OperationType::Serve, "box", "", "10.0.0.2:9000", &json!({})).unwrap();
+        match fallback {
+            JobRequest::Serve {
+                serve_type,
+                fs,
+                addr,
+                ..
+            } => {
+                assert_eq!(serve_type, "http");
+                assert_eq!(fs, "box:");
+                assert_eq!(addr, "10.0.0.2:9000");
+            }
+            other => panic!("expected serve, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn overview_job_stats_read_core_stats() {
+        let jobs = vec![
+            running_job(1, "drive", "sync", "default"),
+            JobInfo {
+                status: "completed".into(),
+                ..running_job(2, "drive", "copy", "default")
+            },
+        ];
+        let stats = overview_job_stats(
+            &jobs,
+            &json!({
+                "bytes": 50,
+                "totalBytes": 200,
+                "speed": 1024.0,
+                "eta": 12,
+                "errors": 1,
+                "transfers": 2,
+                "totalTransfers": 4,
+                "checks": 1,
+                "totalChecks": 3,
+                "deletes": 0,
+                "renames": 1,
+                "serverSideCopies": 2,
+                "serverSideMoves": 0,
+                "lastError": "boom"
+            }),
+        );
+        assert_eq!(stats.active, 1);
+        assert_eq!(stats.completion_pct(), 25.0);
+        assert_eq!(stats.last_error, "boom");
+        assert_eq!(stats.server_side_copies, 2);
+        let mut job = running_job(3, "drive", "sync", "default");
+        job.stats = json!({ "bytes": 1024, "totalBytes": 2048, "speed": 512.0, "eta": 8 });
+        let caption = job_transfer_caption(&job);
+        assert!(caption.contains("KiB"));
+        assert!(caption.contains("/s"));
+    }
+
+    #[test]
+    fn finds_jobs_and_merges_history() {
+        let mut live = running_job(1, "drive", "sync", "nightly");
+        live.start_time = DateTime::parse_from_rfc3339("2026-08-25T12:00:00Z")
+            .unwrap()
+            .with_timezone(&Utc);
+        let mut finished = running_job(2, "drive", "copy", "default");
+        finished.status = "completed".into();
+        finished.start_time = DateTime::parse_from_rfc3339("2026-08-25T11:00:00Z")
+            .unwrap()
+            .with_timezone(&Utc);
+        let other = running_job(3, "box", "sync", "default");
+        let child = JobInfo {
+            parent_job_id: Some(1),
+            ..running_job(4, "drive", "copy", "nightly")
+        };
+        let history = vec![finished.clone(), other.clone(), child.clone()];
+        assert_eq!(find_job_by_id(&[live.clone()], &history, 1).unwrap().id, 1);
+        assert_eq!(
+            find_job_by_id(&[], &history, 2).unwrap().status,
+            "completed"
+        );
+        assert!(find_job_by_id(&[], &history, 99).is_none());
+        let merged = merge_overview_jobs(&[live.clone()], &history, "drive", None);
+        assert_eq!(
+            merged.iter().map(|job| job.id).collect::<Vec<_>>(),
+            vec![1, 2]
+        );
+        let mut weekly = running_job(5, "drive", "sync", "weekly");
+        weekly.status = "completed".into();
+        weekly.start_time = DateTime::parse_from_rfc3339("2026-08-25T10:00:00Z")
+            .unwrap()
+            .with_timezone(&Utc);
+        let history = vec![finished.clone(), other, child, weekly];
+        let nightly = merge_overview_jobs(&[live.clone()], &history, "drive", Some("nightly"));
+        assert_eq!(
+            nightly.iter().map(|job| job.id).collect::<Vec<_>>(),
+            vec![1, 2]
+        );
+        let siblings = merge_job_lists(&[live.clone()], &history);
+        assert_eq!(siblings.len(), 5);
+        assert!(!nightly.iter().any(|job| job.id == 5));
+        let status = job_status_value(&finished);
+        assert_eq!(status["finished"], true);
+        assert_eq!(status["success"], true);
+        assert_eq!(status["group"], "job/2");
+        let mut meta = HashMap::new();
+        meta.insert(
+            186,
+            JobMeta {
+                origin: "filemanager".into(),
+                remote: "testdrive".into(),
+                transfer_snapshot: json!([
+                    {
+                        "name": "k.txt",
+                        "src": "/tmp/gtk-upload-test/k.txt",
+                        "dst": "testdrive:k.txt",
+                        "size": 3,
+                        "bytes": 0
+                    }
+                ]),
+                ..Default::default()
+            },
+        );
+        let restored = find_stored_job(&[], &[], &meta, 186).unwrap();
+        assert_eq!(restored.remote, "testdrive");
+        assert_eq!(restored.origin, "filemanager");
+        assert_eq!(restored.src, "/tmp/gtk-upload-test/k.txt");
+        assert_eq!(restored.operation, "copy");
+        assert_eq!(restored.completed[0]["bytes"], 3);
+        assert_eq!(restored.completed[0]["percentage"], 100);
+        assert_eq!(format_job_speed(0.0), "—");
+        assert!(format_job_speed(1024.0).contains("KiB"));
+        assert!((restored.progress - 1.0).abs() < f64::EPSILON);
+        assert!(!has_known_start_time(&restored));
+        let combined = history_with_meta(&history, &meta);
+        assert!(combined.iter().any(|job| job.id == 186));
+        assert!(combined.iter().any(|job| job.id == 2));
+        let noise = job_from_status(
+            186,
+            &json!({
+                "finished": true,
+                "success": true,
+                "group": "job/186",
+                "output": {}
+            }),
+            None,
+        );
+        assert!(!is_managed_job(&noise));
+        let resolved = resolve_detail_job(Some(noise), Some(restored.clone())).unwrap();
+        assert_eq!(resolved.operation, "copy");
+        assert_eq!(resolved.src, "/tmp/gtk-upload-test/k.txt");
+        let mut zero = restored.clone();
+        zero.progress = 0.0;
+        finalize_history_job(&mut zero);
+        assert!((zero.progress - 1.0).abs() < f64::EPSILON);
+        assert_eq!(
+            job_status_key("completed"),
+            "detailShared.jobs.status.completed"
+        );
+        assert_eq!(
+            job_origin_key("filemanager"),
+            "generalOverview.jobs.originFiles"
+        );
     }
 }

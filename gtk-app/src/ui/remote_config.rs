@@ -284,14 +284,13 @@ fn step_label(ctx: &AppCtx, step: EditorStep) -> String {
         EditorStep::Op(op) => {
             ctx.t_or(&format!("operations.{}.label", op.as_str()), op.api_label())
         }
-        EditorStep::Helper(kind) => ctx.t_or(
-            &format!("modals.remoteConfig.helpers.{kind}"),
-            HELPERS
-                .iter()
-                .find(|(k, _, _)| *k == kind)
-                .map(|(_, label, _)| *label)
-                .unwrap_or(kind),
-        ),
+        EditorStep::Helper(kind) => {
+            let key = match kind {
+                "runtime" => "modals.remoteConfig.steps.runtimeRemote",
+                other => return ctx.t_or(&format!("modals.remoteConfig.steps.{other}"), other),
+            };
+            ctx.t_or(key, "Runtime Remote")
+        }
     }
 }
 
@@ -336,8 +335,14 @@ fn preset_bar(
             ctx.persist();
             rebuild();
             let toast = adw::AlertDialog::new(
-                Some(&ctx.t_or("templates.applySuccess", "Presets applied")),
-                Some("Default provider / OS presets were merged into this remote."),
+                Some(&ctx.t_or(
+                    "wizards.presets.applied",
+                    "Default presets applied successfully",
+                )),
+                Some(&ctx.t_or(
+                    "templates.applySuccess",
+                    "Default provider / OS presets were merged into this remote.",
+                )),
             );
             toast.add_response("ok", &ctx.t_or("common.ok", "OK"));
             toast.present(Some(&parent));
@@ -513,7 +518,7 @@ fn remote_page(
     let sync_ids = Rc::new(RefCell::new(meta.sync_actions.clone()));
     let primary_row = adw::ActionRow::new();
     primary_row.set_title(&ctx.t_or("remoteConfig.primaryActions", "Primary actions"));
-    primary_row.set_subtitle(&action_summary(&primary_ids.borrow()));
+    primary_row.set_subtitle(&action_summary(&ctx, &primary_ids.borrow()));
     let edit_primary = gtk::Button::with_label(&ctx.t_or("common.edit", "Edit"));
     edit_primary.set_valign(gtk::Align::Center);
     {
@@ -534,8 +539,9 @@ fn remote_page(
                 {
                     let primary_ids = primary_ids.clone();
                     let primary_row = primary_row.clone();
+                    let ctx = ctx.clone();
                     move |ids| {
-                        primary_row.set_subtitle(&action_summary(&ids));
+                        primary_row.set_subtitle(&action_summary(&ctx, &ids));
                         *primary_ids.borrow_mut() = ids;
                     }
                 },
@@ -545,7 +551,7 @@ fn remote_page(
     primary_row.add_suffix(&edit_primary);
     let sync_row = adw::ActionRow::new();
     sync_row.set_title(&ctx.t_or("remoteConfig.syncActions", "Sync actions"));
-    sync_row.set_subtitle(&action_summary(&sync_ids.borrow()));
+    sync_row.set_subtitle(&action_summary(&ctx, &sync_ids.borrow()));
     let edit_sync = gtk::Button::with_label(&ctx.t_or("common.edit", "Edit"));
     edit_sync.set_valign(gtk::Align::Center);
     {
@@ -570,8 +576,9 @@ fn remote_page(
                 {
                     let sync_ids = sync_ids.clone();
                     let sync_row = sync_row.clone();
+                    let ctx = ctx.clone();
                     move |ids| {
-                        sync_row.set_subtitle(&action_summary(&ids));
+                        sync_row.set_subtitle(&action_summary(&ctx, &ids));
                         *sync_ids.borrow_mut() = ids;
                     }
                 },
@@ -822,14 +829,16 @@ fn operation_page(
         let remote = remote.to_string();
         let refresh_status = move |path: &str| {
             let resolved = crate::path_kind::resolve_job_path(path, &remote);
-            let status = crate::path_inspection::inspect_dest(
+            let status = crate::path_inspection::inspect_dest_ex(
                 &ctx.store.borrow(),
                 &resolved,
                 &remote,
                 op,
                 &ctx.snapshot.borrow().mounts,
+                ctx.client().as_ref(),
+                &ctx.engine_os(),
             );
-            dest_status.set_subtitle(&crate::path_inspection::describe_status(&status));
+            dest_status.set_subtitle(&super::dialogs::path_status_label(&ctx, &status));
         };
         refresh_status(&dst.text());
         dst.connect_changed(move |row| refresh_status(&row.text()));
@@ -1009,10 +1018,8 @@ fn operation_page(
     automation.add(&auto_start);
     automation.add(&cron_enabled);
     automation.add(&cron);
-    let cron_preset_row = adw::ActionRow::new();
-    cron_preset_row.set_title(&ctx.t_or("remoteConfig.cron", "Cron schedule"));
+    let cron_preset_row = dialogs::attach_cron_builder_row(&cron, &ctx);
     cron_preset_row.set_visible(op.is_automatable());
-    cron_preset_row.add_suffix(&dialogs::attach_cron_builder(&cron, &ctx));
     automation.add(&cron_preset_row);
     automation.add(&watch_enabled);
     automation.add(&watch_delay);
@@ -1083,7 +1090,10 @@ fn operation_page(
     }
     let json_toggle = adw::SwitchRow::new();
     json_toggle.set_title(&ctx.t_or("remoteConfig.jsonMode", "JSON mode"));
-    json_toggle.set_subtitle("Edit this profile's rclone flags as a JSON object");
+    json_toggle.set_subtitle(&ctx.t_or(
+        "remoteConfig.jsonPayloadHelp",
+        "Edit this profile's rclone flags as a JSON object",
+    ));
     json_toggle.set_active(ctx.settings.borrow().runtime.show_json_mode);
     let json_view = gtk::TextView::new();
     json_view.set_monospace(true);
@@ -1141,28 +1151,114 @@ fn operation_page(
         });
     }
 
-    let cli = adw::EntryRow::new();
-    cli.set_title(&ctx.t_or("remoteConfig.importCliFlags", "Import rclone CLI flags"));
-    let apply_cli = gtk::Button::with_label(&ctx.t_or("common.apply", "Apply"));
-    {
-        let flag_rows = flag_rows.clone();
-        let cli = cli.clone();
-        apply_cli.connect_clicked(move |_| {
-            let parsed = crate::jobs::parse_cli_flags(&cli.text());
-            for (field, row, _) in flag_rows.borrow().iter() {
-                if let Some(value) = parsed
-                    .get(field)
-                    .or_else(|| parsed.get(&field.replace('-', "_")))
-                {
-                    row.set_text(&value_to_text(value));
-                }
-            }
-        });
-    }
     let cli_row = adw::ActionRow::new();
     cli_row.set_title(&ctx.t_or("remoteConfig.cliImport", "CLI import"));
-    cli_row.add_suffix(&apply_cli);
-    flags_group.add(&cli);
+    cli_row.set_subtitle(&ctx.t_or(
+        "wizards.cliImport.description",
+        "Paste an rclone command, preview mapped flags, then apply them.",
+    ));
+    let preview = gtk::Button::with_label(&ctx.t_or("wizards.cliImport.preview", "Preview"));
+    {
+        let ctx = ctx.clone();
+        let parent = parent.clone();
+        let flag_rows = flag_rows.clone();
+        let flags_group = flags_group.clone();
+        let src = src.clone();
+        let dst = dst.clone();
+        let serve = serve.clone();
+        let serve_types = serve_types.clone();
+        let remote = remote.to_string();
+        let names = switcher.names.clone();
+        let combo = switcher.combo.clone();
+        let selected = selected.clone();
+        preview.connect_clicked(move |_| {
+            let flags_group = flags_group.clone();
+            let remote_type = remote_type_of(&ctx, &remote);
+            dialogs::present_cli_import(
+                &parent,
+                ctx.clone(),
+                dialogs::CliImportOptions {
+                    preferred: Some(op.as_str().to_string()),
+                    remote_type,
+                    is_quick_run: false,
+                    can_create_new: true,
+                    can_patch: true,
+                    existing_profiles: names.borrow().clone(),
+                    initial_cli: String::new(),
+                },
+                {
+                    let ctx = ctx.clone();
+                    let remote = remote.clone();
+                    let names = names.clone();
+                    let combo = combo.clone();
+                    let selected = selected.clone();
+                    let flag_rows = flag_rows.clone();
+                    let src = src.clone();
+                    let dst = dst.clone();
+                    let serve = serve.clone();
+                    let serve_types = serve_types.clone();
+                    move |apply| {
+                        match apply.profile_mode {
+                            crate::cli_import::ProfileMode::New
+                                if !apply.profile_name.is_empty() =>
+                            {
+                                mutate_profiles(&ctx, &remote, Some(op), None, |meta| {
+                                    meta.upsert_profile(
+                                        op,
+                                        ProfileConfig {
+                                            name: apply.profile_name.clone(),
+                                            ..Default::default()
+                                        },
+                                    );
+                                });
+                                if !names.borrow().iter().any(|n| n == &apply.profile_name) {
+                                    names.borrow_mut().push(apply.profile_name.clone());
+                                }
+                                refresh_combo(&combo, &names.borrow());
+                                if let Some(idx) =
+                                    names.borrow().iter().position(|n| n == &apply.profile_name)
+                                {
+                                    combo.set_selected(idx as u32);
+                                }
+                                *selected.borrow_mut() = apply.profile_name.clone();
+                            }
+                            crate::cli_import::ProfileMode::Override
+                                if !apply.profile_name.is_empty() =>
+                            {
+                                if let Some(idx) =
+                                    names.borrow().iter().position(|n| n == &apply.profile_name)
+                                {
+                                    combo.set_selected(idx as u32);
+                                }
+                                *selected.borrow_mut() = apply.profile_name.clone();
+                            }
+                            _ => {}
+                        }
+                        let apply = apply.clone();
+                        let flag_rows = flag_rows.clone();
+                        let flags_group = flags_group.clone();
+                        let src = src.clone();
+                        let dst = dst.clone();
+                        let serve = serve.clone();
+                        let serve_types = serve_types.clone();
+                        glib::idle_add_local_once(move || {
+                            dialogs::apply_cli_to_form(
+                                &apply,
+                                Some(&flags_group),
+                                &flag_rows,
+                                Some(&src),
+                                Some(&dst),
+                                Some(&serve),
+                                serve_types.as_ref(),
+                                None,
+                            );
+                        });
+                    }
+                },
+            );
+        });
+    }
+    cli_row.add_suffix(&preview);
     flags_group.add(&cli_row);
     flags_group.add(&json_toggle);
     let json_holder = adw::ActionRow::new();
@@ -1769,7 +1865,10 @@ fn wire_profile_actions(
                     drop(snap);
                     if usage.blocked() {
                         let alert = adw::AlertDialog::new(
-                            Some("Profile is in use"),
+                            Some(&ctx.t_or(
+                                "modals.remoteConfig.profile.inUseWarning",
+                                "Profile is in use",
+                            )),
                             Some(&usage.summary()),
                         );
                         alert.add_response("ok", &ctx.t_or("common.ok", "OK"));
@@ -1908,9 +2007,12 @@ fn value_to_text(value: &Value) -> String {
     }
 }
 
-fn action_summary(ids: &[String]) -> String {
+fn action_summary(ctx: &AppCtx, ids: &[String]) -> String {
     if ids.is_empty() {
-        "All actions (default order)".into()
+        ctx.t_or(
+            "remoteConfig.defaultActionOrder",
+            "All actions (default order)",
+        )
     } else {
         ids.join(" · ")
     }

@@ -1,6 +1,7 @@
 //! Parse rclone check/cryptcheck results and decide resolve actions.
 
 use serde_json::Value;
+use std::collections::{HashMap, HashSet};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CheckResult {
@@ -8,6 +9,8 @@ pub struct CheckResult {
     pub status: String,
     pub src_fs: String,
     pub dst_fs: String,
+    pub job_id: Option<u64>,
+    pub completed_at: Option<chrono::DateTime<chrono::Utc>>,
 }
 
 impl CheckResult {
@@ -81,6 +84,8 @@ fn parse_one(item: &Value, fallback_src: &str, fallback_dst: &str) -> Option<Che
             .and_then(|x| x.as_str())
             .unwrap_or(fallback_dst)
             .to_string(),
+        job_id: None,
+        completed_at: None,
     })
 }
 
@@ -107,6 +112,8 @@ fn parse_combined_line(line: &str, fallback_src: &str, fallback_dst: &str) -> Op
         status: status.into(),
         src_fs: fallback_src.into(),
         dst_fs: fallback_dst.into(),
+        job_id: None,
+        completed_at: None,
     })
 }
 
@@ -145,6 +152,140 @@ pub fn parent_remote_path(path: &str) -> String {
 
 pub fn leaf_name(path: &str) -> String {
     path.rsplit(['/', ':']).next().unwrap_or(path).to_string()
+}
+
+pub fn check_unique_id(job_id: Option<u64>, name: &str) -> String {
+    format!("{}-{name}", job_id.unwrap_or(0))
+}
+
+pub fn check_item_matches_query(item: &CheckResult, query: &str) -> bool {
+    if query.is_empty() {
+        return true;
+    }
+    let q = query.to_ascii_lowercase();
+    [&item.name, &item.status, &item.src_fs, &item.dst_fs]
+        .iter()
+        .any(|value| value.to_ascii_lowercase().contains(&q))
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CheckDeleteOutcome {
+    Hide,
+    Override(&'static str),
+}
+
+pub fn check_delete_outcome(status: &str, deleted_source: bool) -> CheckDeleteOutcome {
+    if matches!(status, "partial" | "checked" | "differ") {
+        CheckDeleteOutcome::Override(if deleted_source {
+            "missing_src"
+        } else {
+            "missing_dst"
+        })
+    } else {
+        CheckDeleteOutcome::Hide
+    }
+}
+
+pub fn with_job_id(mut item: CheckResult, job_id: u64) -> CheckResult {
+    item.job_id = Some(job_id);
+    item
+}
+
+pub fn with_job(mut item: CheckResult, job: &crate::store::JobInfo) -> CheckResult {
+    item.job_id = Some(job.id);
+    if job.start_time.timestamp() > 0 {
+        item.completed_at = Some(job.start_time);
+    }
+    item
+}
+
+pub fn relative_time_parts(
+    then: chrono::DateTime<chrono::Utc>,
+    now: chrono::DateTime<chrono::Utc>,
+) -> (&'static str, i64) {
+    let secs = now.signed_duration_since(then).num_seconds().max(0);
+    if secs < 60 {
+        ("shared.transferActivity.time.justNow", 0)
+    } else if secs < 3600 {
+        ("shared.transferActivity.time.minutesAgo", secs / 60)
+    } else if secs < 86_400 {
+        ("shared.transferActivity.time.hoursAgo", secs / 3600)
+    } else {
+        ("shared.transferActivity.time.daysAgo", secs / 86_400)
+    }
+}
+
+pub fn check_status_icon(status: &str) -> &'static str {
+    match status {
+        "checked" | "match" => "emblem-ok-symbolic",
+        "failed" | "error" => "dialog-error-symbolic",
+        _ => "dialog-warning-symbolic",
+    }
+}
+
+pub fn resolve_icon(status: &str) -> &'static str {
+    if status == "missing_src" {
+        "go-previous-symbolic"
+    } else {
+        "go-next-symbolic"
+    }
+}
+
+pub fn resolve_is_preparing(progress: f64, bytes: i64) -> bool {
+    progress <= 0.0 && bytes <= 0
+}
+
+pub fn format_resolve_progress(bytes: i64, size: i64, speed: f64, eta_secs: i64) -> String {
+    let mut parts = vec![format!(
+        "{} / {}",
+        crate::rclone::format_bytes(bytes),
+        crate::rclone::format_bytes(size)
+    )];
+    if speed > 0.0 {
+        parts.push(format!(
+            "{}/s",
+            crate::rclone::format_bytes(speed.round() as i64)
+        ));
+    }
+    if eta_secs > 0 {
+        parts.push(format!(
+            "ETA {}",
+            crate::rclone::format_eta_seconds(eta_secs)
+        ));
+    }
+    parts.join(" · ")
+}
+
+pub fn check_status_key(status: &str) -> &'static str {
+    match status {
+        "missing_dst" => "shared.transferActivity.status.missingDst",
+        "missing_src" => "shared.transferActivity.status.missingSrc",
+        "differ" | "partial" => "shared.transferActivity.status.differ",
+        "checked" | "match" => "shared.transferActivity.status.checked",
+        "failed" | "error" => "shared.transferActivity.status.error",
+        _ => "shared.transferActivity.status.error",
+    }
+}
+
+pub fn visible_check_items(
+    items: impl IntoIterator<Item = CheckResult>,
+    hidden: &HashSet<String>,
+    overrides: &HashMap<String, String>,
+    query: &str,
+) -> Vec<CheckResult> {
+    items
+        .into_iter()
+        .filter_map(|mut item| {
+            let id = check_unique_id(item.job_id, &item.name);
+            if hidden.contains(&id) {
+                return None;
+            }
+            if let Some(status) = overrides.get(&id) {
+                item.status = status.clone();
+            }
+            check_item_matches_query(&item, query).then_some(item)
+        })
+        .collect()
 }
 
 #[cfg(test)]
@@ -212,6 +353,8 @@ mod tests {
             status: "missing_dst".into(),
             src_fs: "drive:".into(),
             dst_fs: "/tmp/out".into(),
+            job_id: None,
+            completed_at: None,
         };
         assert_eq!(
             crate::transfers::join_fs_name(&item.src_fs, &item.name),
@@ -222,5 +365,74 @@ mod tests {
             "/tmp/out/Photos/a.jpg"
         );
         assert_eq!(item.resolve_kind(), Some("copy_src_to_dst"));
+    }
+
+    #[test]
+    fn filters_and_overrides_check_results() {
+        let items = vec![
+            CheckResult {
+                name: "keep.txt".into(),
+                status: "differ".into(),
+                src_fs: "src:".into(),
+                dst_fs: "dst:".into(),
+                job_id: Some(9),
+                completed_at: None,
+            },
+            CheckResult {
+                name: "gone.txt".into(),
+                status: "missing_dst".into(),
+                src_fs: "src:".into(),
+                dst_fs: "dst:".into(),
+                job_id: Some(9),
+                completed_at: None,
+            },
+            CheckResult {
+                name: "other.bin".into(),
+                status: "checked".into(),
+                src_fs: "src:".into(),
+                dst_fs: "dst:".into(),
+                job_id: Some(9),
+                completed_at: None,
+            },
+        ];
+        let mut hidden = HashSet::new();
+        hidden.insert(check_unique_id(Some(9), "gone.txt"));
+        let mut overrides = HashMap::new();
+        overrides.insert(check_unique_id(Some(9), "keep.txt"), "missing_src".into());
+        let visible = visible_check_items(items, &hidden, &overrides, "keep");
+        assert_eq!(visible.len(), 1);
+        assert_eq!(visible[0].status, "missing_src");
+        assert!(check_item_matches_query(&visible[0], "missing"));
+        assert_eq!(
+            check_delete_outcome("differ", true),
+            CheckDeleteOutcome::Override("missing_src")
+        );
+        assert_eq!(
+            check_delete_outcome("missing_dst", false),
+            CheckDeleteOutcome::Hide
+        );
+        assert_eq!(with_job_id(visible[0].clone(), 12).job_id, Some(12));
+        let now = chrono::DateTime::parse_from_rfc3339("2026-08-25T12:00:00Z")
+            .unwrap()
+            .with_timezone(&chrono::Utc);
+        let hour_ago = now - chrono::Duration::minutes(90);
+        assert_eq!(
+            relative_time_parts(hour_ago, now),
+            ("shared.transferActivity.time.hoursAgo", 1)
+        );
+        assert_eq!(
+            check_status_key("missing_dst"),
+            "shared.transferActivity.status.missingDst"
+        );
+        assert_eq!(check_status_icon("checked"), "emblem-ok-symbolic");
+        assert_eq!(check_status_icon("missing_dst"), "dialog-warning-symbolic");
+        assert_eq!(resolve_icon("missing_src"), "go-previous-symbolic");
+        assert_eq!(resolve_icon("partial"), "go-next-symbolic");
+        assert!(resolve_is_preparing(0.0, 0));
+        assert!(!resolve_is_preparing(0.4, 0));
+        assert_eq!(
+            format_resolve_progress(512, 1024, 0.0, 12),
+            "512 B / 1.0 KiB · ETA 12s"
+        );
     }
 }

@@ -172,6 +172,44 @@ pub fn is_flatpak() -> bool {
     std::env::var_os("FLATPAK_ID").is_some() || Path::new("/.flatpak-info").is_file()
 }
 
+/// Angular `about-modal` `updateInstructions` for managed Linux builds.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ManagedBuild {
+    Flatpak,
+    Portable,
+    Default,
+}
+
+pub fn managed_build() -> ManagedBuild {
+    if is_flatpak() {
+        ManagedBuild::Flatpak
+    } else if std::env::var_os("APPIMAGE").is_some() {
+        ManagedBuild::Portable
+    } else {
+        ManagedBuild::Default
+    }
+}
+
+pub fn update_command(build: ManagedBuild) -> Option<&'static str> {
+    match build {
+        ManagedBuild::Flatpak => Some("flatpak update io.github.zarestia_dev.rclone-manager"),
+        ManagedBuild::Portable => None,
+        ManagedBuild::Default => None,
+    }
+}
+
+pub fn update_page_url(build: ManagedBuild) -> Option<&'static str> {
+    match build {
+        ManagedBuild::Flatpak => {
+            Some("https://flathub.org/apps/io.github.zarestia_dev.rclone-manager")
+        }
+        ManagedBuild::Portable => {
+            Some("https://hakanismail.info/zarestia/rclone-manager/downloads")
+        }
+        ManagedBuild::Default => None,
+    }
+}
+
 struct LogindInhibit {
     _conn: dbus::blocking::Connection,
     _fd: dbus::arg::OwnedFd,
@@ -783,24 +821,38 @@ pub fn write_dialog_result(
 
 /// `--share-intake FILE [FILE…]` queues local files for the Files upload banner.
 pub fn parse_share_intake_args(args: &[String]) -> Option<Vec<PathBuf>> {
-    if !args.iter().any(|arg| arg == "--share-intake") {
-        return None;
-    }
     let mut files = Vec::new();
+    let mut found = false;
+    let mut taking = false;
     let mut i = 0;
     while i < args.len() {
         match args[i].as_str() {
-            "--send-to-remote" | "--send-to-path" => {
-                i += 1;
+            "--share-intake" => {
+                found = true;
+                taking = true;
             }
-            "--share-intake" => {}
-            other if other.starts_with('-') => {}
+            other if other.starts_with('-') => {
+                taking = false;
+                if matches!(
+                    other,
+                    "--send-to-remote"
+                        | "--send-to-path"
+                        | "--browse"
+                        | "--browse-path"
+                        | "--dialog"
+                        | "--dialog-data"
+                        | "--dialog-result"
+                ) {
+                    i += 1;
+                }
+            }
             _ if i == 0 => {}
-            other => files.push(PathBuf::from(other)),
+            other if taking => files.push(PathBuf::from(other)),
+            _ => {}
         }
         i += 1;
     }
-    Some(files)
+    found.then_some(files)
 }
 
 pub fn enqueue_share_intake(files: &[PathBuf]) {
@@ -984,6 +1036,19 @@ mod tests {
     }
 
     #[test]
+    fn managed_build_update_instructions() {
+        assert_eq!(
+            update_command(ManagedBuild::Flatpak),
+            Some("flatpak update io.github.zarestia_dev.rclone-manager")
+        );
+        assert!(update_page_url(ManagedBuild::Flatpak)
+            .unwrap()
+            .contains("flathub"));
+        assert!(update_command(ManagedBuild::Default).is_none());
+        assert!(update_page_url(ManagedBuild::Portable).is_some());
+    }
+
+    #[test]
     fn parses_share_intake_cli() {
         let args = [
             "rclone-manager-gtk".into(),
@@ -995,6 +1060,19 @@ mod tests {
         assert_eq!(parsed.len(), 2);
         assert_eq!(parsed[0], PathBuf::from("/tmp/a.jpg"));
         assert!(parse_share_intake_args(&["app".into()]).is_none());
+        let mixed = [
+            "app".into(),
+            "--browse".into(),
+            "testdrive:".into(),
+            "--share-intake".into(),
+            "/tmp/a.jpg".into(),
+            "/tmp/b.png".into(),
+        ];
+        let parsed = parse_share_intake_args(&mixed).unwrap();
+        assert_eq!(
+            parsed,
+            vec![PathBuf::from("/tmp/a.jpg"), PathBuf::from("/tmp/b.png")]
+        );
     }
 
     #[test]

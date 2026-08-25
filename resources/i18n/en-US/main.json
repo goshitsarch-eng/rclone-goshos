@@ -1942,7 +1942,8 @@
       "pid": "rclone PID",
       "groups": "Job groups",
       "memory": "Memory",
-      "activity": "Activity"
+      "activity": "Activity",
+      "activitySummary": "{{jobs}} running jobs · {{mounts}} mounts · {{serves}} serves"
     },
     "quickRuns": {
       "empty": "No quick runs",
@@ -2056,6 +2057,7 @@
     },
     "about": {
       "title": "About",
+      "appName": "Rclone Manager",
       "aboutApp": "About App",
       "details": "Details",
       "aboutRclone": "About Rclone",
@@ -2106,6 +2108,7 @@
       "killSuccess": "Rclone process killed successfully",
       "killFailed": "Failed to kill rclone process",
       "noProcessToKill": "No rclone process to kill",
+      "killRclone": "Quit rclone engine",
       "updateSettingFailed": "Failed to update setting",
       "channelStable": "Stable",
       "channelBeta": "Beta",
@@ -2158,7 +2161,9 @@
       "entries": "Active Entries",
       "clear": "Clear",
       "cacheCleared": "Cache cleared successfully",
-      "cacheClearFailed": "Failed to clear cache"
+      "cacheClearFailed": "Failed to clear cache",
+      "appUpdateAvailable": "App update {{version}} available",
+      "rcloneUpdateAvailableMsg": "rclone update {{version}} available"
     },
     "logs": {
       "fetchError": "Failed to fetch application logs.",
@@ -2832,6 +2837,15 @@
       "nothingToUndo": "Nothing to undo",
       "nothingToRedo": "Nothing to redo",
       "cannotUndo": "This action cannot be undone",
+      "selectValid": "Select a valid item to continue",
+      "selectNewFolderItems": "Select items to move into a new folder",
+      "selectToDownload": "Select a file to download",
+      "selectToShare": "Select a file to share",
+      "noPublicLink": "Remote did not return a public link",
+      "rmdirsDone": "Removed empty directories",
+      "cleanupStarted": "Cleanup started for this remote",
+      "selectArchive": "Select an archive to extract",
+      "shareOpened": "Opened system share for the file",
       "redoComplete": "Redo successful",
       "copyUrlStarted": "Downloading from URL...",
       "getPublicLinkStarted": "Generating public link...",
@@ -2858,6 +2872,8 @@
       "showInTray": "Show in Tray Menu",
       "viewLogs": "View Logs",
       "cloneRemote": "Clone Remote",
+      "cloneFailed": "Clone failed",
+      "cloneNoSettings": "No saved settings were found for this remote.",
       "exportConfig": "Export Configuration",
       "resetSettings": "Reset Settings",
       "deleteRemote": "Delete Remote"
@@ -2967,14 +2983,24 @@
       "lastError": "Last Error:",
       "runningJobs": "Running Jobs",
       "starting": "Starting...",
-      "noRunning": "No active jobs are currently running."
+      "noRunning": "No active jobs are currently running.",
+      "originDashboard": "Dashboard",
+      "originQuickRun": "Quick Run",
+      "originAutomation": "Automation",
+      "originFiles": "Files",
+      "originManual": "Manual"
     },
     "automations": {
       "activeCount": "{{active}} active / {{total}} total",
       "noScheduled": "No automations",
       "noConfigured": "No automations configured. Configure operations with cron schedules or real-time file monitoring to create automations.",
       "nextRun": "Next Run:",
-      "title": "Automations"
+      "title": "Automations",
+      "watchEvery": "Watch every {{seconds}}s",
+      "changedOnly": "changed only",
+      "paused": "paused",
+      "pauseResume": "Pause or resume this automation",
+      "runNow": "Run now"
     },
     "serves": {
       "activeCount": "{{count}} active serve{{s}}",

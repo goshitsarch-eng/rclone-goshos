@@ -277,7 +277,7 @@
       "enabled": "Activé",
       "disabled": "Désactivé",
       "running": "En cours d'exécution",
-      "failed": "Échec",
+      "cloneFailed": "Échec",
       "stopping": "Arrêt en cours"
     },
     "toggle": {
@@ -1936,7 +1936,8 @@
       "pid": "rclone PID",
       "groups": "Job groups",
       "memory": "Memory",
-      "activity": "Activity"
+      "activity": "Activity",
+      "activitySummary": "{{jobs}} running jobs · {{mounts}} mounts · {{serves}} serves"
     },
     "quickRuns": {
       "empty": "No quick runs",
@@ -2050,6 +2051,7 @@
     },
     "about": {
       "title": "À propos",
+      "appName": "Rclone Manager",
       "aboutApp": "À propos de l'application",
       "details": "Détails",
       "aboutRclone": "À propos de rclone",
@@ -2100,6 +2102,7 @@
       "killSuccess": "Processus de rclone  tué avec succès",
       "killFailed": "Échec de la suppression du processus de rclone",
       "noProcessToKill": "Aucun processus de rclone à tuer",
+      "killRclone": "Arrêter le moteur rclone",
       "updateSettingFailed": "Échec de la mise à jour du paramètre",
       "channelStable": "Stable",
       "channelBeta": "Bêta",
@@ -2152,7 +2155,9 @@
       "entries": "Entrées actives",
       "clear": "Effacer",
       "cacheCleared": "Cache effacé avec succès",
-      "cacheClearFailed": "Échec du vidage du cache"
+      "cacheClearFailed": "Échec du vidage du cache",
+      "appUpdateAvailable": "App update {{version}} available",
+      "rcloneUpdateAvailableMsg": "rclone update {{version}} available"
     },
     "logs": {
       "fetchError": "Impossible de récupérer les logs de l'application.",
@@ -2821,6 +2826,15 @@
       "nothingToUndo": "Rien à annuler",
       "nothingToRedo": "Rien à rétablir",
       "cannotUndo": "Cette action ne peut pas être annulée",
+      "selectValid": "Sélectionnez un élément valide pour continuer",
+      "selectNewFolderItems": "Sélectionnez les éléments à déplacer dans un nouveau dossier",
+      "selectToDownload": "Sélectionnez un fichier à télécharger",
+      "selectToShare": "Sélectionnez un fichier à partager",
+      "noPublicLink": "Le distant n’a pas renvoyé de lien public",
+      "rmdirsDone": "Dossiers vides supprimés",
+      "cleanupStarted": "Nettoyage lancé pour ce distant",
+      "selectArchive": "Sélectionnez une archive à extraire",
+      "shareOpened": "Partage système ouvert pour le fichier",
       "redoComplete": "Rétablissement réussi",
       "copyUrlStarted": "Téléchargement depuis l'URL...",
       "getPublicLinkStarted": "Génération du lien public...",
@@ -2847,6 +2861,8 @@
       "showInTray": "Afficher dans le menu déroulant",
       "viewLogs": "Afficher les logs",
       "cloneRemote": "Cloner un dépôt distant",
+      "cloneFailed": "Échec du clonage",
+      "cloneNoSettings": "Aucun paramètre enregistré n’a été trouvé pour ce distant.",
       "exportConfig": "Exporter la configuration",
       "resetSettings": "Réinitialiser les paramètres",
       "deleteRemote": "Supprimer le dépôt distant"
@@ -2956,14 +2972,24 @@
       "lastError": "Dernière erreur :",
       "runningJobs": "Jobs en cours",
       "starting": "Démarrage...",
-      "noRunning": "Aucun travail actif n'est en cours d'exécution."
+      "noRunning": "Aucun travail actif n'est en cours d'exécution.",
+      "originDashboard": "Dashboard",
+      "originQuickRun": "Quick Run",
+      "originAutomation": "Automation",
+      "originFiles": "Files",
+      "originManual": "Manual"
     },
     "automations": {
       "activeCount": "{{active}} actif/ {{total}} total",
       "noScheduled": "Aucune automatisation",
       "noConfigured": "Aucune automatisation configurée. Configurez des opérations avec des calendriers de cron ou une surveillance de fichiers en temps réel pour créer des automatisations.",
       "nextRun": "Prochaine exécution :",
-      "title": "Automations"
+      "title": "Automations",
+      "watchEvery": "Watch every {{seconds}}s",
+      "changedOnly": "changed only",
+      "paused": "paused",
+      "pauseResume": "Pause or resume this automation",
+      "runNow": "Run now"
     },
     "serves": {
       "activeCount": "{{count}} service{{s}} de partage actif",

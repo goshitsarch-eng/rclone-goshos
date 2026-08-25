@@ -1936,7 +1936,8 @@
       "pid": "rclone PID",
       "groups": "Job groups",
       "memory": "Memory",
-      "activity": "Activity"
+      "activity": "Activity",
+      "activitySummary": "{{jobs}} running jobs · {{mounts}} mounts · {{serves}} serves"
     },
     "quickRuns": {
       "empty": "No quick runs",
@@ -2050,6 +2051,7 @@
     },
     "about": {
       "title": "关于",
+      "appName": "Rclone Manager",
       "aboutApp": "关于应用",
       "details": "详情",
       "aboutRclone": "关于 Rclone",
@@ -2100,6 +2102,7 @@
       "killSuccess": "Rclone 进程已结束",
       "killFailed": "结束 Rclone 进程失败",
       "noProcessToKill": "无 Rclone 进程可结束",
+      "killRclone": "退出 rclone 引擎",
       "updateSettingFailed": "更新设置失败",
       "channelStable": "稳定版",
       "channelBeta": "测试版",
@@ -2152,7 +2155,9 @@
       "entries": "活动条目",
       "clear": "清空",
       "cacheCleared": "缓存已清空",
-      "cacheClearFailed": "清空缓存失败"
+      "cacheClearFailed": "清空缓存失败",
+      "appUpdateAvailable": "App update {{version}} available",
+      "rcloneUpdateAvailableMsg": "rclone update {{version}} available"
     },
     "logs": {
       "fetchError": "获取应用日志失败。",
@@ -2821,6 +2826,15 @@
       "nothingToUndo": "没有可撤销的操作",
       "nothingToRedo": "没有可重做的操作",
       "cannotUndo": "此操作无法撤销",
+      "selectValid": "请选择有效项目以继续",
+      "selectNewFolderItems": "选择要移入新文件夹的项目",
+      "selectToDownload": "选择要下载的文件",
+      "selectToShare": "选择要共享的文件",
+      "noPublicLink": "远程未返回公开链接",
+      "rmdirsDone": "已删除空目录",
+      "cleanupStarted": "已开始清理此远程",
+      "selectArchive": "选择要解压的归档",
+      "shareOpened": "已打开该文件的系统共享",
       "redoComplete": "重做成功",
       "copyUrlStarted": "正在从 URL 下载...",
       "getPublicLinkStarted": "正在生成公共链接...",
@@ -2847,6 +2861,8 @@
       "showInTray": "在托盘菜单显示",
       "viewLogs": "查看日志",
       "cloneRemote": "克隆远程存储",
+      "cloneFailed": "克隆失败",
+      "cloneNoSettings": "未找到此远程的已保存设置。",
       "exportConfig": "导出配置",
       "resetSettings": "重置设置",
       "deleteRemote": "删除远程存储"
@@ -2956,14 +2972,24 @@
       "lastError": "最后错误：",
       "runningJobs": "运行中的作业",
       "starting": "正在启动...",
-      "noRunning": "当前没有正在运行的活动任务。"
+      "noRunning": "当前没有正在运行的活动任务。",
+      "originDashboard": "Dashboard",
+      "originQuickRun": "Quick Run",
+      "originAutomation": "Automation",
+      "originFiles": "Files",
+      "originManual": "Manual"
     },
     "automations": {
       "activeCount": "活动 {{active}} / 总计 {{total}}",
       "noScheduled": "暂无自动化",
       "noConfigured": "未配置任何自动化。可通过配置 Cron 表达式或实时文件监控来创建自动化。",
       "nextRun": "下次运行：",
-      "title": "Automations"
+      "title": "Automations",
+      "watchEvery": "Watch every {{seconds}}s",
+      "changedOnly": "changed only",
+      "paused": "paused",
+      "pauseResume": "Pause or resume this automation",
+      "runNow": "Run now"
     },
     "serves": {
       "activeCount": "{{count}} 个活动服务",

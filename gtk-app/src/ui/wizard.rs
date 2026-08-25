@@ -346,6 +346,82 @@ fn present_ex(
         "wizards.cliImport.placeholder",
         "Import CLI flags (--transfers 8 --vfs-cache-mode full)",
     ));
+    let cli_preview = gtk::Button::with_label(&ctx.t_or("wizards.cliImport.preview", "Preview"));
+    {
+        let ctx = ctx.clone();
+        let dialog = dialog.clone();
+        let cli = cli.clone();
+        let src = src.clone();
+        let dst = dst.clone();
+        let mount = mount.clone();
+        let serve = serve.clone();
+        let mount_type = mount_type.clone();
+        let serve_types = serve_types.clone();
+        let mount_types = mount_types.clone();
+        let type_row = type_row.clone();
+        let providers = providers.clone();
+        cli_preview.connect_clicked(move |_| {
+            let remote_type = provider_type(&providers, type_row.selected());
+            super::dialogs::present_cli_import(
+                &dialog,
+                ctx.clone(),
+                super::dialogs::CliImportOptions {
+                    preferred: None,
+                    remote_type,
+                    is_quick_run: false,
+                    can_create_new: false,
+                    can_patch: true,
+                    existing_profiles: Vec::new(),
+                    initial_cli: cli.text().to_string(),
+                },
+                {
+                    let cli = cli.clone();
+                    let src = src.clone();
+                    let dst = dst.clone();
+                    let mount = mount.clone();
+                    let serve = serve.clone();
+                    let mount_type = mount_type.clone();
+                    let serve_types = serve_types.clone();
+                    let mount_types = mount_types.clone();
+                    move |apply| {
+                        match apply.verb.as_deref() {
+                            Some("mount") => {
+                                if let Some(path) = &apply.source_path {
+                                    src.set_text(path);
+                                }
+                                if let Some(path) = &apply.dest_path {
+                                    mount.set_text(path);
+                                }
+                            }
+                            _ => {
+                                if let Some(path) = &apply.source_path {
+                                    src.set_text(path);
+                                }
+                                if let Some(path) = &apply.dest_path {
+                                    dst.set_text(path);
+                                }
+                            }
+                        }
+                        if let Some(subtype) = &apply.serve_subtype {
+                            if let Some(idx) = serve_types.iter().position(|s| s == subtype) {
+                                serve.set_selected(idx as u32);
+                            }
+                        }
+                        if let Some(subtype) = &apply.mount_subtype {
+                            if let Some(idx) = mount_types.iter().position(|s| s == subtype) {
+                                mount_type.set_selected(idx as u32);
+                            }
+                        }
+                        let reconstructed = crate::cli_import::reconstruct_cli(&apply);
+                        if !reconstructed.is_empty() {
+                            cli.set_text(&reconstructed);
+                        }
+                    }
+                },
+            );
+        });
+    }
+    cli.add_suffix(&cli_preview);
     let obscure_in = adw::EntryRow::new();
     obscure_in.set_title(&ctx.t_or("wizards.obscure.clearPlaceholder", "Obscure a secret"));
     let obscure_btn = gtk::Button::with_label(&ctx.t_or("wizards.obscure.action", "Obscure"));
@@ -906,9 +982,7 @@ fn present_ex(
     pgroup.add(&serve);
     pgroup.add(&mount_type);
     pgroup.add(&cron);
-    let cron_row = adw::ActionRow::new();
-    cron_row.set_title(&ctx.t_or("remoteConfig.cron", "Cron schedule"));
-    cron_row.add_suffix(&super::dialogs::attach_cron_builder(&cron, &ctx));
+    let cron_row = super::dialogs::attach_cron_builder_row(&cron, &ctx);
     pgroup.add(&cron_row);
     pgroup.add(&tray);
     pgroup.add(&autostart);
@@ -1120,6 +1194,7 @@ fn present_ex(
                         nav.set_visible_child_name("profiles");
                     } else {
                         apply_question_widgets(
+                            &ctx,
                             &next,
                             &question_title,
                             &question_help,
@@ -1242,11 +1317,17 @@ fn present_ex(
                     }
                 }
             }
-            let mount_status = crate::path_inspection::inspect_local_path(&mount.text());
-            if let Err(e) = crate::path_inspection::ensure_path(
+            let engine_os = ctx.engine_os();
+            let mount_status = crate::path_inspection::inspect_local_ex(
+                &mount.text(),
+                ctx.client().as_ref(),
+                &engine_os,
+            );
+            if let Err(e) = crate::path_inspection::ensure_path_ex(
                 &mount_status,
                 &mount.text(),
                 ctx.client().as_ref(),
+                &engine_os,
             ) {
                 let err = adw::AlertDialog::new(
                     Some(&ctx.t_or(
@@ -1323,8 +1404,10 @@ fn present_ex(
                     }
                     Err(e) => {
                         let err = adw::AlertDialog::new(
-                            Some(&ctx.t_or("common.error", "Could not save remote")),
-                            Some(&e.to_string()),
+                            Some(&ctx.t_or("common.error", "Error")),
+                            Some(
+                                &ctx.tf("settings.remoteSaveFailed", &[("error", &e.to_string())]),
+                            ),
                         );
                         err.add_response("ok", &ctx.t_or("common.ok", "OK"));
                         err.present(Some(&dialog));
@@ -1611,18 +1694,24 @@ fn option_row(
                     &row,
                     crate::picker::FilePickerConfig::folders(),
                 );
-                apply_path_usage(&row);
-                row.connect_changed(|row| apply_path_usage(row));
+                let engine_os = ctx.engine_os();
+                apply_path_usage(&row, &engine_os, Some(&option.help));
+                {
+                    let engine_os = engine_os.clone();
+                    let help = option.help.clone();
+                    row.connect_changed(move |row| {
+                        apply_path_usage(row, &engine_os, Some(&help));
+                    });
+                }
             }
             {
                 let option = option.clone();
+                let engine_os = ctx.engine_os();
                 row.connect_changed(move |row| {
                     match crate::validators::validate_option(&option, &row.text()) {
                         Ok(()) => {
                             row.remove_css_class("error");
-                            if !option.help.is_empty() {
-                                row.set_tooltip_text(Some(&option.help));
-                            }
+                            apply_path_usage(row, &engine_os, Some(&option.help));
                         }
                         Err(msg) => {
                             row.add_css_class("error");
@@ -1636,10 +1725,31 @@ fn option_row(
     }
 }
 
-fn apply_path_usage(row: &adw::EntryRow) {
+fn apply_path_usage(row: &adw::EntryRow, engine_os: &str, help: Option<&str>) {
     let text = row.text().to_string();
-    if let Some(usage) = crate::media::local_path_usage(&text) {
-        row.set_tooltip_text(Some(&format!("{usage} — {}", text)));
+    let mut parts = Vec::new();
+    if let Some(help) = help.filter(|s| !s.is_empty()) {
+        parts.push(help.to_string());
+    }
+    if engine_os.eq_ignore_ascii_case(std::env::consts::OS) {
+        if let Some(usage) = crate::media::local_path_usage(&text) {
+            parts.push(usage);
+        }
+        if let Some((free, total)) = crate::fileops::local_path_disk_usage(&text) {
+            parts.push(format!(
+                "{} / {}",
+                crate::rclone::format_bytes(free as i64),
+                crate::rclone::format_bytes(total as i64)
+            ));
+        }
+    }
+    if parts.is_empty() {
+        return;
+    }
+    if text.is_empty() {
+        row.set_tooltip_text(Some(&parts.join(" · ")));
+    } else {
+        row.set_tooltip_text(Some(&format!("{} — {text}", parts.join(" · "))));
     }
 }
 
@@ -1843,6 +1953,7 @@ fn current_answer(
 }
 
 fn apply_question_widgets(
+    ctx: &AppCtx,
     flow: &InteractiveFlowState,
     title: &gtk::Label,
     help: &gtk::Label,
@@ -1883,8 +1994,16 @@ fn apply_question_widgets(
             }
         }
     } else {
-        title.set_text("Continue authorization");
-        help.set_text(step.error.as_deref().unwrap_or("Complete the next step."));
+        title.set_text(&ctx.t_or(
+            "wizards.remoteConfig.authenticationMethod",
+            "Continue authorization",
+        ));
+        help.set_text(&step.error.clone().unwrap_or_else(|| {
+            ctx.t_or(
+                "modals.oauth.openLink",
+                "Complete the next step in the browser.",
+            )
+        }));
     }
 }
 

@@ -1936,7 +1936,8 @@
       "pid": "rclone PID",
       "groups": "Job groups",
       "memory": "Memory",
-      "activity": "Activity"
+      "activity": "Activity",
+      "activitySummary": "{{jobs}} running jobs · {{mounts}} mounts · {{serves}} serves"
     },
     "quickRuns": {
       "empty": "No quick runs",
@@ -2050,6 +2051,7 @@
     },
     "about": {
       "title": "Про програму",
+      "appName": "Rclone Manager",
       "aboutApp": "Про застосунок",
       "details": "Деталі",
       "aboutRclone": "Про Rclone",
@@ -2100,6 +2102,7 @@
       "killSuccess": "Процес Rclone успішно завершено",
       "killFailed": "Не вдалося завершити процес rclone",
       "noProcessToKill": "Немає процесу rclone для завершення",
+      "killRclone": "Зупинити рушій rclone",
       "updateSettingFailed": "Не вдалося оновити налаштування",
       "channelStable": "Стабільний",
       "channelBeta": "Бета",
@@ -2152,7 +2155,9 @@
       "entries": "Активні записи",
       "clear": "Очистити",
       "cacheCleared": "Кеш успішно очищено",
-      "cacheClearFailed": "Не вдалося очистити кеш"
+      "cacheClearFailed": "Не вдалося очистити кеш",
+      "appUpdateAvailable": "App update {{version}} available",
+      "rcloneUpdateAvailableMsg": "rclone update {{version}} available"
     },
     "logs": {
       "fetchError": "Не вдалося отримати журнали застосунку.",
@@ -2821,6 +2826,15 @@
       "nothingToUndo": "Немає що скасувати",
       "nothingToRedo": "Немає що повторити",
       "cannotUndo": "Цю дію не можна скасувати",
+      "selectValid": "Виберіть дійсний елемент, щоб продовжити",
+      "selectNewFolderItems": "Виберіть елементи для переміщення в нову папку",
+      "selectToDownload": "Виберіть файл для завантаження",
+      "selectToShare": "Виберіть файл для спільного доступу",
+      "noPublicLink": "Віддалене сховище не повернуло публічне посилання",
+      "rmdirsDone": "Порожні каталоги видалено",
+      "cleanupStarted": "Очищення цього віддаленого сховища розпочато",
+      "selectArchive": "Виберіть архів для розпакування",
+      "shareOpened": "Відкрито системний спільний доступ для файлу",
       "redoComplete": "Дію успішно повторено",
       "copyUrlStarted": "Завантаження з URL...",
       "getPublicLinkStarted": "Створення публічного посилання...",
@@ -2847,6 +2861,8 @@
       "showInTray": "Показувати в меню трея",
       "viewLogs": "Переглянути журнали",
       "cloneRemote": "Клонувати сховище",
+      "cloneFailed": "Клонування не вдалося",
+      "cloneNoSettings": "Для цього віддаленого сховища не знайдено збережених налаштувань.",
       "exportConfig": "Експортувати конфігурацію",
       "resetSettings": "Скинути налаштування",
       "deleteRemote": "Видалити сховище"
@@ -2956,14 +2972,24 @@
       "lastError": "Остання помилка:",
       "runningJobs": "Активні завдання",
       "starting": "Запуск...",
-      "noRunning": "Зараз немає активних завдань."
+      "noRunning": "Зараз немає активних завдань.",
+      "originDashboard": "Dashboard",
+      "originQuickRun": "Quick Run",
+      "originAutomation": "Automation",
+      "originFiles": "Files",
+      "originManual": "Manual"
     },
     "automations": {
       "activeCount": "{{active}} активних / {{total}} усього",
       "noScheduled": "Немає автоматизацій",
       "noConfigured": "Автоматизації не налаштовано. Налаштуйте операції з cron-розкладами або моніторингом файлів у реальному часі, щоб створити автоматизації.",
       "nextRun": "Наступний запуск:",
-      "title": "Automations"
+      "title": "Automations",
+      "watchEvery": "Watch every {{seconds}}s",
+      "changedOnly": "changed only",
+      "paused": "paused",
+      "pauseResume": "Pause or resume this automation",
+      "runNow": "Run now"
     },
     "serves": {
       "activeCount": "Активних роздач: {{count}}{{s}}",

@@ -1936,7 +1936,8 @@
       "pid": "rclone PID",
       "groups": "Job groups",
       "memory": "Memory",
-      "activity": "Activity"
+      "activity": "Activity",
+      "activitySummary": "{{jobs}} running jobs · {{mounts}} mounts · {{serves}} serves"
     },
     "quickRuns": {
       "empty": "No quick runs",
@@ -2050,6 +2051,7 @@
     },
     "about": {
       "title": "Acerca de",
+      "appName": "Rclone Manager",
       "aboutApp": "Acerca de la aplicación",
       "details": "Detalles",
       "aboutRclone": "Acerca de Rclone",
@@ -2100,6 +2102,7 @@
       "killSuccess": "Proceso de Rclone terminado correctamente",
       "killFailed": "Error al terminar el proceso de rclone",
       "noProcessToKill": "No hay ningún proceso de rclone que terminar",
+      "killRclone": "Cerrar el motor rclone",
       "updateSettingFailed": "Error al actualizar la configuración",
       "channelStable": "Estable",
       "channelBeta": "Beta",
@@ -2152,7 +2155,9 @@
       "entries": "Entradas activas",
       "clear": "Borrar",
       "cacheCleared": "Caché borrada correctamente",
-      "cacheClearFailed": "Error al borrar la caché"
+      "cacheClearFailed": "Error al borrar la caché",
+      "appUpdateAvailable": "App update {{version}} available",
+      "rcloneUpdateAvailableMsg": "rclone update {{version}} available"
     },
     "logs": {
       "fetchError": "Error al obtener los registros de la aplicación.",
@@ -2821,6 +2826,15 @@
       "nothingToUndo": "Nada que deshacer",
       "nothingToRedo": "Nada que rehacer",
       "cannotUndo": "Esta acción no se puede deshacer",
+      "selectValid": "Seleccione un elemento válido para continuar",
+      "selectNewFolderItems": "Seleccione elementos para mover a una carpeta nueva",
+      "selectToDownload": "Seleccione un archivo para descargar",
+      "selectToShare": "Seleccione un archivo para compartir",
+      "noPublicLink": "El remoto no devolvió un enlace público",
+      "rmdirsDone": "Directorios vacíos eliminados",
+      "cleanupStarted": "Limpieza iniciada para este remoto",
+      "selectArchive": "Seleccione un archivo para extraer",
+      "shareOpened": "Se abrió el recurso compartido del sistema para el archivo",
       "redoComplete": "Rehacer exitoso",
       "copyUrlStarted": "Descargando desde URL...",
       "getPublicLinkStarted": "Generando enlace público...",
@@ -2847,6 +2861,8 @@
       "showInTray": "Mostrar en el menú de la bandeja",
       "viewLogs": "Ver registros",
       "cloneRemote": "Clonar remoto",
+      "cloneFailed": "Error al clonar",
+      "cloneNoSettings": "No se encontraron ajustes guardados para este remoto.",
       "exportConfig": "Exportar configuración",
       "resetSettings": "Restablecer configuraciones",
       "deleteRemote": "Eliminar remoto"
@@ -2956,14 +2972,24 @@
       "lastError": "Último error:",
       "runningJobs": "Tareas en Ejecución",
       "starting": "Iniciando...",
-      "noRunning": "No hay trabajos activos en ejecución."
+      "noRunning": "No hay trabajos activos en ejecución.",
+      "originDashboard": "Dashboard",
+      "originQuickRun": "Quick Run",
+      "originAutomation": "Automation",
+      "originFiles": "Files",
+      "originManual": "Manual"
     },
     "automations": {
       "activeCount": "{{active}} activo / {{total}} total",
       "noScheduled": "No hay automatizaciones",
       "noConfigured": "No hay automatizaciones configuradas. Configure operaciones con cron o monitoreo de archivos en tiempo real para crear automatizaciones.",
       "nextRun": "Próxima ejecución:",
-      "title": "Automations"
+      "title": "Automations",
+      "watchEvery": "Watch every {{seconds}}s",
+      "changedOnly": "changed only",
+      "paused": "paused",
+      "pauseResume": "Pause or resume this automation",
+      "runNow": "Run now"
     },
     "serves": {
       "activeCount": "{{count}} servicio activo{{s}}",

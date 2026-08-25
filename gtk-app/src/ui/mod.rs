@@ -48,6 +48,8 @@ pub struct AppCtx {
     pub updates: Rc<RefCell<crate::updater::PendingUpdates>>,
     pub last_update_check: Rc<RefCell<Option<std::time::Instant>>>,
     pub action_busy: Rc<RefCell<HashSet<String>>>,
+    pub check_status_overrides: Rc<RefCell<HashMap<String, String>>>,
+    pub hidden_check_ids: Rc<RefCell<HashSet<String>>>,
     dump_cache: Rc<RefCell<Option<(std::time::Instant, serde_json::Value)>>>,
 }
 
@@ -88,6 +90,8 @@ impl AppCtx {
             updates: Rc::new(RefCell::new(crate::updater::PendingUpdates::default())),
             last_update_check: Rc::new(RefCell::new(Some(std::time::Instant::now()))),
             action_busy: Rc::new(RefCell::new(HashSet::new())),
+            check_status_overrides: Rc::new(RefCell::new(HashMap::new())),
+            hidden_check_ids: Rc::new(RefCell::new(HashSet::new())),
             dump_cache: Rc::new(RefCell::new(None)),
         };
         ctx.apply_remote_layout();
@@ -160,10 +164,42 @@ impl AppCtx {
     pub fn open_typed_path(&self, current_remote: &str, raw: &str) {
         let typed = crate::path_kind::parse_typed_path(raw, current_remote);
         if typed.kind == crate::path_kind::PathKind::Local {
-            let _ = open::that(&typed.path);
+            if self.engine_os().eq_ignore_ascii_case(std::env::consts::OS) {
+                let _ = open::that(&typed.path);
+                return;
+            }
+            self.request_browse("local", &typed.path);
             return;
         }
         self.request_browse(&typed.remote, &typed.path);
+    }
+
+    pub fn browse_remote_home(&self, name: &str) {
+        let mount = self
+            .snapshot
+            .borrow()
+            .mounts
+            .iter()
+            .find(|mount| {
+                mount.fs == name
+                    || mount.fs == format!("{name}:")
+                    || mount.fs.starts_with(&format!("{name}:"))
+            })
+            .map(|mount| mount.mount_point.clone());
+        if let Some(point) = mount.filter(|p| !p.is_empty()) {
+            self.open_typed_path(name, &point);
+            return;
+        }
+        self.request_browse(name, "");
+    }
+
+    pub fn browse_quick_run(&self, qr: &crate::store::QuickRun) {
+        let (src, dst) = crate::store::quick_run_paths(&qr.config.rclone, qr.operation_type);
+        if let Some(path) = src.or(dst).filter(|p| !p.is_empty()) {
+            self.open_typed_path(&qr.remote_name, &path);
+            return;
+        }
+        self.browse_remote_home(&qr.remote_name);
     }
 
     pub fn fs_info(&self, remote: &str) -> Option<crate::rclone::FsInfo> {
@@ -321,9 +357,17 @@ impl AppCtx {
             .clone()
             .unwrap_or_else(|| match config.mode {
                 crate::picker::PickerMode::Remote => String::new(),
-                _ => dirs::home_dir()
-                    .map(|p| p.to_string_lossy().into_owned())
-                    .unwrap_or_else(|| "/".into()),
+                _ => {
+                    if !self.engine_os().eq_ignore_ascii_case(std::env::consts::OS) {
+                        crate::path_kind::default_local_root(&self.engine_os())
+                    } else {
+                        dirs::home_dir()
+                            .map(|p| p.to_string_lossy().into_owned())
+                            .unwrap_or_else(|| {
+                                crate::path_kind::default_local_root(&self.engine_os())
+                            })
+                    }
+                }
             });
         let (remote, path) = if loc.is_empty() {
             ("local".into(), String::new())
@@ -342,6 +386,42 @@ impl AppCtx {
 
     pub fn backend_key(&self) -> String {
         crate::layout::backend_key(&self.settings.borrow().core.active_backend)
+    }
+
+    /// OS of the active extra RC backend, or this process (`linux` / `windows` / `macos`).
+    pub fn engine_os(&self) -> String {
+        let active = self.settings.borrow().core.active_backend.clone();
+        if !active.is_empty() {
+            if let Some(os) = self
+                .settings
+                .borrow()
+                .core
+                .extra_backends
+                .iter()
+                .find(|backend| backend.name == active)
+                .map(|backend| backend.os.clone())
+            {
+                if !os.is_empty() && os != "unknown" {
+                    return os;
+                }
+            }
+        }
+        std::env::consts::OS.to_string()
+    }
+
+    pub fn remember_backend_identity(&self, name: &str, identity: &crate::rclone::BackendIdentity) {
+        if let Some(entry) = self
+            .settings
+            .borrow_mut()
+            .core
+            .extra_backends
+            .iter_mut()
+            .find(|backend| backend.name == name)
+        {
+            entry.os = identity.os.clone();
+            entry.arch = identity.arch.clone();
+        }
+        self.persist();
     }
 
     pub fn apply_remote_layout(&self) {
@@ -452,6 +532,20 @@ impl AppCtx {
         let settings = self.settings.borrow().clone();
         if !settings.core.active_backend.is_empty() && settings.core.active_backend != "local" {
             *self.engine.borrow_mut() = None;
+            let binary = crate::rclone::engine::resolve_rclone_binary(&settings.core.rclone_binary);
+            let password = crate::keyring::resolve_config_password(&settings.core.config_password);
+            let config_path =
+                crate::repair::config_path_from_flags(&settings.core.rclone_additional_flags)
+                    .map(std::path::PathBuf::from);
+            crate::rclone::serve::install_spawn_context(
+                crate::rclone::serve::spawn_context_from_settings(
+                    binary,
+                    config_path,
+                    &settings.core.rclone_additional_flags,
+                    &settings.core.rclone_env_vars,
+                    &password,
+                ),
+            );
         } else {
             *self.engine.borrow_mut() = Some(crate::rclone::RcloneEngine::start(&settings));
         }
@@ -526,7 +620,7 @@ impl AppCtx {
         let stats = client.stats(None).unwrap_or(serde_json::json!({}));
         let disks = client
             .local_disks()
-            .unwrap_or_else(|_| local_fallback_disks());
+            .unwrap_or_else(|_| local_fallback_disks(&self.engine_os()));
         let hidden = self.store.borrow().hidden_remotes.clone();
         let known: Vec<u64> = self.store.borrow().job_meta.keys().copied().collect();
         let mut jobs = crate::jobs::merge_preparing_jobs(
@@ -538,6 +632,7 @@ impl AppCtx {
             for job in &mut jobs {
                 crate::jobs::apply_job_meta(job, registry.get(&job.id));
             }
+            crate::jobs::hydrate_grouped_transfers(&mut jobs, &registry);
         }
         let remotes = crate::store::build_remote_infos(&dump, &mounts, &serves, &jobs, &hidden);
         let previous = self.snapshot.borrow().jobs.clone();
@@ -555,6 +650,48 @@ impl AppCtx {
         drop(snap);
         self.apply_effective_bandwidth();
         self.update_power_inhibit();
+    }
+
+    pub fn force_check_mounts(&self) -> Result<usize, String> {
+        let client = self
+            .client()
+            .ok_or_else(|| self.t_or("errors.engineOffline", "rclone engine is offline"))?;
+        let mounts = client.list_mounts().map_err(|e| e.to_string())?;
+        let dump = self.cached_dump(&client);
+        let serves = self.snapshot.borrow().serves.clone();
+        let jobs = self.snapshot.borrow().jobs.clone();
+        let hidden = self.store.borrow().hidden_remotes.clone();
+        let remotes = crate::store::build_remote_infos(&dump, &mounts, &serves, &jobs, &hidden);
+        let previous_mounts = self.snapshot.borrow().mounts.clone();
+        emit_runtime_alerts(self, &previous_mounts, &mounts, &serves, &serves);
+        let count = mounts.len();
+        let mut snap = self.snapshot.borrow_mut();
+        snap.mounts = mounts;
+        snap.remotes = remotes;
+        drop(snap);
+        self.update_power_inhibit();
+        Ok(count)
+    }
+
+    pub fn force_check_serves(&self) -> Result<usize, String> {
+        let client = self
+            .client()
+            .ok_or_else(|| self.t_or("errors.engineOffline", "rclone engine is offline"))?;
+        let serves = client.serve_list().map_err(|e| e.to_string())?;
+        let dump = self.cached_dump(&client);
+        let mounts = self.snapshot.borrow().mounts.clone();
+        let jobs = self.snapshot.borrow().jobs.clone();
+        let hidden = self.store.borrow().hidden_remotes.clone();
+        let remotes = crate::store::build_remote_infos(&dump, &mounts, &serves, &jobs, &hidden);
+        let previous_serves = self.snapshot.borrow().serves.clone();
+        emit_runtime_alerts(self, &mounts, &mounts, &previous_serves, &serves);
+        let count = serves.len();
+        let mut snap = self.snapshot.borrow_mut();
+        snap.serves = serves;
+        snap.remotes = remotes;
+        drop(snap);
+        self.update_power_inhibit();
+        Ok(count)
     }
 
     pub fn update_power_inhibit(&self) {
@@ -828,11 +965,9 @@ fn notify_job_changes(
     }
     for job in previous {
         if current.iter().all(|j| j.id != job.id) {
-            let mut finished = job.clone();
-            if finished.status == "running" {
-                finished.status = "completed".into();
-            }
-            ctx.store.borrow_mut().remember_job(finished);
+            ctx.store
+                .borrow_mut()
+                .remember_job(crate::jobs::finalize_dropped_job(job));
             dirty = true;
         }
     }
@@ -880,8 +1015,12 @@ fn emit_runtime_alerts(
     }
 }
 
-fn local_fallback_disks() -> Vec<String> {
-    let mut disks = vec!["/".to_string()];
+fn local_fallback_disks(engine_os: &str) -> Vec<String> {
+    let mut disks = if engine_os.eq_ignore_ascii_case("windows") || cfg!(windows) {
+        vec!["C:\\".to_string()]
+    } else {
+        vec!["/".to_string()]
+    };
     if let Some(home) = dirs::home_dir() {
         disks.push(home.to_string_lossy().into_owned());
     }

@@ -35,9 +35,10 @@ pub fn present(app: &adw::Application, ctx: AppCtx) {
     ));
 
     let nav = adw::NavigationView::new();
+    let toast = adw::ToastOverlay::new();
     for card in cards.iter() {
         let page = match card {
-            OnboardingCard::Welcome => page_welcome(&ctx, &nav, &cards, &window),
+            OnboardingCard::Welcome => page_welcome(&ctx, &nav, &cards, &window, &toast),
             OnboardingCard::Features => page_features(&ctx, &nav, &cards),
             OnboardingCard::InstallRclone => page_install(&ctx, &nav, &cards, &window),
             OnboardingCard::InstallPlugin => page_mount(&ctx, &nav, &cards),
@@ -48,7 +49,8 @@ pub fn present(app: &adw::Application, ctx: AppCtx) {
         };
         nav.add(&page);
     }
-    window.set_content(Some(&nav));
+    toast.set_child(Some(&nav));
+    window.set_content(Some(&toast));
     {
         let nav = nav.clone();
         let cards = cards.clone();
@@ -153,6 +155,7 @@ fn page_welcome(
     nav: &adw::NavigationView,
     cards: &Rc<Vec<OnboardingCard>>,
     window: &adw::ApplicationWindow,
+    toast: &adw::ToastOverlay,
 ) -> adw::NavigationPage {
     let box_ = page_box(ctx, nav, cards, OnboardingCard::Welcome);
     let status = adw::StatusPage::new();
@@ -170,31 +173,9 @@ fn page_welcome(
     {
         let ctx = ctx.clone();
         let window = window.clone();
+        let toast = toast.clone();
         import.connect_clicked(move |_| {
-            let dialog = gtk::FileDialog::new();
-            let ctx = ctx.clone();
-            dialog.open(
-                Some(&window),
-                None::<gio::Cancellable>.as_ref(),
-                move |result| {
-                    if let Ok(file) = result {
-                        if let Some(path) = file.path() {
-                            match crate::backup::restore_backup(&path) {
-                                Ok((settings, store, _)) => {
-                                    if let Some(settings) = settings {
-                                        *ctx.settings.borrow_mut() = settings;
-                                    }
-                                    if let Some(store) = store {
-                                        *ctx.store.borrow_mut() = store;
-                                    }
-                                    ctx.persist();
-                                }
-                                Err(e) => log::warn!("onboarding restore failed: {e}"),
-                            }
-                        }
-                    }
-                },
-            );
+            super::dialogs::import_backup(&window, ctx.clone(), toast.clone(), Rc::new(|| {}));
         });
     }
     actions.append(&import);

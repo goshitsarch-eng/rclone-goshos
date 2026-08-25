@@ -38,6 +38,16 @@ pub enum TrayAction {
     StopQuickRun(String),
 }
 
+/// Localized Start/Stop label for a tray Quick Run (do not parse English prefixes).
+pub fn quick_run_action_label(
+    start: bool,
+    name: &str,
+    start_word: &str,
+    stop_word: &str,
+) -> String {
+    format!("{} {name}", if start { start_word } else { stop_word })
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub enum TrayCaption {
     #[default]
@@ -500,5 +510,17 @@ mod tests {
             c.action,
             Some(TrayAction::MountRemote { ref profile, .. }) if profile == "default"
         )));
+    }
+
+    #[test]
+    fn quick_run_labels_use_translated_verbs() {
+        assert_eq!(
+            quick_run_action_label(true, "Nightly", "Start", "Stop"),
+            "Start Nightly"
+        );
+        assert_eq!(
+            quick_run_action_label(false, "Nightly", "Başlat", "Durdur"),
+            "Durdur Nightly"
+        );
     }
 }

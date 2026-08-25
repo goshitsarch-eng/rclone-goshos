@@ -1936,7 +1936,8 @@
       "pid": "rclone PID",
       "groups": "Job groups",
       "memory": "Memory",
-      "activity": "Activity"
+      "activity": "Activity",
+      "activitySummary": "{{jobs}} running jobs · {{mounts}} mounts · {{serves}} serves"
     },
     "quickRuns": {
       "empty": "No quick runs",
@@ -2050,6 +2051,7 @@
     },
     "about": {
       "title": "Hakkında",
+      "appName": "Rclone Manager",
       "aboutApp": "Uygulama Hakkında",
       "details": "Detaylar",
       "aboutRclone": "Rclone Hakkında",
@@ -2100,6 +2102,7 @@
       "killSuccess": "Rclone işlemi başarıyla sonlandırıldı",
       "killFailed": "Rclone işlemi sonlandırılamadı",
       "noProcessToKill": "Sonlandırılacak rclone işlemi yok",
+      "killRclone": "rclone motorunu durdur",
       "updateSettingFailed": "Ayar güncellenemedi",
       "channelStable": "Kararlı",
       "channelBeta": "Beta",
@@ -2152,7 +2155,9 @@
       "entries": "Aktif Girdi",
       "clear": "Temizle",
       "cacheCleared": "Önbellek başarıyla temizlendi",
-      "cacheClearFailed": "Önbellek temizlenemedi"
+      "cacheClearFailed": "Önbellek temizlenemedi",
+      "appUpdateAvailable": "App update {{version}} available",
+      "rcloneUpdateAvailableMsg": "rclone update {{version}} available"
     },
     "logs": {
       "fetchError": "Uygulama günlükleri alınamadı.",
@@ -2821,6 +2826,15 @@
       "nothingToUndo": "Geri alınacak işlem yok",
       "nothingToRedo": "Yinelenecek işlem yok",
       "cannotUndo": "Bu işlem geri alınamaz",
+      "selectValid": "Devam etmek için geçerli bir öğe seçin",
+      "selectNewFolderItems": "Yeni klasöre taşınacak öğeleri seçin",
+      "selectToDownload": "İndirilecek bir dosya seçin",
+      "selectToShare": "Paylaşılacak bir dosya seçin",
+      "noPublicLink": "Uzak bir genel bağlantı döndürmedi",
+      "rmdirsDone": "Boş dizinler kaldırıldı",
+      "cleanupStarted": "Bu uzak için temizlik başladı",
+      "selectArchive": "Çıkarılacak bir arşiv seçin",
+      "shareOpened": "Dosya için sistem paylaşımı açıldı",
       "redoComplete": "Yineleme başarılı",
       "copyUrlStarted": "URL'den indiriliyor...",
       "getPublicLinkStarted": "Ortak bağlantı oluşturuluyor...",
@@ -2847,6 +2861,8 @@
       "showInTray": "Tepsi Menüsünde Göster",
       "viewLogs": "Günlükleri Görüntüle",
       "cloneRemote": "Uzak Sunucuyu Kopyala",
+      "cloneFailed": "Klonlama başarısız",
+      "cloneNoSettings": "Bu uzak için kayıtlı ayar bulunamadı.",
       "exportConfig": "Yapılandırmayı Dışa Aktar",
       "resetSettings": "Ayarları Sıfırla",
       "deleteRemote": "Uzak Sunucuyu Sil"
@@ -2956,14 +2972,24 @@
       "lastError": "Son Hata:",
       "runningJobs": "Çalışan İşler",
       "starting": "Başlatılıyor...",
-      "noRunning": "Şu anda çalışan aktif iş yok."
+      "noRunning": "Şu anda çalışan aktif iş yok.",
+      "originDashboard": "Dashboard",
+      "originQuickRun": "Quick Run",
+      "originAutomation": "Automation",
+      "originFiles": "Files",
+      "originManual": "Manual"
     },
     "automations": {
       "activeCount": "{{active}} aktif / {{total}} toplam",
       "noScheduled": "Otomasyon yok",
       "noConfigured": "Otomasyon yapılandırılmamış. Otomasyon oluşturmak için cron zamanlamaları veya gerçek zamanlı dosya izlemeyi yapılandırın.",
       "nextRun": "Sonraki Çalışma:",
-      "title": "Automations"
+      "title": "Automations",
+      "watchEvery": "Watch every {{seconds}}s",
+      "changedOnly": "changed only",
+      "paused": "paused",
+      "pauseResume": "Pause or resume this automation",
+      "runNow": "Run now"
     },
     "serves": {
       "activeCount": "{{count}} aktif sunum",

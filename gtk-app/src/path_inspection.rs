@@ -42,8 +42,21 @@ pub fn normalize_mount_path(path: &str) -> String {
 }
 
 pub fn inspect_local_path(path: &str) -> PathStatus {
+    inspect_local_ex(path, None, std::env::consts::OS)
+}
+
+/// Inspect a local path on this host or, when the engine OS differs (or the
+/// path is Windows/UNC), via rclone `operations/stat` using `splitLocalForStat`.
+pub fn inspect_local_ex(path: &str, client: Option<&RcClient>, engine_os: &str) -> PathStatus {
     if path.trim().is_empty() {
         return PathStatus::Empty;
+    }
+    if should_inspect_via_rc(path, engine_os, client) {
+        if let Some(client) = client {
+            let expanded = crate::path_kind::expand_user_for_os(path, engine_os);
+            let (root, relative) = crate::path_kind::split_local_for_stat(&expanded, engine_os);
+            return inspect_remote_path(client, &root, &relative);
+        }
     }
     let expanded = PathBuf::from(normalize_mount_path(path));
     if expanded.exists() {
@@ -63,6 +76,13 @@ pub fn inspect_local_path(path: &str) -> PathStatus {
     } else {
         PathStatus::WillCreate
     }
+}
+
+fn should_inspect_via_rc(path: &str, engine_os: &str, client: Option<&RcClient>) -> bool {
+    client.is_some()
+        && (!engine_os.eq_ignore_ascii_case(std::env::consts::OS)
+            || crate::path_kind::is_windows_local_path(path)
+            || crate::path_kind::is_unc_path(path))
 }
 
 pub fn find_mount_collision(
@@ -131,7 +151,15 @@ pub fn inspect_dest(
     op: OperationType,
     live_mounts: &[MountedRemote],
 ) -> PathStatus {
-    inspect_dest_ex(store, path, current_remote, op, live_mounts, None)
+    inspect_dest_ex(
+        store,
+        path,
+        current_remote,
+        op,
+        live_mounts,
+        None,
+        std::env::consts::OS,
+    )
 }
 
 pub fn inspect_dest_ex(
@@ -141,6 +169,7 @@ pub fn inspect_dest_ex(
     op: OperationType,
     live_mounts: &[MountedRemote],
     client: Option<&RcClient>,
+    engine_os: &str,
 ) -> PathStatus {
     if path.trim().is_empty() {
         return PathStatus::Empty;
@@ -152,10 +181,15 @@ pub fn inspect_dest_ex(
                 profile: hit.profile,
             };
         }
-        return inspect_local_path(path);
+        return inspect_local_ex(path, client, engine_os);
     }
-    if Path::new(path).is_absolute() || path.starts_with("~/") {
-        return inspect_local_path(path);
+    if crate::path_kind::is_truly_local_path(path, engine_os)
+        || Path::new(path).is_absolute()
+        || path.starts_with("~/")
+        || crate::path_kind::is_windows_local_path(path)
+        || crate::path_kind::is_unc_path(path)
+    {
+        return inspect_local_ex(path, client, engine_os);
     }
     if let Some(client) = client {
         if let Some((fs, remote)) = crate::rclone::browse_target(path) {
@@ -167,6 +201,16 @@ pub fn inspect_dest_ex(
         }
     }
     PathStatus::Empty
+}
+
+pub fn status_label_key(status: &PathStatus) -> &'static str {
+    match status {
+        PathStatus::Empty => "remoteConfig.pathStatus.clean",
+        PathStatus::WillCreate => "remoteConfig.pathStatus.willCreate",
+        PathStatus::NonEmpty => "remoteConfig.pathStatus.nonEmpty",
+        PathStatus::Collision { .. } => "remoteConfig.pathStatus.colliding",
+        PathStatus::Invalid => "remoteConfig.pathStatus.invalid",
+    }
 }
 
 pub fn inspect_remote_path(client: &RcClient, fs: &str, remote: &str) -> PathStatus {
@@ -189,11 +233,32 @@ pub fn ensure_path(
     path: &str,
     client: Option<&RcClient>,
 ) -> Result<(), String> {
+    ensure_path_ex(status, path, client, std::env::consts::OS)
+}
+
+pub fn ensure_path_ex(
+    status: &PathStatus,
+    path: &str,
+    client: Option<&RcClient>,
+    engine_os: &str,
+) -> Result<(), String> {
     if !matches!(status, PathStatus::WillCreate | PathStatus::Empty) {
         return Ok(());
     }
     if path.trim().is_empty() {
         return Ok(());
+    }
+    if should_inspect_via_rc(path, engine_os, client) {
+        if let Some(client) = client {
+            let expanded = crate::path_kind::expand_user_for_os(path, engine_os);
+            let (root, relative) = crate::path_kind::split_local_for_stat(&expanded, engine_os);
+            if !relative.is_empty() {
+                return client
+                    .mkdir(&root, &relative)
+                    .map(|_| ())
+                    .map_err(|e| e.to_string());
+            }
+        }
     }
     if Path::new(path).is_absolute() || path.starts_with("~/") || Path::new(path).exists() {
         let expanded = normalize_mount_path(path);
@@ -375,5 +440,24 @@ mod tests {
             profile: "default".into(),
         };
         assert!(describe_status(&status).contains("drive"));
+        assert_eq!(
+            status_label_key(&status),
+            "remoteConfig.pathStatus.colliding"
+        );
+        assert_eq!(
+            inspect_dest(
+                &AppStore::default(),
+                "photos:Inbox",
+                "drive",
+                OperationType::Copy,
+                &[],
+            ),
+            PathStatus::Empty
+        );
+        assert!(!should_inspect_via_rc("/tmp/out", "linux", None));
+        let client = crate::rclone::RcClient::new("127.0.0.1", 1);
+        assert!(should_inspect_via_rc(r"C:\Users", "linux", Some(&client)));
+        assert!(should_inspect_via_rc("/tmp/out", "windows", Some(&client)));
+        assert!(!should_inspect_via_rc("/tmp/out", "linux", Some(&client)));
     }
 }

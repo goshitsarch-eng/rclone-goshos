@@ -6,6 +6,7 @@ mod backend_options;
 mod backup;
 mod checks;
 mod cli;
+mod cli_import;
 mod command_options;
 mod connection;
 mod cron;
@@ -80,11 +81,12 @@ fn main() {
             .iter()
             .map(|s| s.to_str().unwrap_or_default().to_string())
             .collect();
-        let env_args: Vec<String> = std::env::args().collect();
-        if !args.iter().any(|arg| arg.starts_with("--"))
-            && env_args.iter().any(|arg| arg.starts_with("--"))
-        {
-            args = env_args;
+        cli::merge_option_flags(&mut args, &command_line_option_flags(cmdline));
+        if !cmdline.is_remote() && !args.iter().any(|arg| arg.starts_with("--")) {
+            let env_args: Vec<String> = std::env::args().collect();
+            if env_args.iter().any(|arg| arg.starts_with("--")) {
+                args = env_args;
+            }
         }
         cli::set_launch_args(args.clone());
         if let Some(files) = platform::parse_share_intake_args(&args) {
@@ -165,6 +167,54 @@ fn register_application_options(app: &adw::Application) {
     add("updates", OptionArg::None, "Open the Updates dialog", None);
     add("alerts", OptionArg::None, "Open the Alerts dialog", None);
     app.add_main_option(
+        "preferences",
+        0.into(),
+        OptionFlags::OPTIONAL_ARG,
+        OptionArg::String,
+        "Open Preferences, optionally a page",
+        Some("PAGE"),
+    );
+    app.add_main_option(
+        "settings",
+        0.into(),
+        OptionFlags::OPTIONAL_ARG,
+        OptionArg::String,
+        "Alias for --preferences",
+        Some("PAGE"),
+    );
+    add(
+        "onboarding",
+        OptionArg::None,
+        "Re-open the first-run onboarding window",
+        None,
+    );
+    add("about", OptionArg::None, "Open the About dialog", None);
+    add("logs", OptionArg::None, "Open the Logs dialog", None);
+    add(
+        "shortcuts",
+        OptionArg::None,
+        "Open the keyboard shortcuts dialog",
+        None,
+    );
+    add(
+        "remote-config",
+        OptionArg::String,
+        "Open remote configuration",
+        Some("REMOTE"),
+    );
+    add(
+        "step",
+        OptionArg::String,
+        "Remote-config step (with --remote-config)",
+        Some("STEP"),
+    );
+    add(
+        "profile",
+        OptionArg::String,
+        "Remote-config profile (with --remote-config)",
+        Some("NAME"),
+    );
+    app.add_main_option(
         "standalone",
         0.into(),
         OptionFlags::OPTIONAL_ARG,
@@ -209,4 +259,55 @@ fn register_application_options(app: &adw::Application) {
         Some("PATH"),
     );
     app.set_option_context_parameter_string(Some("[URL or FILE…]"));
+}
+
+fn command_line_option_flags(
+    cmdline: &gio::ApplicationCommandLine,
+) -> Vec<(String, Option<String>)> {
+    const NAMES: &[&str] = &[
+        "preferences",
+        "settings",
+        "onboarding",
+        "about",
+        "logs",
+        "shortcuts",
+        "remote-config",
+        "step",
+        "profile",
+        "updates",
+        "alerts",
+        "dashboard",
+        "tab",
+        "remote",
+        "flow",
+        "quick-run",
+        "job",
+        "serve",
+        "automation",
+        "browse",
+        "browse-path",
+        "standalone",
+        "tray",
+        "hidden",
+    ];
+    let dict = cmdline.options_dict();
+    let mut flags = Vec::new();
+    for name in NAMES {
+        let Some(value) = dict.lookup_value(name, None) else {
+            continue;
+        };
+        if let Some(text) = value
+            .str()
+            .map(|s| s.to_string())
+            .or_else(|| value.get::<String>())
+        {
+            flags.push((
+                (*name).to_string(),
+                if text.is_empty() { None } else { Some(text) },
+            ));
+        } else if value.get::<bool>() == Some(true) {
+            flags.push(((*name).to_string(), None));
+        }
+    }
+    flags
 }
