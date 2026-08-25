@@ -384,6 +384,38 @@ impl AppCtx {
         let _ = self.store.borrow().save();
     }
 
+    pub fn record_started_job(
+        &self,
+        result: &str,
+        remote: &str,
+        profile: &crate::store::ProfileConfig,
+        origin: &str,
+        op: &str,
+        src: &str,
+        dst: &str,
+        quick_run_id: &str,
+    ) {
+        let meta =
+            crate::jobs::job_meta_for(remote, profile, origin, &self.backend_key(), quick_run_id);
+        let profile_name = meta.profile.clone();
+        {
+            let mut store = self.store.borrow_mut();
+            crate::jobs::remember_started(&mut store.job_meta, result, meta);
+            for id in crate::jobs::parse_started_ids(result) {
+                store.remember_job(crate::jobs::started_operation_job(
+                    id,
+                    op,
+                    remote,
+                    &profile_name,
+                    origin,
+                    src,
+                    dst,
+                ));
+            }
+        }
+        self.persist();
+    }
+
     pub fn backend_key(&self) -> String {
         crate::layout::backend_key(&self.settings.borrow().core.active_backend)
     }

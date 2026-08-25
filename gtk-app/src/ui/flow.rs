@@ -1723,16 +1723,16 @@ impl FlowView {
             "flow",
         ) {
             Ok(id) => {
-                crate::jobs::remember_started(
-                    &mut self.ctx.store.borrow_mut().job_meta,
+                let rclone = crate::jobs::flatten_rclone(&qr.config.rclone);
+                self.ctx.record_started_job(
                     &id,
-                    crate::jobs::job_meta_for(
-                        &qr.remote_name,
-                        &qr.config,
-                        "flow",
-                        &self.ctx.backend_key(),
-                        &qr.id,
-                    ),
+                    &qr.remote_name,
+                    &qr.config,
+                    "flow",
+                    qr.operation_type.as_str(),
+                    &crate::jobs::default_source(&qr.remote_name, &rclone),
+                    &crate::jobs::default_dest(&qr.remote_name, &rclone, qr.operation_type),
+                    &qr.id,
                 );
                 self.ctx.store.borrow_mut().log_operation(
                     &qr.remote_name,

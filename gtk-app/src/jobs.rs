@@ -1982,6 +1982,45 @@ pub fn preparing_job(
     }
 }
 
+/// Dashboard / start-operation job shown immediately after rclone returns an id.
+pub fn started_operation_job(
+    id: u64,
+    op: &str,
+    remote: &str,
+    profile: &str,
+    origin: &str,
+    src: &str,
+    dst: &str,
+) -> JobInfo {
+    JobInfo {
+        id,
+        operation: op.into(),
+        remote: remote.into(),
+        profile: profile.into(),
+        status: "starting".into(),
+        origin: origin.into(),
+        start_time: Utc::now(),
+        error: None,
+        dry_run: false,
+        src: src.into(),
+        dst: dst.into(),
+        group: format!("job/{id}"),
+        stats: json!({
+            "bytes": 0,
+            "totalBytes": 0,
+            "transfers": 0,
+            "totalTransfers": 0,
+            "preparing": true
+        }),
+        transferring: json!([]),
+        duration: 0.0,
+        progress: 0.0,
+        output: json!({ "operation": op, "origin": origin }),
+        completed: json!([]),
+        parent_job_id: None,
+    }
+}
+
 pub fn preparing_progress_stats(
     bytes: u64,
     total_bytes: u64,
@@ -2681,6 +2720,19 @@ mod tests {
         assert!(!is_managed_job(&running_noise));
         let upload = preparing_job(3, "drive", "/tmp/a.txt", "drive:Inbox", 1, 12);
         assert!(is_managed_job(&upload));
+        let started = started_operation_job(
+            44,
+            "copy",
+            "testdrive",
+            "gui-copy-test",
+            "dashboard",
+            "testdrive:a.txt",
+            "testdrive:verify-gui-copy/",
+        );
+        assert!(is_managed_job(&started));
+        assert_eq!(started.status, "starting");
+        assert_eq!(started.operation, "copy");
+        assert_eq!(started.src, "testdrive:a.txt");
         assert_eq!(
             select_job_ids(&[1, 2, 3], &[2], 48),
             vec![1, 2, 3],

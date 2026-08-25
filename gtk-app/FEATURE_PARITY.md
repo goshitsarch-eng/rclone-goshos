@@ -507,6 +507,7 @@ This client is the GTK 4 + libadwaita desktop UI. It talks to a local `rclone rc
 - `fusermount3` shim on PATH so rclone 1.60 mounts on fuse3-only hosts
 - `mount/listmounts` parses rclone 1.60 arrays and marks alias remotes mounted
 - Live GUI: testdrive/dummyexport remotes, FUSE mount of testdrive, Copy start from a profile
+- Start-operation / profile / Flow / Quick Run starts persist `job_history` immediately (not only after a later poll)
 
 ## Still deepening
 

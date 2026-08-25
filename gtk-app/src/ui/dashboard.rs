@@ -3805,10 +3805,16 @@ fn toggle_profile(
     crate::jobs::apply_session_flags(&mut profile.rclone, dry_run, resync);
     match crate::jobs::start_profile(&client, name, op, &profile, meta.as_ref(), "dashboard") {
         Ok(id) => {
-            crate::jobs::remember_started(
-                &mut ctx.store.borrow_mut().job_meta,
+            let rclone = crate::jobs::flatten_rclone(&profile.rclone);
+            ctx.record_started_job(
                 &id,
-                crate::jobs::job_meta_for(name, &profile, "dashboard", &ctx.backend_key(), ""),
+                name,
+                &profile,
+                "dashboard",
+                op.as_str(),
+                &crate::jobs::default_source(name, &rclone),
+                &crate::jobs::default_dest(name, &rclone, op),
+                "",
             );
             ctx.store.borrow_mut().log_operation(
                 name,
@@ -3895,16 +3901,16 @@ fn start_quick_run(ctx: &AppCtx, qr: &crate::store::QuickRun, toast: &adw::Toast
         "quickrun",
     ) {
         Ok(id) => {
-            crate::jobs::remember_started(
-                &mut ctx.store.borrow_mut().job_meta,
+            let rclone = crate::jobs::flatten_rclone(&qr.config.rclone);
+            ctx.record_started_job(
                 &id,
-                crate::jobs::job_meta_for(
-                    &qr.remote_name,
-                    &qr.config,
-                    "quickrun",
-                    &ctx.backend_key(),
-                    &qr.id,
-                ),
+                &qr.remote_name,
+                &qr.config,
+                "quickrun",
+                qr.operation_type.as_str(),
+                &crate::jobs::default_source(&qr.remote_name, &rclone),
+                &crate::jobs::default_dest(&qr.remote_name, &rclone, qr.operation_type),
+                &qr.id,
             );
             ctx.store.borrow_mut().log_operation(
                 &qr.remote_name,

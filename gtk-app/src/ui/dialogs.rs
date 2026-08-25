@@ -4076,6 +4076,8 @@ pub fn start_operation(
         let vfs_names = vfs_names.clone();
         let filter_names = filter_names.clone();
         let backend_names = backend_names.clone();
+        let profile_row = profile_row.clone();
+        let profile_names = names.clone();
         start.connect_clicked(move |_| {
             let Some(client) = ctx.client() else {
                 toast.add_toast(adw::Toast::new(&ctx.t_or(
@@ -4160,6 +4162,7 @@ pub fn start_operation(
                 profile.app.backend_profile = helper_selected(&backend_row, &backend_names);
                 crate::jobs::apply_helper_options(&mut rclone, &profile, Some(meta));
             }
+            let src_path = sources.first().cloned().unwrap_or_default();
             let mut ids = Vec::new();
             let mut error = None;
             for source in sources {
@@ -4185,6 +4188,22 @@ pub fn start_operation(
                 err.add_response("ok", &ctx.t_or("common.ok", "OK"));
                 err.present(Some(&dialog));
             } else {
+                let profile_name = profile_names
+                    .get(profile_row.selected() as usize)
+                    .cloned()
+                    .unwrap_or_else(|| "default".into());
+                let mut profile = crate::store::ProfileConfig::default();
+                profile.name = profile_name.clone();
+                ctx.record_started_job(
+                    &ids.join(", "),
+                    &remote,
+                    &profile,
+                    "dashboard",
+                    op.as_str(),
+                    &src_path,
+                    &dest,
+                    "",
+                );
                 ctx.store
                     .borrow_mut()
                     .push_log(&remote, format!("started {op} {}", ids.join(", ")));
@@ -4194,7 +4213,7 @@ pub fn start_operation(
                     &[
                         ("type", op.api_label()),
                         ("remote", &remote),
-                        ("profile", "start"),
+                        ("profile", profile_name.as_str()),
                     ],
                 )));
                 on_done();
