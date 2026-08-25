@@ -5834,6 +5834,65 @@ fn attach_text_preview(
     }
 }
 
+fn attach_remote_stream_preview(
+    parent: &gtk::Box,
+    url: &str,
+    category: crate::operations::FileTypeCategory,
+) {
+    let file = gio::File::for_uri(url);
+    if matches!(category, crate::operations::FileTypeCategory::Image) {
+        let picture = gtk::Picture::for_file(&file);
+        picture.set_vexpand(true);
+        picture.set_can_shrink(true);
+        picture.set_content_fit(gtk::ContentFit::Contain);
+        parent.append(&picture);
+    }
+    if matches!(
+        category,
+        crate::operations::FileTypeCategory::Video | crate::operations::FileTypeCategory::Audio
+    ) {
+        let video = gtk::Video::for_file(Some(&file));
+        video.set_vexpand(true);
+        video.set_autoplay(true);
+        parent.append(&video);
+    }
+}
+
+fn append_download_preview_button(
+    actions: &gtk::Box,
+    ctx: &AppCtx,
+    box_: &gtk::Box,
+    fs: &str,
+    path: &str,
+    name: &str,
+    category: crate::operations::FileTypeCategory,
+) {
+    let label = ctx.t_or("fileBrowser.fileViewer.downloadPreview", "Download preview");
+    let fetch = gtk::Button::with_label(&label);
+    fetch.add_css_class("suggested-action");
+    {
+        let ctx = ctx.clone();
+        let box_ = box_.clone();
+        let dest = std::env::temp_dir().join(name);
+        let fs = fs.to_string();
+        let path = path.to_string();
+        let name = name.to_string();
+        fetch.connect_clicked(move |btn| {
+            let Some(client) = ctx.client() else {
+                return;
+            };
+            if client
+                .copy_file(&fs, &path, "/", &dest.to_string_lossy())
+                .is_ok()
+            {
+                attach_local_media_preview(&box_, &dest, category, &name);
+                btn.set_sensitive(false);
+            }
+        });
+    }
+    actions.append(&fetch);
+}
+
 fn attach_local_media_preview(
     parent: &gtk::Box,
     local: &std::path::Path,
@@ -6235,6 +6294,18 @@ pub fn file_viewer(
                         Some((ctx.clone(), fs, path.to_string())),
                     );
                 }
+            } else if category.can_stream_preview()
+                && client.probe_rc_serve(&client.rc_serve_url(remote, path))
+            {
+                let url = client.rc_serve_url(remote, path);
+                info.set_text(&ctx.t_or(
+                    "fileBrowser.fileViewer.remoteStream",
+                    "Streaming remote preview",
+                ));
+                attach_remote_stream_preview(&box_, &url, category);
+                if matches!(category, crate::operations::FileTypeCategory::Audio) {
+                    attach_audio_cover(&box_, None, Some((&ctx, remote, path, name)));
+                }
             } else if crate::media::should_warn_remote_preview(remote_size) {
                 let size_label = remote_size
                     .map(crate::rclone::format_bytes)
@@ -6251,31 +6322,7 @@ pub fn file_viewer(
                 if matches!(category, crate::operations::FileTypeCategory::Audio) {
                     attach_audio_cover(&box_, None, Some((&ctx, remote, path, name)));
                 }
-                let fetch = gtk::Button::with_label(
-                    &ctx.t_or("fileBrowser.fileViewer.downloadPreview", "Download preview"),
-                );
-                fetch.add_css_class("suggested-action");
-                {
-                    let ctx = ctx.clone();
-                    let box_ = box_.clone();
-                    let dest = std::env::temp_dir().join(name);
-                    let fs = fs.clone();
-                    let path = path.to_string();
-                    let name = name.to_string();
-                    fetch.connect_clicked(move |btn| {
-                        let Some(client) = ctx.client() else {
-                            return;
-                        };
-                        if client
-                            .copy_file(&fs, &path, "/", &dest.to_string_lossy())
-                            .is_ok()
-                        {
-                            attach_local_media_preview(&box_, &dest, category, &name);
-                            btn.set_sensitive(false);
-                        }
-                    });
-                }
-                actions.append(&fetch);
+                append_download_preview_button(&actions, &ctx, &box_, &fs, path, name, category);
             } else {
                 let dest = std::env::temp_dir().join(name);
                 if client

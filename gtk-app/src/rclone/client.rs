@@ -45,6 +45,36 @@ impl RcClient {
         self
     }
 
+    /// Base URL with optional HTTP basic credentials for `--rc-serve` media URLs.
+    pub fn authenticated_base_url(&self) -> String {
+        authenticated_base_url(&self.base_url, self.user.as_deref(), self.pass.as_deref())
+    }
+
+    /// HTTP URL used by rclone `--rc-serve` to stream a remote file.
+    ///
+    /// Matches Tauri `build_file_url`: `{base}/[{remote}:]/{encoded/path}`.
+    pub fn rc_serve_url(&self, remote: &str, path: &str) -> String {
+        build_rc_serve_url(&self.authenticated_base_url(), remote, path)
+    }
+
+    /// Probe whether `--rc-serve` can return the start of a file (Range 0-1).
+    pub fn probe_rc_serve(&self, url: &str) -> bool {
+        if url.is_empty() {
+            return false;
+        }
+        let mut request = ureq::get(url)
+            .timeout(Duration::from_secs(5))
+            .set("Range", "bytes=0-1");
+        if let (Some(user), Some(pass)) = (&self.user, &self.pass) {
+            request = request.set("Authorization", &basic_auth_header(user, pass));
+        }
+        match request.call() {
+            Ok(resp) => matches!(resp.status(), 200 | 206),
+            Err(ureq::Error::Status(code, _)) => matches!(code, 200 | 206),
+            Err(_) => false,
+        }
+    }
+
     pub fn call(&self, endpoint: &str, params: Value) -> Result<Value, RcError> {
         self.call_timeout(endpoint, params, self.timeout)
     }
@@ -1652,6 +1682,47 @@ fn split_n_robust(s: &str, n: usize) -> Vec<&str> {
     parts
 }
 
+/// Build an rclone `--rc-serve` file URL. Path segments are encoded individually
+/// and the remote name gets a trailing `:` unless it already looks like an fs.
+pub fn build_rc_serve_url(base_url: &str, remote: &str, path: &str) -> String {
+    let fs_name = if remote.contains(':') || remote.contains('/') || remote.contains('\\') {
+        remote.to_string()
+    } else {
+        format!("{remote}:")
+    };
+    let encoded_path = path
+        .split('/')
+        .map(|segment| urlencoding::encode(segment).into_owned())
+        .collect::<Vec<_>>()
+        .join("/");
+    format!(
+        "{}/[{fs_name}]/{}",
+        base_url.trim_end_matches('/'),
+        encoded_path.trim_start_matches('/')
+    )
+}
+
+pub fn authenticated_base_url(base_url: &str, user: Option<&str>, pass: Option<&str>) -> String {
+    let base = base_url.trim_end_matches('/');
+    match (user, pass) {
+        (Some(user), Some(pass)) if !user.is_empty() => {
+            let auth = format!(
+                "{}:{}",
+                urlencoding::encode(user),
+                urlencoding::encode(pass)
+            );
+            if let Some(rest) = base.strip_prefix("http://") {
+                format!("http://{auth}@{rest}")
+            } else if let Some(rest) = base.strip_prefix("https://") {
+                format!("https://{auth}@{rest}")
+            } else {
+                base.to_string()
+            }
+        }
+        _ => base.to_string(),
+    }
+}
+
 pub fn browse_target(path: &str) -> Option<(String, String)> {
     let trimmed = path.trim();
     if trimmed.is_empty() || trimmed == "—" {
@@ -2087,5 +2158,33 @@ mod tests {
             "couldn't find method operations/archive"
         )));
         assert!(!looks_missing_endpoint(&RcError::message("path not found")));
+    }
+
+    #[test]
+    fn rc_serve_url_matches_tauri() {
+        assert_eq!(
+            build_rc_serve_url("http://127.0.0.1:5572", "drive", "Photos/video.mp4"),
+            "http://127.0.0.1:5572/[drive:]/Photos/video.mp4"
+        );
+        assert_eq!(
+            build_rc_serve_url("http://127.0.0.1:5572/", "drive:", "/Photos/My File.mp4"),
+            "http://127.0.0.1:5572/[drive:]/Photos/My%20File.mp4"
+        );
+        assert_eq!(
+            build_rc_serve_url("http://127.0.0.1:5572", "alias/inner", "a"),
+            "http://127.0.0.1:5572/[alias/inner]/a"
+        );
+        assert_eq!(
+            build_rc_serve_url("http://127.0.0.1:5572", "drive", ""),
+            "http://127.0.0.1:5572/[drive:]/"
+        );
+        let client =
+            RcClient::new("127.0.0.1", 5572).with_auth(Some("ada".into()), Some("s ecret".into()));
+        assert_eq!(
+            client.rc_serve_url("drive", "Photos/clip.mkv"),
+            "http://ada:s%20ecret@127.0.0.1:5572/[drive:]/Photos/clip.mkv"
+        );
+        assert!(!client.probe_rc_serve("http://127.0.0.1:1/[drive:]/missing.bin"));
+        assert!(!client.probe_rc_serve(""));
     }
 }

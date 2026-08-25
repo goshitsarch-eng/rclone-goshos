@@ -338,10 +338,12 @@ This client is the GTK 4 + libadwaita rewrite of the Angular/Tauri desktop UI. I
 - Remote audio cover probe reads the first 10 MiB via `rclone cat --count`
 - Large remote media previews warn and require an explicit download
 - Flow overview includes Bandwidth and System panels (same catalog as Angular)
+- Local rcd starts with `--rc-serve` so remote image/video/audio stream over HTTP Range URLs
+- File viewer probes `--rc-serve` (`GET Range: bytes=0-1`) and plays via `gio::File` / `gtk::Video` / `gtk::Picture`
+- Compact dashboard cards show up to 3 primary-action Start/Stop icons (Angular `primaryActionsFor`)
 
 ## Still deepening toward pixel-level Angular parity
 
 - Workflow builder (stub in both apps)
 - Live GUI session against rclone rcd (no display in this environment)
 - Remaining dialogs/Files English labels (core chrome now localized)
-- Remote media still materializes a local temp file for gtk::Video (no rclone:// stream protocol)

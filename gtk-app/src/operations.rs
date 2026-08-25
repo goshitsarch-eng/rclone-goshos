@@ -386,6 +386,71 @@ impl AppTab {
         }
     }
 
+    pub fn mode_defaults(self) -> &'static [OperationType] {
+        match self {
+            Self::General => &[
+                OperationType::Mount,
+                OperationType::Sync,
+                OperationType::Bisync,
+            ],
+            Self::Operations => &[
+                OperationType::Sync,
+                OperationType::Bisync,
+                OperationType::Copy,
+            ],
+            Self::Mount => &[OperationType::Mount],
+            Self::Serve => &[OperationType::Serve],
+        }
+    }
+
+    /// Compact remote-card actions — same source/limit rules as Angular `primaryActionsFor`.
+    pub fn compact_primary_ops(
+        self,
+        primary: &[String],
+        sync: &[String],
+        limit: usize,
+    ) -> Vec<OperationType> {
+        let parsed = |items: &[String]| -> Vec<OperationType> {
+            items
+                .iter()
+                .filter_map(|s| OperationType::parse(s))
+                .collect()
+        };
+        let source = match self {
+            Self::Operations => {
+                let ops = parsed(sync);
+                if ops.is_empty() {
+                    self.mode_defaults().to_vec()
+                } else {
+                    ops.into_iter().filter(|op| op.is_sync_type()).collect()
+                }
+            }
+            Self::Mount | Self::Serve => self.mode_defaults().to_vec(),
+            Self::General => {
+                let ops = parsed(primary);
+                if ops.is_empty() {
+                    self.mode_defaults().to_vec()
+                } else {
+                    ops
+                }
+            }
+        };
+        let include_mount = !matches!(self, Self::Operations);
+        let mut seen = Vec::new();
+        for op in source {
+            if !include_mount && op == OperationType::Mount {
+                continue;
+            }
+            if !seen.contains(&op) {
+                seen.push(op);
+            }
+            if seen.len() >= limit {
+                break;
+            }
+        }
+        seen
+    }
+
     pub fn idle_section_key(self) -> &'static str {
         match self {
             Self::General => "generalOverview.inactive",
@@ -500,6 +565,11 @@ impl FileTypeCategory {
             _ => true,
         }
     }
+
+    /// Image/video/audio can play from an `--rc-serve` HTTP URL without a full download.
+    pub fn can_stream_preview(self) -> bool {
+        matches!(self, Self::Image | Self::Video | Self::Audio)
+    }
 }
 
 #[cfg(test)]
@@ -602,6 +672,11 @@ mod tests {
             FileTypeCategory::Text
         );
         assert_eq!(FileTypeCategory::from_mime(""), None);
+        assert!(FileTypeCategory::Video.can_stream_preview());
+        assert!(FileTypeCategory::Audio.can_stream_preview());
+        assert!(FileTypeCategory::Image.can_stream_preview());
+        assert!(!FileTypeCategory::Pdf.can_stream_preview());
+        assert!(!FileTypeCategory::Text.can_stream_preview());
     }
 
     #[test]
@@ -620,6 +695,46 @@ mod tests {
         assert!(AppTab::Mount.remote_is_active(true, false, false));
         assert!(!AppTab::Serve.remote_is_active(true, false, true));
         assert!(AppTab::Operations.remote_is_active(false, false, true));
+        assert_eq!(
+            AppTab::General.mode_defaults(),
+            &[
+                OperationType::Mount,
+                OperationType::Sync,
+                OperationType::Bisync
+            ]
+        );
+        assert_eq!(
+            AppTab::General.compact_primary_ops(&[], &[], 3),
+            vec![
+                OperationType::Mount,
+                OperationType::Sync,
+                OperationType::Bisync
+            ]
+        );
+        assert_eq!(
+            AppTab::General.compact_primary_ops(
+                &["serve".into(), "mount".into(), "sync".into(), "copy".into()],
+                &[],
+                3
+            ),
+            vec![
+                OperationType::Serve,
+                OperationType::Mount,
+                OperationType::Sync
+            ]
+        );
+        assert_eq!(
+            AppTab::Operations.compact_primary_ops(&[], &["mount".into(), "copy".into()], 3),
+            vec![OperationType::Copy]
+        );
+        assert_eq!(
+            AppTab::Mount.compact_primary_ops(&["sync".into()], &[], 3),
+            vec![OperationType::Mount]
+        );
+        assert_eq!(
+            AppTab::Serve.compact_primary_ops(&[], &[], 1),
+            vec![OperationType::Serve]
+        );
     }
 
     #[test]

@@ -664,7 +664,78 @@ impl Dashboard {
                 });
             }
             row.add_suffix(&browse);
-            row.add_suffix(&mount);
+            if detailed {
+                row.add_suffix(&mount);
+            } else {
+                let compact_ops = self
+                    .ctx
+                    .store
+                    .borrow()
+                    .remotes
+                    .get(&remote.name)
+                    .map(|meta| {
+                        tab.compact_primary_ops(&meta.primary_actions, &meta.sync_actions, 3)
+                    })
+                    .unwrap_or_else(|| tab.compact_primary_ops(&[], &[], 3));
+                let snap = self.ctx.snapshot.borrow().clone();
+                for op in compact_ops {
+                    let active = match op {
+                        OperationType::Mount => remote.mounted,
+                        OperationType::Serve => remote.serving,
+                        other => snap.jobs.iter().any(|job| {
+                            crate::jobs::job_belongs_to_remote(job, &remote.name)
+                                && crate::jobs::job_operation_matches(&job.operation, other)
+                                && crate::jobs::job_is_running(job)
+                        }),
+                    };
+                    let btn = gtk::Button::from_icon_name(op.icon_name());
+                    btn.set_valign(gtk::Align::Center);
+                    let label = self
+                        .ctx
+                        .t_or(&format!("actions.{}", op.as_str()), op.api_label());
+                    let verb = if active {
+                        self.ctx.t_or("actions.stop", "Stop")
+                    } else {
+                        self.ctx.t_or("actions.start", "Start")
+                    };
+                    btn.set_tooltip_text(Some(&format!("{verb} {label}")));
+                    if active {
+                        btn.add_css_class("destructive-action");
+                    }
+                    let ctx = self.ctx.clone();
+                    let name = remote.name.clone();
+                    let mounted = remote.mounted;
+                    let toast = self.toast.clone();
+                    let dash = self.clone();
+                    let dry = self.dry_run.clone();
+                    let resync = self.resync.clone();
+                    let pname = self
+                        .ctx
+                        .store
+                        .borrow()
+                        .remotes
+                        .get(&remote.name)
+                        .and_then(|meta| meta.profile_names(op).into_iter().next())
+                        .unwrap_or_else(|| "default".into());
+                    btn.connect_clicked(move |_| {
+                        if op == OperationType::Mount {
+                            toggle_mount(&ctx, &name, mounted, &toast);
+                        } else {
+                            toggle_profile(
+                                &ctx,
+                                &name,
+                                op,
+                                &pname,
+                                &toast,
+                                dry.get(),
+                                resync.get(),
+                            );
+                        }
+                        dash.refresh();
+                    });
+                    row.add_suffix(&btn);
+                }
+            }
             if editing {
                 let hide = gtk::Button::from_icon_name(if remote.hidden {
                     "view-reveal-symbolic"

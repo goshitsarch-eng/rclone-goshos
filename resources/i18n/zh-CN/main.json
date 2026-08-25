@@ -1646,7 +1646,12 @@
       "openingNative": "正在外部应用中打开 {{name}}...",
       "errorOpenNative": "在外部应用中打开文件失败",
       "showRawText": "显示原始内容",
-      "showPreview": "显示预览"
+      "showPreview": "显示预览",
+      "remoteStream": "正在流式播放远程预览",
+      "remotePreview": "通过 operations/cat 远程预览",
+      "largeRemotePreview": "此远程文件大小为 {{size}}。下载整个文件进行预览可能需要一些时间。",
+      "downloadPreview": "下载预览",
+      "downloadedPreview": "预览已下载到 {{path}}"
     }
   },
   "dashboard": {

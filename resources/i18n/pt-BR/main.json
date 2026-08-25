@@ -1646,7 +1646,12 @@
       "openingNative": "Abrindo {{name}} no visualizador externo...",
       "errorOpenNative": "Falha ao abrir o arquivo no aplicativo externo",
       "showRawText": "Mostrar texto bruto",
-      "showPreview": "Mostrar pré-visualização"
+      "showPreview": "Mostrar pré-visualização",
+      "remoteStream": "Transmitindo pré-visualização remota",
+      "remotePreview": "Pré-visualização remota via operations/cat",
+      "largeRemotePreview": "Este arquivo remoto tem {{size}}. Baixar o arquivo inteiro para pré-visualizar pode demorar.",
+      "downloadPreview": "Baixar pré-visualização",
+      "downloadedPreview": "Pré-visualização baixada em {{path}}"
     }
   },
   "dashboard": {

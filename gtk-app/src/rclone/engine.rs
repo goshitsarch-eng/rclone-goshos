@@ -39,12 +39,10 @@ impl RcloneEngine {
         }
 
         let mut cmd = Command::new(&binary);
-        cmd.arg("rcd")
-            .arg(format!("--rc-addr=127.0.0.1:{port}"))
-            .arg("--rc-no-auth")
-            .arg("--rc-web-gui=false")
-            .stdout(Stdio::null())
-            .stderr(Stdio::null());
+        for arg in rcd_base_args(port) {
+            cmd.arg(arg);
+        }
+        cmd.stdout(Stdio::null()).stderr(Stdio::null());
 
         for flag in &settings.core.rclone_additional_flags {
             if is_reserved_flag(flag) {
@@ -146,6 +144,18 @@ fn pick_free_port() -> Option<u16> {
     TcpListener::bind("127.0.0.1:0")
         .ok()
         .and_then(|listener| listener.local_addr().ok().map(|a| a.port()))
+}
+
+/// Base `rclone rcd` arguments. `--rc-serve` enables HTTP Range streaming of
+/// remote files (same as the Tauri desktop engine).
+pub fn rcd_base_args(port: u16) -> Vec<String> {
+    vec![
+        "rcd".into(),
+        format!("--rc-addr=127.0.0.1:{port}"),
+        "--rc-no-auth".into(),
+        "--rc-web-gui=false".into(),
+        "--rc-serve".into(),
+    ]
 }
 
 pub fn is_reserved_flag(flag: &str) -> bool {
@@ -702,8 +712,19 @@ mod tests {
         assert!(is_reserved_flag("--rc-addr"));
         assert!(is_reserved_flag("--rc-addr=127.0.0.1:1"));
         assert!(is_reserved_flag("rcd"));
+        assert!(is_reserved_flag("--rc-serve"));
         assert!(!is_reserved_flag("--vfs-cache-mode"));
         assert!(!is_reserved_flag("--transfers"));
+    }
+
+    #[test]
+    fn rcd_args_enable_serve() {
+        let args = rcd_base_args(5572);
+        assert_eq!(args[0], "rcd");
+        assert!(args.iter().any(|a| a == "--rc-addr=127.0.0.1:5572"));
+        assert!(args.iter().any(|a| a == "--rc-no-auth"));
+        assert!(args.iter().any(|a| a == "--rc-serve"));
+        assert!(args.iter().any(|a| a == "--rc-web-gui=false"));
     }
 
     #[test]

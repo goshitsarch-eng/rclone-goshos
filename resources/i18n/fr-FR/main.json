@@ -1646,7 +1646,12 @@
       "openingNative": "Ouverture de {{name}} dans l'application externe...",
       "errorOpenNative": "Échec de l'ouverture du fichier dans l'application externe",
       "showRawText": "Afficher le texte brut",
-      "showPreview": "Afficher l'aperçu"
+      "showPreview": "Afficher l'aperçu",
+      "remoteStream": "Lecture en flux de l'aperçu distant",
+      "remotePreview": "Aperçu distant via operations/cat",
+      "largeRemotePreview": "Ce fichier distant fait {{size}}. Le télécharger entièrement pour l'aperçu peut prendre du temps.",
+      "downloadPreview": "Télécharger l'aperçu",
+      "downloadedPreview": "Aperçu téléchargé vers {{path}}"
     }
   },
   "dashboard": {

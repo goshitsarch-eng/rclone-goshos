@@ -1646,7 +1646,12 @@
       "openingNative": "{{name}} harici uygulamada açılıyor...",
       "errorOpenNative": "Dosya harici uygulamada açılamadı",
       "showRawText": "Ham Metni Göster",
-      "showPreview": "Önizlemeyi Göster"
+      "showPreview": "Önizlemeyi Göster",
+      "remoteStream": "Uzak önizleme yayınlanıyor",
+      "remotePreview": "operations/cat ile uzak önizleme",
+      "largeRemotePreview": "Bu uzak dosya {{size}}. Önizleme için dosyanın tamamını indirmek zaman alabilir.",
+      "downloadPreview": "Önizlemeyi indir",
+      "downloadedPreview": "Önizleme {{path}} konumuna indirildi"
     }
   },
   "dashboard": {

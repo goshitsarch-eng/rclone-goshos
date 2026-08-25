@@ -1652,7 +1652,12 @@
       "openingNative": "Opening {{name}} in external viewer...",
       "errorOpenNative": "Failed to open file in external app",
       "showRawText": "Show Raw Text",
-      "showPreview": "Show Preview"
+      "showPreview": "Show Preview",
+      "remoteStream": "Streaming remote preview",
+      "remotePreview": "Remote preview via operations/cat",
+      "largeRemotePreview": "This remote file is {{size}}. Downloading the whole file for preview may take a while.",
+      "downloadPreview": "Download preview",
+      "downloadedPreview": "Downloaded preview to {{path}}"
     }
   },
   "dashboard": {

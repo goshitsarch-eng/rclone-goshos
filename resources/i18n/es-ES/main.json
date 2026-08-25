@@ -1646,7 +1646,12 @@
       "openingNative": "Abriendo {{name}} en la aplicación externa...",
       "errorOpenNative": "Error al abrir el archivo en la aplicación externa",
       "showRawText": "Mostrar texto sin formato",
-      "showPreview": "Mostrar vista previa"
+      "showPreview": "Mostrar vista previa",
+      "remoteStream": "Reproduciendo vista previa remota",
+      "remotePreview": "Vista previa remota mediante operations/cat",
+      "largeRemotePreview": "Este archivo remoto ocupa {{size}}. Descargar el archivo completo para previsualizarlo puede tardar.",
+      "downloadPreview": "Descargar vista previa",
+      "downloadedPreview": "Vista previa descargada en {{path}}"
     }
   },
   "dashboard": {

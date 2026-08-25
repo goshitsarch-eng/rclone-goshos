@@ -1646,7 +1646,12 @@
       "openingNative": "外部アプリで {{name}} を開いています...",
       "errorOpenNative": "外部アプリでファイルを開けませんでした",
       "showRawText": "元のテキストを表示",
-      "showPreview": "プレビューを表示"
+      "showPreview": "プレビューを表示",
+      "remoteStream": "リモートプレビューをストリーミング中",
+      "remotePreview": "operations/cat によるリモートプレビュー",
+      "largeRemotePreview": "このリモートファイルは {{size}} です。プレビューのためにファイル全体をダウンロードすると時間がかかることがあります。",
+      "downloadPreview": "プレビューをダウンロード",
+      "downloadedPreview": "{{path}} にプレビューをダウンロードしました"
     }
   },
   "dashboard": {
