@@ -288,7 +288,32 @@ pub fn build_job_params(
                     dest.to_string()
                 }),
             );
-            obj.insert("autoFilename".into(), json!(true));
+            let filename = obj
+                .get("filename")
+                .and_then(|v| v.as_str())
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .map(ToString::to_string)
+                .or_else(|| {
+                    obj.get("filenames")
+                        .and_then(|v| v.as_array())
+                        .and_then(|arr| arr.first())
+                        .and_then(|v| v.as_str())
+                        .map(str::trim)
+                        .filter(|s| !s.is_empty())
+                        .map(ToString::to_string)
+                });
+            let auto_filename = if filename.is_some() {
+                false
+            } else {
+                obj.get("autoFilename")
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(true)
+            };
+            if let Some(name) = filename {
+                obj.insert("remote".into(), json!(name));
+            }
+            obj.insert("autoFilename".into(), json!(auto_filename));
             Ok(JobRequest::Async {
                 endpoint: "operations/copyurl",
                 params: body,
@@ -309,19 +334,46 @@ pub fn build_job_params(
             if source.is_empty() || dest.is_empty() {
                 return Err("Archive create requires source and destination".into());
             }
+            let flags = flatten_rclone(rclone);
+            let format = flags
+                .get("format")
+                .and_then(|v| v.as_str())
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .unwrap_or("zip")
+                .to_string();
             let mut dest = dest.to_string();
             if !has_archive_extension(&dest) {
-                let format = obj.get("format").and_then(|v| v.as_str()).unwrap_or("zip");
                 dest = format!("{dest}/archive.{format}");
             }
+            let include = flags
+                .get("include")
+                .and_then(|v| v.as_array())
+                .map(|arr| {
+                    arr.iter()
+                        .filter_map(|v| v.as_str().map(str::to_string))
+                        .filter(|s| !s.is_empty())
+                        .collect::<Vec<_>>()
+                })
+                .unwrap_or_default();
+            let opts = crate::rclone::ArchiveCreateOpts {
+                src: source.to_string(),
+                dst: dest,
+                format: Some(format),
+                prefix: flags
+                    .get("prefix")
+                    .and_then(|v| v.as_str())
+                    .map(str::to_string),
+                full_path: flags
+                    .get("fullPath")
+                    .or_else(|| flags.get("full_path"))
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(false),
+                include,
+            };
             Ok(JobRequest::Async {
-                endpoint: "operations/copyfile",
-                params: json!({
-                    "srcFs": source,
-                    "srcRemote": "",
-                    "dstFs": dest,
-                    "dstRemote": ""
-                }),
+                endpoint: "operations/archive",
+                params: crate::rclone::archive_create_payload(&opts),
             })
         }
         other => {
@@ -374,6 +426,14 @@ pub enum JobRequest {
 
 pub fn start_request(client: &RcClient, request: &JobRequest) -> Result<String, RcError> {
     match request {
+        JobRequest::Async { endpoint, params }
+            if *endpoint == "operations/archive"
+                && params.get("action").and_then(|v| v.as_str()) == Some("create") =>
+        {
+            client
+                .archive_create(&crate::rclone::archive_create_opts_from_payload(params))
+                .map(|id| format!("#{id}"))
+        }
         JobRequest::Async { endpoint, params } => client
             .start_job(endpoint, params.clone())
             .map(|id| format!("#{id}")),
@@ -1319,11 +1379,58 @@ mod tests {
         )
         .unwrap();
         match cu {
-            JobRequest::Async { params, .. } => {
+            JobRequest::Async { endpoint, params } => {
+                assert_eq!(endpoint, "operations/copyurl");
                 assert_eq!(params["url"], "https://example.com/a.bin");
                 assert_eq!(params["fs"], "drive:Inbox");
+                assert_eq!(params["autoFilename"], true);
             }
             _ => panic!(),
+        }
+        let named = build_job_params(
+            OperationType::Copyurl,
+            "drive",
+            "https://example.com/a.bin",
+            "drive:Inbox",
+            &json!({ "filename": "saved.bin" }),
+        )
+        .unwrap();
+        match named {
+            JobRequest::Async { params, .. } => {
+                assert_eq!(params["remote"], "saved.bin");
+                assert_eq!(params["autoFilename"], false);
+            }
+            _ => panic!(),
+        }
+    }
+
+    #[test]
+    fn builds_archive_create_rc_payload() {
+        let req = build_job_params(
+            OperationType::Archivecreate,
+            "drive",
+            "drive:Photos",
+            "drive:Photos/out",
+            &json!({
+                "format": "zip",
+                "prefix": "pack",
+                "fullPath": true,
+                "include": ["a.txt", "b"]
+            }),
+        )
+        .unwrap();
+        match req {
+            JobRequest::Async { endpoint, params } => {
+                assert_eq!(endpoint, "operations/archive");
+                assert_eq!(params["action"], "create");
+                assert_eq!(params["src"], "drive:Photos");
+                assert_eq!(params["dst"], "drive:Photos/out/archive.zip");
+                assert_eq!(params["format"], "zip");
+                assert_eq!(params["prefix"], "pack");
+                assert_eq!(params["full_path"], true);
+                assert_eq!(params["include"], json!(["a.txt", "b"]));
+            }
+            _ => panic!("expected async archive create"),
         }
     }
 

@@ -200,7 +200,7 @@ impl OperationType {
             Self::Delete => Some("operations/delete"),
             Self::Copyurl => Some("operations/copyurl"),
             Self::Cryptcheck => Some("operations/cryptcheck"),
-            Self::Archivecreate => Some("operations/copyfile"),
+            Self::Archivecreate => Some("operations/archive"),
             Self::Mount | Self::Serve => None,
         }
     }
@@ -474,6 +474,10 @@ mod tests {
         assert_eq!(
             OperationType::Check.rc_job_endpoint(),
             Some("operations/check")
+        );
+        assert_eq!(
+            OperationType::Archivecreate.rc_job_endpoint(),
+            Some("operations/archive")
         );
         assert_eq!(OperationType::Mount.config_key(), "mountConfigs");
         assert_eq!(OperationType::SERVE_TYPES.len(), 8);

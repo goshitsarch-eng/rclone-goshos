@@ -997,7 +997,12 @@ fn add_security_page(
         let stored = stored.clone();
         validate.connect_clicked(move |_| {
             let binary = ctx.settings.borrow().core.rclone_binary.clone();
-            let msg = match crate::security::validate_password(&binary, &stored.text()) {
+            let client = ctx.client();
+            let msg = match crate::security::validate_password_for(
+                client.as_ref(),
+                &binary,
+                &stored.text(),
+            ) {
                 Ok(()) => "Password accepted".into(),
                 Err(e) => e,
             };
@@ -1018,13 +1023,16 @@ fn add_security_page(
         let stored = stored.clone();
         encrypt.connect_clicked(move |_| {
             let binary = ctx.settings.borrow().core.rclone_binary.clone();
-            let msg = match crate::security::encrypt_config(&binary, &stored.text()) {
-                Ok(()) => {
-                    ctx.restart_engine();
-                    "rclone.conf encrypted".into()
-                }
-                Err(e) => e,
-            };
+            let client = ctx.client();
+            let msg =
+                match crate::security::encrypt_config_for(client.as_ref(), &binary, &stored.text())
+                {
+                    Ok(()) => {
+                        ctx.restart_engine();
+                        "rclone.conf encrypted".into()
+                    }
+                    Err(e) => e,
+                };
             let alert = adw::AlertDialog::new(
                 Some(&ctx.t_or("modals.backend.security.enableEncryption", "Encrypt")),
                 Some(&msg),
@@ -1049,19 +1057,24 @@ fn add_security_page(
         let new_pass = new_pass.clone();
         change.connect_clicked(move |_| {
             let binary = ctx.settings.borrow().core.rclone_binary.clone();
-            let msg =
-                match crate::security::change_password(&binary, &stored.text(), &new_pass.text()) {
-                    Ok(()) => {
-                        crate::keyring::persist_password_setting(
-                            &mut ctx.settings.borrow_mut().core.config_password,
-                            &new_pass.text(),
-                        );
-                        ctx.persist();
-                        ctx.restart_engine();
-                        "Password changed".into()
-                    }
-                    Err(e) => e,
-                };
+            let client = ctx.client();
+            let msg = match crate::security::change_password_for(
+                client.as_ref(),
+                &binary,
+                &stored.text(),
+                &new_pass.text(),
+            ) {
+                Ok(()) => {
+                    crate::keyring::persist_password_setting(
+                        &mut ctx.settings.borrow_mut().core.config_password,
+                        &new_pass.text(),
+                    );
+                    ctx.persist();
+                    ctx.restart_engine();
+                    "Password changed".into()
+                }
+                Err(e) => e,
+            };
             let alert = adw::AlertDialog::new(
                 Some(&ctx.t_or("modals.backend.security.changePassword", "Change password")),
                 Some(&msg),
@@ -1080,7 +1093,12 @@ fn add_security_page(
         let stored = stored.clone();
         unencrypt.connect_clicked(move |_| {
             let binary = ctx.settings.borrow().core.rclone_binary.clone();
-            let msg = match crate::security::unencrypt_config(&binary, &stored.text()) {
+            let client = ctx.client();
+            let msg = match crate::security::unencrypt_config_for(
+                client.as_ref(),
+                &binary,
+                &stored.text(),
+            ) {
                 Ok(()) => {
                     let _ = crate::keyring::delete_password();
                     ctx.settings.borrow_mut().core.config_password.clear();

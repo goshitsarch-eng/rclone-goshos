@@ -22,7 +22,7 @@ This client is the GTK 4 + libadwaita rewrite of the Angular/Tauri desktop UI. I
 - Backup/restore zip with category picker, notes, and restore preview
 - Template manager: capture, apply (`options/set` or categorized helper/profile merge), delete
 - Remote-config preset bar: apply default OS/provider presets, apply/save/manage user templates
-- Archive create job dialog
+- Archive create job dialog (`operations/archive` create, selection + format flags)
 - Onboarding: welcome, features, rclone detect, default view, complete
 - Keyboard shortcuts (global + nautilus)
 - Theme: system / light / dark
@@ -232,6 +232,10 @@ This client is the GTK 4 + libadwaita rewrite of the Angular/Tauri desktop UI. I
 - Wizard command-options panel hidden by default; custom key/type/value options merge into `config/create` `opt`
 - Shutdown “please wait” overlay after confirm (`app.shutdown.title` / `message`)
 - Start-operation, backends editor, VFS panel, flags JSON, and Files status strings use i18n fallbacks
+- Archive create uses `operations/archive` `{ action: create }` with format/prefix/fullPath/include (core/command fallback)
+- Files archive dialog uses the current selection; Copy URL supports optional filename + `autoFilename`
+- Config password validate/encrypt/decrypt prefer RC (`config/validatepassword|encrypt|decrypt`) with CLI fallback
+- Multi-rename find/replace honors a case-sensitive toggle
 
 ## Still deepening toward pixel-level Angular parity
 
@@ -239,3 +243,4 @@ This client is the GTK 4 + libadwaita rewrite of the Angular/Tauri desktop UI. I
 - Live GUI session against rclone rcd (no display in this environment)
 - Native share portal / Android share intent (Linux uses `--share-intake` + Files banner)
 - Remaining dialogs/Files English labels
+- Internal Files drag-and-drop between folders/panes (copy/cut/paste works)

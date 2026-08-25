@@ -1,6 +1,7 @@
 //! Rclone config password and encryption — mirrors Tauri security commands.
 
 use crate::rclone::engine::resolve_rclone_binary;
+use crate::rclone::{RcClient, RcError};
 use std::process::Command;
 
 pub fn octal_escape(input: &str) -> String {
@@ -25,6 +26,67 @@ pub fn apply_config_password_env(cmd: &mut Command, password: &str) {
 
 fn rclone_cmd(binary: &str) -> Command {
     Command::new(resolve_rclone_binary(binary))
+}
+
+fn prefer_rc(
+    client: Option<&RcClient>,
+    rc: impl FnOnce(&RcClient) -> Result<(), RcError>,
+    fallback: impl FnOnce() -> Result<(), String>,
+) -> Result<(), String> {
+    match client {
+        Some(client) => match rc(client) {
+            Ok(()) => Ok(()),
+            Err(RcError::Unreachable(_)) => fallback(),
+            Err(e) => Err(e.to_string()),
+        },
+        None => fallback(),
+    }
+}
+
+pub fn validate_password_for(
+    client: Option<&RcClient>,
+    binary: &str,
+    password: &str,
+) -> Result<(), String> {
+    prefer_rc(
+        client,
+        |c| c.config_validate_password(password).map(|_| ()),
+        || validate_password(binary, password),
+    )
+}
+
+pub fn encrypt_config_for(
+    client: Option<&RcClient>,
+    binary: &str,
+    password: &str,
+) -> Result<(), String> {
+    prefer_rc(
+        client,
+        |c| c.config_encrypt(password).map(|_| ()),
+        || encrypt_config(binary, password),
+    )
+}
+
+pub fn unencrypt_config_for(
+    client: Option<&RcClient>,
+    binary: &str,
+    password: &str,
+) -> Result<(), String> {
+    prefer_rc(
+        client,
+        |c| c.config_decrypt(password).map(|_| ()),
+        || unencrypt_config(binary, password),
+    )
+}
+
+pub fn change_password_for(
+    client: Option<&RcClient>,
+    binary: &str,
+    current: &str,
+    next: &str,
+) -> Result<(), String> {
+    unencrypt_config_for(client, binary, current)?;
+    encrypt_config_for(client, binary, next)
 }
 
 pub fn validate_password(binary: &str, password: &str) -> Result<(), String> {
@@ -118,5 +180,7 @@ mod tests {
     fn rejects_empty_password() {
         assert!(validate_password("rclone", "").is_err());
         assert!(encrypt_config("rclone", "abc").is_err());
+        assert!(validate_password_for(None, "rclone", "").is_err());
+        assert!(encrypt_config_for(None, "rclone", "abc").is_err());
     }
 }

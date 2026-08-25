@@ -311,10 +311,16 @@ impl RcClient {
         )
     }
 
-    pub fn copy_url(&self, url: &str, fs: &str, remote: &str) -> Result<Value, RcError> {
-        self.call(
+    pub fn copy_url(
+        &self,
+        url: &str,
+        fs: &str,
+        remote: &str,
+        auto_filename: bool,
+    ) -> Result<u64, RcError> {
+        self.start_job(
             "operations/copyurl",
-            json!({ "url": url, "fs": fs, "remote": remote }),
+            copy_url_payload(url, fs, remote, auto_filename),
         )
     }
 
@@ -424,15 +430,37 @@ impl RcClient {
         self.call("operations/cleanup", cleanup_payload(fs, remote))
     }
 
+    pub fn archive_create(&self, opts: &ArchiveCreateOpts) -> Result<u64, RcError> {
+        match self.start_job("operations/archive", archive_create_payload(opts)) {
+            Ok(id) => Ok(id),
+            Err(e) if looks_missing_endpoint(&e) => {
+                let value = self.core_command("archive", archive_create_cli_args(opts), true)?;
+                value.get("jobid").and_then(|x| x.as_u64()).ok_or(e)
+            }
+            Err(e) => Err(e),
+        }
+    }
+
     pub fn archive_extract(&self, src: &str, dst: &str) -> Result<u64, RcError> {
-        self.start_job(
+        match self.start_job(
             "operations/archive",
             json!({
                 "action": "extract",
                 "src": src,
                 "dst": dst
             }),
-        )
+        ) {
+            Ok(id) => Ok(id),
+            Err(e) if looks_missing_endpoint(&e) => {
+                let value = self.core_command(
+                    "archive",
+                    vec!["extract".into(), src.to_string(), dst.to_string()],
+                    true,
+                )?;
+                value.get("jobid").and_then(|x| x.as_u64()).ok_or(e)
+            }
+            Err(e) => Err(e),
+        }
     }
 
     pub fn archive_list(&self, src: &str, long: bool) -> Result<Vec<ArchiveListItem>, RcError> {
@@ -808,6 +836,30 @@ impl RcClient {
     pub fn gc(&self) -> Result<Value, RcError> {
         self.call("core/gc", json!({}))
     }
+
+    pub fn core_command(
+        &self,
+        command: &str,
+        args: Vec<String>,
+        async_job: bool,
+    ) -> Result<Value, RcError> {
+        self.call(
+            "core/command",
+            core_command_payload(command, args, async_job),
+        )
+    }
+
+    pub fn config_validate_password(&self, password: &str) -> Result<Value, RcError> {
+        self.call("config/validatepassword", json!({ "password": password }))
+    }
+
+    pub fn config_encrypt(&self, password: &str) -> Result<Value, RcError> {
+        self.call("config/encrypt", json!({ "password": password }))
+    }
+
+    pub fn config_decrypt(&self, password: &str) -> Result<Value, RcError> {
+        self.call("config/decrypt", json!({ "password": password }))
+    }
 }
 
 fn basic_auth_header(user: &str, pass: &str) -> String {
@@ -1028,6 +1080,144 @@ impl ArchiveListItem {
 
 pub fn archive_list_payload(src: &str, long: bool) -> Value {
     json!({ "action": "list", "src": src, "long": long })
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct ArchiveCreateOpts {
+    pub src: String,
+    pub dst: String,
+    pub format: Option<String>,
+    pub prefix: Option<String>,
+    pub full_path: bool,
+    pub include: Vec<String>,
+}
+
+pub fn archive_create_payload(opts: &ArchiveCreateOpts) -> Value {
+    let mut body = json!({
+        "action": "create",
+        "src": opts.src,
+        "dst": opts.dst,
+    });
+    if let Some(obj) = body.as_object_mut() {
+        if let Some(format) = opts
+            .format
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+        {
+            obj.insert("format".into(), json!(format));
+        }
+        if let Some(prefix) = opts
+            .prefix
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+        {
+            obj.insert("prefix".into(), json!(prefix));
+        }
+        if opts.full_path {
+            obj.insert("full_path".into(), json!(true));
+        }
+        if !opts.include.is_empty() {
+            obj.insert("include".into(), json!(opts.include));
+        }
+    }
+    body
+}
+
+pub fn archive_create_opts_from_payload(params: &Value) -> ArchiveCreateOpts {
+    ArchiveCreateOpts {
+        src: params
+            .get("src")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string(),
+        dst: params
+            .get("dst")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string(),
+        format: params
+            .get("format")
+            .and_then(|v| v.as_str())
+            .map(str::to_string),
+        prefix: params
+            .get("prefix")
+            .and_then(|v| v.as_str())
+            .map(str::to_string),
+        full_path: params
+            .get("full_path")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false),
+        include: params
+            .get("include")
+            .and_then(|v| v.as_array())
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|v| v.as_str().map(str::to_string))
+                    .collect()
+            })
+            .unwrap_or_default(),
+    }
+}
+
+pub fn archive_create_cli_args(opts: &ArchiveCreateOpts) -> Vec<String> {
+    let mut args = vec!["create".into(), opts.src.clone(), opts.dst.clone()];
+    if let Some(format) = opts
+        .format
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+    {
+        args.push(format!("--format={format}"));
+    }
+    if let Some(prefix) = opts
+        .prefix
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+    {
+        args.push(format!("--prefix={prefix}"));
+    }
+    if opts.full_path {
+        args.push("--full-path".into());
+    }
+    for item in &opts.include {
+        if !item.is_empty() {
+            args.push(format!("--include={item}"));
+        }
+    }
+    args
+}
+
+pub fn core_command_payload(command: &str, args: Vec<String>, async_job: bool) -> Value {
+    let mut body = json!({
+        "command": command,
+        "arg": args,
+    });
+    if async_job {
+        if let Some(obj) = body.as_object_mut() {
+            obj.insert("_async".into(), json!(true));
+            obj.insert("returnType".into(), json!("STREAM"));
+        }
+    }
+    body
+}
+
+pub fn copy_url_payload(url: &str, fs: &str, remote: &str, auto_filename: bool) -> Value {
+    json!({
+        "url": url,
+        "fs": fs,
+        "remote": remote,
+        "autoFilename": auto_filename,
+    })
+}
+
+pub fn looks_missing_endpoint(err: &RcError) -> bool {
+    let text = err.to_string().to_ascii_lowercase();
+    text.contains("couldn't find method")
+        || text.contains("unknown method")
+        || (text.contains("404") && text.contains("method"))
 }
 
 pub fn batch_input(path: &str, params: Value) -> Value {
@@ -1557,5 +1747,64 @@ mod tests {
             vfs_queue_expiry_payload("drive:", "3", "1m", true),
             json!({ "fs": "drive:", "id": "3", "expiry": "1m", "relative": true })
         );
+    }
+
+    #[test]
+    fn archive_create_payload_matches_tauri() {
+        let opts = ArchiveCreateOpts {
+            src: "drive:Photos".into(),
+            dst: "drive:Photos/pack.zip".into(),
+            format: Some("zip".into()),
+            prefix: Some("backup".into()),
+            full_path: true,
+            include: vec!["a.txt".into(), "b".into()],
+        };
+        let payload = archive_create_payload(&opts);
+        assert_eq!(payload["action"], "create");
+        assert_eq!(payload["src"], "drive:Photos");
+        assert_eq!(payload["dst"], "drive:Photos/pack.zip");
+        assert_eq!(payload["format"], "zip");
+        assert_eq!(payload["prefix"], "backup");
+        assert_eq!(payload["full_path"], true);
+        assert_eq!(payload["include"], json!(["a.txt", "b"]));
+        let args = archive_create_cli_args(&opts);
+        assert_eq!(args[0], "create");
+        assert!(args.iter().any(|a| a == "--format=zip"));
+        assert!(args.iter().any(|a| a == "--full-path"));
+        assert!(args.iter().any(|a| a == "--include=a.txt"));
+        let empty = archive_create_payload(&ArchiveCreateOpts {
+            src: "a:".into(),
+            dst: "a:out.zip".into(),
+            ..ArchiveCreateOpts::default()
+        });
+        assert!(empty.get("format").is_none());
+        assert!(empty.get("include").is_none());
+        assert!(empty.get("full_path").is_none());
+    }
+
+    #[test]
+    fn copy_url_and_core_command_payloads() {
+        assert_eq!(
+            copy_url_payload("https://ex/a.bin", "drive:Inbox", "", true),
+            json!({
+                "url": "https://ex/a.bin",
+                "fs": "drive:Inbox",
+                "remote": "",
+                "autoFilename": true
+            })
+        );
+        assert_eq!(
+            copy_url_payload("https://ex/a.bin", "drive:", "Inbox/a.bin", false)["autoFilename"],
+            false
+        );
+        let cmd = core_command_payload("archive", vec!["list".into(), "a.zip".into()], true);
+        assert_eq!(cmd["command"], "archive");
+        assert_eq!(cmd["arg"], json!(["list", "a.zip"]));
+        assert_eq!(cmd["_async"], true);
+        assert_eq!(cmd["returnType"], "STREAM");
+        assert!(looks_missing_endpoint(&RcError::message(
+            "couldn't find method operations/archive"
+        )));
+        assert!(!looks_missing_endpoint(&RcError::message("path not found")));
     }
 }

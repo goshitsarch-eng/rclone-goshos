@@ -2766,12 +2766,23 @@ impl NautilusView {
                 "archive" => {
                     if let Some(win) = view.root.root().and_downcast::<gtk::Window>() {
                         let current = view.current.borrow().clone();
-                        dialogs::archive_create(
-                            &win,
-                            view.ctx.clone(),
-                            &current.remote,
-                            &current.path,
-                        );
+                        let names = view.selected_names();
+                        if names.is_empty() {
+                            view.toast.add_toast(adw::Toast::new(
+                                &view.ctx.t_or(
+                                    "nautilus.errors.minSelection",
+                                    "Select items to archive",
+                                ),
+                            ));
+                        } else {
+                            dialogs::archive_create(
+                                &win,
+                                view.ctx.clone(),
+                                &current.remote,
+                                &current.path,
+                                &names,
+                            );
+                        }
                     }
                 }
                 "share" => view.share_selected(),
@@ -2860,29 +2871,21 @@ impl NautilusView {
         let Some(win) = self.root.root().and_downcast::<gtk::Window>() else {
             return;
         };
+        let current = self.current.borrow().clone();
         let view = self.clone();
-        dialogs::prompt(
+        dialogs::copy_url_into(
             &win,
-            "Copy URL",
-            "Download this URL into the current folder",
-            "https://",
-            move |url| {
-                if url.is_empty() {
-                    return;
-                }
-                let Some(client) = view.ctx.client() else {
-                    return;
-                };
-                let current = view.current.borrow().clone();
-                let (fs, remote) = fs_remote(&current.remote, &current.path);
-                match client.copy_url(&url, &fs, &remote) {
-                    Ok(_) => {
-                        view.reload();
-                        view.toast.add_toast(adw::Toast::new("Started URL copy"));
-                    }
-                    Err(e) => view.toast.add_toast(adw::Toast::new(&e.to_string())),
-                }
-            },
+            self.ctx.clone(),
+            &current.remote,
+            &current.path,
+            Rc::new(move || {
+                view.reload();
+                view.toast.add_toast(adw::Toast::new(
+                    &view
+                        .ctx
+                        .t_or("nautilus.notifications.copyUrlStarted", "Started URL copy"),
+                ));
+            }),
         );
     }
 

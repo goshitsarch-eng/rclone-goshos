@@ -103,7 +103,7 @@ pub fn present_standalone(
         "remote-about" => remote_about(&window, ctx.clone(), &remote),
         "keyboard-shortcuts" => shortcuts(&window, &ctx),
         "alerts" => alerts(&window, ctx.clone()),
-        "archive-create" => archive_create(&window, ctx.clone(), &remote, &path),
+        "archive-create" => archive_create(&window, ctx.clone(), &remote, &path, &[]),
         "quick-run-editor" => quick_run_editor(&window, ctx.clone(), None, noop),
         "template-manager" => templates(&window, ctx.clone()),
         "delete-remote" => delete_remote(&window, ctx.clone(), &remote, noop),
@@ -5429,57 +5429,116 @@ pub fn templates(parent: &impl IsA<gtk::Widget>, ctx: AppCtx) {
     present_window_or_dialog(parent, &ctx, &dialog);
 }
 
-pub fn archive_create(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, remote: &str, path: &str) {
+pub fn archive_create(
+    parent: &impl IsA<gtk::Widget>,
+    ctx: AppCtx,
+    remote: &str,
+    path: &str,
+    names: &[String],
+) {
     let dialog = adw::Dialog::new();
-    dialog.set_title(&ctx.t_or("nautilus.contextMenu.compress", "Create archive"));
+    dialog.set_title(&ctx.t_or("nautilus.modals.archiveCreate.title", "Create archive"));
+    let default_name = if names.len() == 1 {
+        format!("{}.zip", names[0])
+    } else {
+        "archive.zip".into()
+    };
     let name = adw::EntryRow::new();
-    name.set_title("Archive name");
-    name.set_text("archive.zip");
+    name.set_title(&ctx.t_or(
+        "nautilus.modals.archiveCreate.filenameLabel",
+        "Archive name",
+    ));
+    name.set_text(&default_name);
+    let formats = ["zip", "tar", "tar.gz", "tar.bz2", "tar.xz", "tar.zst"];
     let format = adw::ComboRow::new();
-    format.set_title("Format");
-    format.set_model(Some(&gtk::StringList::new(&[
-        "zip", "tar", "tar.gz", "tar.bz2", "tar.xz", "tar.zst",
-    ])));
-    let start = gtk::Button::with_label("Create");
+    format.set_title(&ctx.t_or("remoteConfig.archiveFormat", "Format"));
+    format.set_model(Some(&gtk::StringList::new(&formats)));
+    let prefix = adw::EntryRow::new();
+    prefix.set_title(&ctx.t_or("remoteConfig.archivePrefix", "Prefix"));
+    let full_path = adw::SwitchRow::new();
+    full_path.set_title(&ctx.t_or(
+        "remoteConfig.archiveFullPath",
+        "Use full paths in the archive",
+    ));
+    let start =
+        gtk::Button::with_label(&ctx.t_or("nautilus.modals.archiveCreate.compress", "Create"));
     start.add_css_class("suggested-action");
     {
         let ctx = ctx.clone();
         let dialog = dialog.clone();
         let remote = remote.to_string();
-        let src_path = path.to_string();
+        let folder = path.to_string();
+        let names = names.to_vec();
         let name = name.clone();
+        let format = format.clone();
+        let prefix = prefix.clone();
+        let full_path = full_path.clone();
         start.connect_clicked(move |_| {
-            let mut dest = name.text().to_string();
-            if dest.is_empty() {
-                dest = "archive.zip".into();
+            let mut dest_name = name.text().to_string();
+            if dest_name.is_empty() {
+                dest_name = "archive.zip".into();
             }
-            if let Some(client) = ctx.client() {
-                let fs = if remote == "local" {
-                    "/".into()
-                } else {
-                    remote_fs(&remote, "")
-                };
-                match client.start_job(
-                    "operations/copyfile",
-                    serde_json::json!({
-                        "srcFs": fs,
-                        "srcRemote": src_path,
-                        "dstFs": fs,
-                        "dstRemote": dest
-                    }),
-                ) {
-                    Ok(id) => {
-                        ctx.store
-                            .borrow_mut()
-                            .push_log(&remote, format!("archive job #{id} queued"));
-                        dialog.close();
+            let format_name = formats
+                .get(format.selected() as usize)
+                .copied()
+                .unwrap_or("zip");
+            if !crate::jobs::has_archive_extension(&dest_name) {
+                dest_name = format!("{dest_name}.{format_name}");
+            }
+            let source = if names.len() == 1 {
+                rclone_item_path(&remote, &folder, Some(&names[0]))
+            } else {
+                rclone_item_path(&remote, &folder, None)
+            };
+            let destination = rclone_item_path(&remote, &folder, Some(&dest_name));
+            let include = if names.len() > 1 {
+                names.clone()
+            } else {
+                Vec::new()
+            };
+            let opts = crate::rclone::ArchiveCreateOpts {
+                src: source,
+                dst: destination,
+                format: Some(format_name.to_string()),
+                prefix: {
+                    let text = prefix.text().to_string();
+                    if text.trim().is_empty() {
+                        None
+                    } else {
+                        Some(text)
                     }
-                    Err(e) => {
-                        let err =
-                            adw::AlertDialog::new(Some("Archive failed"), Some(&e.to_string()));
-                        err.add_response("ok", "OK");
-                        err.present(Some(&dialog));
-                    }
+                },
+                full_path: full_path.is_active(),
+                include,
+            };
+            let Some(client) = ctx.client() else {
+                return;
+            };
+            match client.archive_create(&opts) {
+                Ok(id) => {
+                    ctx.store.borrow_mut().job_meta.insert(
+                        id,
+                        crate::jobs::job_meta_for(
+                            &remote,
+                            &crate::store::ProfileConfig::default(),
+                            "file-manager",
+                            &ctx.backend_key(),
+                            "",
+                        ),
+                    );
+                    ctx.store
+                        .borrow_mut()
+                        .push_log(&remote, format!("archive job #{id} queued"));
+                    ctx.refresh_runtime();
+                    dialog.close();
+                }
+                Err(e) => {
+                    let err = adw::AlertDialog::new(
+                        Some(&ctx.t_or("nautilus.errors.archiveCreateFailed", "Archive failed")),
+                        Some(&e.to_string()),
+                    );
+                    err.add_response("ok", "OK");
+                    err.present(Some(&dialog));
                 }
             }
         });
@@ -5488,12 +5547,126 @@ pub fn archive_create(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, remote: &str,
     let group = adw::PreferencesGroup::new();
     group.add(&name);
     group.add(&format);
+    group.add(&prefix);
+    group.add(&full_path);
     page.add(&group);
     let box_ = gtk::Box::new(gtk::Orientation::Vertical, 8);
     box_.append(&page);
     box_.append(&start);
     dialog.set_child(Some(&box_));
     dialog.present(Some(parent));
+}
+
+pub fn copy_url_into(
+    parent: &impl IsA<gtk::Widget>,
+    ctx: AppCtx,
+    remote: &str,
+    path: &str,
+    on_done: Rc<dyn Fn()>,
+) {
+    let dialog = adw::Dialog::new();
+    dialog.set_title(&ctx.t_or("nautilus.modals.copyUrl.title", "Copy URL"));
+    let url = adw::EntryRow::new();
+    url.set_title(&ctx.t_or("nautilus.modals.copyUrl.urlLabel", "URL"));
+    url.set_text("https://");
+    let filename = adw::EntryRow::new();
+    filename.set_title(&ctx.t_or("nautilus.modals.copyUrl.fileLabel", "Filename (optional)"));
+    filename.set_tooltip_text(Some(&ctx.t_or(
+        "nautilus.modals.copyUrl.filePlaceholder",
+        "Leave empty to use the automatic name",
+    )));
+    let start = gtk::Button::with_label(&ctx.t_or("nautilus.modals.copyUrl.confirm", "Download"));
+    start.add_css_class("suggested-action");
+    {
+        let ctx = ctx.clone();
+        let dialog = dialog.clone();
+        let remote = remote.to_string();
+        let folder = path.to_string();
+        let url = url.clone();
+        let filename = filename.clone();
+        start.connect_clicked(move |_| {
+            let url_text = url.text().to_string();
+            if url_text.trim().is_empty() {
+                return;
+            }
+            let file = filename.text().to_string();
+            let auto_filename = file.trim().is_empty();
+            let dest_remote = if auto_filename {
+                folder.clone()
+            } else {
+                crate::rclone::join_remote_path(&folder, file.trim())
+            };
+            let dest_remote = if remote == "local" {
+                dest_remote.trim_start_matches('/').to_string()
+            } else {
+                dest_remote
+            };
+            let Some(client) = ctx.client() else {
+                return;
+            };
+            let (fs, _) = if remote == "local" {
+                ("/".to_string(), dest_remote.clone())
+            } else {
+                (remote_fs(&remote, ""), dest_remote.clone())
+            };
+            match client.copy_url(&url_text, &fs, &dest_remote, auto_filename) {
+                Ok(id) => {
+                    ctx.store.borrow_mut().job_meta.insert(
+                        id,
+                        crate::jobs::job_meta_for(
+                            &remote,
+                            &crate::store::ProfileConfig::default(),
+                            "file-manager",
+                            &ctx.backend_key(),
+                            "",
+                        ),
+                    );
+                    ctx.store
+                        .borrow_mut()
+                        .push_log(&remote, format!("copyurl job #{id} queued"));
+                    ctx.refresh_runtime();
+                    on_done();
+                    dialog.close();
+                }
+                Err(e) => {
+                    let err = adw::AlertDialog::new(
+                        Some(&ctx.t_or("nautilus.errors.copyUrlFailed", "Copy URL failed")),
+                        Some(&e.to_string()),
+                    );
+                    err.add_response("ok", "OK");
+                    err.present(Some(&dialog));
+                }
+            }
+        });
+    }
+    let page = adw::PreferencesPage::new();
+    let group = adw::PreferencesGroup::new();
+    group.add(&url);
+    group.add(&filename);
+    page.add(&group);
+    let box_ = gtk::Box::new(gtk::Orientation::Vertical, 8);
+    box_.append(&page);
+    box_.append(&start);
+    dialog.set_child(Some(&box_));
+    dialog.present(Some(parent));
+}
+
+fn rclone_item_path(remote: &str, folder: &str, name: Option<&str>) -> String {
+    let path = match name {
+        Some(name) if !name.is_empty() => crate::rclone::join_remote_path(folder, name),
+        _ => folder.to_string(),
+    };
+    if remote == "local" {
+        if path.is_empty() {
+            "/".into()
+        } else {
+            path
+        }
+    } else if path.is_empty() {
+        format!("{remote}:")
+    } else {
+        format!("{remote}:{path}")
+    }
 }
 
 pub fn install_rclone_update(
@@ -7298,6 +7471,11 @@ pub fn multi_rename(
     let pad = adw::EntryRow::new();
     pad.set_title("Counter padding");
     pad.set_text("2");
+    let case_sensitive = adw::SwitchRow::new();
+    case_sensitive.set_title(&ctx.t_or(
+        "nautilus.modals.multiRename.caseSensitive",
+        "Case sensitive",
+    ));
     let preview = gtk::ListBox::new();
     preview.add_css_class("boxed-list");
     let plan_slots = Rc::new(RefCell::new((
@@ -7308,6 +7486,7 @@ pub fn multi_rename(
         step.clone(),
         pad.clone(),
         mode.clone(),
+        case_sensitive.clone(),
     )));
     let refresh_preview = {
         let names = names.clone();
@@ -7330,7 +7509,7 @@ pub fn multi_rename(
                 counter_start: slots.3.text().parse().unwrap_or(1),
                 counter_step: slots.4.text().parse().unwrap_or(1),
                 counter_padding: slots.5.text().parse().unwrap_or(2),
-                case_sensitive: false,
+                case_sensitive: slots.7.is_active(),
             };
             let date = chrono::Local::now().format("%Y-%m-%d").to_string();
             for row in rename_preview(&names, &plan, &date) {
@@ -7352,6 +7531,10 @@ pub fn multi_rename(
     {
         let refresh_preview = refresh_preview.clone();
         mode.connect_selected_notify(move |_| refresh_preview());
+    }
+    {
+        let refresh_preview = refresh_preview.clone();
+        case_sensitive.connect_active_notify(move |_| refresh_preview());
     }
     refresh_preview();
     let apply = gtk::Button::with_label("Rename");
@@ -7380,7 +7563,7 @@ pub fn multi_rename(
                 counter_start: slots.3.text().parse().unwrap_or(1),
                 counter_step: slots.4.text().parse().unwrap_or(1),
                 counter_padding: slots.5.text().parse().unwrap_or(2),
-                case_sensitive: false,
+                case_sensitive: slots.7.is_active(),
             };
             let date = chrono::Local::now().format("%Y-%m-%d").to_string();
             let rows = rename_preview(&names, &plan, &date);
@@ -7427,6 +7610,7 @@ pub fn multi_rename(
     group.add(&start);
     group.add(&step);
     group.add(&pad);
+    group.add(&case_sensitive);
     let box_ = gtk::Box::new(gtk::Orientation::Vertical, 8);
     let scroll = gtk::ScrolledWindow::new();
     scroll.set_vexpand(true);

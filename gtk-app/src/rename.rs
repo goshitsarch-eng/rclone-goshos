@@ -193,6 +193,21 @@ mod tests {
             calculate_new_name("img_001.JPG", 0, &plan, ""),
             "pic_001.JPG"
         );
+        let sensitive = RenamePlan {
+            mode: RenameMode::Replace,
+            find_text: "IMG".into(),
+            replace_with: "pic".into(),
+            case_sensitive: true,
+            ..Default::default()
+        };
+        assert_eq!(
+            calculate_new_name("img_001.JPG", 0, &sensitive, ""),
+            "img_001.JPG"
+        );
+        assert_eq!(
+            calculate_new_name("IMG_001.JPG", 0, &sensitive, ""),
+            "pic_001.JPG"
+        );
     }
 
     #[test]
