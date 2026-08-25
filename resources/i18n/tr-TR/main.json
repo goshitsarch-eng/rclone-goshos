@@ -55,6 +55,12 @@
     "weeklyAt": "Haftalık, gün {{dow}}, {{time}}",
     "weeklyDaysAt": "Haftalık, günler {{days}}, {{time}}",
     "weeklyOnAt": "Her {{day}} {{time}}",
+    "weeklyOnDaysAt": "Haftalık {{days}} {{time}}",
+    "everyMinutesBetween": "Her {{n}} dakikada bir, {{start}}–{{end}} arasında",
+    "everyHoursAt": "Her {{n}} saatte, {{min}}. dakikada",
+    "monthlyDaysAt": "Her ayın {{days}} günleri {{time}}",
+    "yearlyOn": "Her yıl {{month}} {{dom}} {{time}}",
+    "atReboot": "Açılışta",
     "days": {
       "0": "Pazar",
       "1": "Pazartesi",
@@ -64,6 +70,20 @@
       "5": "Cuma",
       "6": "Cumartesi",
       "7": "Pazar"
+    },
+    "months": {
+      "1": "Ocak",
+      "2": "Şubat",
+      "3": "Mart",
+      "4": "Nisan",
+      "5": "Mayıs",
+      "6": "Haziran",
+      "7": "Temmuz",
+      "8": "Ağustos",
+      "9": "Eylül",
+      "10": "Ekim",
+      "11": "Kasım",
+      "12": "Aralık"
     }
   },
   "remoteConfig": {

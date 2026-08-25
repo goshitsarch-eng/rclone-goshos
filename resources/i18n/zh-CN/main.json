@@ -55,6 +55,12 @@
     "weeklyAt": "每周第 {{dow}} 天 {{time}}",
     "weeklyDaysAt": "每周 {{days}} {{time}}",
     "weeklyOnAt": "每周{{day}} {{time}}",
+    "weeklyOnDaysAt": "每周 {{days}} {{time}}",
+    "everyMinutesBetween": "每 {{n}} 分钟，在 {{start}} 至 {{end}} 之间",
+    "everyHoursAt": "每 {{n}} 小时的第 {{min}} 分钟",
+    "monthlyDaysAt": "每月 {{days}} 日 {{time}}",
+    "yearlyOn": "每年 {{month}} {{dom}} 日 {{time}}",
+    "atReboot": "开机时",
     "days": {
       "0": "星期日",
       "1": "星期一",
@@ -64,6 +70,20 @@
       "5": "星期五",
       "6": "星期六",
       "7": "星期日"
+    },
+    "months": {
+      "1": "1月",
+      "2": "2月",
+      "3": "3月",
+      "4": "4月",
+      "5": "5月",
+      "6": "6月",
+      "7": "7月",
+      "8": "8月",
+      "9": "9月",
+      "10": "10月",
+      "11": "11月",
+      "12": "12月"
     }
   },
   "remoteConfig": {

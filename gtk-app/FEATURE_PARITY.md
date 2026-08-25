@@ -265,6 +265,7 @@ This client is the GTK 4 + libadwaita rewrite of the Angular/Tauri desktop UI. I
 - Remote About splits MetadataInfo into System vs Standard groups with Type/Help/Example/ReadOnly
 - Files grid tiles show size and relative Modified dates
 - Remaining dialog chrome (quick-add, CLI import, helper profiles, template capture, path kind) uses i18n fallbacks
+- Cron descriptions: `@hourly/@daily/@weekly/@monthly/@yearly/@reboot`, named weekdays, 6-field seconds, minute ranges, multi-day monthly, yearly month names
 
 ## Still deepening toward pixel-level Angular parity
 
@@ -272,4 +273,4 @@ This client is the GTK 4 + libadwaita rewrite of the Angular/Tauri desktop UI. I
 - Live GUI session against rclone rcd (no display in this environment)
 - Native share portal / Android share intent (Linux uses `--share-intake` + Files banner)
 - Remaining dialogs/Files English labels (core chrome now localized)
-- cronstrue-quality coverage for uncommon cron forms beyond the expanded matcher
+- Remaining cronstrue forms (lists of months, last/nth weekday, timezone suffixes)

@@ -55,6 +55,12 @@
     "weeklyAt": "Semanalmente el día {{dow}} a las {{time}}",
     "weeklyDaysAt": "Semanalmente los días {{days}} a las {{time}}",
     "weeklyOnAt": "Cada {{day}} a las {{time}}",
+    "weeklyOnDaysAt": "Semanalmente los {{days}} a las {{time}}",
+    "everyMinutesBetween": "Cada {{n}} minutos entre {{start}} y {{end}}",
+    "everyHoursAt": "Cada {{n}} horas en el minuto {{min}}",
+    "monthlyDaysAt": "Los días {{days}} de cada mes a las {{time}}",
+    "yearlyOn": "Cada año el {{dom}} de {{month}} a las {{time}}",
+    "atReboot": "Al reiniciar",
     "days": {
       "0": "domingo",
       "1": "lunes",
@@ -64,6 +70,20 @@
       "5": "viernes",
       "6": "sábado",
       "7": "domingo"
+    },
+    "months": {
+      "1": "enero",
+      "2": "febrero",
+      "3": "marzo",
+      "4": "abril",
+      "5": "mayo",
+      "6": "junio",
+      "7": "julio",
+      "8": "agosto",
+      "9": "septiembre",
+      "10": "octubre",
+      "11": "noviembre",
+      "12": "diciembre"
     }
   },
   "remoteConfig": {

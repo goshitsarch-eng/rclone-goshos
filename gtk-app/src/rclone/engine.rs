@@ -206,12 +206,101 @@ fn cron_day_name(dow: &str, i18n: &crate::i18n::I18n) -> String {
     )
 }
 
+fn cron_month_name(mon: &str, i18n: &crate::i18n::I18n) -> String {
+    let key = format!("cron.months.{mon}");
+    i18n.t_or(
+        &key,
+        match mon {
+            "1" => "January",
+            "2" => "February",
+            "3" => "March",
+            "4" => "April",
+            "5" => "May",
+            "6" => "June",
+            "7" => "July",
+            "8" => "August",
+            "9" => "September",
+            "10" => "October",
+            "11" => "November",
+            "12" => "December",
+            other => other,
+        },
+    )
+}
+
+fn cron_day_list(dow: &str, i18n: &crate::i18n::I18n) -> String {
+    dow.split(',')
+        .map(|d| cron_day_name(d.trim(), i18n))
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
+fn cron_expand_nickname(expression: &str) -> String {
+    match expression.to_ascii_lowercase().as_str() {
+        "@yearly" | "@annually" => "0 0 1 1 *".into(),
+        "@monthly" => "0 0 1 * *".into(),
+        "@weekly" => "0 0 * * 0".into(),
+        "@daily" | "@midnight" => "0 0 * * *".into(),
+        "@hourly" => "0 * * * *".into(),
+        _ => expression.to_string(),
+    }
+}
+
+fn cron_normalize_dow(dow: &str) -> String {
+    let mut out = dow.to_ascii_uppercase();
+    for (name, num) in [
+        ("SUN", "0"),
+        ("MON", "1"),
+        ("TUE", "2"),
+        ("WED", "3"),
+        ("THU", "4"),
+        ("FRI", "5"),
+        ("SAT", "6"),
+    ] {
+        out = out.replace(name, num);
+    }
+    out
+}
+
 pub fn describe_cron_i18n(expression: &str, i18n: &crate::i18n::I18n) -> String {
-    let parts: Vec<&str> = expression.split_whitespace().collect();
-    if parts.len() < 5 {
+    let trimmed = expression.trim();
+    if trimmed.eq_ignore_ascii_case("@reboot") {
+        return i18n.t_or("cron.atReboot", "At reboot");
+    }
+    let normalized = cron_expand_nickname(trimmed);
+    let parts: Vec<&str> = normalized.split_whitespace().collect();
+    let fields = if parts.len() >= 6 {
+        &parts[parts.len() - 5..]
+    } else {
+        &parts[..]
+    };
+    if fields.len() < 5 {
         return expression.to_string();
     }
-    let (min, hour, dom, mon, dow) = (parts[0], parts[1], parts[2], parts[3], parts[4]);
+    let (min, hour, dom, mon, dow_raw) = (fields[0], fields[1], fields[2], fields[3], fields[4]);
+    let dow_owned = cron_normalize_dow(dow_raw);
+    let dow = dow_owned.as_str();
+    if min.starts_with("*/")
+        && hour.contains('-')
+        && cron_is_int(hour.split('-').next().unwrap_or(""))
+        && cron_is_int(hour.split('-').nth(1).unwrap_or(""))
+        && !hour.contains(',')
+        && dom == "*"
+        && mon == "*"
+        && dow == "*"
+    {
+        let n = min.trim_start_matches("*/");
+        let start = cron_time(hour.split('-').next().unwrap_or(hour), "0");
+        let end = cron_time(hour.split('-').nth(1).unwrap_or(hour), "0");
+        return if i18n.has("cron.everyMinutesBetween") {
+            i18n.tf(
+                "cron.everyMinutesBetween",
+                &[("n", n), ("start", &start), ("end", &end)],
+            )
+        } else {
+            format!("Every {n} minutes between {start} and {end}")
+        };
+    }
     if min.starts_with("*/") && hour == "*" && dom == "*" && mon == "*" && dow == "*" {
         let n = min.trim_start_matches("*/");
         return if i18n.has("cron.everyMinutes") {
@@ -220,12 +309,19 @@ pub fn describe_cron_i18n(expression: &str, i18n: &crate::i18n::I18n) -> String 
             format!("Every {n} minutes")
         };
     }
-    if min == "0" && hour.starts_with("*/") && dom == "*" && mon == "*" && dow == "*" {
+    if cron_is_int(min) && hour.starts_with("*/") && dom == "*" && mon == "*" && dow == "*" {
         let n = hour.trim_start_matches("*/");
-        return if i18n.has("cron.everyHours") {
-            i18n.tf("cron.everyHours", &[("n", n)])
+        if min == "0" {
+            return if i18n.has("cron.everyHours") {
+                i18n.tf("cron.everyHours", &[("n", n)])
+            } else {
+                format!("Every {n} hours")
+            };
+        }
+        return if i18n.has("cron.everyHoursAt") {
+            i18n.tf("cron.everyHoursAt", &[("n", n), ("min", min)])
         } else {
-            format!("Every {n} hours")
+            format!("Every {n} hours at minute {min}")
         };
     }
     if min == "*" && hour == "*" && dom == "*" && mon == "*" && dow == "*" {
@@ -260,6 +356,26 @@ pub fn describe_cron_i18n(expression: &str, i18n: &crate::i18n::I18n) -> String 
             i18n.tf("cron.weekendsAt", &[("time", &time)])
         } else {
             format!("Weekends at {time}")
+        };
+    }
+    if cron_is_int(min) && cron_is_int(hour) && cron_is_int(dom) && cron_is_int(mon) && dow == "*" {
+        let time = cron_time(hour, min);
+        let month = cron_month_name(mon, i18n);
+        return if i18n.has("cron.yearlyOn") {
+            i18n.tf(
+                "cron.yearlyOn",
+                &[("month", &month), ("dom", dom), ("time", &time)],
+            )
+        } else {
+            format!("Yearly on {month} {dom} at {time}")
+        };
+    }
+    if cron_is_int(min) && cron_is_int(hour) && dom.contains(',') && mon == "*" && dow == "*" {
+        let time = cron_time(hour, min);
+        return if i18n.has("cron.monthlyDaysAt") {
+            i18n.tf("cron.monthlyDaysAt", &[("days", dom), ("time", &time)])
+        } else {
+            format!("Monthly on days {dom} at {time}")
         };
     }
     if cron_is_int(min) && cron_is_int(hour) && cron_is_int(dom) && mon == "*" && dow == "*" {
@@ -309,10 +425,14 @@ pub fn describe_cron_i18n(expression: &str, i18n: &crate::i18n::I18n) -> String 
     }
     if cron_is_int(min) && cron_is_int(hour) && dom == "*" && mon == "*" && dow.contains(',') {
         let time = cron_time(hour, min);
+        let days = cron_day_list(dow, i18n);
+        if i18n.has("cron.weeklyOnDaysAt") {
+            return i18n.tf("cron.weeklyOnDaysAt", &[("days", &days), ("time", &time)]);
+        }
         return if i18n.has("cron.weeklyDaysAt") {
-            i18n.tf("cron.weeklyDaysAt", &[("days", dow), ("time", &time)])
+            i18n.tf("cron.weeklyDaysAt", &[("days", &days), ("time", &time)])
         } else {
-            format!("Weekly on days {dow} at {time}")
+            format!("Weekly on {days} at {time}")
         };
     }
     expression.to_string()
@@ -345,14 +465,33 @@ mod tests {
         assert_eq!(describe_cron("30 * * * *"), "Hourly at minute 30");
         assert_eq!(
             describe_cron("0 9 * * 1,3,5"),
-            "Weekly on days 1,3,5 at 9:00"
+            "Weekly on Monday, Wednesday, Friday at 9:00"
         );
         assert_eq!(describe_cron("0 9 * * 1"), "Weekly on Monday at 9:00");
+        assert_eq!(describe_cron("0 9 * * MON"), "Weekly on Monday at 9:00");
+        assert_eq!(describe_cron("0 9 * * MON-FRI"), "Weekdays at 9:00");
         assert_eq!(
             describe_cron("0 9-17 * * *"),
             "Daily between 9:00 and 17:00"
         );
         assert_eq!(describe_cron("0 0 */3 * *"), "Every 3 days");
+        assert_eq!(
+            describe_cron("*/15 9-17 * * *"),
+            "Every 15 minutes between 9:00 and 17:00"
+        );
+        assert_eq!(describe_cron("30 */2 * * *"), "Every 2 hours at minute 30");
+        assert_eq!(
+            describe_cron("0 9 1,15 * *"),
+            "Monthly on days 1,15 at 9:00"
+        );
+        assert_eq!(describe_cron("0 0 1 1 *"), "Yearly on January 1 at 0:00");
+        assert_eq!(describe_cron("@hourly"), "Hourly at minute 0");
+        assert_eq!(describe_cron("@daily"), "Daily at 0:00");
+        assert_eq!(describe_cron("@weekly"), "Weekly on Sunday at 0:00");
+        assert_eq!(describe_cron("@monthly"), "Monthly on day 1 at 0:00");
+        assert_eq!(describe_cron("@yearly"), "Yearly on January 1 at 0:00");
+        assert_eq!(describe_cron("@reboot"), "At reboot");
+        assert_eq!(describe_cron("0 0 9 * * *"), "Daily at 9:00");
         let i18n = crate::i18n::I18n::default();
         assert_eq!(describe_cron_i18n("*/5 * * * *", &i18n), "Every 5 minutes");
         assert_eq!(describe_cron_i18n("* * * * *", &i18n), "Every minute");
