@@ -30,6 +30,7 @@ pub struct Dashboard {
     detail_host: Rc<RefCell<Option<gtk::Box>>>,
     detail_page: Rc<RefCell<String>>,
     detail_sig: Rc<RefCell<String>>,
+    sidebar_sig: Rc<RefCell<String>>,
 }
 
 impl Dashboard {
@@ -120,6 +121,7 @@ impl Dashboard {
             detail_host: Rc::new(RefCell::new(None)),
             detail_page: Rc::new(RefCell::new("monitoring".into())),
             detail_sig: Rc::new(RefCell::new(String::new())),
+            sidebar_sig: Rc::new(RefCell::new(String::new())),
         };
 
         let mut group_anchor: Option<gtk::ToggleButton> = None;
@@ -219,6 +221,7 @@ impl Dashboard {
 
     pub fn refresh(&self) {
         self.detail_sig.borrow_mut().clear();
+        self.sidebar_sig.borrow_mut().clear();
         self.refresh_inner();
     }
 
@@ -227,7 +230,9 @@ impl Dashboard {
     }
 
     fn refresh_inner(&self) {
-        self.fill_sidebar();
+        if self.should_rebuild_sidebar() {
+            self.fill_sidebar();
+        }
         if let Some(name) = self.ctx.selected_remote.borrow().clone() {
             self.content.set_visible_child_name("detail");
             if self.should_rebuild_detail(&name) {
@@ -240,21 +245,56 @@ impl Dashboard {
         }
     }
 
+    fn should_rebuild_sidebar(&self) -> bool {
+        let query = self.search.text().to_lowercase();
+        let snap = self.ctx.snapshot.borrow();
+        let sig = snap
+            .remotes
+            .iter()
+            .map(|remote| {
+                format!(
+                    "{}:{}:{}:{}:{}",
+                    remote.name, remote.r#type, remote.mounted, remote.serving, remote.job_active
+                )
+            })
+            .collect::<Vec<_>>()
+            .join("|");
+        let sig = format!("{query}:{sig}");
+        drop(snap);
+        let mut prev = self.sidebar_sig.borrow_mut();
+        if *prev == sig {
+            return false;
+        }
+        *prev = sig;
+        true
+    }
+
     fn should_rebuild_detail(&self, name: &str) -> bool {
         let tab = *self.tab.borrow();
         let snap = self.ctx.snapshot.borrow();
         let jobs: String = snap
             .jobs
             .iter()
-            .filter(|job| job.remote == name)
+            .filter(|job| {
+                job.remote == name
+                    && (crate::jobs::job_is_running(job) || crate::jobs::job_is_pending(job))
+            })
             .map(|job| format!("{}:{}:{:.2}", job.id, job.status, job.progress))
             .collect::<Vec<_>>()
             .join(",");
+        let mounts = snap
+            .mounts
+            .iter()
+            .filter(|item| item.fs.contains(name))
+            .count();
+        let serves = snap
+            .serves
+            .iter()
+            .filter(|item| item.fs.contains(name))
+            .count();
         let sig = format!(
-            "{name}:{:?}:{jobs}:m{}:s{}:{}",
+            "{name}:{:?}:{jobs}:m{mounts}:s{serves}:{}",
             tab,
-            snap.mounts.len(),
-            snap.serves.len(),
             self.detail_page.borrow().as_str(),
         );
         drop(snap);
