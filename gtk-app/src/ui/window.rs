@@ -1008,12 +1008,14 @@ fn install_actions(
         let toast = toast.clone();
         let dash = dashboard.clone();
         let action = gio::SimpleAction::new("refresh-mounts", None);
-        action.connect_activate(move |_, _| {
-            ctx.refresh_runtime();
-            dash.refresh();
-            toast.add_toast(adw::Toast::new(
-                &ctx.t_or("shortcuts.mountsRefreshSuccess", "Mounts refreshed"),
-            ));
+        action.connect_activate(move |_, _| match ctx.force_check_mounts() {
+            Ok(_) => {
+                dash.refresh();
+                toast.add_toast(adw::Toast::new(
+                    &ctx.t_or("shortcuts.mountsRefreshSuccess", "Mounts refreshed"),
+                ));
+            }
+            Err(error) => toast.add_toast(adw::Toast::new(&error)),
         });
         window.add_action(&action);
     }
@@ -1022,12 +1024,14 @@ fn install_actions(
         let toast = toast.clone();
         let dash = dashboard.clone();
         let action = gio::SimpleAction::new("refresh-serves", None);
-        action.connect_activate(move |_, _| {
-            ctx.refresh_runtime();
-            dash.refresh();
-            toast.add_toast(adw::Toast::new(
-                &ctx.t_or("shortcuts.servesRefreshSuccess", "Serves refreshed"),
-            ));
+        action.connect_activate(move |_, _| match ctx.force_check_serves() {
+            Ok(_) => {
+                dash.refresh();
+                toast.add_toast(adw::Toast::new(
+                    &ctx.t_or("shortcuts.servesRefreshSuccess", "Serves refreshed"),
+                ));
+            }
+            Err(error) => toast.add_toast(adw::Toast::new(&error)),
         });
         window.add_action(&action);
     }

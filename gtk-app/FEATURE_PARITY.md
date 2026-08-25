@@ -448,8 +448,11 @@ This client is the GTK 4 + libadwaita rewrite of the Angular/Tauri desktop UI. I
 - Overview Job Information matches Angular: aggregate progress/ETA, speed/transfers/checks/errors, and per-job captions with stop
 - Transfer activity rows show preparing/finalizing/error badges, bytes/speed/ETA, and a progress bar
 - Browse opens a mounted folder in the OS file manager (or a Quick Run src/dst); transfer Open uses typed-path routing
-- About update strings are i18n; Updates lists skipped app/rclone versions with Restore; wiki + rclone.org links
+- About update strings are i18n and use the same skipped-filtered pending state as Updates; skipped versions have Restore; wiki + rclone.org links
 - Dashboard hidden/activity/automation watch-pause labels use i18n; job origins use translated pills
+- CLI import preview/classify matches Angular: tokenize, verb/path/macro detection, mapped vs unknown flags, source/dest import, profile new/override/patch
+- About Details shows OS/arch, mode, release channel, and Debug tools
+- Ctrl+Shift+M / Ctrl+Shift+S force-reconcile mounts and serves from rclone RC (errors surface as toasts)
 
 ## Still deepening toward pixel-level Angular parity
 

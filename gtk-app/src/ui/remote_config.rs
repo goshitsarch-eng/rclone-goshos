@@ -1141,28 +1141,109 @@ fn operation_page(
         });
     }
 
-    let cli = adw::EntryRow::new();
-    cli.set_title(&ctx.t_or("remoteConfig.importCliFlags", "Import rclone CLI flags"));
-    let apply_cli = gtk::Button::with_label(&ctx.t_or("common.apply", "Apply"));
-    {
-        let flag_rows = flag_rows.clone();
-        let cli = cli.clone();
-        apply_cli.connect_clicked(move |_| {
-            let parsed = crate::jobs::parse_cli_flags(&cli.text());
-            for (field, row, _) in flag_rows.borrow().iter() {
-                if let Some(value) = parsed
-                    .get(field)
-                    .or_else(|| parsed.get(&field.replace('-', "_")))
-                {
-                    row.set_text(&value_to_text(value));
-                }
-            }
-        });
-    }
     let cli_row = adw::ActionRow::new();
     cli_row.set_title(&ctx.t_or("remoteConfig.cliImport", "CLI import"));
-    cli_row.add_suffix(&apply_cli);
-    flags_group.add(&cli);
+    cli_row.set_subtitle(&ctx.t_or(
+        "wizards.cliImport.description",
+        "Paste an rclone command, preview mapped flags, then apply them.",
+    ));
+    let preview = gtk::Button::with_label(&ctx.t_or("wizards.cliImport.preview", "Preview"));
+    {
+        let ctx = ctx.clone();
+        let parent = parent.clone();
+        let flag_rows = flag_rows.clone();
+        let src = src.clone();
+        let dst = dst.clone();
+        let serve = serve.clone();
+        let serve_types = serve_types.clone();
+        let remote = remote.to_string();
+        let names = switcher.names.clone();
+        let combo = switcher.combo.clone();
+        let selected = selected.clone();
+        preview.connect_clicked(move |_| {
+            let remote_type = remote_type_of(&ctx, &remote);
+            dialogs::present_cli_import(
+                &parent,
+                ctx.clone(),
+                dialogs::CliImportOptions {
+                    preferred: Some(op.as_str().to_string()),
+                    remote_type,
+                    is_quick_run: false,
+                    can_create_new: true,
+                    can_patch: true,
+                    existing_profiles: names.borrow().clone(),
+                    initial_cli: String::new(),
+                },
+                {
+                    let ctx = ctx.clone();
+                    let remote = remote.clone();
+                    let names = names.clone();
+                    let combo = combo.clone();
+                    let selected = selected.clone();
+                    let flag_rows = flag_rows.clone();
+                    let src = src.clone();
+                    let dst = dst.clone();
+                    let serve = serve.clone();
+                    let serve_types = serve_types.clone();
+                    move |apply| {
+                        match apply.profile_mode {
+                            crate::cli_import::ProfileMode::New
+                                if !apply.profile_name.is_empty() =>
+                            {
+                                mutate_profiles(&ctx, &remote, Some(op), None, |meta| {
+                                    meta.upsert_profile(
+                                        op,
+                                        ProfileConfig {
+                                            name: apply.profile_name.clone(),
+                                            ..Default::default()
+                                        },
+                                    );
+                                });
+                                if !names.borrow().iter().any(|n| n == &apply.profile_name) {
+                                    names.borrow_mut().push(apply.profile_name.clone());
+                                }
+                                refresh_combo(&combo, &names.borrow());
+                                if let Some(idx) =
+                                    names.borrow().iter().position(|n| n == &apply.profile_name)
+                                {
+                                    combo.set_selected(idx as u32);
+                                }
+                                *selected.borrow_mut() = apply.profile_name.clone();
+                            }
+                            crate::cli_import::ProfileMode::Override
+                                if !apply.profile_name.is_empty() =>
+                            {
+                                if let Some(idx) =
+                                    names.borrow().iter().position(|n| n == &apply.profile_name)
+                                {
+                                    combo.set_selected(idx as u32);
+                                }
+                                *selected.borrow_mut() = apply.profile_name.clone();
+                            }
+                            _ => {}
+                        }
+                        let apply = apply.clone();
+                        let flag_rows = flag_rows.clone();
+                        let src = src.clone();
+                        let dst = dst.clone();
+                        let serve = serve.clone();
+                        let serve_types = serve_types.clone();
+                        glib::idle_add_local_once(move || {
+                            dialogs::apply_cli_to_form(
+                                &apply,
+                                &flag_rows.borrow(),
+                                Some(&src),
+                                Some(&dst),
+                                Some(&serve),
+                                serve_types.as_ref(),
+                            );
+                        });
+                    }
+                },
+            );
+        });
+    }
+    cli_row.add_suffix(&preview);
     flags_group.add(&cli_row);
     flags_group.add(&json_toggle);
     let json_holder = adw::ActionRow::new();

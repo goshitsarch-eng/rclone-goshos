@@ -599,6 +599,48 @@ impl AppCtx {
         self.update_power_inhibit();
     }
 
+    pub fn force_check_mounts(&self) -> Result<usize, String> {
+        let client = self
+            .client()
+            .ok_or_else(|| self.t_or("errors.engineOffline", "rclone engine is offline"))?;
+        let mounts = client.list_mounts().map_err(|e| e.to_string())?;
+        let dump = self.cached_dump(&client);
+        let serves = self.snapshot.borrow().serves.clone();
+        let jobs = self.snapshot.borrow().jobs.clone();
+        let hidden = self.store.borrow().hidden_remotes.clone();
+        let remotes = crate::store::build_remote_infos(&dump, &mounts, &serves, &jobs, &hidden);
+        let previous_mounts = self.snapshot.borrow().mounts.clone();
+        emit_runtime_alerts(self, &previous_mounts, &mounts, &serves, &serves);
+        let count = mounts.len();
+        let mut snap = self.snapshot.borrow_mut();
+        snap.mounts = mounts;
+        snap.remotes = remotes;
+        drop(snap);
+        self.update_power_inhibit();
+        Ok(count)
+    }
+
+    pub fn force_check_serves(&self) -> Result<usize, String> {
+        let client = self
+            .client()
+            .ok_or_else(|| self.t_or("errors.engineOffline", "rclone engine is offline"))?;
+        let serves = client.serve_list().map_err(|e| e.to_string())?;
+        let dump = self.cached_dump(&client);
+        let mounts = self.snapshot.borrow().mounts.clone();
+        let jobs = self.snapshot.borrow().jobs.clone();
+        let hidden = self.store.borrow().hidden_remotes.clone();
+        let remotes = crate::store::build_remote_infos(&dump, &mounts, &serves, &jobs, &hidden);
+        let previous_serves = self.snapshot.borrow().serves.clone();
+        emit_runtime_alerts(self, &mounts, &mounts, &previous_serves, &serves);
+        let count = serves.len();
+        let mut snap = self.snapshot.borrow_mut();
+        snap.serves = serves;
+        snap.remotes = remotes;
+        drop(snap);
+        self.update_power_inhibit();
+        Ok(count)
+    }
+
     pub fn update_power_inhibit(&self) {
         if !self.settings.borrow().general.prevent_sleep {
             self.inhibitor.borrow_mut().release();

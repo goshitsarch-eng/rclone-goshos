@@ -1271,26 +1271,7 @@ pub fn merge_completed_transfers(stats: &mut Value, transferred: &Value) {
 }
 
 pub fn parse_cli_flags(cli: &str) -> Map<String, Value> {
-    let mut map = Map::new();
-    let tokens: Vec<&str> = cli.split_whitespace().collect();
-    let mut i = 0;
-    while i < tokens.len() {
-        let token = tokens[i].trim_start_matches('-');
-        if token.is_empty() {
-            i += 1;
-            continue;
-        }
-        if let Some((k, v)) = token.split_once('=') {
-            map.insert(k.replace('-', "_"), json!(v));
-        } else if i + 1 < tokens.len() && !tokens[i + 1].starts_with('-') {
-            map.insert(token.replace('-', "_"), json!(tokens[i + 1]));
-            i += 1;
-        } else {
-            map.insert(token.replace('-', "_"), json!(true));
-        }
-        i += 1;
-    }
-    map
+    crate::cli_import::parsed_to_flag_map(&crate::cli_import::parse(cli, &Default::default()))
 }
 
 pub fn job_from_status(jobid: u64, status: &Value, stats: Option<&Value>) -> JobInfo {

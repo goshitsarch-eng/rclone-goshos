@@ -346,6 +346,82 @@ fn present_ex(
         "wizards.cliImport.placeholder",
         "Import CLI flags (--transfers 8 --vfs-cache-mode full)",
     ));
+    let cli_preview = gtk::Button::with_label(&ctx.t_or("wizards.cliImport.preview", "Preview"));
+    {
+        let ctx = ctx.clone();
+        let dialog = dialog.clone();
+        let cli = cli.clone();
+        let src = src.clone();
+        let dst = dst.clone();
+        let mount = mount.clone();
+        let serve = serve.clone();
+        let mount_type = mount_type.clone();
+        let serve_types = serve_types.clone();
+        let mount_types = mount_types.clone();
+        let type_row = type_row.clone();
+        let providers = providers.clone();
+        cli_preview.connect_clicked(move |_| {
+            let remote_type = provider_type(&providers, type_row.selected());
+            super::dialogs::present_cli_import(
+                &dialog,
+                ctx.clone(),
+                super::dialogs::CliImportOptions {
+                    preferred: None,
+                    remote_type,
+                    is_quick_run: false,
+                    can_create_new: false,
+                    can_patch: true,
+                    existing_profiles: Vec::new(),
+                    initial_cli: cli.text().to_string(),
+                },
+                {
+                    let cli = cli.clone();
+                    let src = src.clone();
+                    let dst = dst.clone();
+                    let mount = mount.clone();
+                    let serve = serve.clone();
+                    let mount_type = mount_type.clone();
+                    let serve_types = serve_types.clone();
+                    let mount_types = mount_types.clone();
+                    move |apply| {
+                        match apply.verb.as_deref() {
+                            Some("mount") => {
+                                if let Some(path) = &apply.source_path {
+                                    src.set_text(path);
+                                }
+                                if let Some(path) = &apply.dest_path {
+                                    mount.set_text(path);
+                                }
+                            }
+                            _ => {
+                                if let Some(path) = &apply.source_path {
+                                    src.set_text(path);
+                                }
+                                if let Some(path) = &apply.dest_path {
+                                    dst.set_text(path);
+                                }
+                            }
+                        }
+                        if let Some(subtype) = &apply.serve_subtype {
+                            if let Some(idx) = serve_types.iter().position(|s| s == subtype) {
+                                serve.set_selected(idx as u32);
+                            }
+                        }
+                        if let Some(subtype) = &apply.mount_subtype {
+                            if let Some(idx) = mount_types.iter().position(|s| s == subtype) {
+                                mount_type.set_selected(idx as u32);
+                            }
+                        }
+                        let reconstructed = crate::cli_import::reconstruct_cli(&apply);
+                        if !reconstructed.is_empty() {
+                            cli.set_text(&reconstructed);
+                        }
+                    }
+                },
+            );
+        });
+    }
+    cli.add_suffix(&cli_preview);
     let obscure_in = adw::EntryRow::new();
     obscure_in.set_title(&ctx.t_or("wizards.obscure.clearPlaceholder", "Obscure a secret"));
     let obscure_btn = gtk::Button::with_label(&ctx.t_or("wizards.obscure.action", "Obscure"));

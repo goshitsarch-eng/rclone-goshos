@@ -6,6 +6,7 @@ mod backend_options;
 mod backup;
 mod checks;
 mod cli;
+mod cli_import;
 mod command_options;
 mod connection;
 mod cron;

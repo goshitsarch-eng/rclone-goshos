@@ -1,5 +1,9 @@
 use super::AppCtx;
 use crate::backup;
+use crate::cli_import::{
+    import_cli_command, is_valid_import, selected_apply, value_as_text, CliImportApply, FlagStatus,
+    LookupOption, ProfileMode,
+};
 use crate::guidance::{operation_banners, BannerKind};
 use crate::jobs::{
     assemble_rclone, build_job_params, default_dest, default_source, flatten_rclone,
@@ -19,6 +23,7 @@ use gtk::gio;
 use gtk::glib;
 use gtk::prelude::*;
 use std::cell::{Cell, RefCell};
+use std::collections::HashSet;
 use std::rc::Rc;
 
 pub(super) fn attach_operation_guidance(
@@ -467,13 +472,15 @@ pub fn about(parent: &impl IsA<gtk::Widget>, ctx: AppCtx) {
         .as_ref()
         .map(|e| e.version.clone())
         .unwrap_or_default();
-    let app_update = crate::updater::fetch_app_update(env!("CARGO_PKG_VERSION"))
-        .ok()
+    ctx.refresh_updates();
+    let pending = ctx.updates.borrow().clone();
+    let app_update = pending
+        .app
         .filter(|u| u.available)
         .map(|u| ctx.tf("modals.about.appUpdateAvailable", &[("version", &u.latest)]))
         .unwrap_or_else(|| ctx.t_or("modals.about.upToDate", "App is up to date"));
-    let rclone_update = crate::updater::fetch_rclone_update(&version)
-        .ok()
+    let rclone_update = pending
+        .rclone
         .filter(|u| u.available)
         .map(|u| {
             ctx.tf(
@@ -522,6 +529,45 @@ pub fn about(parent: &impl IsA<gtk::Widget>, ctx: AppCtx) {
     );
     details.append(&wiki);
     details.append(&rclone_site);
+    let debug = crate::platform::debug_info();
+    let identity = adw::PreferencesGroup::new();
+    identity.set_title(&ctx.t_or("modals.about.details", "Details"));
+    let os_row = adw::ActionRow::new();
+    os_row.set_title(&ctx.t_or("modals.about.os", "OS"));
+    os_row.set_subtitle(&format!("{} ({})", debug.platform, debug.arch));
+    identity.add(&os_row);
+    let mode_row = adw::ActionRow::new();
+    mode_row.set_title(&ctx.t_or("modals.about.mode", "Mode"));
+    mode_row.set_subtitle(&debug.mode);
+    identity.add(&mode_row);
+    let app_channel = ctx.settings.borrow().runtime.app_update_channel.clone();
+    let rclone_channel = ctx.settings.borrow().runtime.rclone_update_channel.clone();
+    let channel_row = adw::ActionRow::new();
+    channel_row.set_title(&ctx.t_or("modals.about.releaseChannel", "Release channel"));
+    channel_row.set_subtitle(&format!(
+        "{} · rclone {}",
+        ctx.t_or(
+            match app_channel.as_str() {
+                "beta" => "modals.about.channelBeta",
+                _ => "modals.about.channelStable",
+            },
+            &app_channel
+        ),
+        rclone_channel
+    ));
+    identity.add(&channel_row);
+    {
+        let parent = parent.clone();
+        let ctx_click = ctx.clone();
+        let debug_btn =
+            gtk::Button::with_label(&ctx.t_or("modals.about.debugTools", "Debug tools"));
+        debug_btn.connect_clicked(move |_| debug_info(&parent, ctx_click.clone()));
+        let debug_row = adw::ActionRow::new();
+        debug_row.set_title(&ctx.t_or("modals.about.debugTools", "Debug tools"));
+        debug_row.add_suffix(&debug_btn);
+        identity.add(&debug_row);
+    }
+    details.append(&identity);
     {
         let parent = parent.clone();
         let ctx = ctx.clone();
@@ -3679,7 +3725,19 @@ pub fn start_operation(
             });
         }
     }
-    attach_cli_import(&ctx, &flags_group, flag_rows.clone());
+    attach_cli_import(
+        &ctx,
+        &dialog,
+        &flags_group,
+        flag_rows.clone(),
+        Some(src.clone()),
+        Some(dst.clone()),
+        Some(serve.clone()),
+        serve_types.as_ref().clone(),
+        Some(op),
+        remote.to_string(),
+        false,
+    );
 
     {
         let profiles = profiles.clone();
@@ -4401,7 +4459,22 @@ pub fn quick_run_editor(
             &serve_types,
         );
     }
-    attach_cli_import(&ctx, &flags_group, flag_rows.clone());
+    attach_cli_import(
+        &ctx,
+        &dialog,
+        &flags_group,
+        flag_rows.clone(),
+        Some(src.clone()),
+        Some(dst.clone()),
+        Some(serve.clone()),
+        serve_types.as_ref().clone(),
+        Some(initial_op),
+        existing
+            .as_ref()
+            .map(|qr| qr.remote_name.clone())
+            .unwrap_or_default(),
+        true,
+    );
     {
         let flags_group = flags_group.clone();
         let flag_rows = flag_rows.clone();
@@ -8511,32 +8584,617 @@ fn flag_value_row(flag: &crate::flags::FlagOption, rclone: &serde_json::Value) -
 
 fn attach_cli_import(
     ctx: &AppCtx,
+    parent: &impl IsA<gtk::Widget>,
     flags_group: &adw::PreferencesGroup,
     flag_rows: Rc<RefCell<Vec<(String, adw::EntryRow, String)>>>,
+    src: Option<adw::EntryRow>,
+    dst: Option<adw::EntryRow>,
+    serve: Option<adw::ComboRow>,
+    serve_types: Vec<String>,
+    preferred: Option<OperationType>,
+    remote: String,
+    is_quick_run: bool,
 ) {
-    let cli = adw::EntryRow::new();
-    cli.set_title(&ctx.t_or("wizards.cliImport.placeholder", "Import rclone CLI flags"));
-    let apply_cli = gtk::Button::with_label(&ctx.t_or("common.apply", "Apply"));
+    let preview = gtk::Button::with_label(&ctx.t_or("wizards.cliImport.preview", "Preview"));
     {
+        let ctx = ctx.clone();
+        let parent = parent.clone();
         let flag_rows = flag_rows.clone();
-        let cli = cli.clone();
-        apply_cli.connect_clicked(move |_| {
-            let parsed = crate::jobs::parse_cli_flags(&cli.text());
-            for (field, row, _) in flag_rows.borrow().iter() {
-                if let Some(value) = parsed
-                    .get(field)
-                    .or_else(|| parsed.get(&field.replace('-', "_")))
+        let src = src.clone();
+        let dst = dst.clone();
+        let serve = serve.clone();
+        let serve_types = serve_types.clone();
+        let remote_type = remote_type_of(ctx.clone(), &remote);
+        preview.connect_clicked(move |_| {
+            present_cli_import(
+                &parent,
+                ctx.clone(),
+                CliImportOptions {
+                    preferred: preferred.map(|op| op.as_str().to_string()),
+                    remote_type: remote_type.clone(),
+                    is_quick_run,
+                    can_create_new: false,
+                    can_patch: true,
+                    existing_profiles: Vec::new(),
+                    initial_cli: String::new(),
+                },
                 {
-                    row.set_text(&value.to_string().trim_matches('"').to_string());
-                }
-            }
+                    let flag_rows = flag_rows.clone();
+                    let src = src.clone();
+                    let dst = dst.clone();
+                    let serve = serve.clone();
+                    let serve_types = serve_types.clone();
+                    move |apply| {
+                        apply_cli_to_form(
+                            &apply,
+                            &flag_rows.borrow(),
+                            src.as_ref(),
+                            dst.as_ref(),
+                            serve.as_ref(),
+                            &serve_types,
+                        );
+                    }
+                },
+            );
         });
     }
     let cli_row = adw::ActionRow::new();
     cli_row.set_title(&ctx.t_or("wizards.cliImport.title", "CLI import"));
-    cli_row.add_suffix(&apply_cli);
-    flags_group.add(&cli);
+    cli_row.set_subtitle(&ctx.t_or(
+        "wizards.cliImport.description",
+        "Paste an rclone command, preview mapped flags, then apply them to this profile.",
+    ));
+    cli_row.add_suffix(&preview);
     flags_group.add(&cli_row);
+}
+
+fn remote_type_of(ctx: AppCtx, remote: &str) -> String {
+    ctx.snapshot
+        .borrow()
+        .remotes
+        .iter()
+        .find(|info| info.name == remote)
+        .map(|info| info.r#type.clone())
+        .unwrap_or_default()
+}
+
+#[derive(Clone)]
+pub(super) struct CliImportOptions {
+    pub preferred: Option<String>,
+    pub remote_type: String,
+    pub is_quick_run: bool,
+    pub can_create_new: bool,
+    pub can_patch: bool,
+    pub existing_profiles: Vec<String>,
+    pub initial_cli: String,
+}
+
+pub(super) fn present_cli_import(
+    parent: &impl IsA<gtk::Widget>,
+    ctx: AppCtx,
+    options: CliImportOptions,
+    on_apply: impl Fn(CliImportApply) + 'static,
+) {
+    let dialog = adw::Dialog::new();
+    dialog.set_title(&ctx.t_or("wizards.cliImport.title", "Import from CLI"));
+    dialog.set_content_width(560);
+    dialog.set_content_height(640);
+    let box_ = gtk::Box::new(gtk::Orientation::Vertical, 10);
+    box_.set_margin_top(12);
+    box_.set_margin_bottom(12);
+    box_.set_margin_start(12);
+    box_.set_margin_end(12);
+    let desc = gtk::Label::new(Some(&ctx.t_or(
+        "wizards.cliImport.description",
+        "Paste your rclone command line string below. We will parse it and configure your profile options.",
+    )));
+    desc.set_wrap(true);
+    desc.set_xalign(0.0);
+    desc.add_css_class("dim-label");
+    box_.append(&desc);
+    let view = gtk::TextView::new();
+    view.set_wrap_mode(gtk::WrapMode::WordChar);
+    view.set_monospace(true);
+    view.buffer().set_text(&options.initial_cli);
+    let scroll = gtk::ScrolledWindow::new();
+    scroll.set_min_content_height(110);
+    scroll.set_child(Some(&view));
+    scroll.add_css_class("card");
+    box_.append(&scroll);
+    let error = gtk::Label::new(None);
+    error.add_css_class("error");
+    error.set_wrap(true);
+    error.set_xalign(0.0);
+    error.set_visible(false);
+    box_.append(&error);
+    let actions = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+    let clear = gtk::Button::with_label(&ctx.t_or("common.clear", "Clear"));
+    let preview = gtk::Button::with_label(&ctx.t_or("wizards.cliImport.preview", "Preview"));
+    preview.add_css_class("suggested-action");
+    actions.append(&clear);
+    actions.append(&preview);
+    box_.append(&actions);
+    let results = gtk::Box::new(gtk::Orientation::Vertical, 10);
+    box_.append(&results);
+    let apply_btn = gtk::Button::with_label(&if options.is_quick_run {
+        ctx.t_or("wizards.cliImport.applyToTask", "Apply to Task")
+    } else {
+        ctx.t_or("wizards.cliImport.applyConfig", "Apply to Profile")
+    });
+    apply_btn.add_css_class("suggested-action");
+    apply_btn.set_sensitive(false);
+    box_.append(&apply_btn);
+    let selected = Rc::new(RefCell::new(HashSet::<String>::new()));
+    let import_source = Rc::new(Cell::new(true));
+    let import_dest = Rc::new(Cell::new(true));
+    let profile_mode = Rc::new(Cell::new(if options.is_quick_run {
+        ProfileMode::Patch
+    } else if options.can_create_new {
+        ProfileMode::New
+    } else {
+        ProfileMode::Patch
+    }));
+    let profile_name = Rc::new(RefCell::new(String::new()));
+    let last_result = Rc::new(RefCell::new(None::<crate::cli_import::ImportResult>));
+    {
+        let view = view.clone();
+        let error = error.clone();
+        let results = results.clone();
+        let apply_btn = apply_btn.clone();
+        let last_result = last_result.clone();
+        let selected = selected.clone();
+        clear.connect_clicked(move |_| {
+            view.buffer().set_text("");
+            error.set_visible(false);
+            error.set_text("");
+            while let Some(child) = results.first_child() {
+                results.remove(&child);
+            }
+            last_result.borrow_mut().take();
+            selected.borrow_mut().clear();
+            apply_btn.set_sensitive(false);
+        });
+    }
+    {
+        let ctx = ctx.clone();
+        let view = view.clone();
+        let error = error.clone();
+        let results = results.clone();
+        let apply_btn = apply_btn.clone();
+        let last_result = last_result.clone();
+        let selected = selected.clone();
+        let import_source = import_source.clone();
+        let import_dest = import_dest.clone();
+        let profile_mode = profile_mode.clone();
+        let profile_name = profile_name.clone();
+        let options = options.clone();
+        preview.connect_clicked(move |_| {
+            let buffer = view.buffer();
+            let text = buffer
+                .text(&buffer.start_iter(), &buffer.end_iter(), false)
+                .to_string();
+            if text.trim().is_empty() {
+                error.set_text(&ctx.t_or(
+                    "wizards.cliImport.invalidCommand",
+                    "Invalid rclone command.",
+                ));
+                error.set_visible(true);
+                last_result.borrow_mut().take();
+                apply_btn.set_sensitive(false);
+                return;
+            }
+            let blocks = operation_flag_blocks(&ctx);
+            let runtime = if options.remote_type.is_empty() {
+                Vec::new()
+            } else {
+                super::remote_config::runtime_flags_for_type(&ctx, &options.remote_type)
+                    .iter()
+                    .map(LookupOption::from)
+                    .collect()
+            };
+            let result = import_cli_command(
+                &text,
+                &blocks,
+                &runtime,
+                if options.remote_type.is_empty() {
+                    None
+                } else {
+                    Some(options.remote_type.as_str())
+                },
+                options.preferred.as_deref(),
+            );
+            if !is_valid_import(&result) {
+                error.set_text(&ctx.t_or(
+                    "wizards.cliImport.invalidCommand",
+                    "Invalid rclone command. Please provide a command with a supported operation (e.g. sync, copy, mount) or flags.",
+                ));
+                error.set_visible(true);
+                last_result.borrow_mut().take();
+                apply_btn.set_sensitive(false);
+                while let Some(child) = results.first_child() {
+                    results.remove(&child);
+                }
+                return;
+            }
+            error.set_visible(false);
+            fill_cli_preview(
+                &ctx,
+                &results,
+                &result,
+                &options,
+                &selected,
+                &import_source,
+                &import_dest,
+                &profile_mode,
+                &profile_name,
+            );
+            *last_result.borrow_mut() = Some(result);
+            apply_btn.set_sensitive(true);
+        });
+    }
+    {
+        let apply_btn = apply_btn.clone();
+        let last_result = last_result.clone();
+        let selected = selected.clone();
+        let import_source = import_source.clone();
+        let import_dest = import_dest.clone();
+        let profile_mode = profile_mode.clone();
+        let profile_name = profile_name.clone();
+        let options = options.clone();
+        let dialog = dialog.clone();
+        apply_btn.connect_clicked(move |_| {
+            let Some(result) = last_result.borrow().clone() else {
+                return;
+            };
+            let mode = profile_mode.get();
+            let name = profile_name.borrow().trim().to_string();
+            if !options.is_quick_run {
+                match mode {
+                    ProfileMode::New if options.can_create_new && name.is_empty() => return,
+                    ProfileMode::Override if options.can_create_new && name.is_empty() => return,
+                    ProfileMode::Patch if !options.can_patch => return,
+                    _ => {}
+                }
+            }
+            let apply = selected_apply(
+                &result,
+                &selected.borrow(),
+                import_source.get(),
+                import_dest.get(),
+                mode,
+                &name,
+            );
+            if apply.flags.is_empty() && apply.source_path.is_none() && apply.dest_path.is_none() {
+                return;
+            }
+            on_apply(apply);
+            dialog.close();
+        });
+    }
+    let scroll_all = gtk::ScrolledWindow::new();
+    scroll_all.set_vexpand(true);
+    scroll_all.set_child(Some(&box_));
+    dialog.set_child(Some(&scroll_all));
+    dialog.present(Some(parent));
+}
+
+fn fill_cli_preview(
+    ctx: &AppCtx,
+    results: &gtk::Box,
+    result: &crate::cli_import::ImportResult,
+    options: &CliImportOptions,
+    selected: &Rc<RefCell<HashSet<String>>>,
+    import_source: &Rc<Cell<bool>>,
+    import_dest: &Rc<Cell<bool>>,
+    profile_mode: &Rc<Cell<ProfileMode>>,
+    profile_name: &Rc<RefCell<String>>,
+) {
+    while let Some(child) = results.first_child() {
+        results.remove(&child);
+    }
+    selected.borrow_mut().clear();
+    let detected = adw::PreferencesGroup::new();
+    detected.set_title(&ctx.t_or("wizards.cliImport.detectedTitle", "Detected Configuration"));
+    let op_row = adw::ActionRow::new();
+    op_row.set_title(&ctx.t_or("wizards.cliImport.operation", "Operation"));
+    op_row.set_subtitle(
+        &result
+            .verb
+            .clone()
+            .unwrap_or_else(|| ctx.t_or("wizards.cliImport.patch", "Patch / Apply to Active")),
+    );
+    detected.add(&op_row);
+    if let Some(serve) = &result.serve_subtype {
+        let row = adw::ActionRow::new();
+        row.set_title(&ctx.t_or("wizards.cliImport.serveType", "Serve Type"));
+        row.set_subtitle(serve);
+        detected.add(&row);
+    }
+    if let Some(src) = &result.source_path {
+        let row = adw::ActionRow::new();
+        let mount_or_serve = matches!(result.verb.as_deref(), Some("mount") | Some("serve"));
+        row.set_title(&if mount_or_serve {
+            ctx.t_or("wizards.cliImport.remote", "Remote")
+        } else {
+            ctx.t_or("wizards.cliImport.source", "Source")
+        });
+        row.set_subtitle(src);
+        detected.add(&row);
+    }
+    if let Some(dst) = &result.dest_path {
+        if result.verb.as_deref() != Some("serve") {
+            let row = adw::ActionRow::new();
+            row.set_title(&if result.verb.as_deref() == Some("mount") {
+                ctx.t_or("wizards.cliImport.mountPoint", "Mount Point")
+            } else {
+                ctx.t_or("wizards.cliImport.destination", "Destination")
+            });
+            row.set_subtitle(dst);
+            detected.add(&row);
+        }
+    }
+    results.append(&detected);
+
+    let mapped: Vec<_> = result
+        .classified
+        .iter()
+        .filter(|item| item.status == FlagStatus::Mapped)
+        .cloned()
+        .collect();
+    if !mapped.is_empty() {
+        let group = adw::PreferencesGroup::new();
+        group.set_title(&ctx.t_or(
+            "wizards.cliImport.mappedFlags",
+            "Will Apply (Mapped Fields)",
+        ));
+        for item in mapped {
+            let key = item.flag.key.clone();
+            selected.borrow_mut().insert(key.clone());
+            let row = adw::SwitchRow::new();
+            row.set_title(&format!("--{key}"));
+            let field = item.field_name.clone().unwrap_or_default();
+            let value = item
+                .coerced_value
+                .as_ref()
+                .map(value_as_text)
+                .unwrap_or_default();
+            row.set_subtitle(&format!("{field} = {value}"));
+            row.set_active(true);
+            {
+                let selected = selected.clone();
+                row.connect_active_notify(move |row| {
+                    if row.is_active() {
+                        selected.borrow_mut().insert(key.clone());
+                    } else {
+                        selected.borrow_mut().remove(&key);
+                    }
+                });
+            }
+            group.add(&row);
+        }
+        results.append(&group);
+    }
+
+    let macros: Vec<(String, String)> = {
+        let mut items = Vec::new();
+        let is_mount = result.verb.as_deref() == Some("mount");
+        let is_serve = result.verb.as_deref() == Some("serve");
+        if result
+            .source_path
+            .as_deref()
+            .is_some_and(crate::cli_import::has_macro)
+        {
+            items.push((
+                if is_mount || is_serve {
+                    ctx.t_or("wizards.cliImport.remote", "Remote")
+                } else {
+                    ctx.t_or("wizards.cliImport.source", "Source")
+                },
+                result.source_path.clone().unwrap_or_default(),
+            ));
+        }
+        if result
+            .dest_path
+            .as_deref()
+            .is_some_and(crate::cli_import::has_macro)
+        {
+            items.push((
+                if is_mount {
+                    ctx.t_or("wizards.cliImport.mountPoint", "Mount Point")
+                } else {
+                    ctx.t_or("wizards.cliImport.destination", "Destination")
+                },
+                result.dest_path.clone().unwrap_or_default(),
+            ));
+        }
+        for item in &result.classified {
+            if item.flag.has_macro {
+                items.push((format!("--{}", item.flag.key), item.flag.value.as_display()));
+            }
+        }
+        items
+    };
+    if !macros.is_empty() {
+        let group = adw::PreferencesGroup::new();
+        group.set_title(&ctx.t_or("wizards.cliImport.macroDetected", "Shell Macros Detected"));
+        group.set_description(Some(&ctx.t_or(
+            "wizards.cliImport.macroDesc",
+            "The backend will resolve these values at runtime when starting the job.",
+        )));
+        for (source, value) in macros {
+            let row = adw::ActionRow::new();
+            row.set_title(&source);
+            row.set_subtitle(&value);
+            group.add(&row);
+        }
+        results.append(&group);
+    }
+
+    let unknown: Vec<_> = result
+        .classified
+        .iter()
+        .filter(|item| item.status == FlagStatus::Unknown)
+        .collect();
+    if !unknown.is_empty() {
+        let group = adw::PreferencesGroup::new();
+        group.set_title(&ctx.t_or(
+            "wizards.cliImport.unrecognizedFlags",
+            "Unrecognized Flags (Ignored)",
+        ));
+        for item in unknown {
+            let row = adw::ActionRow::new();
+            row.set_title(&item.flag.raw);
+            group.add(&row);
+        }
+        results.append(&group);
+    }
+
+    let apply_group = adw::PreferencesGroup::new();
+    apply_group.set_title(&if options.is_quick_run {
+        ctx.t_or("wizards.cliImport.applyToTask", "Apply to Task")
+    } else {
+        ctx.t_or("wizards.cliImport.applyConfig", "Apply to Profile")
+    });
+    if result.source_path.is_some() {
+        let row = adw::SwitchRow::new();
+        row.set_title(&ctx.t_or("wizards.cliImport.importSourcePath", "Import Source Path"));
+        row.set_active(true);
+        import_source.set(true);
+        {
+            let import_source = import_source.clone();
+            row.connect_active_notify(move |row| import_source.set(row.is_active()));
+        }
+        apply_group.add(&row);
+    }
+    if result.dest_path.is_some() && result.verb.as_deref() != Some("serve") {
+        let row = adw::SwitchRow::new();
+        row.set_title(&if result.verb.as_deref() == Some("mount") {
+            ctx.t_or("wizards.cliImport.importMountPoint", "Import Mount Point")
+        } else {
+            ctx.t_or(
+                "wizards.cliImport.importDestPath",
+                "Import Destination Path",
+            )
+        });
+        row.set_active(true);
+        import_dest.set(true);
+        {
+            let import_dest = import_dest.clone();
+            row.connect_active_notify(move |row| import_dest.set(row.is_active()));
+        }
+        apply_group.add(&row);
+    }
+    if !options.is_quick_run {
+        let mode_row = adw::ComboRow::new();
+        mode_row.set_title(&ctx.t_or("wizards.cliImport.applyToProfile", "Apply to Profile"));
+        let labels = [
+            ctx.t_or("wizards.cliImport.newProfile", "Create New Profile"),
+            ctx.t_or(
+                "wizards.cliImport.overrideProfile",
+                "Override Existing Profile",
+            ),
+            ctx.t_or("wizards.cliImport.patchProfile", "Patch Active Profile(s)"),
+        ];
+        mode_row.set_model(Some(&gtk::StringList::new(&[
+            labels[0].as_str(),
+            labels[1].as_str(),
+            labels[2].as_str(),
+        ])));
+        let initial = if options.can_create_new { 0 } else { 2 };
+        mode_row.set_selected(initial);
+        profile_mode.set(if options.can_create_new {
+            ProfileMode::New
+        } else {
+            ProfileMode::Patch
+        });
+        let name_row = adw::EntryRow::new();
+        name_row.set_title(&ctx.t_or("wizards.cliImport.profileName", "Profile Name"));
+        name_row.set_visible(options.can_create_new);
+        let override_row = adw::ComboRow::new();
+        override_row.set_title(&ctx.t_or("wizards.cliImport.selectProfile", "Select Profile"));
+        let refs: Vec<&str> = options
+            .existing_profiles
+            .iter()
+            .map(|s| s.as_str())
+            .collect();
+        override_row.set_model(Some(&gtk::StringList::new(&refs)));
+        override_row.set_visible(false);
+        if let Some(first) = options.existing_profiles.first() {
+            *profile_name.borrow_mut() = first.clone();
+        }
+        {
+            let profile_mode = profile_mode.clone();
+            let profile_name = profile_name.clone();
+            let name_row = name_row.clone();
+            let override_row = override_row.clone();
+            let can_create = options.can_create_new;
+            let can_override = can_create && !options.existing_profiles.is_empty();
+            let names = options.existing_profiles.clone();
+            mode_row.connect_selected_notify(move |row| {
+                let mode = match row.selected() {
+                    0 if can_create => ProfileMode::New,
+                    1 if can_override => ProfileMode::Override,
+                    _ => ProfileMode::Patch,
+                };
+                profile_mode.set(mode);
+                name_row.set_visible(mode == ProfileMode::New);
+                override_row.set_visible(mode == ProfileMode::Override);
+                if mode == ProfileMode::Override {
+                    if let Some(name) = names.get(override_row.selected() as usize) {
+                        *profile_name.borrow_mut() = name.clone();
+                    }
+                }
+            });
+        }
+        {
+            let profile_name = profile_name.clone();
+            name_row.connect_changed(move |row| {
+                *profile_name.borrow_mut() = row.text().to_string();
+            });
+        }
+        {
+            let profile_name = profile_name.clone();
+            let names = options.existing_profiles.clone();
+            override_row.connect_selected_notify(move |row| {
+                if let Some(name) = names.get(row.selected() as usize) {
+                    *profile_name.borrow_mut() = name.clone();
+                }
+            });
+        }
+        apply_group.add(&mode_row);
+        apply_group.add(&name_row);
+        apply_group.add(&override_row);
+    }
+    results.append(&apply_group);
+}
+
+pub(super) fn apply_cli_to_form(
+    apply: &CliImportApply,
+    flag_rows: &[(String, adw::EntryRow, String)],
+    src: Option<&adw::EntryRow>,
+    dst: Option<&adw::EntryRow>,
+    serve: Option<&adw::ComboRow>,
+    serve_types: &[String],
+) {
+    for (field, value) in &apply.flags {
+        if let Some((_, row, _)) = flag_rows
+            .iter()
+            .find(|(name, _, _)| name == field || name.replace('-', "_") == field.replace('-', "_"))
+        {
+            row.set_text(&value_as_text(value));
+        }
+    }
+    if let (Some(src), Some(path)) = (src, apply.source_path.as_deref()) {
+        src.set_text(path);
+    }
+    if let (Some(dst), Some(path)) = (dst, apply.dest_path.as_deref()) {
+        dst.set_text(path);
+    }
+    if let (Some(serve), Some(subtype)) = (serve, apply.serve_subtype.as_deref()) {
+        if let Some(idx) = serve_types.iter().position(|s| s == subtype) {
+            serve.set_selected(idx as u32);
+        }
+    }
 }
 
 fn clear_flag_rows(

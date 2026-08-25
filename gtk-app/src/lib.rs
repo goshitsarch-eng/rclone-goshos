@@ -8,6 +8,7 @@ pub mod backend_options;
 pub mod backup;
 pub mod checks;
 pub mod cli;
+pub mod cli_import;
 pub mod command_options;
 pub mod connection;
 pub mod cron;
