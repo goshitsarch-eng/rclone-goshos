@@ -4263,7 +4263,6 @@ pub fn quick_run_editor(
     group.add(&backend_profile);
     group.add(&runtime_profile);
     group.add(&helpers_row);
-    group.add(&runtime_json);
     let dry = adw::SwitchRow::new();
     dry.set_title(&ctx.t_or("detailShared.jobs.dryRun", "Dry run"));
     dry.set_active(
@@ -4412,12 +4411,45 @@ pub fn quick_run_editor(
     let backend_flag_rows: Rc<RefCell<Vec<(String, adw::EntryRow, String)>>> =
         Rc::new(RefCell::new(Vec::new()));
     let vfs_flags = adw::PreferencesGroup::new();
-    vfs_flags.set_title(&ctx.t_or("flow.quickRun.editor.tabVfs", "VFS flags"));
-    vfs_flags.set_visible(initial_op.supports_vfs());
+    vfs_flags.set_title(&ctx.t_or("flow.quickRun.editor.tabVfs", "VFS"));
     let filter_flags = adw::PreferencesGroup::new();
-    filter_flags.set_title(&ctx.t_or("flow.quickRun.editor.tabFilter", "Filter flags"));
+    filter_flags.set_title(&ctx.t_or("flow.quickRun.editor.tabFilter", "Filter"));
     let backend_flags = adw::PreferencesGroup::new();
-    backend_flags.set_title(&ctx.t_or("flow.quickRun.editor.tabBackend", "Backend flags"));
+    backend_flags.set_title(&ctx.t_or("flow.quickRun.editor.tabBackend", "Backend"));
+    let runtime_flags = adw::PreferencesGroup::new();
+    runtime_flags.set_title(&ctx.t_or("flow.quickRun.editor.tabRuntimeRemote", "Runtime Remote"));
+    runtime_flags.add(&runtime_json);
+    let flag_stack = adw::ViewStack::new();
+    flag_stack.set_vhomogeneous(false);
+    flag_stack.add_titled(
+        &flags_group,
+        Some("operation"),
+        &ctx.t_or("flow.quickRun.editor.flags", "Operation flags"),
+    );
+    let vfs_page = flag_stack.add_titled(
+        &vfs_flags,
+        Some("vfs"),
+        &ctx.t_or("flow.quickRun.editor.tabVfs", "VFS"),
+    );
+    flag_stack.add_titled(
+        &filter_flags,
+        Some("filter"),
+        &ctx.t_or("flow.quickRun.editor.tabFilter", "Filter"),
+    );
+    flag_stack.add_titled(
+        &backend_flags,
+        Some("backend"),
+        &ctx.t_or("flow.quickRun.editor.tabBackend", "Backend"),
+    );
+    flag_stack.add_titled(
+        &runtime_flags,
+        Some("runtime"),
+        &ctx.t_or("flow.quickRun.editor.tabRuntimeRemote", "Runtime Remote"),
+    );
+    vfs_page.set_visible(initial_op.supports_vfs());
+    let flag_switcher = adw::ViewSwitcher::new();
+    flag_switcher.set_stack(Some(&flag_stack));
+    flag_switcher.set_policy(adw::ViewSwitcherPolicy::Wide);
     populate_helper_flag_rows(
         &ctx,
         &vfs_flags,
@@ -4503,15 +4535,19 @@ pub fn quick_run_editor(
         });
     }
     {
-        let vfs_flags = vfs_flags.clone();
         let vfs_profile = vfs_profile.clone();
+        let vfs_page = vfs_page.clone();
+        let flag_stack = flag_stack.clone();
         op_row.connect_selected_notify(move |row| {
             let op = OperationType::ALL
                 .get(row.selected() as usize)
                 .copied()
                 .unwrap_or(OperationType::Sync);
             vfs_profile.set_visible(op.supports_vfs());
-            vfs_flags.set_visible(op.supports_vfs());
+            vfs_page.set_visible(op.supports_vfs());
+            if !op.supports_vfs() && flag_stack.visible_child_name().as_deref() == Some("vfs") {
+                flag_stack.set_visible_child_name("operation");
+            }
         });
     }
     let save = gtk::Button::with_label(&ctx.t_or("common.save", "Save"));
@@ -4550,8 +4586,11 @@ pub fn quick_run_editor(
             let expr = cron.text().to_string();
             if !expr.is_empty() {
                 if let Err(e) = validate_cron(&expr) {
-                    let err = adw::AlertDialog::new(Some("Invalid cron"), Some(&e));
-                    err.add_response("ok", "OK");
+                    let err = adw::AlertDialog::new(
+                        Some(&ctx.t_or("flow.quickRun.editor.cron", "Cron schedule")),
+                        Some(&e),
+                    );
+                    err.add_response("ok", &ctx.t_or("common.ok", "OK"));
                     err.present(Some(&dialog));
                     return;
                 }
@@ -4718,10 +4757,8 @@ pub fn quick_run_editor(
     box_.append(&group);
     box_.append(&guidance);
     box_.append(&cron_hint);
-    box_.append(&flags_group);
-    box_.append(&vfs_flags);
-    box_.append(&filter_flags);
-    box_.append(&backend_flags);
+    box_.append(&flag_switcher);
+    box_.append(&flag_stack);
     box_.append(&save);
     dialog.set_child(Some(&box_));
     dialog.present(Some(parent));

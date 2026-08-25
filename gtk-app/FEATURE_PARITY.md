@@ -411,8 +411,8 @@ This client is the GTK 4 + libadwaita rewrite of the Angular/Tauri desktop UI. I
 - General remote activity has Stop / Delete; General can create a Quick Run for that remote
 - Operations dry-run / resync toggles persist on the selected profile
 - Flow overview groups Quick Runs with remote filter chips
-- Flow remote detail (jobs, disk usage, helper/config shortcuts, per-remote Quick Runs) from card/remote name
-- Quick Run editor uses helper profile combos plus VFS/filter/backend flag editors
+- Flow remote detail matches Angular general-detail: disk-usage bar + retry, transfer/check rows, jobs with stop/delete, automations with pause/resume and folder-open, QR Start/Stop/Edit, configuration shortcuts, and a settings panel from `config/dump`
+- Quick Run editor uses helper profile combos plus VFS/filter/backend/runtime flag tabs (`adw::ViewStack`)
 
 ## Still deepening toward pixel-level Angular parity
 
