@@ -205,6 +205,7 @@ impl RcClient {
         name: &str,
         r#type: &str,
         parameters: Value,
+        opt: Option<Value>,
     ) -> Result<Value, RcError> {
         self.call(
             "config/create",
@@ -212,16 +213,22 @@ impl RcClient {
                 "name": name,
                 "type": r#type,
                 "parameters": parameters,
-                "opt": { "nonInteractive": true }
+                "opt": crate::command_options::merge_create_opt(opt)
             }),
         )
     }
 
-    pub fn update_remote(&self, name: &str, parameters: Value) -> Result<Value, RcError> {
-        self.call(
-            "config/update",
-            json!({ "name": name, "parameters": parameters }),
-        )
+    pub fn update_remote(
+        &self,
+        name: &str,
+        parameters: Value,
+        opt: Option<Value>,
+    ) -> Result<Value, RcError> {
+        let mut body = json!({ "name": name, "parameters": parameters });
+        if let Some(opt) = opt {
+            body["opt"] = opt;
+        }
+        self.call("config/update", body)
     }
 
     pub fn delete_remote(&self, name: &str) -> Result<Value, RcError> {
@@ -250,7 +257,7 @@ impl RcClient {
             obj.remove("type");
             obj.remove("name");
         }
-        self.create_remote(to, &r#type, params)
+        self.create_remote(to, &r#type, params, None)
     }
 
     pub fn obscure(&self, value: &str) -> Result<String, RcError> {
@@ -759,7 +766,7 @@ impl RcClient {
                 if let Some(map) = params.as_object_mut() {
                     map.remove("type");
                 }
-                self.create_remote(name, r#type, params)?;
+                self.create_remote(name, r#type, params, None)?;
                 count += 1;
             }
         }

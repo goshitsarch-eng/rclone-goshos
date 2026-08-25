@@ -5,6 +5,7 @@ mod automation;
 mod backend_options;
 mod backup;
 mod checks;
+mod command_options;
 mod connection;
 mod cron;
 mod fileops;

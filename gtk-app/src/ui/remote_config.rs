@@ -494,7 +494,7 @@ fn remote_page(
     let primary_row = adw::ActionRow::new();
     primary_row.set_title(&ctx.t_or("remoteConfig.primaryActions", "Primary actions"));
     primary_row.set_subtitle(&action_summary(&primary_ids.borrow()));
-    let edit_primary = gtk::Button::with_label("Edit");
+    let edit_primary = gtk::Button::with_label(&ctx.t_or("common.edit", "Edit"));
     edit_primary.set_valign(gtk::Align::Center);
     {
         let parent = parent.clone();
@@ -515,9 +515,9 @@ fn remote_page(
     }
     primary_row.add_suffix(&edit_primary);
     let sync_row = adw::ActionRow::new();
-    sync_row.set_title("Sync actions");
+    sync_row.set_title(&ctx.t_or("remoteConfig.syncActions", "Sync actions"));
     sync_row.set_subtitle(&action_summary(&sync_ids.borrow()));
-    let edit_sync = gtk::Button::with_label("Edit");
+    let edit_sync = gtk::Button::with_label(&ctx.t_or("common.edit", "Edit"));
     edit_sync.set_valign(gtk::Align::Center);
     {
         let parent = parent.clone();
@@ -553,7 +553,8 @@ fn remote_page(
             super::wizard::present(&parent, ctx.clone(), Some(remote.clone()), on_done.clone());
         });
     }
-    let helpers = gtk::Button::with_label("Helper JSON editor…");
+    let helpers =
+        gtk::Button::with_label(&ctx.t_or("remoteConfig.helperJsonEditor", "Helper JSON editor…"));
     {
         let ctx = ctx.clone();
         let parent = parent.clone();
@@ -570,12 +571,12 @@ fn remote_page(
     group.add(&primary_row);
     group.add(&sync_row);
     let actions = adw::PreferencesGroup::new();
-    actions.set_title("Provider");
+    actions.set_title(&ctx.t_or("remoteConfig.provider", "Provider"));
     let provider_row = adw::ActionRow::new();
-    provider_row.set_title("Rclone remote definition");
+    provider_row.set_title(&ctx.t_or("remoteConfig.rcloneDefinition", "Rclone remote definition"));
     provider_row.add_suffix(&provider);
     let helper_row = adw::ActionRow::new();
-    helper_row.set_title("Named helper profiles");
+    helper_row.set_title(&ctx.t_or("remoteConfig.namedHelpers", "Named helper profiles"));
     helper_row.add_suffix(&helpers);
     actions.add(&provider_row);
     actions.add(&helper_row);
@@ -643,11 +644,12 @@ fn operation_page(
     let switcher = profile_switcher(&ctx, &names, &initial.name);
     let rclone = flatten_rclone(&initial.rclone);
     let src = adw::EntryRow::new();
-    src.set_title(if op == OperationType::Copyurl {
-        "URL"
+    let src_title = if op == OperationType::Copyurl {
+        ctx.t_or("remoteConfig.url", "URL")
     } else {
-        "Source"
-    });
+        ctx.t_or("remoteConfig.source", "Source")
+    };
+    src.set_title(&src_title);
     src.set_text(&default_source(remote, &rclone));
     if op != OperationType::Copyurl {
         dialogs::attach_path_picker(&ctx, &src, crate::picker::FilePickerConfig::folders());
@@ -661,13 +663,14 @@ fn operation_page(
         }
     }
     let dst = adw::EntryRow::new();
-    dst.set_title(match op {
-        OperationType::Mount => "Mount point",
-        OperationType::Serve => "Listen address",
-        OperationType::Copyurl => "Destination fs",
-        OperationType::Delete => "Unused destination",
-        _ => "Destination",
-    });
+    let dst_title = match op {
+        OperationType::Mount => ctx.t_or("remoteConfig.mountPoint", "Mount point"),
+        OperationType::Serve => ctx.t_or("remoteConfig.listenAddress", "Listen address"),
+        OperationType::Copyurl => ctx.t_or("remoteConfig.destinationFs", "Destination fs"),
+        OperationType::Delete => ctx.t_or("remoteConfig.unusedDestination", "Unused destination"),
+        _ => ctx.t_or("remoteConfig.dest", "Destination"),
+    };
+    dst.set_title(&dst_title);
     dst.set_text(&default_dest(remote, &rclone, op));
     dst.set_visible(op != OperationType::Delete);
     if op == OperationType::Mount {
@@ -676,7 +679,7 @@ fn operation_page(
         dialogs::attach_path_picker(&ctx, &dst, crate::picker::FilePickerConfig::folders());
     }
     let dest_status = adw::ActionRow::new();
-    dest_status.set_title("Path status");
+    dest_status.set_title(&ctx.t_or("remoteConfig.pathStatusTitle", "Path status"));
     dest_status.set_visible(matches!(
         op,
         OperationType::Mount | OperationType::Sync | OperationType::Copy | OperationType::Bisync
@@ -703,7 +706,7 @@ fn operation_page(
     let serve_types = Rc::new(ctx.serve_types());
     let mount_types = Rc::new(ctx.mount_types());
     let serve = adw::ComboRow::new();
-    serve.set_title("Serve type");
+    serve.set_title(&ctx.t_or("remoteConfig.serveType", "Serve type"));
     serve.set_model(Some(&gtk::StringList::new(
         &crate::operations::combo_names(&serve_types),
     )));
@@ -718,7 +721,7 @@ fn operation_page(
         }
     }
     let mount_type = adw::ComboRow::new();
-    mount_type.set_title("Mount type");
+    mount_type.set_title(&ctx.t_or("remoteConfig.mountType", "Mount type"));
     mount_type.set_model(Some(&gtk::StringList::new(
         &crate::operations::combo_names(&mount_types),
     )));
@@ -730,14 +733,17 @@ fn operation_page(
     }
 
     let auto_start = adw::SwitchRow::new();
-    auto_start.set_title("Start with application");
+    auto_start.set_title(&ctx.t_or(
+        "wizards.appOperation.enableAutoStart",
+        "Start with application",
+    ));
     auto_start.set_active(initial.app.auto_start);
     let cron_enabled = adw::SwitchRow::new();
     cron_enabled.set_title(&ctx.t_or("remoteConfig.scheduledCron", "Scheduled (cron)"));
     cron_enabled.set_active(initial.app.cron_enabled);
     cron_enabled.set_visible(op.is_automatable());
     let cron = adw::EntryRow::new();
-    cron.set_title("Cron expression");
+    cron.set_title(&ctx.t_or("remoteConfig.cronExpression", "Cron expression"));
     cron.set_text(&initial.app.cron_expression);
     cron.set_visible(op.is_automatable());
     let cron_hint = gtk::Label::new(None);
@@ -752,15 +758,18 @@ fn operation_page(
         cron.connect_changed(move |row| update_cron_hint(&ctx, row, &cron_hint));
     }
     let watch_enabled = adw::SwitchRow::new();
-    watch_enabled.set_title("Watch local sources");
+    watch_enabled.set_title(&ctx.t_or("wizards.appOperation.enableWatch", "Watch local sources"));
     watch_enabled.set_active(initial.app.watch_enabled);
     watch_enabled.set_visible(op.is_automatable());
     let watch_delay = adw::EntryRow::new();
-    watch_delay.set_title("Watch delay (seconds)");
+    watch_delay.set_title(&ctx.t_or("wizards.appOperation.watchDelay", "Watch delay (seconds)"));
     watch_delay.set_text(&initial.app.watch_delay.to_string());
     watch_delay.set_visible(op.is_automatable());
     let watch_changed = adw::SwitchRow::new();
-    watch_changed.set_title("Changed files only");
+    watch_changed.set_title(&ctx.t_or(
+        "wizards.appOperation.watchChangedOnly",
+        "Changed files only",
+    ));
     watch_changed.set_active(initial.app.watch_changed_only);
     watch_changed.set_visible(op.is_automatable());
 
@@ -775,16 +784,17 @@ fn operation_page(
     let filter_names = helper_names("filter");
     let backend_names = helper_names("backend");
     let runtime_names = helper_names("runtime");
-    let vfs_row = dialogs::helper_combo("VFS profile", &vfs_names, &initial.app.vfs_profile);
+    let vfs_title = ctx.t_or("remoteConfig.vfsProfile", "VFS profile");
+    let filter_title = ctx.t_or("remoteConfig.filterProfile", "Filter profile");
+    let backend_title = ctx.t_or("remoteConfig.backendProfile", "Backend profile");
+    let runtime_title = ctx.t_or("remoteConfig.runtimeProfile", "Runtime profile");
+    let vfs_row = dialogs::helper_combo(&vfs_title, &vfs_names, &initial.app.vfs_profile);
     let filter_row =
-        dialogs::helper_combo("Filter profile", &filter_names, &initial.app.filter_profile);
-    let backend_row = dialogs::helper_combo(
-        "Backend profile",
-        &backend_names,
-        &initial.app.backend_profile,
-    );
+        dialogs::helper_combo(&filter_title, &filter_names, &initial.app.filter_profile);
+    let backend_row =
+        dialogs::helper_combo(&backend_title, &backend_names, &initial.app.backend_profile);
     let runtime_row = dialogs::helper_combo(
-        "Runtime profile",
+        &runtime_title,
         &runtime_names,
         &initial.app.runtime_remote_profile,
     );
@@ -805,7 +815,7 @@ fn operation_page(
     };
 
     let identity = adw::PreferencesGroup::new();
-    identity.set_title("Paths");
+    identity.set_title(&ctx.t_or("wizards.appOperation.sourcePaths", "Paths"));
     if let Some(kind) = &src_kind {
         identity.add(kind);
     }
@@ -814,17 +824,17 @@ fn operation_page(
         identity.add(row);
     }
     if op.supports_multi_source() {
-        let add_src = gtk::Button::with_label("Add source");
+        let add_src = gtk::Button::with_label(&ctx.t_or("remoteConfig.addSource", "Add source"));
         let extra_sources = extra_sources.clone();
         let identity_for_add = identity.clone();
-        let ctx = ctx.clone();
+        let ctx_add = ctx.clone();
         add_src.connect_clicked(move |_| {
-            let row = extra_source_row(&ctx, "");
+            let row = extra_source_row(&ctx_add, "");
             identity_for_add.add(&row);
             extra_sources.borrow_mut().push(row);
         });
         let add_row = adw::ActionRow::new();
-        add_row.set_title("Multiple sources");
+        add_row.set_title(&ctx.t_or("remoteConfig.multipleSources", "Multiple sources"));
         add_row.add_suffix(&add_src);
         identity.add(&add_row);
     }
@@ -837,12 +847,12 @@ fn operation_page(
     identity.add(&mount_type);
 
     let automation = adw::PreferencesGroup::new();
-    automation.set_title("Automation");
+    automation.set_title(&ctx.t_or("remoteConfig.automation", "Automation"));
     automation.add(&auto_start);
     automation.add(&cron_enabled);
     automation.add(&cron);
     let cron_preset_row = adw::ActionRow::new();
-    cron_preset_row.set_title("Cron schedule");
+    cron_preset_row.set_title(&ctx.t_or("remoteConfig.cron", "Cron schedule"));
     cron_preset_row.set_visible(op.is_automatable());
     cron_preset_row.add_suffix(&dialogs::attach_cron_builder(&cron));
     automation.add(&cron_preset_row);
@@ -851,16 +861,16 @@ fn operation_page(
     automation.add(&watch_changed);
 
     let helpers = adw::PreferencesGroup::new();
-    helpers.set_title("Linked helper profiles");
+    helpers.set_title(&ctx.t_or("remoteConfig.linkedHelpers", "Linked helper profiles"));
     helpers.add(&vfs_row);
     helpers.add(&filter_row);
     helpers.add(&backend_row);
     helpers.add(&runtime_row);
 
     let flags_group = adw::PreferencesGroup::new();
-    flags_group.set_title("Flags");
+    flags_group.set_title(&ctx.t_or("remoteConfig.flags", "Flags"));
     let search = adw::EntryRow::new();
-    search.set_title("Filter flags");
+    search.set_title(&ctx.t_or("remoteConfig.filterFlags", "Filter flags"));
     flags_group.add(&search);
     let flag_rows: Rc<RefCell<Vec<(String, adw::EntryRow, String)>>> =
         Rc::new(RefCell::new(Vec::new()));
@@ -974,8 +984,8 @@ fn operation_page(
     }
 
     let cli = adw::EntryRow::new();
-    cli.set_title("Import rclone CLI flags");
-    let apply_cli = gtk::Button::with_label("Apply");
+    cli.set_title(&ctx.t_or("remoteConfig.importCliFlags", "Import rclone CLI flags"));
+    let apply_cli = gtk::Button::with_label(&ctx.t_or("common.apply", "Apply"));
     {
         let flag_rows = flag_rows.clone();
         let cli = cli.clone();
@@ -992,13 +1002,13 @@ fn operation_page(
         });
     }
     let cli_row = adw::ActionRow::new();
-    cli_row.set_title("CLI import");
+    cli_row.set_title(&ctx.t_or("remoteConfig.cliImport", "CLI import"));
     cli_row.add_suffix(&apply_cli);
     flags_group.add(&cli);
     flags_group.add(&cli_row);
     flags_group.add(&json_toggle);
     let json_holder = adw::ActionRow::new();
-    json_holder.set_title("JSON document");
+    json_holder.set_title(&ctx.t_or("remoteConfig.jsonDocument", "JSON document"));
     json_holder.set_activatable(false);
     json_holder.set_child(Some(&json_scroll));
     flags_group.add(&json_holder);
@@ -1216,9 +1226,9 @@ fn helper_page(
         .unwrap_or_else(|| json!({}));
     let switcher = profile_switcher(&ctx, &names, &names[0]);
     let flags_group = adw::PreferencesGroup::new();
-    flags_group.set_title("Options");
+    flags_group.set_title(&ctx.t_or("remoteConfig.options", "Options"));
     let search = adw::EntryRow::new();
-    search.set_title("Filter flags");
+    search.set_title(&ctx.t_or("remoteConfig.filterFlags", "Filter flags"));
     flags_group.add(&search);
     let category = match kind {
         "runtime" => "backend",
@@ -1235,7 +1245,7 @@ fn helper_page(
     }
     if flag_rows.borrow().is_empty() {
         let json_row = adw::EntryRow::new();
-        json_row.set_title("JSON object");
+        json_row.set_title(&ctx.t_or("remoteConfig.jsonObject", "JSON object"));
         json_row.set_text(&serde_json::to_string(&current).unwrap_or_else(|_| "{}".into()));
         flags_group.add(&json_row);
         flag_rows
@@ -1604,7 +1614,7 @@ fn refresh_combo(combo: &adw::ComboRow, names: &[String]) {
 
 fn extra_source_row(ctx: &AppCtx, value: &str) -> adw::EntryRow {
     let row = adw::EntryRow::new();
-    row.set_title("Additional source");
+    row.set_title(&ctx.t_or("remoteConfig.additionalSource", "Additional source"));
     row.set_text(value);
     dialogs::attach_path_picker(ctx, &row, crate::picker::FilePickerConfig::folders());
     row

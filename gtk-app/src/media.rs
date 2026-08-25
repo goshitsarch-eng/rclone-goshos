@@ -39,15 +39,41 @@ pub fn local_path_usage(path: &str) -> Option<String> {
     }
 }
 
-/// Render the first PDF page to a PNG via `pdftoppm` when Poppler tools are installed.
-pub fn render_pdf_preview(path: &Path) -> Option<PathBuf> {
+pub fn pdf_page_count(path: &Path) -> Option<u32> {
     if !path.is_file() {
         return None;
     }
+    let output = std::process::Command::new("pdfinfo")
+        .arg(path)
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    for line in String::from_utf8_lossy(&output.stdout).lines() {
+        if let Some(rest) = line.strip_prefix("Pages:") {
+            return rest.trim().parse().ok();
+        }
+    }
+    None
+}
+
+/// Render one PDF page to a PNG via `pdftoppm` when Poppler tools are installed.
+pub fn render_pdf_page(path: &Path, page: u32) -> Option<PathBuf> {
+    if !path.is_file() || page == 0 {
+        return None;
+    }
     let stem = path.file_stem()?.to_string_lossy();
-    let out = std::env::temp_dir().join(format!("rm-pdf-{stem}"));
+    let out = std::env::temp_dir().join(format!("rm-pdf-{stem}-{page}"));
     let status = std::process::Command::new("pdftoppm")
-        .args(["-png", "-f", "1", "-l", "1", "-singlefile"])
+        .args([
+            "-png",
+            "-f",
+            &page.to_string(),
+            "-l",
+            &page.to_string(),
+            "-singlefile",
+        ])
         .arg(path)
         .arg(&out)
         .status()
@@ -57,6 +83,11 @@ pub fn render_pdf_preview(path: &Path) -> Option<PathBuf> {
     }
     let png = out.with_extension("png");
     png.is_file().then_some(png)
+}
+
+/// Render the first PDF page to a PNG via `pdftoppm` when Poppler tools are installed.
+pub fn render_pdf_preview(path: &Path) -> Option<PathBuf> {
+    render_pdf_page(path, 1)
 }
 
 pub fn is_path_field(name: &str, help: &str) -> bool {
@@ -107,6 +138,9 @@ mod tests {
     #[test]
     fn pdf_preview_skips_missing_file() {
         assert!(render_pdf_preview(Path::new("/tmp/rm-missing.pdf")).is_none());
+        assert!(render_pdf_page(Path::new("/tmp/rm-missing.pdf"), 1).is_none());
+        assert!(pdf_page_count(Path::new("/tmp/rm-missing.pdf")).is_none());
+        assert!(render_pdf_page(Path::new("/tmp/rm-missing.pdf"), 0).is_none());
     }
 
     #[test]

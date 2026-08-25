@@ -192,6 +192,9 @@ pub fn present(
         parameters: json!({}),
     }));
     let rebuilding = Rc::new(Cell::new(false));
+    let command_options = Rc::new(RefCell::new(
+        crate::command_options::initial_command_options(),
+    ));
     rebuild_fields(
         parent,
         &ctx,
@@ -394,6 +397,30 @@ pub fn present(
     identity.add(&name);
     identity.add(&type_row);
     setup.add(&identity);
+    let cmd_group = adw::PreferencesGroup::new();
+    cmd_group.set_title(&ctx.t_or("wizards.remoteConfig.showCommandOptions", "Command options"));
+    for def in crate::command_options::PREDEFINED_OPTIONS {
+        let row = adw::SwitchRow::new();
+        row.set_title(&ctx.t_or(def.label_key, def.key));
+        row.set_subtitle(&ctx.t_or(def.description_key, ""));
+        row.set_active(crate::command_options::option_enabled(
+            &command_options.borrow(),
+            def.key,
+        ));
+        {
+            let command_options = command_options.clone();
+            let key = def.key;
+            row.connect_active_notify(move |row| {
+                crate::command_options::set_option(
+                    &mut command_options.borrow_mut(),
+                    key,
+                    row.is_active(),
+                );
+            });
+        }
+        cmd_group.add(&row);
+    }
+    setup.add(&cmd_group);
     setup.add(&fields_group);
     setup.add(&advanced_group);
     nav.add_titled(
@@ -487,6 +514,7 @@ pub fn present(
         let example_row = example_row.clone();
         let oauth_status = oauth_status.clone();
         let nav = nav.clone();
+        let command_options = command_options.clone();
         continue_btn.connect_clicked(move |_| {
             let remote_name = name.text().to_string();
             if remote_name.is_empty() {
@@ -500,8 +528,11 @@ pub fn present(
             };
             let result = {
                 let flow = state.borrow().flow.clone();
+                let opt = Some(crate::command_options::build_opt(
+                    &crate::command_options::sync_non_interactive(&command_options.borrow(), true),
+                ));
                 if !flow.is_active {
-                    client.create_remote_interactive(&remote_name, &r#type, params, None)
+                    client.create_remote_interactive(&remote_name, &r#type, params, opt)
                 } else {
                     if is_continue_disabled(&flow) {
                         return;
@@ -523,7 +554,7 @@ pub fn present(
                         &token,
                         answer.as_rc_result(option_type),
                         params,
-                        None,
+                        opt,
                     )
                 }
             };
@@ -590,6 +621,7 @@ pub fn present(
         let autostart = autostart.clone();
         let op_flags = op_flags.clone();
         let cli = cli.clone();
+        let command_options = command_options.clone();
         save.connect_clicked(move |_| {
             let remote_name = name.text().to_string();
             let existing_names = ctx.store.borrow().remote_names();
@@ -656,15 +688,19 @@ pub fn present(
             }
             let mut params = collect_params(&state);
             if let Some(client) = ctx.client() {
-                for (key, value) in params
-                    .clone()
-                    .as_object()
-                    .unwrap_or(&serde_json::Map::new())
-                {
-                    if let Some(s) = value.as_str() {
-                        if looks_secret(key) && !s.is_empty() {
-                            if let Ok(obscured) = client.obscure(s) {
-                                params[key] = json!(obscured);
+                let selected = command_options.borrow().clone();
+                let opt = Some(crate::command_options::build_opt(&selected));
+                if !crate::command_options::option_enabled(&selected, "noObscure") {
+                    for (key, value) in params
+                        .clone()
+                        .as_object()
+                        .unwrap_or(&serde_json::Map::new())
+                    {
+                        if let Some(s) = value.as_str() {
+                            if looks_secret(key) && !s.is_empty() {
+                                if let Ok(obscured) = client.obscure(s) {
+                                    params[key] = json!(obscured);
+                                }
                             }
                         }
                     }
@@ -676,9 +712,9 @@ pub fn present(
                     crate::presets::merge_remote_params(&mut params, &presets);
                 }
                 let result = if existing.is_some() || state.borrow().flow.is_active {
-                    client.update_remote(&remote_name, params)
+                    client.update_remote(&remote_name, params, opt)
                 } else {
-                    client.create_remote(&remote_name, &r#type, params)
+                    client.create_remote(&remote_name, &r#type, params, opt)
                 };
                 match result {
                     Ok(_) => {

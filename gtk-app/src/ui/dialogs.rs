@@ -2692,9 +2692,14 @@ fn remote_editor(
             }
             if let Some(client) = ctx.client() {
                 let result = if existing.is_some() {
-                    client.update_remote(&remote_name, serde_json::Value::Object(params))
+                    client.update_remote(&remote_name, serde_json::Value::Object(params), None)
                 } else {
-                    client.create_remote(&remote_name, &r#type, serde_json::Value::Object(params))
+                    client.create_remote(
+                        &remote_name,
+                        &r#type,
+                        serde_json::Value::Object(params),
+                        None,
+                    )
                 };
                 match result {
                     Ok(_) => {
@@ -3818,7 +3823,7 @@ pub fn restore_preview(
                     if let Some(obj) = dump.as_object() {
                         for (name, cfg) in obj {
                             if let Some(t) = cfg.get("type").and_then(|x| x.as_str()) {
-                                let _ = client.create_remote(name, t, cfg.clone());
+                                let _ = client.create_remote(name, t, cfg.clone(), None);
                             }
                         }
                     }
@@ -4659,34 +4664,76 @@ fn pdf_panel(path: Option<std::path::PathBuf>, name: &str) -> gtk::Box {
         .and_then(|p| std::fs::metadata(p).ok())
         .map(|m| crate::rclone::format_bytes(m.len() as i64))
         .unwrap_or_else(|| "—".into());
-    let magic = path.as_ref().and_then(|p| {
-        let mut buf = [0u8; 5];
-        std::fs::File::open(p)
-            .ok()
-            .and_then(|mut f| {
-                use std::io::Read;
-                f.read_exact(&mut buf).ok().map(|_| buf)
-            })
-            .map(|b| String::from_utf8_lossy(&b).into_owned())
-    });
+    let pages = path
+        .as_ref()
+        .and_then(|p| crate::media::pdf_page_count(p))
+        .unwrap_or(0);
     let label = gtk::Label::new(Some(&format!(
-        "{name}\nSize: {size}\n{}",
-        if magic.as_deref() == Some("%PDF-") {
-            "PDF document — open with the system viewer for pages and search."
+        "{name}\nSize: {size}{}",
+        if pages > 0 {
+            format!("\n{pages} pages")
         } else {
-            "PDF preview uses the system viewer. Open native to display pages."
+            String::new()
         }
     )));
     label.set_wrap(true);
     label.set_xalign(0.0);
     box_.append(&label);
     if let Some(path) = path {
-        if let Some(preview) = crate::media::render_pdf_preview(&path) {
-            let picture = gtk::Picture::for_filename(&preview);
-            picture.set_can_shrink(true);
-            picture.set_content_fit(gtk::ContentFit::Contain);
-            picture.set_vexpand(true);
-            box_.append(&picture);
+        let picture = gtk::Picture::new();
+        picture.set_can_shrink(true);
+        picture.set_content_fit(gtk::ContentFit::Contain);
+        picture.set_vexpand(true);
+        let page = Rc::new(Cell::new(1u32));
+        let page_label = gtk::Label::new(None);
+        let show: Rc<dyn Fn()> = {
+            let path = path.clone();
+            let picture = picture.clone();
+            let page = page.clone();
+            let page_label = page_label.clone();
+            Rc::new(move || {
+                let current = page.get().max(1);
+                let total = crate::media::pdf_page_count(&path).unwrap_or(pages.max(1));
+                let current = current.min(total.max(1));
+                page.set(current);
+                page_label.set_text(&format!("{current} / {total}"));
+                if let Some(preview) = crate::media::render_pdf_page(&path, current) {
+                    picture.set_filename(Some(&preview));
+                    picture.set_visible(true);
+                } else {
+                    picture.set_visible(false);
+                }
+            })
+        };
+        show();
+        let nav = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+        nav.set_halign(gtk::Align::Center);
+        let prev = gtk::Button::from_icon_name("go-previous-symbolic");
+        prev.set_tooltip_text(Some("Previous page"));
+        let next = gtk::Button::from_icon_name("go-next-symbolic");
+        next.set_tooltip_text(Some("Next page"));
+        {
+            let show = show.clone();
+            let page = page.clone();
+            prev.connect_clicked(move |_| {
+                page.set(page.get().saturating_sub(1).max(1));
+                show();
+            });
+        }
+        {
+            let show = show.clone();
+            let page = page.clone();
+            next.connect_clicked(move |_| {
+                page.set(page.get().saturating_add(1));
+                show();
+            });
+        }
+        nav.append(&prev);
+        nav.append(&page_label);
+        nav.append(&next);
+        box_.append(&picture);
+        if pages > 1 || crate::media::pdf_page_count(&path).unwrap_or(0) > 1 {
+            box_.append(&nav);
         }
         let open = gtk::Button::with_label("Open native");
         open.add_css_class("suggested-action");

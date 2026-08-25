@@ -224,11 +224,13 @@ This client is the GTK 4 + libadwaita rewrite of the Angular/Tauri desktop UI. I
 - Profile rename updates live job metadata, job history, and automation last-run/pause keys
 - Dashboard Add profile opens remote-config and immediately prompts for a new profile name
 - Remote-config deep-link selects the named profile; standalone dialogs honor `initial`/`profile`/`autoAdd`
+- Wizard command options (`obscure` / `noObscure` / `nonInteractive` / `all` / `noOutput`) passed as `config/create` `opt`
+- Embedded PDF page navigation via `pdfinfo` + `pdftoppm` (system viewer still available)
+- Remote-config operation/metadata labels use i18n fallbacks
 
 ## Still deepening toward pixel-level Angular parity
 
-- Full embedded PDF page renderer (first page via pdftoppm; system viewer for the rest)
 - Workflow builder (stub in both apps)
 - Live GUI session against rclone rcd (no display in this environment)
 - Native share portal / Android share intent (Linux uses `--share-intake` + Files banner)
-- Remaining dashboard/remote-config English labels
+- Remaining dialogs/Files English labels
