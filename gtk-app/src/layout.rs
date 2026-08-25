@@ -202,5 +202,13 @@ mod tests {
         assert_eq!(backend_key("drive-rc"), "drive-rc");
         assert!(QUICK_RUN_PANELS.contains(&"bandwidth"));
         assert!(QUICK_RUN_PANELS.contains(&"system"));
+        let mut flow = PanelLayout::default();
+        flow.ensure_order(QUICK_RUN_PANELS);
+        assert_eq!(flow.order[0], "quickRuns");
+        assert!(flow.move_panel("system", -1, QUICK_RUN_PANELS));
+        assert_eq!(flow.order[flow.order.len() - 2], "system");
+        assert!(!flow.toggle_hidden("quickRuns"));
+        let resolved = flow.resolve(QUICK_RUN_PANELS);
+        assert!(resolved.iter().any(|(id, vis)| id == "quickRuns" && !*vis));
     }
 }

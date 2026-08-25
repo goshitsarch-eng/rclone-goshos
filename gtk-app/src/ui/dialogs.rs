@@ -9561,7 +9561,46 @@ pub fn repair(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, toast: adw::ToastOver
                     backends(&parent, ctx.clone());
                 }
                 crate::repair::RepairKind::ConfigUnreadable => {
-                    restore_or_pick_config(&parent, ctx.clone());
+                    let ask = adw::AlertDialog::new(
+                        Some(&ctx.t_or(
+                            "repairSheet.titles.corruptConfig",
+                            "Configuration Corrupt",
+                        )),
+                        Some(&ctx.t_or(
+                            "repairSheet.messages.corruptConfig",
+                            "The rclone configuration file appears to be corrupt. Restore from backup?",
+                        )),
+                    );
+                    ask.add_response(
+                        "restore",
+                        &ctx.t_or("repairSheet.actions.restoreBackup", "Restore Backup"),
+                    );
+                    ask.add_response(
+                        "pick",
+                        &ctx.t_or("repair.chooseConfig", "Choose rclone.conf…"),
+                    );
+                    ask.add_response("cancel", &ctx.t_or("common.cancel", "Cancel"));
+                    ask.set_response_appearance("restore", adw::ResponseAppearance::Suggested);
+                    {
+                        let ctx = ctx.clone();
+                        let toast = toast.clone();
+                        let parent = parent.clone();
+                        ask.connect_response(None, move |_, response| {
+                            if response == "restore" {
+                                if let Some(win) = parent.root().and_downcast::<gtk::Window>() {
+                                    import_backup(
+                                        &win,
+                                        ctx.clone(),
+                                        toast.clone(),
+                                        Rc::new(|| {}),
+                                    );
+                                }
+                            } else if response == "pick" {
+                                restore_or_pick_config(&parent, ctx.clone());
+                            }
+                        });
+                    }
+                    ask.present(Some(&parent));
                 }
                 crate::repair::RepairKind::EngineUnreachable => {
                     ctx.restart_engine();

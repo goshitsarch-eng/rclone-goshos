@@ -368,6 +368,8 @@ This client is the GTK 4 + libadwaita rewrite of the Angular/Tauri desktop UI. I
 - Repair FUSE / mount-plugin install uses the same live progress dialog as rclone updates
 - Repair issue titles and actions use `repairSheet.*` i18n; dashboard toasts use `mount.*` / `operations.*` / `notification.*`
 - Native Open shows `fileBrowser.fileViewer.openingNative` and translates engine-offline errors
+- Flow overview Edit layout hides/reorders `quick_run_layout` panels (same model as the dashboard)
+- Repair corrupt-config offers Restore Backup (import preview) or Choose rclone.conf
 
 ## Still deepening toward pixel-level Angular parity
 
