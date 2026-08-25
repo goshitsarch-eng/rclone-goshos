@@ -244,6 +244,18 @@ pub fn dump_provider_type(params: &Value) -> Option<String> {
         .map(|s| s.to_string())
 }
 
+/// Parameters for `config/create` / `config/update` interactive re-auth.
+/// Drops `name` / `type` so they are only passed as dedicated RC fields.
+pub fn interactive_remote_params(dump: &Value, remote: &str) -> Option<(String, Value)> {
+    let mut params = dump_remote_params(dump, remote)?;
+    let r#type = dump_provider_type(&params)?;
+    if let Some(obj) = params.as_object_mut() {
+        obj.remove("type");
+        obj.remove("name");
+    }
+    Some((r#type, params))
+}
+
 pub fn provider_index_by_name(providers: &[Provider], type_name: &str) -> Option<usize> {
     let wanted = type_name.trim();
     if wanted.is_empty() {
@@ -389,6 +401,11 @@ mod tests {
         assert_eq!(providers[drive_idx].options[1].value_str, "true");
         assert_eq!(providers[drive_idx].options[2].value_str, "8");
         assert_eq!(dump_field_text(&params, "token"), None);
+        let (kind, stripped) = interactive_remote_params(&dump, "photos").unwrap();
+        assert_eq!(kind, "drive");
+        assert!(stripped.get("type").is_none());
+        assert_eq!(stripped["client_id"], "abc");
+        assert!(interactive_remote_params(&dump, "missing").is_none());
     }
 
     #[test]

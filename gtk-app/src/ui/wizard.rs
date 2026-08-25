@@ -435,9 +435,7 @@ fn present_ex(
     answer_switch.set_title(&ctx.t_or("wizards.remoteConfig.yes", "Yes / enabled"));
     let example_row = adw::ComboRow::new();
     example_row.set_title(&ctx.t_or("wizards.remoteConfig.chooseOption", "Choose an option"));
-    let oauth_status = gtk::Label::new(Some(""));
-    oauth_status.add_css_class("dim-label");
-    oauth_status.set_xalign(0.0);
+    let oauth = super::interactive::OAuthHelper::new(&ctx);
 
     let nav = adw::ViewStack::new();
     let setup = adw::PreferencesPage::new();
@@ -764,12 +762,12 @@ fn present_ex(
     interactive_box.append(&example_row);
     interactive_box.append(&answer_row);
     interactive_box.append(&answer_switch);
-    interactive_box.append(&oauth_status);
+    interactive_box.append(&oauth.root);
     let cancel_oauth =
         gtk::Button::with_label(&ctx.t_or("modals.remoteConfig.cancelOauth", "Cancel OAuth"));
     {
         let ctx = ctx.clone();
-        let oauth_status = oauth_status.clone();
+        let oauth = oauth.clone();
         let name = name.clone();
         let editing = existing.clone();
         cancel_oauth.connect_clicked(move |_| {
@@ -782,11 +780,11 @@ fn present_ex(
                                 let _ = client.delete_remote(&created);
                             }
                         }
-                        oauth_status.set_text(
+                        oauth.set_status(
                             &ctx.t_or("modals.remoteConfig.oauthCancelled", "OAuth cancelled"),
                         );
                     }
-                    Err(e) => oauth_status.set_text(&e.to_string()),
+                    Err(e) => oauth.set_status(&e.to_string()),
                 }
             }
         });
@@ -930,7 +928,7 @@ fn present_ex(
         let answer_row = answer_row.clone();
         let answer_switch = answer_switch.clone();
         let example_row = example_row.clone();
-        let oauth_status = oauth_status.clone();
+        let oauth = oauth.clone();
         let nav = nav.clone();
         let command_options = command_options.clone();
         let custom_options = custom_options.clone();
@@ -999,7 +997,7 @@ fn present_ex(
                     let next = apply_interactive_response(&value);
                     if let Ok((_, Some(url))) = client.oauth_status() {
                         let _ = open::that(&url);
-                        oauth_status.set_text(&format!("Opened authorization URL: {url}"));
+                        oauth.set_url(&ctx, Some(&url));
                     }
                     if !next.is_active {
                         question_title.set_text(&ctx.t_or(

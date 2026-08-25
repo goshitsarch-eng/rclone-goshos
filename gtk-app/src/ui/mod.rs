@@ -1,6 +1,7 @@
 mod dashboard;
 mod dialogs;
 mod flow;
+mod interactive;
 mod nautilus;
 mod onboarding;
 mod preferences;

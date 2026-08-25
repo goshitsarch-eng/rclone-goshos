@@ -2,6 +2,7 @@
 //! helper configs (VFS / filter / backend / runtime), and remote metadata.
 
 use super::dialogs;
+use super::interactive::InteractivePanel;
 use super::AppCtx;
 use crate::flags::{
     flag_category_for_op, options_for_category, parse_flag_value, parse_options_info,
@@ -574,6 +575,15 @@ fn remote_page(
             super::wizard::present(&parent, ctx.clone(), Some(remote.clone()), on_done.clone());
         });
     }
+    let reauth = gtk::Button::with_label(&ctx.t_or(
+        "wizards.remoteConfig.authenticationMethod",
+        "Re-authenticate…",
+    ));
+    reauth.set_valign(gtk::Align::Center);
+    reauth.set_tooltip_text(Some(&ctx.t_or(
+        "modals.oauth.manualOpenPrompt",
+        "Start the rclone interactive / OAuth flow without leaving this dialog",
+    )));
     let helpers =
         gtk::Button::with_label(&ctx.t_or("remoteConfig.helperJsonEditor", "Helper JSON editor…"));
     {
@@ -599,14 +609,63 @@ fn remote_page(
     let helper_row = adw::ActionRow::new();
     helper_row.set_title(&ctx.t_or("remoteConfig.namedHelpers", "Named helper profiles"));
     helper_row.add_suffix(&helpers);
+    let auth_row = adw::ActionRow::new();
+    auth_row.set_title(&ctx.t_or(
+        "banners.engine.auth.title",
+        "Rclone Authentication Required",
+    ));
+    auth_row.set_subtitle(&ctx.t_or(
+        "banners.engine.auth.subtitle",
+        "Please check your credentials or configuration password",
+    ));
+    auth_row.add_suffix(&reauth);
     actions.add(&provider_row);
     actions.add(&helper_row);
+    actions.add(&auth_row);
+
+    let panel = InteractivePanel::new(&ctx);
+    {
+        let ctx = ctx.clone();
+        let remote = remote.to_string();
+        let parent = parent.clone();
+        let panel = panel.clone();
+        reauth.connect_clicked(move |_| {
+            start_remote_reauth(&parent, ctx.clone(), &remote, &panel);
+        });
+    }
+    {
+        let ctx = ctx.clone();
+        let remote = remote.to_string();
+        let parent = parent.clone();
+        let panel = panel.clone();
+        panel.continue_btn.clone().connect_clicked(move |_| {
+            continue_remote_reauth(&parent, ctx.clone(), &remote, &panel);
+        });
+    }
+    {
+        let ctx = ctx.clone();
+        let panel = panel.clone();
+        panel.cancel_btn.clone().connect_clicked(move |_| {
+            if let Some(client) = ctx.client() {
+                match client.oauth_stop() {
+                    Ok(_) => {
+                        panel.oauth.set_status(
+                            &ctx.t_or("modals.remoteConfig.oauthCancelled", "OAuth cancelled"),
+                        );
+                        panel.apply(&ctx, crate::interactive::InteractiveFlowState::default());
+                    }
+                    Err(e) => panel.oauth.set_status(&e.to_string()),
+                }
+            }
+        });
+    }
 
     let page = adw::PreferencesPage::new();
     page.add(&group);
     page.add(&actions);
     let box_ = gtk::Box::new(gtk::Orientation::Vertical, 0);
     box_.append(&page);
+    box_.append(&panel.root);
 
     let saver = {
         let ctx = ctx.clone();
@@ -1754,6 +1813,135 @@ fn action_summary(ids: &[String]) -> String {
     } else {
         ids.join(" · ")
     }
+}
+
+fn start_remote_reauth(
+    parent: &impl IsA<gtk::Widget>,
+    ctx: AppCtx,
+    remote: &str,
+    panel: &InteractivePanel,
+) {
+    let Some(client) = ctx.client() else {
+        show_reauth_error(
+            parent,
+            &ctx,
+            &ctx.t_or(
+                "notification.title.engineConnectionFailed",
+                "Engine Connection Error",
+            ),
+        );
+        return;
+    };
+    let dump = match client.dump_config() {
+        Ok(value) => value,
+        Err(e) => {
+            show_reauth_error(parent, &ctx, &e.to_string());
+            return;
+        }
+    };
+    let Some((r#type, params)) = crate::providers::interactive_remote_params(&dump, remote) else {
+        show_reauth_error(
+            parent,
+            &ctx,
+            &ctx.t_or(
+                "modals.remoteConfig.errors.interactiveProcessingFailed",
+                "Could not start interactive configuration",
+            ),
+        );
+        return;
+    };
+    let opt = Some(crate::command_options::build_opt(
+        &crate::command_options::sync_non_interactive(
+            &crate::command_options::initial_command_options(),
+            true,
+        ),
+    ));
+    match client.create_remote_interactive(remote, &r#type, params, opt) {
+        Ok(value) => apply_reauth_response(&ctx, panel, &value),
+        Err(e) => show_reauth_error(parent, &ctx, &e.to_string()),
+    }
+}
+
+fn continue_remote_reauth(
+    parent: &impl IsA<gtk::Widget>,
+    ctx: AppCtx,
+    remote: &str,
+    panel: &InteractivePanel,
+) {
+    let flow = panel.flow.borrow().clone();
+    if crate::interactive::is_continue_disabled(&flow) {
+        return;
+    }
+    let Some(client) = ctx.client() else {
+        show_reauth_error(
+            parent,
+            &ctx,
+            &ctx.t_or(
+                "notification.title.engineConnectionFailed",
+                "Engine Connection Error",
+            ),
+        );
+        return;
+    };
+    let dump = client.dump_config().unwrap_or(serde_json::json!({}));
+    let params = crate::providers::interactive_remote_params(&dump, remote)
+        .map(|(_, params)| params)
+        .unwrap_or(serde_json::json!({}));
+    let option_type = flow
+        .question
+        .as_ref()
+        .and_then(|q| q.option.as_ref())
+        .map(|o| o.type_name.as_str())
+        .unwrap_or("string");
+    let answer = panel.current_answer();
+    let token = flow
+        .question
+        .as_ref()
+        .map(|q| q.state.clone())
+        .unwrap_or_default();
+    let opt = Some(crate::command_options::build_opt(
+        &crate::command_options::sync_non_interactive(
+            &crate::command_options::initial_command_options(),
+            true,
+        ),
+    ));
+    match client.continue_create_remote(
+        remote,
+        &token,
+        answer.as_rc_result(option_type),
+        params,
+        opt,
+    ) {
+        Ok(value) => apply_reauth_response(&ctx, panel, &value),
+        Err(e) => show_reauth_error(parent, &ctx, &e.to_string()),
+    }
+}
+
+fn apply_reauth_response(ctx: &AppCtx, panel: &InteractivePanel, value: &serde_json::Value) {
+    let next = panel.apply_response(ctx, value);
+    if let Some(url) = super::interactive::poll_oauth_url(ctx) {
+        let _ = open::that(&url);
+        panel.oauth.set_url(ctx, Some(&url));
+    }
+    if !next.is_active {
+        panel.root.set_visible(true);
+        panel.oauth.set_status(&ctx.t_or(
+            "wizards.remoteConfig.readyToContinue",
+            "Authorization complete",
+        ));
+    }
+}
+
+fn show_reauth_error(parent: &impl IsA<gtk::Widget>, ctx: &AppCtx, detail: &str) {
+    let err = adw::AlertDialog::new(
+        Some(&ctx.t_or(
+            "modals.remoteConfig.errors.interactiveProcessingFailed",
+            "Interactive configuration failed",
+        )),
+        Some(detail),
+    );
+    err.add_response("ok", &ctx.t_or("common.ok", "OK"));
+    err.present(Some(parent));
 }
 
 fn update_cron_hint(ctx: &AppCtx, row: &adw::EntryRow, hint: &gtk::Label) {

@@ -402,6 +402,9 @@ mod tests {
             "serve.serving",
             "automation.status.running",
             "overviews.status.labels.inactive",
+            "modals.oauth.manualOpenPrompt",
+            "modals.oauth.copyLink",
+            "modals.remoteConfig.errors.interactiveProcessingFailed",
         ] {
             assert!(i18n.has(key), "missing i18n key {key}");
         }
