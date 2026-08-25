@@ -88,6 +88,25 @@ pub fn set_launch_args(args: Vec<String>) {
     *LAUNCH_ARGS.lock().unwrap_or_else(|e| e.into_inner()) = args;
 }
 
+/// Re-insert GIO-consumed flags so a second instance can deep-link the primary.
+pub fn merge_option_flags(args: &mut Vec<String>, flags: &[(String, Option<String>)]) {
+    for (name, value) in flags {
+        let flag = format!("--{name}");
+        if args
+            .iter()
+            .any(|arg| arg == &flag || arg.starts_with(&format!("{flag}=")))
+        {
+            continue;
+        }
+        args.push(flag);
+        if let Some(value) = value {
+            if !value.is_empty() {
+                args.push(value.clone());
+            }
+        }
+    }
+}
+
 /// Args from `GApplication` command-line, or `std::env::args()` on first launch.
 pub fn launch_args() -> Vec<String> {
     let stored = LAUNCH_ARGS
@@ -176,5 +195,28 @@ mod tests {
             vec!["app".to_string(), "--browse".into(), "drive:".into()]
         );
         set_launch_args(Vec::new());
+    }
+
+    #[test]
+    fn merges_gio_consumed_deep_link_flags() {
+        let mut args = vec!["app".into()];
+        merge_option_flags(
+            &mut args,
+            &[
+                ("about".into(), None),
+                ("preferences".into(), Some("developer".into())),
+            ],
+        );
+        assert_eq!(
+            args,
+            vec![
+                "app".to_string(),
+                "--about".into(),
+                "--preferences".into(),
+                "developer".into()
+            ]
+        );
+        merge_option_flags(&mut args, &[("about".into(), None)]);
+        assert_eq!(args.iter().filter(|arg| *arg == "--about").count(), 1);
     }
 }

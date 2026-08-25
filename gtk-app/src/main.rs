@@ -81,11 +81,12 @@ fn main() {
             .iter()
             .map(|s| s.to_str().unwrap_or_default().to_string())
             .collect();
-        let env_args: Vec<String> = std::env::args().collect();
-        if !args.iter().any(|arg| arg.starts_with("--"))
-            && env_args.iter().any(|arg| arg.starts_with("--"))
-        {
-            args = env_args;
+        cli::merge_option_flags(&mut args, &command_line_option_flags(cmdline));
+        if !cmdline.is_remote() && !args.iter().any(|arg| arg.starts_with("--")) {
+            let env_args: Vec<String> = std::env::args().collect();
+            if env_args.iter().any(|arg| arg.starts_with("--")) {
+                args = env_args;
+            }
         }
         cli::set_launch_args(args.clone());
         if let Some(files) = platform::parse_share_intake_args(&args) {
@@ -258,4 +259,55 @@ fn register_application_options(app: &adw::Application) {
         Some("PATH"),
     );
     app.set_option_context_parameter_string(Some("[URL or FILE…]"));
+}
+
+fn command_line_option_flags(
+    cmdline: &gio::ApplicationCommandLine,
+) -> Vec<(String, Option<String>)> {
+    const NAMES: &[&str] = &[
+        "preferences",
+        "settings",
+        "onboarding",
+        "about",
+        "logs",
+        "shortcuts",
+        "remote-config",
+        "step",
+        "profile",
+        "updates",
+        "alerts",
+        "dashboard",
+        "tab",
+        "remote",
+        "flow",
+        "quick-run",
+        "job",
+        "serve",
+        "automation",
+        "browse",
+        "browse-path",
+        "standalone",
+        "tray",
+        "hidden",
+    ];
+    let dict = cmdline.options_dict();
+    let mut flags = Vec::new();
+    for name in NAMES {
+        let Some(value) = dict.lookup_value(name, None) else {
+            continue;
+        };
+        if let Some(text) = value
+            .str()
+            .map(|s| s.to_string())
+            .or_else(|| value.get::<String>())
+        {
+            flags.push((
+                (*name).to_string(),
+                if text.is_empty() { None } else { Some(text) },
+            ));
+        } else if value.get::<bool>() == Some(true) {
+            flags.push(((*name).to_string(), None));
+        }
+    }
+    flags
 }
