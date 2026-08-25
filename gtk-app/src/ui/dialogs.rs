@@ -3426,8 +3426,13 @@ pub fn job_detail(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, job_id: u64) {
             let job = job_from_status(job_id, &status, stats.as_ref());
             progress.set_fraction(job.progress);
             progress.set_text(Some(&format!(
-                "{} · {:.0}% · {:.1}s",
+                "{}{} · {:.0}% · {:.1}s",
                 job.status,
+                if job.dry_run {
+                    format!(" · {}", ctx.t_or("detailShared.jobs.dryRun", "Dry Run"))
+                } else {
+                    String::new()
+                },
                 job.progress * 100.0,
                 job.duration
             )));
@@ -3451,11 +3456,31 @@ pub fn job_detail(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, job_id: u64) {
                     ctx.t_or("modals.jobDetail.fields.status", "Status"),
                     job.status.clone(),
                 ),
+                (
+                    ctx.t_or("modals.jobDetail.fields.started", "Started"),
+                    job.start_time.format("%Y-%m-%d %H:%M:%S UTC").to_string(),
+                ),
+                (
+                    ctx.t_or("modals.jobDetail.fields.duration", "Duration"),
+                    format!("{:.1}s", job.duration),
+                ),
                 (ctx.t_or("sidebar.remotes", "Remote"), job.remote.clone()),
                 (
                     ctx.t_or("modals.jobDetail.fields.profile", "Profile"),
                     job.profile.clone(),
                 ),
+                (
+                    ctx.t_or("modals.jobDetail.fields.origin", "Origin"),
+                    job.origin.clone(),
+                ),
+                (ctx.t_or("modals.jobDetail.fields.backend", "Backend"), {
+                    let backend = ctx.settings.borrow().core.active_backend.clone();
+                    if backend.is_empty() {
+                        "local".into()
+                    } else {
+                        backend
+                    }
+                }),
                 (
                     ctx.t_or("fileBrowser.operations.details.source", "Source"),
                     job.src.clone(),

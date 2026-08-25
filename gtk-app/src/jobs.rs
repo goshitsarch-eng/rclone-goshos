@@ -571,7 +571,12 @@ pub fn job_from_status(jobid: u64, status: &Value, stats: Option<&Value>) -> Job
         } else {
             "failed".into()
         },
-        origin: "dashboard".into(),
+        origin: output
+            .get("origin")
+            .and_then(|x| x.as_str())
+            .or_else(|| status.get("origin").and_then(|x| x.as_str()))
+            .unwrap_or("dashboard")
+            .to_string(),
         start_time,
         error,
         dry_run: output
@@ -957,9 +962,25 @@ mod tests {
         assert_eq!(job.src, "drive:Photos");
         assert_eq!(job.dst, "/tmp/out");
         assert!(job.dry_run);
+        assert_eq!(job.origin, "dashboard");
         assert!((job.progress - 0.5).abs() < f64::EPSILON);
         assert_eq!(job.transferring[0]["name"], "a.bin");
         assert_eq!(job.completed[0]["name"], "done.bin");
+    }
+
+    #[test]
+    fn job_from_status_reads_origin() {
+        let job = job_from_status(
+            2,
+            &json!({
+                "finished": true,
+                "success": true,
+                "output": { "origin": "quick-run", "srcFs": "drive:" }
+            }),
+            None,
+        );
+        assert_eq!(job.origin, "quick-run");
+        assert_eq!(job.status, "completed");
     }
 
     #[test]

@@ -144,6 +144,7 @@ This client is the GTK 4 + libadwaita rewrite of the Angular/Tauri desktop UI. I
 - Flow tabs + overview/detail i18n; dashboard empty-state i18n
 - Properties star toggle and i18n; job detail and quick-run editor titles i18n
 - Preferences Core/Developer/Security titles, plus Flags/Backends/Export/Templates/About/Repair dialog titles
+- Job detail shows start time, duration, origin, backend, and dry-run in the progress line
 
 ## Still deepening toward pixel-level Angular parity
 
