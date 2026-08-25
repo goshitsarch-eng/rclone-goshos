@@ -1831,23 +1831,35 @@ impl Dashboard {
                 });
             }
             self.detail_box().append(&dry);
-            let resync = adw::SwitchRow::new();
-            resync.set_title(&self.ctx.t_or("dashboard.appDetail.resync", "Resync"));
-            resync.set_subtitle(&self.ctx.t_or(
-                "dashboard.appDetail.resyncActive",
-                "Force a bisync resync on the next start",
-            ));
-            resync.set_active(self.resync.get());
-            {
-                let flag = self.resync.clone();
-                let ctx = self.ctx.clone();
-                let remote = name.clone();
-                resync.connect_active_notify(move |row| {
-                    flag.set(row.is_active());
-                    persist_profile_flag(&ctx, &remote, op, &profile, None, Some(row.is_active()));
-                });
+            if op == OperationType::Bisync {
+                let resync = adw::SwitchRow::new();
+                resync.set_title(&self.ctx.t_or("dashboard.appDetail.resync", "Resync"));
+                if self.resync.get() {
+                    resync.set_subtitle(&self.ctx.t_or(
+                        "dashboard.appDetail.resyncActive",
+                        "Force a bisync resync on the next start",
+                    ));
+                }
+                resync.set_active(self.resync.get());
+                {
+                    let flag = self.resync.clone();
+                    let ctx = self.ctx.clone();
+                    let remote = name.clone();
+                    let profile = profile.clone();
+                    resync.connect_active_notify(move |row| {
+                        flag.set(row.is_active());
+                        persist_profile_flag(
+                            &ctx,
+                            &remote,
+                            op,
+                            &profile,
+                            None,
+                            Some(row.is_active()),
+                        );
+                    });
+                }
+                self.detail_box().append(&resync);
             }
-            self.detail_box().append(&resync);
         }
         self.append_operation_control(&name, detail_op, &profile_name);
 
