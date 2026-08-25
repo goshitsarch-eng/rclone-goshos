@@ -10,6 +10,7 @@ use crate::rclone::engine::RcloneEngine;
 use adw::prelude::*;
 use gtk::prelude::*;
 use gtk::{gio, glib};
+use std::cell::Cell;
 use std::rc::Rc;
 
 pub fn activate(app: &adw::Application) {
@@ -290,21 +291,31 @@ pub fn present_main(app: &adw::Application, ctx: AppCtx) {
             glib::ControlFlow::Continue
         });
     }
-    glib::timeout_add_local(std::time::Duration::from_secs(3), move || {
-        ctx_poll.tick_automations();
-        ctx_poll.refresh_runtime();
-        dash_poll.refresh();
-        flow_poll.refresh();
-        if ctx_poll.connection_stale(std::time::Duration::from_secs(300)) {
-            ctx_poll.refresh_connection();
+    let poll_tick = Rc::new(Cell::new(0u32));
+    glib::timeout_add_local(crate::refresh::BUSY_POLL, move || {
+        let busy = ctx_poll.runtime_busy();
+        let tick = poll_tick.get();
+        if crate::refresh::should_refresh(
+            tick,
+            busy,
+            crate::refresh::idle_ticks_for(crate::refresh::poll_interval(false)),
+        ) {
+            ctx_poll.tick_automations();
+            ctx_poll.refresh_runtime();
+            dash_poll.refresh();
+            flow_poll.refresh();
+            if ctx_poll.connection_stale(std::time::Duration::from_secs(300)) {
+                ctx_poll.refresh_connection();
+            }
+            if ctx_poll.updates_stale(std::time::Duration::from_secs(1800)) {
+                ctx_poll.refresh_updates();
+            }
+            sync_connection_button(&ctx_poll, &conn_btn_poll);
+            sync_home_button(&ctx_poll, &home_btn_poll);
+            sync_notice_button(&ctx_poll, &notice_btn_poll);
+            update_banner(&ctx_poll, &banner_poll, &banner_kind_poll);
         }
-        if ctx_poll.updates_stale(std::time::Duration::from_secs(1800)) {
-            ctx_poll.refresh_updates();
-        }
-        sync_connection_button(&ctx_poll, &conn_btn_poll);
-        sync_home_button(&ctx_poll, &home_btn_poll);
-        sync_notice_button(&ctx_poll, &notice_btn_poll);
-        update_banner(&ctx_poll, &banner_poll, &banner_kind_poll);
+        poll_tick.set(tick.wrapping_add(1));
         if let Some(tray) = &tray {
             tray.drain(&ctx_poll);
         }
@@ -372,6 +383,10 @@ fn app_menu(ctx: &AppCtx) -> gio::Menu {
     prefs.append(
         Some(&ctx.t_or("modals.updates.title", "Updates")),
         Some("win.updates"),
+    );
+    prefs.append(
+        Some(&ctx.t_or("modals.about.whatsNew", "What's New")),
+        Some("win.whats-new"),
     );
     prefs.append(
         Some(&ctx.t_or("titlebar.menu.installRclone", "Install rclone")),
@@ -594,6 +609,14 @@ fn install_actions(
         add_action(
             "updates",
             Box::new(move || dialogs::updates(&window, ctx.clone(), toast.clone())),
+        );
+    }
+    {
+        let ctx = ctx.clone();
+        let window = window.clone();
+        add_action(
+            "whats-new",
+            Box::new(move || dialogs::whats_new(&window, ctx.clone(), "app")),
         );
     }
     {

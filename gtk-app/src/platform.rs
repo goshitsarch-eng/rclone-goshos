@@ -223,8 +223,56 @@ const NAUTILUS_SCRIPT: &str = include_str!("../../src-tauri/resources/send_to/na
 const DOLPHIN_DESKTOP: &str =
     include_str!("../../src-tauri/resources/send_to/dolphin_action.desktop");
 const NEMO_ACTION: &str = include_str!("../../src-tauri/resources/send_to/nemo_action.nemo_action");
+const MACOS_INFO_PLIST: &str = include_str!("../../src-tauri/resources/send_to/macos_info.plist");
+const MACOS_DOCUMENT_WFLOW: &str =
+    include_str!("../../src-tauri/resources/send_to/macos_document.wflow");
 
 pub fn register_send_to(remote: &str, path: Option<&str>) -> Result<(), String> {
+    #[cfg(target_os = "windows")]
+    {
+        return register_windows_send_to(remote, path);
+    }
+    #[cfg(target_os = "macos")]
+    {
+        return register_macos_send_to(remote, path);
+    }
+    #[cfg(not(any(target_os = "windows", target_os = "macos")))]
+    {
+        register_linux_send_to(remote, path)
+    }
+}
+
+pub fn unregister_send_to(remote: &str, path: Option<&str>) -> Result<(), String> {
+    #[cfg(target_os = "windows")]
+    {
+        return unregister_windows_send_to(remote, path);
+    }
+    #[cfg(target_os = "macos")]
+    {
+        return unregister_macos_send_to(remote, path);
+    }
+    #[cfg(not(any(target_os = "windows", target_os = "macos")))]
+    {
+        unregister_linux_send_to(remote, path)
+    }
+}
+
+pub fn is_send_to_registered(remote: &str, path: Option<&str>) -> bool {
+    #[cfg(target_os = "windows")]
+    {
+        return is_windows_send_to_registered(remote, path);
+    }
+    #[cfg(target_os = "macos")]
+    {
+        return is_macos_send_to_registered(remote, path);
+    }
+    #[cfg(not(any(target_os = "windows", target_os = "macos")))]
+    {
+        is_linux_send_to_registered(remote, path)
+    }
+}
+
+fn register_linux_send_to(remote: &str, path: Option<&str>) -> Result<(), String> {
     let name = send_to_display_name(remote, path);
     let exec = current_exe_quoted();
     let path_val = path.unwrap_or("");
@@ -258,7 +306,7 @@ pub fn register_send_to(remote: &str, path: Option<&str>) -> Result<(), String> 
     Ok(())
 }
 
-pub fn unregister_send_to(remote: &str, path: Option<&str>) -> Result<(), String> {
+fn unregister_linux_send_to(remote: &str, path: Option<&str>) -> Result<(), String> {
     let name = send_to_display_name(remote, path);
     let home = home_dir();
     let _ = std::fs::remove_file(home.join(".local/share/nautilus/scripts").join(&name));
@@ -273,7 +321,7 @@ pub fn unregister_send_to(remote: &str, path: Option<&str>) -> Result<(), String
     Ok(())
 }
 
-pub fn is_send_to_registered(remote: &str, path: Option<&str>) -> bool {
+fn is_linux_send_to_registered(remote: &str, path: Option<&str>) -> bool {
     let name = send_to_display_name(remote, path);
     let home = home_dir();
     home.join(".local/share/nautilus/scripts")
@@ -287,6 +335,225 @@ pub fn is_send_to_registered(remote: &str, path: Option<&str>) -> bool {
             .join(".local/share/nemo/actions")
             .join(format!("{name}.nemo_action"))
             .exists()
+}
+
+pub fn windows_sendto_dir() -> PathBuf {
+    std::env::var("APPDATA")
+        .map(|appdata| {
+            PathBuf::from(appdata)
+                .join("Microsoft")
+                .join("Windows")
+                .join("SendTo")
+        })
+        .unwrap_or_else(|_| home_dir().join("AppData/Roaming/Microsoft/Windows/SendTo"))
+}
+
+pub fn windows_sendto_arguments(remote: &str, path: &str) -> String {
+    format!("--send-to-remote \"{remote}\" --send-to-path \"{path}\"")
+}
+
+pub fn windows_shortcut_ps1(exe: &str, arguments: &str, lnk: &str) -> String {
+    let shortcut = lnk.replace('\'', "''");
+    let target = exe.replace('\'', "''");
+    let args = arguments.replace('\'', "''");
+    format!(
+        "$WshShell = New-Object -ComObject WScript.Shell; \
+         $Shortcut = $WshShell.CreateShortcut('{shortcut}'); \
+         $Shortcut.TargetPath = '{target}'; \
+         $Shortcut.Arguments = '{args}'; \
+         $Shortcut.IconLocation = '{target}'; \
+         $Shortcut.Save()"
+    )
+}
+
+pub fn windows_context_menu_command(exe: &str, remote: &str, path: &str) -> String {
+    format!("\"{exe}\" --send-to-remote \"{remote}\" --send-to-path \"{path}\" \"%1\"")
+}
+
+pub fn windows_registry_ps1(
+    name: &str,
+    label: &str,
+    exe: &str,
+    remote: &str,
+    path: &str,
+) -> String {
+    let command = windows_context_menu_command(exe, remote, path).replace('\'', "''");
+    let name = name.replace('\'', "''");
+    let label = label.replace('\'', "''");
+    let icon = exe.replace('\'', "''");
+    format!(
+        "$roots = @('HKCU:\\Software\\Classes\\*','HKCU:\\Software\\Classes\\Directory'); \
+         foreach ($root in $roots) {{ \
+           $parent = Join-Path $root 'shell\\RCloneManager'; \
+           New-Item -Path $parent -Force | Out-Null; \
+           New-ItemProperty -Path $parent -Name 'MUIVerb' -Value 'RClone Manager' -Force | Out-Null; \
+           New-ItemProperty -Path $parent -Name 'Icon' -Value '{icon}' -Force | Out-Null; \
+           New-ItemProperty -Path $parent -Name 'SubCommands' -Value '' -Force | Out-Null; \
+           $item = Join-Path $parent ('shell\\{name}'); \
+           New-Item -Path $item -Force | Out-Null; \
+           Set-ItemProperty -Path $item -Name '(default)' -Value '{label}'; \
+           $cmd = Join-Path $item 'command'; \
+           New-Item -Path $cmd -Force | Out-Null; \
+           Set-ItemProperty -Path $cmd -Name '(default)' -Value '{command}'; \
+         }}"
+    )
+}
+
+fn windows_upload_label(remote: &str, path: &str) -> String {
+    if path.is_empty() {
+        format!("Upload to {remote}")
+    } else {
+        format!("Upload to {remote}/{}", path.trim_start_matches('/'))
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn register_windows_send_to(remote: &str, path: Option<&str>) -> Result<(), String> {
+    let name = send_to_display_name(remote, path);
+    let path_val = path.unwrap_or("");
+    let exe = std::env::current_exe().map_err(|e| e.to_string())?;
+    let exe = exe.to_string_lossy();
+    let dir = windows_sendto_dir();
+    std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    let lnk = dir.join(format!("{name}.lnk"));
+    let arguments = windows_sendto_arguments(remote, path_val);
+    let shortcut = windows_shortcut_ps1(&exe, &arguments, &lnk.to_string_lossy());
+    let registry = windows_registry_ps1(
+        &name,
+        &windows_upload_label(remote, path_val),
+        &exe,
+        remote,
+        path_val,
+    );
+    run_powershell(&format!("{shortcut}; {registry}"))
+}
+
+#[cfg(target_os = "windows")]
+fn unregister_windows_send_to(remote: &str, path: Option<&str>) -> Result<(), String> {
+    let name = send_to_display_name(remote, path);
+    let lnk = windows_sendto_dir().join(format!("{name}.lnk"));
+    let _ = std::fs::remove_file(lnk);
+    let name = name.replace('\'', "''");
+    run_powershell(&format!(
+        "$roots = @('HKCU:\\Software\\Classes\\*','HKCU:\\Software\\Classes\\Directory'); \
+         foreach ($root in $roots) {{ \
+           $item = Join-Path $root 'shell\\RCloneManager\\shell\\{name}'; \
+           if (Test-Path $item) {{ Remove-Item -Path $item -Recurse -Force }}; \
+           $parent = Join-Path $root 'shell\\RCloneManager'; \
+           if ((Test-Path $parent) -and -not (Get-ChildItem (Join-Path $parent 'shell') -ErrorAction SilentlyContinue)) {{ \
+             Remove-Item -Path $parent -Recurse -Force \
+           }} \
+         }}"
+    ))
+}
+
+#[cfg(target_os = "windows")]
+fn is_windows_send_to_registered(remote: &str, path: Option<&str>) -> bool {
+    let name = send_to_display_name(remote, path);
+    windows_sendto_dir().join(format!("{name}.lnk")).exists()
+}
+
+#[cfg(target_os = "windows")]
+fn run_powershell(script: &str) -> Result<(), String> {
+    let exe = if which::which("powershell").is_ok() {
+        "powershell"
+    } else if which::which("pwsh").is_ok() {
+        "pwsh"
+    } else {
+        return Err("Neither powershell nor pwsh is available".into());
+    };
+    let output = Command::new(exe)
+        .args(["-NoProfile", "-Command", script])
+        .output()
+        .map_err(|e| e.to_string())?;
+    if output.status.success() {
+        Ok(())
+    } else {
+        Err(String::from_utf8_lossy(&output.stderr).into_owned())
+    }
+}
+
+pub fn escape_xml(value: &str) -> String {
+    value
+        .replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+        .replace('"', "&quot;")
+        .replace('\'', "&apos;")
+}
+
+pub fn macos_workflow_dir(name: &str) -> PathBuf {
+    home_dir().join(format!("Library/Services/{name}.workflow"))
+}
+
+pub fn macos_info_plist(name: &str, uuid: &str) -> String {
+    apply_template(
+        MACOS_INFO_PLIST,
+        &[("uuid", uuid), ("name", &escape_xml(name))],
+    )
+}
+
+pub fn macos_document_wflow(exe: &str, remote: &str, path: &str) -> String {
+    let cmd = escape_xml(&format!(
+        "exec \"{exe}\" --send-to-remote \"{remote}\" --send-to-path \"{path}\" \"$@\""
+    ));
+    apply_template(
+        MACOS_DOCUMENT_WFLOW,
+        &[
+            ("cmd_string", cmd.as_str()),
+            (
+                "input_uuid",
+                &uuid::Uuid::new_v4().to_string().to_uppercase(),
+            ),
+            (
+                "output_uuid",
+                &uuid::Uuid::new_v4().to_string().to_uppercase(),
+            ),
+            (
+                "action_uuid",
+                &uuid::Uuid::new_v4().to_string().to_uppercase(),
+            ),
+        ],
+    )
+}
+
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+fn write_macos_workflow(remote: &str, path: Option<&str>, exe: &Path) -> Result<PathBuf, String> {
+    let name = send_to_display_name(remote, path);
+    let workflow = macos_workflow_dir(&name);
+    let contents = workflow.join("Contents");
+    std::fs::create_dir_all(&contents).map_err(|e| e.to_string())?;
+    std::fs::write(
+        contents.join("Info.plist"),
+        macos_info_plist(&name, &uuid::Uuid::new_v4().to_string().replace('-', "")),
+    )
+    .map_err(|e| e.to_string())?;
+    std::fs::write(
+        contents.join("document.wflow"),
+        macos_document_wflow(&exe.to_string_lossy(), remote, path.unwrap_or("")),
+    )
+    .map_err(|e| e.to_string())?;
+    Ok(workflow)
+}
+
+#[cfg(target_os = "macos")]
+fn register_macos_send_to(remote: &str, path: Option<&str>) -> Result<(), String> {
+    let exe = std::env::current_exe().map_err(|e| e.to_string())?;
+    write_macos_workflow(remote, path, &exe).map(|_| ())
+}
+
+#[cfg(target_os = "macos")]
+fn unregister_macos_send_to(remote: &str, path: Option<&str>) -> Result<(), String> {
+    let workflow = macos_workflow_dir(&send_to_display_name(remote, path));
+    if workflow.exists() {
+        std::fs::remove_dir_all(workflow).map_err(|e| e.to_string())?;
+    }
+    Ok(())
+}
+
+#[cfg(target_os = "macos")]
+fn is_macos_send_to_registered(remote: &str, path: Option<&str>) -> bool {
+    macos_workflow_dir(&send_to_display_name(remote, path)).exists()
 }
 
 #[derive(Debug, Clone, Default)]
@@ -480,5 +747,48 @@ mod tests {
         assert_eq!(cmd.get_program(), "/opt/rclone-manager-gtk");
         let args: Vec<_> = cmd.get_args().collect();
         assert_eq!(args, vec!["--foo"]);
+    }
+
+    #[test]
+    fn windows_send_to_scripts_quote_paths() {
+        let args = windows_sendto_arguments("gdrive", "Inbox");
+        assert!(args.contains("--send-to-remote \"gdrive\""));
+        let ps1 = windows_shortcut_ps1(
+            r"C:\Program Files\app.exe",
+            &args,
+            r"C:\Users\me\SendTo\drive.lnk",
+        );
+        assert!(ps1.contains("CreateShortcut"));
+        assert!(ps1.contains("TargetPath"));
+        assert!(!ps1.contains("'{target}')"));
+        let cmd = windows_context_menu_command(r"C:\app.exe", "box", "Photos");
+        assert!(cmd.contains("\"%1\""));
+        let reg = windows_registry_ps1(
+            "box (RClone Manager)",
+            "Upload to box",
+            r"C:\app.exe",
+            "box",
+            "",
+        );
+        assert!(reg.contains("HKCU:\\Software\\Classes\\*"));
+        assert!(reg.contains("RCloneManager"));
+    }
+
+    #[test]
+    fn macos_workflow_templates_escape_and_substitute() {
+        let plist = macos_info_plist("drive & photos", "abc123");
+        assert!(plist.contains("drive &amp; photos"));
+        assert!(plist.contains("abc123"));
+        let wflow = macos_document_wflow(
+            "/Applications/Rclone Manager.app/Contents/MacOS/app",
+            "gdrive",
+            "Inbox",
+        );
+        assert!(wflow.contains("--send-to-remote"));
+        assert!(wflow.contains("gdrive"));
+        assert!(wflow.contains("Inbox"));
+        assert!(macos_workflow_dir("drive (RClone Manager)")
+            .to_string_lossy()
+            .contains("Library/Services/drive (RClone Manager).workflow"));
     }
 }

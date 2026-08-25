@@ -81,7 +81,23 @@ impl AppCtx {
             let notifications = ctx.settings.borrow().general.notifications;
             ctx.store.borrow_mut().seed_alert_defaults(notifications);
         }
+        ctx.watch_hub
+            .borrow_mut()
+            .ensure_paths(&[crate::settings::AppSettings::log_path()
+                .to_string_lossy()
+                .into_owned()]);
         ctx
+    }
+
+    pub fn runtime_busy(&self) -> bool {
+        let snap = self.snapshot.borrow();
+        crate::refresh::runtime_busy(
+            snap.jobs
+                .iter()
+                .any(|j| j.status == "running" || j.status == "starting"),
+            snap.mounts.len(),
+            snap.serves.len(),
+        )
     }
 
     pub fn fs_info(&self, remote: &str) -> Option<crate::rclone::FsInfo> {
@@ -584,6 +600,28 @@ fn notify_job_changes(
     for job in current {
         let was = previous.iter().find(|j| j.id == job.id);
         if job.status != "running" && was.map(|j| j.status.as_str()) != Some(job.status.as_str()) {
+            let level = if job.status == "failed" || job.error.is_some() {
+                crate::logs::LogLevel::Error
+            } else {
+                crate::logs::LogLevel::Info
+            };
+            let context = serde_json::json!({
+                "job_id": job.id,
+                "operation": job.operation,
+                "status": job.status,
+                "error": job.error,
+                "src": job.src,
+                "dst": job.dst,
+            });
+            ctx.store.borrow_mut().push_log(
+                &job.remote,
+                crate::logs::format_now(
+                    level,
+                    Some(&job.remote),
+                    &format!("job {} {}", job.id, job.status),
+                    Some(&context.to_string()),
+                ),
+            );
             ctx.store.borrow_mut().remember_job(job.clone());
             dirty = true;
         }

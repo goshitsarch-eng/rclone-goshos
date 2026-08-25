@@ -163,10 +163,13 @@ This client is the GTK 4 + libadwaita rewrite of the Angular/Tauri desktop UI. I
 - RC 401 repair opens the backends editor; FUSE repair can run a package-manager install
 - Restrict mode redacts wizard secrets and remote-config JSON
 - Developer menu Memory stats dialog (alloc/heap/GC)
+- Structured logs: rclone text + JSON parse, job context, copy/export, live refresh
+- Adaptive runtime poll (400ms while jobs/mounts/serves are active, ~3s idle)
+- In-app What's New for app and rclone release notes
+- Windows SendTo + Explorer context-menu writers and macOS Finder Services workflow
 
 ## Still deepening toward pixel-level Angular parity
 
-- Windows/macOS send-to
 - In-app PDF renderer
 - Workflow builder (stub in both apps)
 - Live GUI session against rclone rcd (no display in this environment)

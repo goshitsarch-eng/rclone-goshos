@@ -14,6 +14,7 @@ pub struct UpdateInfo {
     pub url: String,
     pub available: bool,
     pub download_url: Option<String>,
+    pub notes: Option<String>,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -127,17 +128,43 @@ pub fn parse_github_release(body: &Value, current: &str) -> Option<UpdateInfo> {
         current: current.to_string(),
         url,
         download_url: linux_asset_url(body),
+        notes: github_body_notes(body),
     })
 }
 
+pub fn github_body_notes(body: &Value) -> Option<String> {
+    body.get("body")
+        .and_then(|x| x.as_str())
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(|s| s.to_string())
+}
+
+fn fetch_github_json(url: &str) -> Result<Value, String> {
+    let resp = ureq::get(url)
+        .set("User-Agent", "rclone-manager-gtk")
+        .timeout(Duration::from_secs(8))
+        .call()
+        .map_err(|e| e.to_string())?;
+    resp.into_json().map_err(|e| e.to_string())
+}
+
+pub fn fetch_app_release_notes() -> Result<String, String> {
+    let body = fetch_github_json(
+        "https://api.github.com/repos/Zarestia-Dev/rclone-manager/releases/latest",
+    )?;
+    github_body_notes(&body).ok_or_else(|| "no release notes".into())
+}
+
+pub fn fetch_rclone_release_notes() -> Result<String, String> {
+    let body = fetch_github_json("https://api.github.com/repos/rclone/rclone/releases/latest")?;
+    github_body_notes(&body).ok_or_else(|| "no release notes".into())
+}
+
 pub fn fetch_app_update(current: &str) -> Result<UpdateInfo, String> {
-    let resp =
-        ureq::get("https://api.github.com/repos/Zarestia-Dev/rclone-manager/releases/latest")
-            .set("User-Agent", "rclone-manager-gtk")
-            .timeout(Duration::from_secs(8))
-            .call()
-            .map_err(|e| e.to_string())?;
-    let body: Value = resp.into_json().map_err(|e| e.to_string())?;
+    let body = fetch_github_json(
+        "https://api.github.com/repos/Zarestia-Dev/rclone-manager/releases/latest",
+    )?;
     parse_github_release(&body, current).ok_or_else(|| "invalid GitHub response".into())
 }
 
@@ -343,8 +370,9 @@ pub fn fetch_rclone_update(current: &str) -> Result<UpdateInfo, String> {
         available: version_is_newer(&latest, current),
         latest,
         current: current.to_string(),
-        url: "https://rclone.org/downloads/".into(),
+        url: "https://rclone.org/changelog/".into(),
         download_url: Some(rclone_linux_zip_url().into()),
+        notes: fetch_rclone_release_notes().ok(),
     })
 }
 
@@ -360,6 +388,7 @@ mod tests {
             url: "https://example.com".into(),
             available: true,
             download_url: Some("https://example.com/app.AppImage".into()),
+            notes: Some("## Highlights\n- faster copies".into()),
         }
     }
 
@@ -377,6 +406,7 @@ mod tests {
             &json!({
                 "tag_name": "v0.9.0",
                 "html_url": "https://example.com/r",
+                "body": "## v0.9.0\n- GTK rewrite",
                 "assets": [{
                     "name": "rclone-manager_0.9.0_amd64.AppImage",
                     "browser_download_url": "https://example.com/app.AppImage"
@@ -391,6 +421,16 @@ mod tests {
         assert_eq!(
             info.download_url.as_deref(),
             Some("https://example.com/app.AppImage")
+        );
+        assert_eq!(info.notes.as_deref(), Some("## v0.9.0\n- GTK rewrite"));
+    }
+
+    #[test]
+    fn extracts_github_notes() {
+        assert!(github_body_notes(&json!({"body": "  "})).is_none());
+        assert_eq!(
+            github_body_notes(&json!({"body": "  hello  "})).as_deref(),
+            Some("hello")
         );
     }
 

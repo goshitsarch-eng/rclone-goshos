@@ -887,7 +887,81 @@ pub fn about(parent: &impl IsA<gtk::Widget>, ctx: AppCtx) {
             );
         }
     }
+    dialog.add_link(
+        &ctx.t_or("modals.about.whatsNewRclone", "rclone changelog"),
+        "https://rclone.org/changelog/",
+    );
     dialog.present(Some(parent));
+}
+
+pub fn whats_new(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, kind: &str) {
+    let dialog = adw::Dialog::new();
+    let app_title = ctx.t_or("modals.about.whatsNew", "What's New");
+    let rclone_title = ctx.t_or("modals.about.whatsNewRclone", "What's New in rclone");
+    dialog.set_title(if kind == "rclone" {
+        &rclone_title
+    } else {
+        &app_title
+    });
+    dialog.set_content_width(640);
+    dialog.set_content_height(520);
+    let pending = ctx.updates.borrow().clone();
+    let (notes, url) = if kind == "rclone" {
+        (
+            pending
+                .rclone
+                .as_ref()
+                .and_then(|u| u.notes.clone())
+                .or_else(|| crate::updater::fetch_rclone_release_notes().ok()),
+            pending
+                .rclone
+                .as_ref()
+                .map(|u| u.url.clone())
+                .unwrap_or_else(|| "https://rclone.org/changelog/".into()),
+        )
+    } else {
+        (
+            pending
+                .app
+                .as_ref()
+                .and_then(|u| u.notes.clone())
+                .or_else(|| crate::updater::fetch_app_release_notes().ok()),
+            pending
+                .app
+                .as_ref()
+                .map(|u| u.url.clone())
+                .unwrap_or_else(|| {
+                    "https://github.com/Zarestia-Dev/rclone-manager/releases".into()
+                }),
+        )
+    };
+    let view = gtk::TextView::new();
+    view.set_editable(false);
+    view.set_wrap_mode(gtk::WrapMode::WordChar);
+    view.set_left_margin(8);
+    view.set_right_margin(8);
+    view.set_top_margin(8);
+    view.set_bottom_margin(8);
+    view.buffer().set_text(&notes.unwrap_or_else(|| {
+        ctx.t_or(
+            "modals.logs.noLogsFound",
+            "No release notes are available yet.",
+        )
+    }));
+    let scroll = gtk::ScrolledWindow::new();
+    scroll.set_vexpand(true);
+    scroll.set_child(Some(&view));
+    let open = gtk::LinkButton::with_label(&url, &ctx.t_or("common.open", "Open in browser"));
+    open.set_halign(gtk::Align::Start);
+    let box_ = gtk::Box::new(gtk::Orientation::Vertical, 8);
+    box_.set_margin_top(12);
+    box_.set_margin_start(12);
+    box_.set_margin_end(12);
+    box_.set_margin_bottom(12);
+    box_.append(&scroll);
+    box_.append(&open);
+    dialog.set_child(Some(&box_));
+    present_window_or_dialog(parent, &ctx, &dialog);
 }
 
 pub fn memory_stats(parent: &impl IsA<gtk::Widget>, ctx: AppCtx) {
@@ -952,14 +1026,16 @@ pub fn updates(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, toast: adw::ToastOve
     app_row.set_title(&ctx.t_or("titlebar.updates.app", "Application update"));
     if let Some(info) = pending.app.clone() {
         app_row.set_subtitle(&format!("{} → {}", info.current, info.latest));
-        if !info.url.is_empty() {
-            let notes = gtk::LinkButton::with_label(
-                &info.url,
-                &ctx.t_or("modals.about.whatsNew", "What's New"),
-            );
-            notes.set_valign(gtk::Align::Center);
-            app_row.add_suffix(&notes);
+        let notes = gtk::Button::with_label(&ctx.t_or("modals.about.whatsNew", "What's New"));
+        notes.set_valign(gtk::Align::Center);
+        {
+            let ctx = ctx.clone();
+            let parent = parent.clone();
+            notes.connect_clicked(move |_| {
+                whats_new(&parent, ctx.clone(), "app");
+            });
         }
+        app_row.add_suffix(&notes);
         if info.download_url.is_some() {
             let install = gtk::Button::with_label(&ctx.t_or("common.install", "Install"));
             install.add_css_class("suggested-action");
@@ -1001,6 +1077,16 @@ pub fn updates(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, toast: adw::ToastOve
     rclone_row.set_title(&ctx.t_or("titlebar.updates.rclone", "Rclone update"));
     if let Some(info) = pending.rclone.clone() {
         rclone_row.set_subtitle(&format!("{} → {}", info.current, info.latest));
+        let notes = gtk::Button::with_label(&ctx.t_or("modals.about.whatsNewRclone", "What's New"));
+        notes.set_valign(gtk::Align::Center);
+        {
+            let ctx = ctx.clone();
+            let parent = parent.clone();
+            notes.connect_clicked(move |_| {
+                whats_new(&parent, ctx.clone(), "rclone");
+            });
+        }
+        rclone_row.add_suffix(&notes);
         let install = gtk::Button::with_label(&ctx.t_or("titlebar.menu.installRclone", "Install"));
         install.add_css_class("suggested-action");
         install.set_valign(gtk::Align::Center);
@@ -1323,64 +1409,108 @@ pub fn debug_info(parent: &impl IsA<gtk::Widget>, ctx: AppCtx) {
 
 pub fn logs(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, remote: Option<String>) {
     let dialog = adw::Dialog::new();
-    dialog.set_title(&ctx.t_or("modals.logs.terminalOutput", "Logs"));
-    dialog.set_content_width(720);
-    dialog.set_content_height(480);
-    let view = gtk::TextView::new();
-    view.set_editable(false);
-    view.set_monospace(true);
+    let title = if let Some(name) = remote.as_ref().filter(|r| *r != "_engine") {
+        ctx.tf("modals.logs.remoteLogs", &[("name", name)])
+    } else {
+        ctx.t_or("modals.logs.terminalOutput", "Logs")
+    };
+    dialog.set_title(&title);
+    dialog.set_content_width(760);
+    dialog.set_content_height(520);
     let key = remote.clone().unwrap_or_else(|| "_engine".into());
-    let mut lines = ctx
-        .store
-        .borrow()
-        .logs
-        .get(&key)
-        .cloned()
-        .unwrap_or_default();
-    if let Ok(file) = std::fs::read_to_string(crate::settings::AppSettings::log_path()) {
-        let tail: Vec<String> = file
-            .lines()
-            .rev()
-            .take(400)
-            .map(|s| s.to_string())
-            .collect();
-        let mut chron = tail;
-        chron.reverse();
-        if !chron.is_empty() {
-            lines.extend(chron);
-        }
-    }
-    let lines = Rc::new(RefCell::new(lines));
+    let locked = remote.clone().filter(|r| r != "_engine");
+    let entries = Rc::new(RefCell::new(crate::logs::collect_entries(
+        &ctx.store.borrow().logs,
+        &crate::logs::read_log_file_tail(400),
+        locked.as_deref(),
+    )));
     let level_filter = Rc::new(RefCell::new(String::new()));
+    let remote_filter = Rc::new(RefCell::new(locked.clone()));
+    let list = gtk::ListBox::new();
+    list.add_css_class("boxed-list");
+    list.set_selection_mode(gtk::SelectionMode::None);
+    let empty = adw::StatusPage::new();
+    empty.set_icon_name(Some("utilities-system-monitor-symbolic"));
+    empty.set_title(&ctx.t_or("modals.logs.noLogsFound", "No logs found"));
+    empty.set_description(Some(
+        &ctx.t_or("modals.logs.adjustFilters", "Try adjusting your filters"),
+    ));
+    let stack = gtk::Stack::new();
+    let scroll = gtk::ScrolledWindow::new();
+    scroll.set_vexpand(true);
+    scroll.set_child(Some(&list));
+    stack.add_named(&scroll, Some("list"));
+    stack.add_named(&empty, Some("empty"));
     let search = gtk::Entry::new();
     search.set_placeholder_text(Some(
         &ctx.t_or("modals.logs.searchPlaceholder", "Search logs..."),
     ));
-    let empty_text = ctx.t_or("modals.logs.noLogsFound", "No logs found");
+    let copy_label = ctx.t_or("common.copy", "Copy");
+    let context_label = ctx.t_or("modals.logs.logContext", "Log Context");
     let apply = {
-        let view = view.clone();
-        let lines = lines.clone();
+        let list = list.clone();
+        let stack = stack.clone();
+        let entries = entries.clone();
         let level_filter = level_filter.clone();
-        let empty_text = empty_text.clone();
+        let remote_filter = remote_filter.clone();
+        let copy_label = copy_label.clone();
+        let context_label = context_label.clone();
         move |query: &str| {
-            let q = query.to_ascii_lowercase();
-            let level = level_filter.borrow().to_ascii_lowercase();
-            let filtered: Vec<String> = lines
-                .borrow()
-                .iter()
-                .filter(|line| {
-                    let lower = line.to_ascii_lowercase();
-                    (q.is_empty() || lower.contains(&q))
-                        && (level.is_empty() || lower.contains(&level))
-                })
-                .cloned()
-                .collect();
-            let text = if filtered.is_empty() {
-                empty_text.clone()
-            } else {
-                filtered.join("\n")
-            };
-            view.buffer().set_text(&text);
+            while let Some(child) = list.first_child() {
+                list.remove(&child);
+            }
+            let owned = entries.borrow();
+            let filtered = crate::logs::filter_entries(
+                &owned,
+                query,
+                &level_filter.borrow(),
+                remote_filter.borrow().as_deref(),
+            );
+            if filtered.is_empty() {
+                stack.set_visible_child_name("empty");
+                return;
+            }
+            stack.set_visible_child_name("list");
+            for entry in filtered {
+                let subtitle = match &entry.remote_name {
+                    Some(remote) if !remote.is_empty() => {
+                        format!("{} · {} · {remote}", entry.timestamp, entry.level.as_str())
+                    }
+                    _ => format!("{} · {}", entry.timestamp, entry.level.as_str()),
+                };
+                let copy = gtk::Button::from_icon_name("edit-copy-symbolic");
+                copy.set_valign(gtk::Align::Center);
+                copy.set_tooltip_text(Some(&copy_label));
+                let formatted = entry.formatted();
+                copy.connect_clicked(move |_| {
+                    if let Some(display) = gtk::gdk::Display::default() {
+                        display.clipboard().set_text(&formatted);
+                    }
+                });
+                if let Some(details) = &entry.context {
+                    let row = adw::ExpanderRow::new();
+                    row.set_title(&entry.message);
+                    row.set_subtitle(&subtitle);
+                    row.add_suffix(&copy);
+                    let label = gtk::Label::new(Some(&format!("{context_label}\n{details}")));
+                    label.set_wrap(true);
+                    label.set_xalign(0.0);
+                    label.set_selectable(true);
+                    label.add_css_class("monospace");
+                    label.set_margin_start(12);
+                    label.set_margin_end(12);
+                    label.set_margin_top(8);
+                    label.set_margin_bottom(8);
+                    row.add_row(&label);
+                    list.append(&row);
+                } else {
+                    let row = adw::ActionRow::new();
+                    row.set_title(&entry.message);
+                    row.set_subtitle(&subtitle);
+                    row.add_suffix(&copy);
+                    list.append(&row);
+                }
+            }
         }
     };
     apply("");
@@ -1388,7 +1518,7 @@ pub fn logs(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, remote: Option<String>)
         let apply = apply.clone();
         search.connect_changed(move |entry| apply(&entry.text()));
     }
-    let levels = gtk::StringList::new(&["", "ERROR", "NOTICE", "INFO", "DEBUG"]);
+    let levels = gtk::StringList::new(&["", "ERROR", "WARN", "NOTICE", "INFO", "DEBUG"]);
     let level = gtk::DropDown::new(Some(levels), gtk::Expression::NONE);
     level.set_tooltip_text(Some(&ctx.t_or("modals.logs.logLevel", "Log Level")));
     {
@@ -1396,7 +1526,7 @@ pub fn logs(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, remote: Option<String>)
         let search = search.clone();
         let level_filter = level_filter.clone();
         level.connect_selected_notify(move |drop| {
-            let selected = ["", "ERROR", "NOTICE", "INFO", "DEBUG"]
+            let selected = ["", "ERROR", "WARN", "NOTICE", "INFO", "DEBUG"]
                 .get(drop.selected() as usize)
                 .copied()
                 .unwrap_or_default();
@@ -1404,54 +1534,105 @@ pub fn logs(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, remote: Option<String>)
             apply(&search.text());
         });
     }
+    let reload = {
+        let ctx = ctx.clone();
+        let entries = entries.clone();
+        let locked = locked.clone();
+        move || {
+            *entries.borrow_mut() = crate::logs::collect_entries(
+                &ctx.store.borrow().logs,
+                &crate::logs::read_log_file_tail(400),
+                locked.as_deref(),
+            );
+        }
+    };
     let clear = gtk::Button::from_icon_name("edit-clear-symbolic");
     clear.set_tooltip_text(Some(&ctx.t_or("modals.logs.clearAll", "Clear")));
     {
         let ctx = ctx.clone();
         let key = key.clone();
-        let lines = lines.clone();
+        let reload = reload.clone();
         let apply = apply.clone();
         let search = search.clone();
         clear.connect_clicked(move |_| {
-            ctx.store.borrow_mut().logs.remove(&key);
+            if key == "_engine" {
+                ctx.store.borrow_mut().logs.clear();
+            } else {
+                ctx.store.borrow_mut().logs.remove(&key);
+            }
             ctx.persist();
-            lines.borrow_mut().clear();
+            reload();
             apply(&search.text());
         });
     }
     let refresh = gtk::Button::from_icon_name("view-refresh-symbolic");
     refresh.set_tooltip_text(Some(&ctx.t("common.refresh")));
     {
-        let ctx = ctx.clone();
-        let key = key.clone();
-        let lines = lines.clone();
+        let reload = reload.clone();
         let apply = apply.clone();
         let search = search.clone();
         refresh.connect_clicked(move |_| {
-            let mut next = ctx
-                .store
-                .borrow()
-                .logs
-                .get(&key)
-                .cloned()
-                .unwrap_or_default();
-            if let Ok(file) = std::fs::read_to_string(crate::settings::AppSettings::log_path()) {
-                let mut tail: Vec<String> = file
-                    .lines()
-                    .rev()
-                    .take(400)
-                    .map(|s| s.to_string())
-                    .collect();
-                tail.reverse();
-                next.extend(tail);
-            }
-            *lines.borrow_mut() = next;
+            reload();
             apply(&search.text());
         });
     }
-    let scroll = gtk::ScrolledWindow::new();
-    scroll.set_vexpand(true);
-    scroll.set_child(Some(&view));
+    let copy_all = gtk::Button::from_icon_name("edit-copy-symbolic");
+    copy_all.set_tooltip_text(Some(&ctx.t_or("common.copy", "Copy")));
+    {
+        let entries = entries.clone();
+        let level_filter = level_filter.clone();
+        let remote_filter = remote_filter.clone();
+        let search = search.clone();
+        copy_all.connect_clicked(move |_| {
+            let owned = entries.borrow();
+            let filtered = crate::logs::filter_entries(
+                &owned,
+                &search.text(),
+                &level_filter.borrow(),
+                remote_filter.borrow().as_deref(),
+            );
+            if let Some(display) = gtk::gdk::Display::default() {
+                display
+                    .clipboard()
+                    .set_text(&crate::logs::export_text(&filtered));
+            }
+        });
+    }
+    let export = gtk::Button::from_icon_name("document-save-symbolic");
+    export.set_tooltip_text(Some(&ctx.t_or("titlebar.menu.export", "Export")));
+    {
+        let parent = parent.clone();
+        let entries = entries.clone();
+        let level_filter = level_filter.clone();
+        let remote_filter = remote_filter.clone();
+        let search = search.clone();
+        export.connect_clicked(move |_| {
+            let text = {
+                let owned = entries.borrow();
+                let filtered = crate::logs::filter_entries(
+                    &owned,
+                    &search.text(),
+                    &level_filter.borrow(),
+                    remote_filter.borrow().as_deref(),
+                );
+                crate::logs::export_text(&filtered)
+            };
+            let file_dialog = gtk::FileDialog::new();
+            file_dialog.set_initial_name(Some("rclone-manager-logs.txt"));
+            let window = parent.root().and_downcast::<gtk::Window>();
+            file_dialog.save(
+                window.as_ref(),
+                None::<gio::Cancellable>.as_ref(),
+                move |result| {
+                    if let Ok(file) = result {
+                        if let Some(path) = file.path() {
+                            let _ = std::fs::write(path, text);
+                        }
+                    }
+                },
+            );
+        });
+    }
     let top = gtk::Button::from_icon_name("go-top-symbolic");
     top.set_tooltip_text(Some(&ctx.t_or("modals.logs.scrollTop", "Scroll Top")));
     {
@@ -1469,6 +1650,20 @@ pub fn logs(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, remote: Option<String>)
             adj.set_value(adj.upper() - adj.page_size());
         });
     }
+    {
+        let reload = reload.clone();
+        let apply = apply.clone();
+        let search = search.clone();
+        let list = list.clone();
+        glib::timeout_add_local(std::time::Duration::from_secs(2), move || {
+            if !list.is_mapped() {
+                return glib::ControlFlow::Break;
+            }
+            reload();
+            apply(&search.text());
+            glib::ControlFlow::Continue
+        });
+    }
     let toolbar = gtk::Box::new(gtk::Orientation::Horizontal, 8);
     toolbar.set_margin_start(8);
     toolbar.set_margin_end(8);
@@ -1477,14 +1672,16 @@ pub fn logs(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, remote: Option<String>)
     toolbar.append(&level);
     toolbar.append(&search);
     toolbar.append(&refresh);
+    toolbar.append(&copy_all);
+    toolbar.append(&export);
     toolbar.append(&top);
     toolbar.append(&bottom);
     toolbar.append(&clear);
     let box_ = gtk::Box::new(gtk::Orientation::Vertical, 8);
     box_.append(&toolbar);
-    box_.append(&scroll);
+    box_.append(&stack);
     dialog.set_child(Some(&box_));
-    dialog.present(Some(parent));
+    present_window_or_dialog(parent, &ctx, &dialog);
 }
 
 pub fn rclone_flags(parent: &impl IsA<gtk::Widget>, ctx: AppCtx) {
