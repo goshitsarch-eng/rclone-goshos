@@ -37,6 +37,7 @@ pub(super) fn attach_operation_guidance(
 ) -> (adw::PreferencesGroup, Rc<dyn Fn()>) {
     let group = adw::PreferencesGroup::new();
     group.set_title(&ctx.t_or("remoteConfig.guidance", "Guidance"));
+    let banner_rows: Rc<RefCell<Vec<adw::ActionRow>>> = Rc::new(RefCell::new(Vec::new()));
     let refresh = {
         let ctx = ctx.clone();
         let group = group.clone();
@@ -45,6 +46,7 @@ pub(super) fn attach_operation_guidance(
         let extra_sources = extra_sources.clone();
         let dst = dst.clone();
         let current_op = current_op.clone();
+        let banner_rows = banner_rows.clone();
         Rc::new(move || {
             let mut sources = vec![src.text().to_string()];
             sources.extend(
@@ -60,9 +62,10 @@ pub(super) fn attach_operation_guidance(
                 &sources,
                 &dst.text(),
             );
-            while let Some(child) = group.first_child() {
-                group.remove(&child);
+            for row in banner_rows.borrow().iter() {
+                group.remove(row);
             }
+            banner_rows.borrow_mut().clear();
             for banner in &banners {
                 let row = adw::ActionRow::new();
                 row.set_title(&ctx.t_or(banner.key, banner.key));
@@ -80,6 +83,7 @@ pub(super) fn attach_operation_guidance(
                     row.add_css_class("warning");
                 }
                 group.add(&row);
+                banner_rows.borrow_mut().push(row);
             }
             group.set_visible(!banners.is_empty());
         }) as Rc<dyn Fn()>
@@ -4165,7 +4169,7 @@ pub fn quick_run_editor(
             }
         });
     }
-    let cron_presets = attach_cron_builder(&cron, &ctx);
+    let cron_presets = attach_cron_builder_row(&cron, &ctx);
     let op_row = adw::ComboRow::new();
     op_row.set_title(&ctx.t_or("wizards.cliImport.operation", "Operation"));
     let labels: Vec<&str> = OperationType::ALL.iter().map(|o| o.as_str()).collect();
@@ -4427,10 +4431,7 @@ pub fn quick_run_editor(
     group.add(&dst_kind);
     group.add(&dst);
     group.add(&cron);
-    let cron_preset_row = adw::ActionRow::new();
-    cron_preset_row.set_title(&ctx.t_or("flow.quickRun.editor.cron", "Cron schedule"));
-    cron_preset_row.add_suffix(&cron_presets);
-    group.add(&cron_preset_row);
+    group.add(&cron_presets);
     group.add(&auto);
     group.add(&watch);
     group.add(&watch_delay);
@@ -10044,6 +10045,19 @@ pub(crate) fn attach_path_kind(
         });
     }
     combo
+}
+
+pub(crate) fn attach_cron_builder_row(cron: &adw::EntryRow, ctx: &AppCtx) -> adw::ExpanderRow {
+    let row = adw::ExpanderRow::new();
+    row.set_title(&ctx.t_or("remoteConfig.cron", "Cron schedule"));
+    row.set_expanded(true);
+    let builder = attach_cron_builder(cron, ctx);
+    builder.set_margin_start(12);
+    builder.set_margin_end(12);
+    builder.set_margin_top(8);
+    builder.set_margin_bottom(12);
+    row.add_row(&builder);
+    row
 }
 
 pub(crate) fn attach_cron_presets(cron: &adw::EntryRow, ctx: &AppCtx) -> gtk::Box {

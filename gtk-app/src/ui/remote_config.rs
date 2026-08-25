@@ -1018,10 +1018,8 @@ fn operation_page(
     automation.add(&auto_start);
     automation.add(&cron_enabled);
     automation.add(&cron);
-    let cron_preset_row = adw::ActionRow::new();
-    cron_preset_row.set_title(&ctx.t_or("remoteConfig.cron", "Cron schedule"));
+    let cron_preset_row = dialogs::attach_cron_builder_row(&cron, &ctx);
     cron_preset_row.set_visible(op.is_automatable());
-    cron_preset_row.add_suffix(&dialogs::attach_cron_builder(&cron, &ctx));
     automation.add(&cron_preset_row);
     automation.add(&watch_enabled);
     automation.add(&watch_delay);
