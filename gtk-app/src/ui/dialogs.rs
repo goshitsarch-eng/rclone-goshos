@@ -5912,8 +5912,11 @@ pub fn job_detail(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, job_id: u64) {
     }
     let box_ = gtk::Box::new(gtk::Orientation::Vertical, 8);
     box_.set_margin_top(12);
+    box_.set_margin_start(12);
+    box_.set_margin_end(12);
+    box_.set_margin_bottom(12);
     box_.append(&progress);
-    box_.append(&scrolled_list(&meta));
+    box_.append(&meta);
     box_.append(&filter);
     let xfer_label = gtk::Label::new(Some(
         &ctx.t_or("generalOverview.jobs.transfers", "Active transfers"),
@@ -5921,14 +5924,14 @@ pub fn job_detail(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, job_id: u64) {
     xfer_label.add_css_class("heading");
     xfer_label.set_xalign(0.0);
     box_.append(&xfer_label);
-    box_.append(&scrolled_list(&transfers));
+    box_.append(&transfers);
     let done_label = gtk::Label::new(Some(
         &ctx.t_or("fileBrowser.operations.completed", "Completed transfers"),
     ));
     done_label.add_css_class("heading");
     done_label.set_xalign(0.0);
     box_.append(&done_label);
-    box_.append(&scrolled_list(&completed));
+    box_.append(&completed);
     let open_box = gtk::Box::new(gtk::Orientation::Horizontal, 8);
     let populate_opens: Rc<dyn Fn(&str, &str)> = Rc::new({
         let open_box = open_box.clone();
@@ -5983,7 +5986,12 @@ pub fn job_detail(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, job_id: u64) {
     actions.append(&delete);
     actions.append(&open_box);
     box_.append(&actions);
-    dialog.set_child(Some(&box_));
+    let scroll = gtk::ScrolledWindow::new();
+    scroll.set_hexpand(true);
+    scroll.set_vexpand(true);
+    scroll.set_policy(gtk::PolicyType::Never, gtk::PolicyType::Automatic);
+    scroll.set_child(Some(&box_));
+    dialog.set_child(Some(&scroll));
 
     let fill = {
         let ctx = ctx.clone();
@@ -6271,6 +6279,7 @@ pub fn job_detail(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, job_id: u64) {
                 let row = adw::ActionRow::new();
                 row.set_title(&title);
                 row.set_subtitle(&value);
+                row.set_subtitle_lines(2);
                 meta.append(&row);
             }
             let query = filter.text().to_lowercase();

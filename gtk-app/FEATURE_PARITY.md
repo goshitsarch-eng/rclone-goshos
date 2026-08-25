@@ -482,6 +482,7 @@ This client is the GTK 4 + libadwaita rewrite of the Angular/Tauri desktop UI. I
 - Check results show localized status badges plus relative time when a parent job timestamp is known
 - Reconstructed completed transfers fill `bytes` from snapshot `size` (no more `0 B / 3 B` after restart)
 - Job detail shows Origin / Profile / Backend / Group with Type / Status, and `—` for unknown speed
+- Job detail uses one page scroll so identity fields are not clipped by competing transfer lists
 
 ## Still deepening toward pixel-level Angular parity
 
