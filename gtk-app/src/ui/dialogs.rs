@@ -890,6 +890,259 @@ pub fn about(parent: &impl IsA<gtk::Widget>, ctx: AppCtx) {
     dialog.present(Some(parent));
 }
 
+pub fn updates(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, toast: adw::ToastOverlay) {
+    let dialog = adw::Dialog::new();
+    dialog.set_title(&ctx.t_or("modals.updates.title", "Updates"));
+    dialog.set_content_width(520);
+    dialog.set_content_height(420);
+    let pending = ctx.updates.borrow().clone();
+    let group = adw::PreferencesGroup::new();
+    group.set_title(&ctx.t_or("modals.updates.title", "Updates"));
+
+    let app_row = adw::ActionRow::new();
+    app_row.set_title(&ctx.t_or("titlebar.updates.app", "Application update"));
+    if let Some(info) = pending.app.clone() {
+        app_row.set_subtitle(&format!("{} → {}", info.current, info.latest));
+        if !info.url.is_empty() {
+            let notes = gtk::LinkButton::with_label(
+                &info.url,
+                &ctx.t_or("modals.about.whatsNew", "What's New"),
+            );
+            notes.set_valign(gtk::Align::Center);
+            app_row.add_suffix(&notes);
+        }
+        if info.download_url.is_some() {
+            let install = gtk::Button::with_label(&ctx.t_or("common.install", "Install"));
+            install.add_css_class("suggested-action");
+            install.set_valign(gtk::Align::Center);
+            {
+                let ctx = ctx.clone();
+                let parent = parent.clone();
+                let toast = toast.clone();
+                let dialog = dialog.clone();
+                install.connect_clicked(move |_| {
+                    start_app_update(&parent, ctx.clone(), toast.clone());
+                    dialog.close();
+                });
+            }
+            app_row.add_suffix(&install);
+        }
+        let skip = gtk::Button::with_label(&ctx.t_or("modals.about.skipVersion", "Skip"));
+        skip.set_valign(gtk::Align::Center);
+        {
+            let ctx = ctx.clone();
+            let latest = info.latest.clone();
+            skip.connect_clicked(move |_| {
+                ctx.settings
+                    .borrow_mut()
+                    .runtime
+                    .app_skipped_updates
+                    .push(latest.clone());
+                ctx.persist();
+                ctx.refresh_updates();
+            });
+        }
+        app_row.add_suffix(&skip);
+    } else {
+        app_row.set_subtitle(&ctx.t_or("modals.about.upToDate", "Up to date"));
+    }
+    group.add(&app_row);
+
+    let rclone_row = adw::ActionRow::new();
+    rclone_row.set_title(&ctx.t_or("titlebar.updates.rclone", "Rclone update"));
+    if let Some(info) = pending.rclone.clone() {
+        rclone_row.set_subtitle(&format!("{} → {}", info.current, info.latest));
+        let install = gtk::Button::with_label(&ctx.t_or("titlebar.menu.installRclone", "Install"));
+        install.add_css_class("suggested-action");
+        install.set_valign(gtk::Align::Center);
+        {
+            let ctx = ctx.clone();
+            let parent = parent.clone();
+            let toast = toast.clone();
+            let dialog = dialog.clone();
+            install.connect_clicked(move |_| {
+                start_rclone_update(&parent, ctx.clone(), toast.clone());
+                dialog.close();
+            });
+        }
+        rclone_row.add_suffix(&install);
+        let skip = gtk::Button::with_label(&ctx.t_or("modals.about.skipVersion", "Skip"));
+        skip.set_valign(gtk::Align::Center);
+        {
+            let ctx = ctx.clone();
+            let latest = info.latest.clone();
+            skip.connect_clicked(move |_| {
+                ctx.settings
+                    .borrow_mut()
+                    .runtime
+                    .rclone_skipped_updates
+                    .push(latest.clone());
+                ctx.persist();
+                ctx.refresh_updates();
+            });
+        }
+        rclone_row.add_suffix(&skip);
+    } else {
+        rclone_row.set_subtitle(&ctx.t_or("modals.about.upToDate", "Up to date"));
+    }
+    group.add(&rclone_row);
+
+    let refresh = gtk::Button::with_label(&ctx.t_or("common.refresh", "Check again"));
+    {
+        let ctx = ctx.clone();
+        let parent = parent.clone();
+        let toast = toast.clone();
+        let dialog = dialog.clone();
+        refresh.connect_clicked(move |_| {
+            ctx.refresh_updates();
+            dialog.close();
+            updates(&parent, ctx.clone(), toast.clone());
+        });
+    }
+    let box_ = gtk::Box::new(gtk::Orientation::Vertical, 8);
+    box_.set_margin_top(12);
+    box_.set_margin_start(12);
+    box_.set_margin_end(12);
+    box_.append(&group);
+    box_.append(&refresh);
+    dialog.set_child(Some(&box_));
+    present_window_or_dialog(parent, &ctx, &dialog);
+}
+
+fn start_app_update(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, toast: adw::ToastOverlay) {
+    let Some(url) = ctx
+        .updates
+        .borrow()
+        .app
+        .as_ref()
+        .and_then(|u| u.download_url.clone())
+    else {
+        toast.add_toast(adw::Toast::new(
+            "No download is available for this platform",
+        ));
+        return;
+    };
+    let Ok(exe) = std::env::current_exe() else {
+        toast.add_toast(adw::Toast::new("Cannot locate the running binary"));
+        return;
+    };
+    run_download_job(
+        parent,
+        ctx,
+        toast,
+        "Installing application update",
+        move |cancel, progress| crate::updater::install_app_update(&url, &exe, cancel, progress),
+        |ctx, path, toast| {
+            toast.add_toast(adw::Toast::new(&format!("Installed {}", path.display())));
+            if let Err(e) = crate::platform::relaunch() {
+                ctx.notify("Relaunch failed", &e);
+            } else {
+                std::process::exit(0);
+            }
+        },
+    );
+}
+
+fn start_rclone_update(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, toast: adw::ToastOverlay) {
+    let dest = dirs::home_dir()
+        .unwrap_or_else(|| std::path::PathBuf::from("."))
+        .join(".local/bin");
+    run_download_job(
+        parent,
+        ctx,
+        toast,
+        "Installing rclone",
+        move |cancel, progress| crate::updater::install_rclone_binary_ex(&dest, cancel, progress),
+        |ctx, path, toast| {
+            ctx.settings.borrow_mut().core.rclone_binary = path.to_string_lossy().into_owned();
+            ctx.persist();
+            toast.add_toast(adw::Toast::new(&format!(
+                "Installed rclone to {}",
+                path.display()
+            )));
+        },
+    );
+}
+
+fn run_download_job<F, OnOk>(
+    parent: &impl IsA<gtk::Widget>,
+    ctx: AppCtx,
+    toast: adw::ToastOverlay,
+    title: &str,
+    work: F,
+    on_ok: OnOk,
+) where
+    F: FnOnce(
+            Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
+            Option<std::sync::Arc<std::sync::Mutex<crate::updater::DownloadProgress>>>,
+        ) -> Result<std::path::PathBuf, String>
+        + Send
+        + 'static,
+    OnOk: FnOnce(AppCtx, std::path::PathBuf, adw::ToastOverlay) + 'static,
+{
+    let dialog = adw::AlertDialog::new(Some(title), Some("Downloading…"));
+    dialog.add_response("cancel", &ctx.t_or("common.cancel", "Cancel"));
+    let bar = gtk::ProgressBar::new();
+    bar.set_show_text(true);
+    dialog.set_extra_child(Some(&bar));
+    let cancel = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let progress = std::sync::Arc::new(std::sync::Mutex::new(
+        crate::updater::DownloadProgress::default(),
+    ));
+    let result: std::sync::Arc<std::sync::Mutex<Option<Result<std::path::PathBuf, String>>>> =
+        std::sync::Arc::new(std::sync::Mutex::new(None));
+    {
+        let cancel = cancel.clone();
+        dialog.connect_response(None, move |_, response| {
+            if response == "cancel" {
+                cancel.store(true, std::sync::atomic::Ordering::Relaxed);
+            }
+        });
+    }
+    dialog.present(Some(parent));
+    {
+        let cancel = cancel.clone();
+        let progress = progress.clone();
+        let result = result.clone();
+        std::thread::spawn(move || {
+            let outcome = work(Some(cancel), Some(progress));
+            if let Ok(mut slot) = result.lock() {
+                *slot = Some(outcome);
+            }
+        });
+    }
+    let ctx_done = ctx.clone();
+    let toast_done = toast.clone();
+    let bar_poll = bar.clone();
+    let dialog_poll = dialog.clone();
+    let on_ok = std::rc::Rc::new(std::cell::RefCell::new(Some(on_ok)));
+    glib::timeout_add_local(std::time::Duration::from_millis(200), move || {
+        if let Ok(guard) = progress.lock() {
+            bar_poll.set_fraction(guard.fraction());
+            bar_poll.set_text(Some(&guard.label()));
+        }
+        let finished = result.lock().ok().and_then(|mut slot| slot.take());
+        if let Some(outcome) = finished {
+            dialog_poll.close();
+            match outcome {
+                Ok(path) => {
+                    if let Some(cb) = on_ok.borrow_mut().take() {
+                        cb(ctx_done.clone(), path, toast_done.clone());
+                    }
+                }
+                Err(e) if e == "cancelled" => {
+                    toast_done.add_toast(adw::Toast::new("Update cancelled"));
+                }
+                Err(e) => {
+                    toast_done.add_toast(adw::Toast::new(&e));
+                }
+            }
+            return glib::ControlFlow::Break;
+        }
+        glib::ControlFlow::Continue
+    });
+}
+
 pub fn shortcuts(parent: &impl IsA<gtk::Widget>, ctx: &AppCtx) {
     let dialog = adw::Dialog::new();
     dialog.set_title(&ctx.t_or("titlebar.menu.shortcuts", "Keyboard Shortcuts"));
@@ -1271,8 +1524,16 @@ pub fn rclone_flags(parent: &impl IsA<gtk::Widget>, ctx: AppCtx) {
         apply.connect_clicked(move |_| {
             if let Some(client) = ctx.client() {
                 let payload = crate::flags::collect_edits(&edits.borrow());
-                match client.options_set(payload) {
-                    Ok(_) => log::info!("rclone flags applied"),
+                match client.options_set(payload.clone()) {
+                    Ok(_) => {
+                        if let Err(e) =
+                            crate::backend_options::merge_and_save(&ctx.backend_key(), &payload)
+                        {
+                            log::warn!("failed to persist flags: {e}");
+                        } else {
+                            log::info!("rclone flags applied");
+                        }
+                    }
                     Err(e) => log::warn!("failed to apply flags: {e}"),
                 }
             }
@@ -1328,8 +1589,18 @@ pub fn rclone_flags(parent: &impl IsA<gtk::Widget>, ctx: AppCtx) {
             match crate::flags::parse_json_object(&text) {
                 Ok(map) => {
                     if let Some(client) = ctx.client() {
-                        match client.options_set(serde_json::Value::Object(map)) {
-                            Ok(_) => log::info!("rclone flags applied from JSON"),
+                        let payload = serde_json::Value::Object(map);
+                        match client.options_set(payload.clone()) {
+                            Ok(_) => {
+                                if let Err(e) = crate::backend_options::merge_and_save(
+                                    &ctx.backend_key(),
+                                    &payload,
+                                ) {
+                                    log::warn!("failed to persist JSON flags: {e}");
+                                } else {
+                                    log::info!("rclone flags applied from JSON");
+                                }
+                            }
                             Err(e) => log::warn!("failed to apply JSON flags: {e}"),
                         }
                     }
@@ -1871,7 +2142,27 @@ pub fn alerts(parent: &impl IsA<gtk::Widget>, ctx: AppCtx) {
     let stack = adw::ViewStack::new();
     let history = gtk::ListBox::new();
     history.add_css_class("boxed-list");
-    for event in ctx.store.borrow().alert_history.iter().take(50) {
+    let stats = ctx.store.borrow().alert_stats();
+    let stats_row = adw::ActionRow::new();
+    stats_row.set_title(&ctx.t_or("alerts.stats", "History stats"));
+    let last = stats
+        .last_at
+        .map(|t| t.format("%Y-%m-%d %H:%M").to_string())
+        .unwrap_or_else(|| "—".into());
+    stats_row.set_subtitle(&format!(
+        "{} total · {} ack · {} open · {} delivered · last {last}",
+        stats.total, stats.acknowledged, stats.unacknowledged, stats.delivered
+    ));
+    history.append(&stats_row);
+    let events: Vec<_> = ctx
+        .store
+        .borrow()
+        .alert_history
+        .iter()
+        .take(50)
+        .cloned()
+        .collect();
+    for event in &events {
         let row = adw::ActionRow::new();
         row.set_title(&event.title);
         row.set_subtitle(&format!(
@@ -1882,7 +2173,7 @@ pub fn alerts(parent: &impl IsA<gtk::Widget>, ctx: AppCtx) {
         ));
         history.append(&row);
     }
-    if history.first_child().is_none() {
+    if events.is_empty() {
         let row = adw::ActionRow::new();
         row.set_title(&ctx.t_or("alerts.noHistory", "No alert history"));
         history.append(&row);
@@ -2868,6 +3159,18 @@ pub fn export_backup(parent: &impl IsA<gtk::Window>, ctx: AppCtx, toast: adw::To
     let secrets = adw::SwitchRow::new();
     secrets.set_title("Include secrets in rclone dump");
     secrets.set_active(true);
+    let extra_backends = ctx.settings.borrow().core.extra_backends.clone();
+    let mut backend_labels = vec!["local".to_string()];
+    backend_labels.extend(
+        extra_backends
+            .iter()
+            .map(|b| format!("{} ({}:{})", b.name, b.host, b.port)),
+    );
+    let backend_refs: Vec<&str> = backend_labels.iter().map(|s| s.as_str()).collect();
+    let backend_row = adw::ComboRow::new();
+    backend_row.set_title(&ctx.t_or("modals.export.backend", "Rclone backend"));
+    backend_row.set_subtitle("Dump remotes from this RC instance");
+    backend_row.set_model(Some(&gtk::StringList::new(&backend_refs)));
     let save = gtk::Button::with_label("Choose file…");
     save.add_css_class("suggested-action");
     {
@@ -2882,6 +3185,8 @@ pub fn export_backup(parent: &impl IsA<gtk::Window>, ctx: AppCtx, toast: adw::To
         let note = note.clone();
         let password = password.clone();
         let secrets = secrets.clone();
+        let backend_row = backend_row.clone();
+        let extra_backends = extra_backends.clone();
         save.connect_clicked(move |_| {
             let mut export_type = categories
                 .get(type_row.selected() as usize)
@@ -2899,14 +3204,34 @@ pub fn export_backup(parent: &impl IsA<gtk::Window>, ctx: AppCtx, toast: adw::To
             file_dialog.set_initial_name(Some("rclone-manager-backup.zip"));
             let ctx = ctx.clone();
             let toast = toast.clone();
+            let backend_row = backend_row.clone();
+            let extra_backends = extra_backends.clone();
             file_dialog.save(
                 Some(&parent),
                 None::<gio::Cancellable>.as_ref(),
                 move |result| {
                     if let Ok(file) = result {
                         if let Some(path) = file.path() {
-                            let mut dump = ctx
-                                .client()
+                            let selected = backend_row.selected() as usize;
+                            let dump_client = if selected == 0 {
+                                ctx.client()
+                            } else {
+                                extra_backends.get(selected.saturating_sub(1)).map(|entry| {
+                                    let user = if entry.user.is_empty() {
+                                        None
+                                    } else {
+                                        Some(entry.user.clone())
+                                    };
+                                    let pass = if entry.pass.is_empty() {
+                                        None
+                                    } else {
+                                        Some(entry.pass.clone())
+                                    };
+                                    crate::rclone::RcClient::new(&entry.host, entry.port)
+                                        .with_auth(user, pass)
+                                })
+                            };
+                            let mut dump = dump_client
                                 .and_then(|c| c.dump_config().ok())
                                 .unwrap_or(serde_json::json!({}));
                             if !include_secrets {
@@ -2958,6 +3283,7 @@ pub fn export_backup(parent: &impl IsA<gtk::Window>, ctx: AppCtx, toast: adw::To
     group.add(&note);
     group.add(&password);
     group.add(&secrets);
+    group.add(&backend_row);
     let box_ = gtk::Box::new(gtk::Orientation::Vertical, 8);
     box_.set_margin_top(12);
     box_.append(&group);
@@ -4396,24 +4722,7 @@ pub fn install_rclone_update(
     ctx: AppCtx,
     toast: adw::ToastOverlay,
 ) {
-    let dest = dirs::home_dir()
-        .unwrap_or_else(|| std::path::PathBuf::from("."))
-        .join(".local/bin");
-    match crate::updater::install_rclone_binary(&dest) {
-        Ok(path) => {
-            ctx.settings.borrow_mut().core.rclone_binary = path.to_string_lossy().into_owned();
-            ctx.persist();
-            toast.add_toast(adw::Toast::new(&format!(
-                "Installed rclone to {}",
-                path.display()
-            )));
-        }
-        Err(e) => {
-            let err = adw::AlertDialog::new(Some("Update failed"), Some(&e));
-            err.add_response("ok", "OK");
-            err.present(Some(parent));
-        }
-    }
+    start_rclone_update(parent, ctx, toast);
 }
 
 pub fn helper_profiles(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, remote: &str) {
@@ -5249,6 +5558,31 @@ fn alert_action_editor(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, existing_id:
     } else {
         body.set_text("{{title}}: {{body}}");
     }
+    let keys = adw::ComboRow::new();
+    keys.set_title(&ctx.t_or("alerts.templateKeys", "Insert template key"));
+    keys.set_model(Some(&gtk::StringList::new(
+        crate::store::ALERT_TEMPLATE_KEYS,
+    )));
+    {
+        let body = body.clone();
+        let primed = Rc::new(Cell::new(false));
+        keys.connect_selected_notify(move |row| {
+            if !primed.get() {
+                primed.set(true);
+                return;
+            }
+            if let Some(key) = crate::store::ALERT_TEMPLATE_KEYS.get(row.selected() as usize) {
+                let current = body.text().to_string();
+                if !current.contains(key) {
+                    if current.is_empty() {
+                        body.set_text(key);
+                    } else {
+                        body.set_text(&format!("{current} {key}"));
+                    }
+                }
+            }
+        });
+    }
     let test = gtk::Button::with_label("Test");
     let save = gtk::Button::with_label("Save");
     save.add_css_class("suggested-action");
@@ -5456,6 +5790,7 @@ fn alert_action_editor(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, existing_id:
     group.add(&token);
     group.add(&extra);
     group.add(&body);
+    group.add(&keys);
     let buttons = gtk::Box::new(gtk::Orientation::Horizontal, 8);
     buttons.append(&test);
     buttons.append(&save);

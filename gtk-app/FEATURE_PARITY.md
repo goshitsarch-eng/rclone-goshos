@@ -127,7 +127,7 @@ This client is the GTK 4 + libadwaita rewrite of the Angular/Tauri desktop UI. I
 - Translated menus, Files chrome, tray labels, and key preference titles
 - Tray icon themes (system/color/mono/symbolic) and auto-update preference switches
 - Title-bar connectivity indicator (offline / checking) with click-to-retry
-- Update-available banner (app / rclone / both) opening About
+- Update-available banner (app / rclone / both) opening the Updates dialog
 - Provider-type icons on dashboard remotes and Files cloud sidebar
 - Files list-view Name / Size / Modified column headers
 - Files type-filter chips (folders / images / videos / audio / documents / archives)
@@ -150,6 +150,12 @@ This client is the GTK 4 + libadwaita rewrite of the Angular/Tauri desktop UI. I
 - Job detail transfer rows: open in Files, copy path, delete source / destination
 - Quick Run editor persists dry-run plus static operation flags
 - Onboarding can download rclone into `~/.local/bin` and store an optional config password
+- App self-update: GitHub Linux asset download with progress/cancel, binary replace, and relaunch
+- Rclone install reports download progress and can be cancelled
+- Cross-view navigation dispatcher (dashboard tab/remote, Files, Flow, job, serve, automation)
+- Alert history stats plus template-key helper in the action editor
+- Persisted rclone `options/set` store (`backend.json`) applied on backend switch / engine restart
+- Backup export can dump remotes from local or an extra RC backend
 
 ## Still deepening toward pixel-level Angular parity
 

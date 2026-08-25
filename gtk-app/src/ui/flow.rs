@@ -1,5 +1,6 @@
 use super::dialogs;
 use super::AppCtx;
+use crate::navigation::NavTarget;
 use crate::operations::OperationType;
 use crate::store::QuickRun;
 use adw::prelude::*;
@@ -109,6 +110,12 @@ impl FlowView {
         }
         view.refresh();
         view
+    }
+
+    pub fn select_quick_run(&self, id: Option<&str>) {
+        *self.ctx.selected_quick_run.borrow_mut() =
+            id.filter(|s| !s.is_empty()).map(|s| s.to_string());
+        self.refresh();
     }
 
     pub fn refresh(&self) {
@@ -237,12 +244,10 @@ impl FlowView {
                     let row = adw::ActionRow::new();
                     row.set_title(&format!("{} · {}", job.operation, job.remote));
                     row.set_subtitle(&format!("{} · {:.0}%", job.status, job.progress * 100.0));
-                    let view = self.clone();
+                    let ctx = self.ctx.clone();
                     let id = job.id;
                     row.connect_activated(move |_| {
-                        if let Some(win) = view.root.root().and_downcast::<gtk::Window>() {
-                            dialogs::job_detail(&win, view.ctx.clone(), id);
-                        }
+                        ctx.request_nav(NavTarget::Job { id });
                     });
                     jobs.append(&row);
                 }
@@ -271,6 +276,13 @@ impl FlowView {
                     let row = adw::ActionRow::new();
                     row.set_title(&format!("{} · {}", serve.serve_type, serve.fs));
                     row.set_subtitle(&serve.addr);
+                    {
+                        let ctx = self.ctx.clone();
+                        let id = serve.id.clone();
+                        row.connect_activated(move |_| {
+                            ctx.request_nav(NavTarget::Serve { id: id.clone() });
+                        });
+                    }
                     serves.append(&row);
                 }
             }
@@ -304,6 +316,13 @@ impl FlowView {
                     } else {
                         self.ctx.t_or("flow.quickRun.badges.scheduled", "scheduled")
                     });
+                    {
+                        let ctx = self.ctx.clone();
+                        let id = record.id.clone();
+                        row.connect_activated(move |_| {
+                            ctx.request_nav(NavTarget::Automation { id: id.clone() });
+                        });
+                    }
                     autos.append(&row);
                 }
             }

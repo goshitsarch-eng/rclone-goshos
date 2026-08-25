@@ -259,6 +259,16 @@ impl AppTab {
         }
     }
 
+    pub fn parse(value: &str) -> Option<Self> {
+        match value {
+            "general" => Some(Self::General),
+            "mount" => Some(Self::Mount),
+            "operations" => Some(Self::Operations),
+            "serve" => Some(Self::Serve),
+            _ => None,
+        }
+    }
+
     pub fn label_key(self) -> &'static str {
         match self {
             Self::General => "tabs.general",
@@ -419,5 +429,8 @@ mod tests {
         assert_eq!(MainView::parse("flow"), MainView::Flow);
         assert_eq!(MainView::parse("unknown"), MainView::MainMenu);
         assert_eq!(AppTab::ALL.len(), 4);
+        assert_eq!(AppTab::parse("operations"), Some(AppTab::Operations));
+        assert_eq!(AppTab::parse("serve"), Some(AppTab::Serve));
+        assert_eq!(AppTab::parse("nope"), None);
     }
 }

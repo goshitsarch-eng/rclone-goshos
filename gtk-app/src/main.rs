@@ -1,6 +1,7 @@
 mod action_order;
 mod alerts;
 mod automation;
+mod backend_options;
 mod backup;
 mod connection;
 mod fileops;
@@ -13,6 +14,7 @@ mod layout;
 mod media;
 mod migrate;
 mod mqtt;
+mod navigation;
 mod operations;
 mod path_inspection;
 mod path_kind;

@@ -1,5 +1,6 @@
 use super::dialogs;
 use super::AppCtx;
+use crate::navigation::NavTarget;
 use crate::operations::{AppTab, OperationType};
 use crate::rclone::{format_bytes, remote_fs};
 use adw::prelude::*;
@@ -13,6 +14,7 @@ pub struct Dashboard {
     ctx: AppCtx,
     toast: adw::ToastOverlay,
     tab: Rc<RefCell<AppTab>>,
+    tab_buttons: Rc<RefCell<Vec<(AppTab, gtk::ToggleButton)>>>,
     sidebar_list: gtk::ListBox,
     search: gtk::SearchEntry,
     content: gtk::Stack,
@@ -91,6 +93,7 @@ impl Dashboard {
             ctx: ctx.clone(),
             toast,
             tab: Rc::new(RefCell::new(AppTab::General)),
+            tab_buttons: Rc::new(RefCell::new(Vec::new())),
             sidebar_list,
             search,
             content,
@@ -99,13 +102,20 @@ impl Dashboard {
             editing_layout: Rc::new(RefCell::new(false)),
         };
 
+        let mut group_anchor: Option<gtk::ToggleButton> = None;
         for tab in AppTab::ALL {
             let btn = gtk::ToggleButton::new();
             btn.set_label(&ctx.t(tab.label_key()));
             btn.set_tooltip_text(Some(tab.as_str()));
+            if let Some(anchor) = &group_anchor {
+                btn.set_group(Some(anchor));
+            } else {
+                group_anchor = Some(btn.clone());
+            }
             if tab == AppTab::General {
                 btn.set_active(true);
             }
+            dash.tab_buttons.borrow_mut().push((tab, btn.clone()));
             let dash_c = dash.clone();
             btn.connect_toggled(move |b| {
                 if b.is_active() {
@@ -174,6 +184,24 @@ impl Dashboard {
 
         dash.refresh();
         dash
+    }
+
+    pub fn navigate(&self, tab: AppTab, remote: Option<&str>) {
+        *self.ctx.selected_remote.borrow_mut() =
+            remote.filter(|s| !s.is_empty()).map(|s| s.to_string());
+        let already = *self.tab.borrow() == tab;
+        *self.tab.borrow_mut() = tab;
+        for (candidate, btn) in self.tab_buttons.borrow().iter() {
+            if *candidate == tab {
+                if !btn.is_active() {
+                    btn.set_active(true);
+                }
+                break;
+            }
+        }
+        if already {
+            self.refresh();
+        }
     }
 
     pub fn refresh(&self) {
@@ -630,11 +658,9 @@ impl Dashboard {
                 row.add_suffix(&stop);
                 {
                     let job = job.clone();
-                    let dash = self.clone();
+                    let ctx = self.ctx.clone();
                     row.connect_activated(move |_| {
-                        if let Some(win) = dash.root.root().and_downcast::<gtk::Window>() {
-                            dialogs::job_detail(&win, dash.ctx.clone(), job.id);
-                        }
+                        ctx.request_nav(NavTarget::Job { id: job.id });
                     });
                 }
                 jobs.append(&row);
@@ -681,6 +707,13 @@ impl Dashboard {
                     row.add_suffix(&open);
                 }
                 row.add_suffix(&stop);
+                {
+                    let ctx = self.ctx.clone();
+                    let id = serve.id.clone();
+                    row.connect_activated(move |_| {
+                        ctx.request_nav(NavTarget::Serve { id: id.clone() });
+                    });
+                }
                 serves.append(&row);
             }
         }
@@ -849,6 +882,7 @@ impl Dashboard {
                 let run = gtk::Button::from_icon_name("media-playback-start-symbolic");
                 run.set_valign(gtk::Align::Center);
                 run.set_tooltip_text(Some("Run now"));
+                let nav_id = record.id.clone();
                 {
                     let ctx = self.ctx.clone();
                     let toast = self.toast.clone();
@@ -875,6 +909,12 @@ impl Dashboard {
                 }
                 row.add_suffix(&enabled);
                 row.add_suffix(&run);
+                {
+                    let ctx = self.ctx.clone();
+                    row.connect_activated(move |_| {
+                        ctx.request_nav(NavTarget::Automation { id: nav_id.clone() });
+                    });
+                }
                 autos.append(&row);
             }
         }
@@ -1078,12 +1118,10 @@ impl Dashboard {
                     ),
                     job.profile
                 ));
-                let dash = self.clone();
+                let ctx = self.ctx.clone();
                 let id = job.id;
                 row.connect_activated(move |_| {
-                    if let Some(win) = dash.root.root().and_downcast::<gtk::Window>() {
-                        dialogs::job_detail(&win, dash.ctx.clone(), id);
-                    }
+                    ctx.request_nav(NavTarget::Job { id });
                 });
                 activity.append(&row);
             }
@@ -1098,6 +1136,13 @@ impl Dashboard {
             let row = adw::ActionRow::new();
             row.set_title(&format!("Serve · {}", serve.serve_type));
             row.set_subtitle(&serve.addr);
+            {
+                let ctx = self.ctx.clone();
+                let id = serve.id.clone();
+                row.connect_activated(move |_| {
+                    ctx.request_nav(NavTarget::Serve { id: id.clone() });
+                });
+            }
             activity.append(&row);
         }
         self.detail.append(&activity);

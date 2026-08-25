@@ -3,6 +3,7 @@
 pub mod action_order;
 pub mod alerts;
 pub mod automation;
+pub mod backend_options;
 pub mod backup;
 pub mod connection;
 pub mod fileops;
@@ -15,6 +16,7 @@ pub mod layout;
 pub mod media;
 pub mod migrate;
 pub mod mqtt;
+pub mod navigation;
 pub mod operations;
 pub mod path_inspection;
 pub mod path_kind;

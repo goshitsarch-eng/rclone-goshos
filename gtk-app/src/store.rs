@@ -798,6 +798,18 @@ impl AppStore {
             .count()
     }
 
+    pub fn alert_stats(&self) -> AlertStats {
+        let total = self.alert_history.len();
+        let unacknowledged = self.unacknowledged_alerts();
+        AlertStats {
+            total,
+            acknowledged: total.saturating_sub(unacknowledged),
+            unacknowledged,
+            delivered: self.alert_rules.iter().map(|r| r.fire_count).sum(),
+            last_at: self.alert_history.first().map(|e| e.created_at),
+        }
+    }
+
     pub fn acknowledge_all(&mut self) {
         for event in &mut self.alert_history {
             event.acknowledged = true;
@@ -935,6 +947,26 @@ pub fn dispatch_action(action: &AlertAction, event: &AlertEvent) {
         }
         other => log::warn!("unknown alert action kind {other}"),
     }
+}
+
+pub const ALERT_TEMPLATE_KEYS: &[&str] = &[
+    "{{title}}",
+    "{{body}}",
+    "{{severity}}",
+    "{{kind}}",
+    "{{remote}}",
+    "{{origin}}",
+    "{{backend}}",
+    "{{profile}}",
+];
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AlertStats {
+    pub total: usize,
+    pub acknowledged: usize,
+    pub unacknowledged: usize,
+    pub delivered: u64,
+    pub last_at: Option<DateTime<Utc>>,
 }
 
 pub fn render_template(template: &str, event: &AlertEvent) -> String {
@@ -1357,6 +1389,20 @@ mod tests {
         store.alert_actions.clear();
         store.alert_rules.clear();
         assert!(store.seed_alert_defaults(false));
+        store.alert_rules[0].fire_count = 3;
+        store.alert_history.push(AlertEvent::new(
+            AlertEventKind::System,
+            AlertSeverity::Info,
+            "hello".into(),
+            "world".into(),
+        ));
+        store.alert_history[0].acknowledged = true;
+        let stats = store.alert_stats();
+        assert_eq!(stats.total, 1);
+        assert_eq!(stats.acknowledged, 1);
+        assert_eq!(stats.unacknowledged, 0);
+        assert_eq!(stats.delivered, 3);
+        assert!(stats.last_at.is_some());
         assert!(!store.alert_actions[0].enabled);
         assert!(!store.alert_rules[0].enabled);
     }

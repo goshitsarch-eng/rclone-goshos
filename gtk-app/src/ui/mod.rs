@@ -29,6 +29,7 @@ pub struct AppCtx {
     pub selected_remote: Rc<RefCell<Option<String>>>,
     pub selected_quick_run: Rc<RefCell<Option<String>>>,
     pub pending_browse: Rc<RefCell<Option<(String, String)>>>,
+    pub pending_nav: Rc<RefCell<Option<crate::navigation::NavTarget>>>,
     pub inhibitor: Rc<RefCell<PowerInhibitor>>,
     pub watch_mtimes: Rc<RefCell<HashMap<String, u64>>>,
     pub watch_hub: Rc<RefCell<crate::watch::WatchHub>>,
@@ -63,6 +64,7 @@ impl AppCtx {
             selected_remote: Rc::new(RefCell::new(None)),
             selected_quick_run: Rc::new(RefCell::new(None)),
             pending_browse: Rc::new(RefCell::new(None)),
+            pending_nav: Rc::new(RefCell::new(None)),
             inhibitor: Rc::new(RefCell::new(PowerInhibitor::new())),
             watch_mtimes: Rc::new(RefCell::new(HashMap::new())),
             watch_hub: Rc::new(RefCell::new(crate::watch::WatchHub::new())),
@@ -187,7 +189,24 @@ impl AppCtx {
     }
 
     pub fn request_browse(&self, remote: &str, path: &str) {
-        *self.pending_browse.borrow_mut() = Some((remote.to_string(), path.to_string()));
+        self.request_nav(crate::navigation::NavTarget::Files {
+            remote: remote.to_string(),
+            path: path.to_string(),
+        });
+    }
+
+    pub fn request_nav(&self, target: crate::navigation::NavTarget) {
+        *self.pending_nav.borrow_mut() = Some(target);
+    }
+
+    pub fn take_nav(&self) -> Option<crate::navigation::NavTarget> {
+        self.pending_nav.borrow_mut().take()
+    }
+
+    pub fn apply_persisted_options(&self) {
+        if let Some(client) = self.client() {
+            crate::backend_options::apply(&client, &self.backend_key());
+        }
     }
 
     pub fn request_picker(
@@ -260,6 +279,7 @@ impl AppCtx {
         };
         self.apply_remote_layout();
         self.persist();
+        self.apply_persisted_options();
         self.refresh_runtime();
     }
 
@@ -317,6 +337,7 @@ impl AppCtx {
             *self.engine.borrow_mut() = Some(crate::rclone::RcloneEngine::start(&settings));
         }
         if self.engine_ready() {
+            self.apply_persisted_options();
             self.start_autostarts();
         } else {
             self.refresh_runtime();

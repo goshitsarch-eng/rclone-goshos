@@ -4,7 +4,8 @@ use super::flow::FlowView;
 use super::nautilus::NautilusView;
 use super::onboarding;
 use super::AppCtx;
-use crate::operations::MainView;
+use crate::navigation::NavTarget;
+use crate::operations::{AppTab, MainView};
 use crate::rclone::engine::RcloneEngine;
 use adw::prelude::*;
 use gtk::prelude::*;
@@ -22,6 +23,7 @@ pub fn activate(app: &adw::Application) {
     if settings.general.start_on_startup {
         let _ = crate::platform::set_autostart(true);
     }
+    ctx.apply_persisted_options();
     ctx.refresh_runtime();
 
     if !ctx.settings.borrow().core.completed_onboarding {
@@ -162,12 +164,11 @@ pub fn present_main(app: &adw::Application, ctx: AppCtx) {
     notice_btn.set_visible(false);
     {
         let ctx = ctx.clone();
-        let window = window.clone();
         notice_btn.connect_clicked(move |_| {
             if ctx.updates.borrow().has_updates() {
-                dialogs::about(&window, ctx.clone());
+                ctx.request_nav(NavTarget::Updates);
             } else {
-                dialogs::alerts(&window, ctx.clone());
+                ctx.request_nav(NavTarget::Alerts);
             }
         });
     }
@@ -190,7 +191,7 @@ pub fn present_main(app: &adw::Application, ctx: AppCtx) {
                 ctx.persist();
                 update_banner(&ctx, &banner_ref, &banner_kind);
             }
-            BannerKind::Update => dialogs::about(&window, ctx.clone()),
+            BannerKind::Update => ctx.request_nav(NavTarget::Updates),
             BannerKind::Metered | BannerKind::None => {}
         });
     }
@@ -250,7 +251,22 @@ pub fn present_main(app: &adw::Application, ctx: AppCtx) {
         let ctx_nav = ctx.clone();
         let stack_nav = view_stack.clone();
         let nautilus_nav = nautilus.clone();
+        let dash_nav = dashboard.clone();
+        let flow_nav = flow.clone();
+        let window_nav = window.clone();
+        let toast_nav = toast.clone();
         glib::timeout_add_local(std::time::Duration::from_millis(200), move || {
+            if let Some(target) = ctx_nav.take_nav() {
+                apply_nav(
+                    &ctx_nav,
+                    &stack_nav,
+                    &dash_nav,
+                    &flow_nav,
+                    &window_nav,
+                    &toast_nav,
+                    target,
+                );
+            }
             if ctx_nav.pending_picker.borrow().is_some()
                 || ctx_nav.pending_browse.borrow().is_some()
             {
@@ -352,6 +368,10 @@ fn app_menu(ctx: &AppCtx) -> gio::Menu {
     prefs.append(
         Some(&ctx.t_or("titlebar.menu.templates", "Templates")),
         Some("win.templates"),
+    );
+    prefs.append(
+        Some(&ctx.t_or("modals.updates.title", "Updates")),
+        Some("win.updates"),
     );
     prefs.append(
         Some(&ctx.t_or("titlebar.menu.installRclone", "Install rclone")),
@@ -561,6 +581,15 @@ fn install_actions(
         add_action(
             "templates",
             Box::new(move || dialogs::templates(&window, ctx.clone())),
+        );
+    }
+    {
+        let ctx = ctx.clone();
+        let window = window.clone();
+        let toast = toast.clone();
+        add_action(
+            "updates",
+            Box::new(move || dialogs::updates(&window, ctx.clone(), toast.clone())),
         );
     }
     {
@@ -856,6 +885,106 @@ fn install_shortcuts(window: &adw::ApplicationWindow) {
     window.add_controller(controller);
 }
 
+fn apply_nav(
+    ctx: &AppCtx,
+    stack: &adw::ViewStack,
+    dashboard: &Dashboard,
+    flow: &FlowView,
+    window: &adw::ApplicationWindow,
+    toast: &adw::ToastOverlay,
+    target: NavTarget,
+) {
+    match target {
+        NavTarget::Dashboard { tab, remote } => {
+            stack.set_visible_child_name("main_menu");
+            dashboard.navigate(tab, remote.as_deref());
+        }
+        NavTarget::Files { remote, path } => {
+            *ctx.pending_browse.borrow_mut() = Some((remote, path));
+        }
+        NavTarget::Flow { quick_run } => {
+            stack.set_visible_child_name("flow");
+            flow.select_quick_run(quick_run.as_deref());
+        }
+        NavTarget::Job { id } => {
+            let job = ctx
+                .snapshot
+                .borrow()
+                .jobs
+                .iter()
+                .find(|j| j.id == id)
+                .cloned()
+                .or_else(|| {
+                    ctx.store
+                        .borrow()
+                        .job_history
+                        .iter()
+                        .find(|j| j.id == id)
+                        .cloned()
+                });
+            if let Some(job) = job {
+                match NavTarget::for_job(&job) {
+                    NavTarget::Flow { quick_run } => {
+                        stack.set_visible_child_name("flow");
+                        flow.select_quick_run(quick_run.as_deref());
+                    }
+                    NavTarget::Dashboard { tab, remote } => {
+                        stack.set_visible_child_name("main_menu");
+                        dashboard.navigate(tab, remote.as_deref());
+                    }
+                    other => apply_nav(ctx, stack, dashboard, flow, window, toast, other),
+                }
+            }
+            dialogs::job_detail(window, ctx.clone(), id);
+        }
+        NavTarget::Serve { id } => {
+            let serve = ctx
+                .snapshot
+                .borrow()
+                .serves
+                .iter()
+                .find(|s| s.id == id)
+                .cloned();
+            if let Some(serve) = serve {
+                match NavTarget::for_serve(&serve.fs, None) {
+                    NavTarget::Flow { quick_run } => {
+                        stack.set_visible_child_name("flow");
+                        flow.select_quick_run(quick_run.as_deref());
+                    }
+                    NavTarget::Dashboard { tab, remote } => {
+                        stack.set_visible_child_name("main_menu");
+                        dashboard.navigate(tab, remote.as_deref());
+                    }
+                    other => apply_nav(ctx, stack, dashboard, flow, window, toast, other),
+                }
+            } else {
+                stack.set_visible_child_name("main_menu");
+                dashboard.navigate(AppTab::Serve, None);
+            }
+        }
+        NavTarget::Automation { id } => {
+            let record = crate::automation::collect(&ctx.store.borrow())
+                .into_iter()
+                .find(|r| r.id == id);
+            if let Some(record) = record {
+                match NavTarget::for_automation(&record) {
+                    NavTarget::Flow { quick_run } => {
+                        stack.set_visible_child_name("flow");
+                        flow.select_quick_run(quick_run.as_deref());
+                    }
+                    NavTarget::Dashboard { tab, remote } => {
+                        stack.set_visible_child_name("main_menu");
+                        dashboard.navigate(tab, remote.as_deref());
+                    }
+                    other => apply_nav(ctx, stack, dashboard, flow, window, toast, other),
+                }
+            }
+        }
+        NavTarget::Updates => dialogs::updates(window, ctx.clone(), toast.clone()),
+        NavTarget::Alerts => dialogs::alerts(window, ctx.clone()),
+    }
+}
+
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum BannerKind {
     None,
@@ -909,7 +1038,7 @@ fn update_banner(ctx: &AppCtx, banner: &adw::Banner, kind: &Rc<std::cell::RefCel
             _ => ctx.t_or("titlebar.updates.app", "Application update available"),
         };
         banner.set_title(&title);
-        banner.set_button_label(Some(&ctx.t_or("titlebar.menu.about", "About")));
+        banner.set_button_label(Some(&ctx.t_or("modals.updates.title", "Updates")));
         banner.set_revealed(true);
         *kind.borrow_mut() = BannerKind::Update;
         return;
