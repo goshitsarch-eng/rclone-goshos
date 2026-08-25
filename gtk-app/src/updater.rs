@@ -219,7 +219,7 @@ mod tests {
         };
         assert!(pending.has_updates());
         assert_eq!(pending.banner_kind(), "app");
-        assert!(filter_skipped(Some(app.clone()), &["v0.4.0"]).is_none());
-        assert!(filter_skipped(Some(app), &["0.3.1"]).is_some());
+        assert!(filter_skipped(Some(app.clone()), &["v0.4.0".into()]).is_none());
+        assert!(filter_skipped(Some(app), &["0.3.1".into()]).is_some());
     }
 }
