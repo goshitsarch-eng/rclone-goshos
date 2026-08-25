@@ -1470,8 +1470,10 @@ impl NautilusView {
         self.reload_ops();
 
         let Some(client) = self.ctx.client() else {
-            self.status
-                .set_text("Rclone engine offline — showing empty listing");
+            self.status.set_text(&self.ctx.t_or(
+                "nautilus.errors.connectionFailed",
+                "Rclone engine offline — showing empty listing",
+            ));
             return;
         };
         let fs = if current.remote == "local" {
@@ -1944,9 +1946,14 @@ impl NautilusView {
         if next {
             *self.secondary.borrow_mut() = self.current.borrow().clone();
             self.reload();
-            self.status.set_text("Split view — two listings");
+            self.status.set_text(
+                &self
+                    .ctx
+                    .t_or("nautilus.splitOn", "Split view — two listings"),
+            );
         } else {
-            self.status.set_text("Split view off");
+            self.status
+                .set_text(&self.ctx.t_or("nautilus.splitOff", "Split view off"));
         }
         let _ = &self.paned;
     }
@@ -3140,7 +3147,11 @@ impl NautilusView {
         let history = self.ctx.store.borrow().job_history.clone();
         if jobs.is_empty() && history.is_empty() {
             let row = adw::ActionRow::new();
-            row.set_title("No file operations");
+            row.set_title(
+                &self
+                    .ctx
+                    .t_or("nautilus.noFileOperations", "No file operations"),
+            );
             self.ops.append(&row);
             return;
         }

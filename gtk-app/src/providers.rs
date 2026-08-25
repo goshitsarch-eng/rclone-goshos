@@ -249,6 +249,10 @@ pub fn dump_field_text(params: &Value, name: &str) -> Option<String> {
     }
 }
 
+pub fn parse_parameters_json(text: &str) -> Result<serde_json::Map<String, Value>, String> {
+    crate::flags::parse_json_object(text)
+}
+
 pub fn apply_dump_to_options(options: &mut [ProviderOption], params: &Value) {
     for option in options {
         if let Some(text) = dump_field_text(params, &option.name) {
@@ -369,5 +373,16 @@ mod tests {
         assert_eq!(providers[drive_idx].options[1].value_str, "true");
         assert_eq!(providers[drive_idx].options[2].value_str, "8");
         assert_eq!(dump_field_text(&params, "token"), None);
+    }
+
+    #[test]
+    fn parse_parameters_json_accepts_objects() {
+        let map = parse_parameters_json(r#"{ "client_id": "abc", "team_drive": true }"#).unwrap();
+        assert_eq!(map["client_id"], "abc");
+        assert_eq!(map["team_drive"], true);
+        assert!(parse_parameters_json("").unwrap().is_empty());
+        assert!(parse_parameters_json("   ").unwrap().is_empty());
+        assert!(parse_parameters_json("[1,2]").is_err());
+        assert!(parse_parameters_json("{").is_err());
     }
 }

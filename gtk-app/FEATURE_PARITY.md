@@ -227,6 +227,11 @@ This client is the GTK 4 + libadwaita rewrite of the Angular/Tauri desktop UI. I
 - Wizard command options (`obscure` / `noObscure` / `nonInteractive` / `all` / `noOutput`) passed as `config/create` `opt`
 - Embedded PDF page navigation via `pdfinfo` + `pdftoppm` (system viewer still available)
 - Remote-config operation/metadata labels use i18n fallbacks
+- Wizard JSON mode (form ↔ JSON, restrict redaction, persisted `show_json_mode`)
+- Wizard advanced options hidden by default with show/hide toggle
+- Wizard command-options panel hidden by default; custom key/type/value options merge into `config/create` `opt`
+- Shutdown “please wait” overlay after confirm (`app.shutdown.title` / `message`)
+- Start-operation, backends editor, VFS panel, flags JSON, and Files status strings use i18n fallbacks
 
 ## Still deepening toward pixel-level Angular parity
 

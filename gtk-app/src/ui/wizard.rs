@@ -195,6 +195,23 @@ pub fn present(
     let command_options = Rc::new(RefCell::new(
         crate::command_options::initial_command_options(),
     ));
+    let custom_options: Rc<RefCell<Vec<crate::command_options::CustomCommandOption>>> =
+        Rc::new(RefCell::new(Vec::new()));
+    let show_advanced = Rc::new(Cell::new(false));
+    let json_mode = Rc::new(Cell::new(ctx.settings.borrow().runtime.show_json_mode));
+    let show_cmd = Rc::new(Cell::new(false));
+    let json_view = gtk::TextView::new();
+    json_view.set_wrap_mode(gtk::WrapMode::WordChar);
+    json_view.set_monospace(true);
+    json_view.set_left_margin(8);
+    json_view.set_right_margin(8);
+    json_view.set_top_margin(8);
+    json_view.set_bottom_margin(8);
+    fill_json_view(
+        &json_view,
+        &collect_params(&state),
+        ctx.settings.borrow().general.restrict,
+    );
     rebuild_fields(
         parent,
         &ctx,
@@ -224,6 +241,11 @@ pub fn present(
             }
         }
         apply_dump_to_wizard_fields(&state, params);
+        fill_json_view(
+            &json_view,
+            &collect_params(&state),
+            ctx.settings.borrow().general.restrict,
+        );
     }
 
     {
@@ -235,6 +257,8 @@ pub fn present(
         let ctx = ctx.clone();
         let existing_params = existing_params.clone();
         let rebuilding = rebuilding.clone();
+        let json_mode = json_mode.clone();
+        let json_view = json_view.clone();
         type_row.connect_selected_notify(move |row| {
             let provider = providers.get(row.selected() as usize);
             rebuild_fields(
@@ -247,6 +271,13 @@ pub fn present(
                 true,
                 &rebuilding,
             );
+            if json_mode.get() {
+                fill_json_view(
+                    &json_view,
+                    &collect_params(&state),
+                    ctx.settings.borrow().general.restrict,
+                );
+            }
             if let Some(params) = existing_params.as_ref() {
                 let matches_type = crate::providers::dump_provider_type(params).is_some_and(|t| {
                     provider.is_some_and(|p| {
@@ -397,8 +428,42 @@ pub fn present(
     identity.add(&name);
     identity.add(&type_row);
     setup.add(&identity);
+
+    let mode_group = adw::PreferencesGroup::new();
+    mode_group.set_title(&ctx.t_or("wizards.remoteConfig.fields", "Fields"));
+    let adv_switch = adw::SwitchRow::new();
+    let adv_on = ctx.t_or("wizards.remoteConfig.hideAdvanced", "Hide Advanced Options");
+    let adv_off = ctx.t_or("wizards.remoteConfig.showAdvanced", "Show Advanced Options");
+    adv_switch.set_title(if show_advanced.get() {
+        &adv_on
+    } else {
+        &adv_off
+    });
+    adv_switch.set_active(show_advanced.get());
+    let json_switch = adw::SwitchRow::new();
+    let json_on = ctx.t_or("wizards.remoteConfig.switchToForm", "Switch to Form Mode");
+    let json_off = ctx.t_or("wizards.remoteConfig.switchToJson", "Switch to JSON Mode");
+    json_switch.set_title(if json_mode.get() { &json_on } else { &json_off });
+    json_switch.set_active(json_mode.get());
+    let cmd_switch = adw::SwitchRow::new();
+    let cmd_on = ctx.t_or(
+        "wizards.remoteConfig.hideCommandOptions",
+        "Hide Command Options",
+    );
+    let cmd_off = ctx.t_or(
+        "wizards.remoteConfig.showCommandOptions",
+        "Show Command Options",
+    );
+    cmd_switch.set_title(if show_cmd.get() { &cmd_on } else { &cmd_off });
+    cmd_switch.set_active(show_cmd.get());
+    mode_group.add(&adv_switch);
+    mode_group.add(&json_switch);
+    mode_group.add(&cmd_switch);
+    setup.add(&mode_group);
+
     let cmd_group = adw::PreferencesGroup::new();
     cmd_group.set_title(&ctx.t_or("wizards.remoteConfig.showCommandOptions", "Command options"));
+    cmd_group.set_visible(show_cmd.get());
     for def in crate::command_options::PREDEFINED_OPTIONS {
         let row = adw::SwitchRow::new();
         row.set_title(&ctx.t_or(def.label_key, def.key));
@@ -420,9 +485,251 @@ pub fn present(
         }
         cmd_group.add(&row);
     }
+    let custom_box = gtk::Box::new(gtk::Orientation::Vertical, 4);
+    let rebuild_custom: Rc<RefCell<Rc<dyn Fn()>>> = Rc::new(RefCell::new(Rc::new(|| {})));
+    let refresh_custom = {
+        let custom_box = custom_box.clone();
+        let custom_options = custom_options.clone();
+        let rebuild_custom = rebuild_custom.clone();
+        let ctx = ctx.clone();
+        Rc::new(move || {
+            while let Some(child) = custom_box.first_child() {
+                custom_box.remove(&child);
+            }
+            let items = custom_options.borrow().clone();
+            for (idx, option) in items.iter().enumerate() {
+                let row = match option.kind {
+                    crate::command_options::CustomValueKind::Bool => {
+                        let switch = adw::SwitchRow::new();
+                        switch.set_title(&option.key);
+                        switch.set_subtitle(option.kind.as_str());
+                        switch.set_active(option.bool_value);
+                        let custom_options = custom_options.clone();
+                        switch.connect_active_notify(move |row| {
+                            if let Some(item) = custom_options.borrow_mut().get_mut(idx) {
+                                item.bool_value = row.is_active();
+                            }
+                        });
+                        switch.upcast::<gtk::Widget>()
+                    }
+                    crate::command_options::CustomValueKind::Number => {
+                        let spin = adw::SpinRow::with_range(-1_000_000_000.0, 1_000_000_000.0, 1.0);
+                        spin.set_title(&option.key);
+                        spin.set_subtitle(option.kind.as_str());
+                        spin.set_value(option.number_value);
+                        let custom_options = custom_options.clone();
+                        spin.connect_changed(move |row| {
+                            if let Some(item) = custom_options.borrow_mut().get_mut(idx) {
+                                item.number_value = row.value();
+                            }
+                        });
+                        spin.upcast::<gtk::Widget>()
+                    }
+                    crate::command_options::CustomValueKind::Array => {
+                        let entry = adw::EntryRow::new();
+                        entry.set_title(&format!("{} ({})", option.key, option.kind.as_str()));
+                        entry.set_text(&option.array_value.join(", "));
+                        let custom_options = custom_options.clone();
+                        entry.connect_changed(move |row| {
+                            if let Some(item) = custom_options.borrow_mut().get_mut(idx) {
+                                item.array_value =
+                                    crate::command_options::parse_array_chips(&row.text());
+                            }
+                        });
+                        entry.upcast::<gtk::Widget>()
+                    }
+                    crate::command_options::CustomValueKind::Text => {
+                        let entry = adw::EntryRow::new();
+                        entry.set_title(&format!("{} ({})", option.key, option.kind.as_str()));
+                        entry.set_text(&option.text_value);
+                        let custom_options = custom_options.clone();
+                        entry.connect_changed(move |row| {
+                            if let Some(item) = custom_options.borrow_mut().get_mut(idx) {
+                                item.text_value = row.text().to_string();
+                            }
+                        });
+                        entry.upcast::<gtk::Widget>()
+                    }
+                };
+                let remove = gtk::Button::from_icon_name("user-trash-symbolic");
+                remove.set_valign(gtk::Align::Center);
+                let remove_title = ctx.t_or("wizards.remoteConfig.removeOption", "Remove option");
+                remove.set_tooltip_text(Some(&remove_title));
+                let custom_options = custom_options.clone();
+                let rebuild_custom = rebuild_custom.clone();
+                remove.connect_clicked(move |_| {
+                    let mut items = custom_options.borrow_mut();
+                    if idx < items.len() {
+                        items.remove(idx);
+                    }
+                    drop(items);
+                    rebuild_custom.borrow()();
+                });
+                if let Ok(action) = row.clone().downcast::<adw::ActionRow>() {
+                    action.add_suffix(&remove);
+                } else if let Ok(entry) = row.clone().downcast::<adw::EntryRow>() {
+                    entry.add_suffix(&remove);
+                } else if let Ok(switch) = row.clone().downcast::<adw::SwitchRow>() {
+                    switch.add_suffix(&remove);
+                } else if let Ok(spin) = row.clone().downcast::<adw::SpinRow>() {
+                    spin.add_suffix(&remove);
+                }
+                custom_box.append(&row);
+            }
+        })
+    };
+    *rebuild_custom.borrow_mut() = refresh_custom.clone();
+    refresh_custom();
+    cmd_group.add(&{
+        let row = adw::ActionRow::new();
+        row.set_title(&ctx.t_or("wizards.remoteConfig.addOption", "Custom options"));
+        row.set_activatable(false);
+        row
+    });
+    cmd_group.add(&{
+        let holder = adw::ActionRow::new();
+        holder.set_activatable(false);
+        holder.add_suffix(&custom_box);
+        holder
+    });
+    let custom_key = adw::EntryRow::new();
+    custom_key.set_title(&ctx.t_or("wizards.remoteConfig.optionKey", "Option Key"));
+    custom_key.set_tooltip_text(Some(
+        &ctx.t_or("wizards.remoteConfig.optionKeyPlaceholder", "e.g., myFlag"),
+    ));
+    let custom_type = adw::ComboRow::new();
+    custom_type.set_title(&ctx.t_or("wizards.remoteConfig.optionType", "Option Type"));
+    custom_type.set_model(Some(&gtk::StringList::new(&[
+        "boolean", "string", "number", "array",
+    ])));
+    let add_custom =
+        gtk::Button::with_label(&ctx.t_or("wizards.remoteConfig.addOption", "Add Option"));
+    {
+        let custom_options = custom_options.clone();
+        let custom_key = custom_key.clone();
+        let custom_type = custom_type.clone();
+        let refresh_custom = refresh_custom.clone();
+        add_custom.connect_clicked(move |_| {
+            let kind = match custom_type.selected() {
+                0 => crate::command_options::CustomValueKind::Bool,
+                2 => crate::command_options::CustomValueKind::Number,
+                3 => crate::command_options::CustomValueKind::Array,
+                _ => crate::command_options::CustomValueKind::Text,
+            };
+            let key = custom_key.text().to_string();
+            if custom_options
+                .borrow()
+                .iter()
+                .any(|item| item.key.eq_ignore_ascii_case(key.trim()))
+            {
+                return;
+            }
+            if let Some(option) = crate::command_options::new_custom(&key, kind) {
+                custom_options.borrow_mut().push(option);
+                custom_key.set_text("");
+                refresh_custom();
+            }
+        });
+    }
+    cmd_group.add(&custom_key);
+    cmd_group.add(&custom_type);
+    cmd_group.add(&{
+        let row = adw::ActionRow::new();
+        row.set_title(&ctx.t_or("wizards.remoteConfig.addOption", "Add Option"));
+        row.add_suffix(&add_custom);
+        row
+    });
     setup.add(&cmd_group);
     setup.add(&fields_group);
     setup.add(&advanced_group);
+    advanced_group.set_visible(show_advanced.get() && !json_mode.get());
+    fields_group.set_visible(!json_mode.get());
+
+    let json_group = adw::PreferencesGroup::new();
+    json_group.set_title(&ctx.t_or("wizards.remoteConfig.switchToJson", "Parameters JSON"));
+    json_group.set_description(Some(&ctx.t_or(
+        "wizards.remoteConfig.jsonEditorInfo.runtimeRemote",
+        "Edit the remote parameters as JSON. Switch back to form to apply.",
+    )));
+    let json_scroll = gtk::ScrolledWindow::new();
+    json_scroll.set_min_content_height(240);
+    json_scroll.set_hexpand(true);
+    json_scroll.set_vexpand(true);
+    json_scroll.set_child(Some(&json_view));
+    json_group.add(&json_scroll);
+    json_group.set_visible(json_mode.get());
+    setup.add(&json_group);
+
+    {
+        let show_advanced = show_advanced.clone();
+        let json_mode = json_mode.clone();
+        let advanced_group = advanced_group.clone();
+        let adv_on = adv_on.clone();
+        let adv_off = adv_off.clone();
+        adv_switch.connect_active_notify(move |row| {
+            show_advanced.set(row.is_active());
+            row.set_title(if row.is_active() { &adv_on } else { &adv_off });
+            advanced_group.set_visible(row.is_active() && !json_mode.get());
+        });
+    }
+    {
+        let json_mode = json_mode.clone();
+        let ctx = ctx.clone();
+        let state = state.clone();
+        let json_view = json_view.clone();
+        let fields_group = fields_group.clone();
+        let advanced_group = advanced_group.clone();
+        let show_advanced = show_advanced.clone();
+        let json_on = json_on.clone();
+        let json_off = json_off.clone();
+        let json_group = json_group.clone();
+        json_switch.connect_active_notify(move |row| {
+            let next = row.is_active();
+            if next == json_mode.get() {
+                row.set_title(if next { &json_on } else { &json_off });
+                return;
+            }
+            if next {
+                fill_json_view(
+                    &json_view,
+                    &collect_params(&state),
+                    ctx.settings.borrow().general.restrict,
+                );
+                json_mode.set(true);
+            } else if let Err(e) = apply_json_to_form(&state, &json_view) {
+                row.set_active(true);
+                let err = adw::AlertDialog::new(
+                    Some(&ctx.t_or(
+                        "wizards.remoteConfig.unknownTopLevelProperty",
+                        "Invalid JSON",
+                    )),
+                    Some(&e),
+                );
+                err.add_response("ok", "OK");
+                err.present(Some(row));
+                return;
+            } else {
+                json_mode.set(false);
+            }
+            ctx.settings.borrow_mut().runtime.show_json_mode = json_mode.get();
+            ctx.persist();
+            row.set_title(if json_mode.get() { &json_on } else { &json_off });
+            fields_group.set_visible(!json_mode.get());
+            advanced_group.set_visible(show_advanced.get() && !json_mode.get());
+            json_group.set_visible(json_mode.get());
+        });
+    }
+    {
+        let show_cmd = show_cmd.clone();
+        let cmd_group = cmd_group.clone();
+        let cmd_on = cmd_on.clone();
+        let cmd_off = cmd_off.clone();
+        cmd_switch.connect_active_notify(move |row| {
+            show_cmd.set(row.is_active());
+            row.set_title(if row.is_active() { &cmd_on } else { &cmd_off });
+            cmd_group.set_visible(row.is_active());
+        });
+    }
     nav.add_titled(
         &setup,
         Some("setup"),
@@ -515,21 +822,39 @@ pub fn present(
         let oauth_status = oauth_status.clone();
         let nav = nav.clone();
         let command_options = command_options.clone();
+        let custom_options = custom_options.clone();
+        let json_mode = json_mode.clone();
+        let json_view = json_view.clone();
         continue_btn.connect_clicked(move |_| {
             let remote_name = name.text().to_string();
             if remote_name.is_empty() {
                 return;
             }
             let r#type = provider_type(&state.borrow().providers, type_row.selected());
-            let params = collect_params(&state);
+            let params = match collect_wizard_params(&state, &json_mode, &json_view) {
+                Ok(value) => value,
+                Err(e) => {
+                    let err = adw::AlertDialog::new(
+                        Some(&ctx.t_or(
+                            "wizards.remoteConfig.unknownTopLevelProperty",
+                            "Invalid JSON",
+                        )),
+                        Some(&e),
+                    );
+                    err.add_response("ok", "OK");
+                    err.present(Some(&dialog));
+                    return;
+                }
+            };
             state.borrow_mut().parameters = params.clone();
             let Some(client) = ctx.client() else {
                 return;
             };
             let result = {
                 let flow = state.borrow().flow.clone();
-                let opt = Some(crate::command_options::build_opt(
+                let opt = Some(crate::command_options::build_opt_with_custom(
                     &crate::command_options::sync_non_interactive(&command_options.borrow(), true),
+                    &custom_options.borrow(),
                 ));
                 if !flow.is_active {
                     client.create_remote_interactive(&remote_name, &r#type, params, opt)
@@ -622,6 +947,9 @@ pub fn present(
         let op_flags = op_flags.clone();
         let cli = cli.clone();
         let command_options = command_options.clone();
+        let custom_options = custom_options.clone();
+        let json_mode = json_mode.clone();
+        let json_view = json_view.clone();
         save.connect_clicked(move |_| {
             let remote_name = name.text().to_string();
             let existing_names = ctx.store.borrow().remote_names();
@@ -642,6 +970,21 @@ pub fn present(
                 return;
             }
             let r#type = provider_type(&state.borrow().providers, type_row.selected());
+            let mut params = match collect_wizard_params(&state, &json_mode, &json_view) {
+                Ok(value) => value,
+                Err(e) => {
+                    let err = adw::AlertDialog::new(
+                        Some(&ctx.t_or(
+                            "wizards.remoteConfig.unknownTopLevelProperty",
+                            "Invalid JSON",
+                        )),
+                        Some(&e),
+                    );
+                    err.add_response("ok", "OK");
+                    err.present(Some(&dialog));
+                    return;
+                }
+            };
             if let Some(provider) = state
                 .borrow()
                 .providers
@@ -651,10 +994,20 @@ pub fn present(
             {
                 let fields = state.borrow().fields.clone();
                 for option in &provider.options {
-                    let Some(widget) = fields.get(&option.name) else {
-                        continue;
+                    let value = if json_mode.get() {
+                        params
+                            .get(&option.name)
+                            .map(|v| match v {
+                                Value::String(s) => s.clone(),
+                                other => other.to_string().trim_matches('"').to_string(),
+                            })
+                            .unwrap_or_default()
+                    } else {
+                        let Some(widget) = fields.get(&option.name) else {
+                            continue;
+                        };
+                        widget.display_text()
                     };
-                    let value = widget.display_text();
                     if let Err(e) = crate::validators::validate_option(option, &value) {
                         let err = adw::AlertDialog::new(
                             Some(&ctx.t_or(
@@ -686,10 +1039,12 @@ pub fn present(
                 err.present(Some(&dialog));
                 return;
             }
-            let mut params = collect_params(&state);
             if let Some(client) = ctx.client() {
                 let selected = command_options.borrow().clone();
-                let opt = Some(crate::command_options::build_opt(&selected));
+                let opt = Some(crate::command_options::build_opt_with_custom(
+                    &selected,
+                    &custom_options.borrow(),
+                ));
                 if !crate::command_options::option_enabled(&selected, "noObscure") {
                     for (key, value) in params
                         .clone()
@@ -1193,6 +1548,46 @@ fn collect_params(state: &Rc<RefCell<WizardState>>) -> Value {
         }
     }
     Value::Object(map)
+}
+
+fn textview_text(view: &gtk::TextView) -> String {
+    let buf = view.buffer();
+    buf.text(&buf.start_iter(), &buf.end_iter(), false)
+        .to_string()
+}
+
+fn pretty_params(params: &Value, restrict: bool) -> String {
+    let value = if restrict {
+        crate::restrict::redact_value(params)
+    } else {
+        params.clone()
+    };
+    serde_json::to_string_pretty(&value).unwrap_or_else(|_| "{}".into())
+}
+
+fn fill_json_view(view: &gtk::TextView, params: &Value, restrict: bool) {
+    view.buffer().set_text(&pretty_params(params, restrict));
+}
+
+fn apply_json_to_form(
+    state: &Rc<RefCell<WizardState>>,
+    json_view: &gtk::TextView,
+) -> Result<(), String> {
+    let map = crate::providers::parse_parameters_json(&textview_text(json_view))?;
+    apply_dump_to_wizard_fields(state, &Value::Object(map));
+    Ok(())
+}
+
+fn collect_wizard_params(
+    state: &Rc<RefCell<WizardState>>,
+    json_mode: &Rc<Cell<bool>>,
+    json_view: &gtk::TextView,
+) -> Result<Value, String> {
+    if json_mode.get() {
+        crate::providers::parse_parameters_json(&textview_text(json_view)).map(Value::Object)
+    } else {
+        Ok(collect_params(state))
+    }
 }
 
 fn looks_secret(key: &str) -> bool {

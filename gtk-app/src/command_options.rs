@@ -110,6 +110,98 @@ pub fn build_opt(options: &[CommandOption]) -> Value {
     Value::Object(map)
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CustomValueKind {
+    Bool,
+    Text,
+    Number,
+    Array,
+}
+
+impl CustomValueKind {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Bool => "boolean",
+            Self::Text => "string",
+            Self::Number => "number",
+            Self::Array => "array",
+        }
+    }
+
+    pub fn parse(name: &str) -> Self {
+        match name.trim().to_ascii_lowercase().as_str() {
+            "boolean" | "bool" => Self::Bool,
+            "number" | "int" | "float" => Self::Number,
+            "array" | "list" => Self::Array,
+            _ => Self::Text,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct CustomCommandOption {
+    pub key: String,
+    pub kind: CustomValueKind,
+    pub bool_value: bool,
+    pub text_value: String,
+    pub number_value: f64,
+    pub array_value: Vec<String>,
+}
+
+pub fn new_custom(key: &str, kind: CustomValueKind) -> Option<CustomCommandOption> {
+    let key = key.trim();
+    if key.is_empty() {
+        return None;
+    }
+    Some(CustomCommandOption {
+        key: key.to_string(),
+        kind,
+        bool_value: true,
+        text_value: String::new(),
+        number_value: 0.0,
+        array_value: Vec::new(),
+    })
+}
+
+pub fn custom_to_value(option: &CustomCommandOption) -> Value {
+    match option.kind {
+        CustomValueKind::Bool => json!(option.bool_value),
+        CustomValueKind::Text => json!(option.text_value),
+        CustomValueKind::Number => {
+            if option.number_value.fract() == 0.0
+                && option.number_value >= i64::MIN as f64
+                && option.number_value <= i64::MAX as f64
+            {
+                json!(option.number_value as i64)
+            } else {
+                json!(option.number_value)
+            }
+        }
+        CustomValueKind::Array => json!(option.array_value),
+    }
+}
+
+pub fn parse_array_chips(text: &str) -> Vec<String> {
+    text.split(',')
+        .map(str::trim)
+        .filter(|part| !part.is_empty())
+        .map(ToString::to_string)
+        .collect()
+}
+
+pub fn build_opt_with_custom(options: &[CommandOption], custom: &[CustomCommandOption]) -> Value {
+    let mut map = match build_opt(options) {
+        Value::Object(map) => map,
+        _ => Map::new(),
+    };
+    for option in custom {
+        if !option.key.is_empty() {
+            map.insert(option.key.clone(), custom_to_value(option));
+        }
+    }
+    Value::Object(map)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -166,5 +258,25 @@ mod tests {
         assert_eq!(merged["obscure"], true);
         assert_eq!(merged["all"], true);
         assert_eq!(merge_create_opt(None)["nonInteractive"], true);
+    }
+
+    #[test]
+    fn custom_options_merge_into_opt() {
+        let predefined = initial_command_options();
+        let mut custom = vec![new_custom("retries", CustomValueKind::Number).unwrap()];
+        custom[0].number_value = 8.0;
+        custom.push(new_custom("tags", CustomValueKind::Array).unwrap());
+        custom[1].array_value = parse_array_chips("a, b, ,c");
+        custom.push(new_custom("note", CustomValueKind::Text).unwrap());
+        custom[2].text_value = "hello".into();
+        assert!(new_custom("  ", CustomValueKind::Bool).is_none());
+        let opt = build_opt_with_custom(&predefined, &custom);
+        assert_eq!(opt["obscure"], true);
+        assert_eq!(opt["retries"], 8);
+        assert_eq!(opt["tags"], json!(["a", "b", "c"]));
+        assert_eq!(opt["note"], "hello");
+        assert_eq!(CustomValueKind::parse("BOOL"), CustomValueKind::Bool);
+        assert_eq!(CustomValueKind::parse("list"), CustomValueKind::Array);
+        assert_eq!(CustomValueKind::parse("other").as_str(), "string");
     }
 }
