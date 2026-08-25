@@ -3680,6 +3680,16 @@ pub fn quick_run_editor(
     filter_profile.set_title(&ctx.t_or("flow.quickRun.editor.tabFilter", "Filter profile name"));
     let backend_profile = adw::EntryRow::new();
     backend_profile.set_title(&ctx.t_or("flow.quickRun.editor.tabBackend", "Backend profile name"));
+    let runtime_profile = adw::EntryRow::new();
+    runtime_profile.set_title(&ctx.t_or(
+        "flow.quickRun.editor.tabRuntimeRemote",
+        "Runtime remote profile",
+    ));
+    let runtime_json = adw::EntryRow::new();
+    runtime_json.set_title(&ctx.t_or(
+        "flow.quickRun.editor.runtimeRemoteJson",
+        "Runtime remote JSON",
+    ));
     if let Some(qr) = &existing {
         name.set_text(&qr.name);
         remote.set_text(&qr.remote_name);
@@ -3693,6 +3703,10 @@ pub fn quick_run_editor(
         vfs_profile.set_text(&qr.config.app.vfs_profile);
         filter_profile.set_text(&qr.config.app.filter_profile);
         backend_profile.set_text(&qr.config.app.backend_profile);
+        runtime_profile.set_text(&qr.config.app.runtime_remote_profile);
+        if let Some(value) = qr.config.rclone.get("runtimeRemote") {
+            runtime_json.set_text(&value.to_string());
+        }
         if let Some(idx) = OperationType::ALL
             .iter()
             .position(|o| *o == qr.operation_type)
@@ -3716,6 +3730,8 @@ pub fn quick_run_editor(
     group.add(&vfs_profile);
     group.add(&filter_profile);
     group.add(&backend_profile);
+    group.add(&runtime_profile);
+    group.add(&runtime_json);
     let dry = adw::SwitchRow::new();
     dry.set_title(&ctx.t_or("detailShared.jobs.dryRun", "Dry run"));
     dry.set_active(
@@ -3823,6 +3839,8 @@ pub fn quick_run_editor(
         let vfs_profile = vfs_profile.clone();
         let filter_profile = filter_profile.clone();
         let backend_profile = backend_profile.clone();
+        let runtime_profile = runtime_profile.clone();
+        let runtime_json = runtime_json.clone();
         let flag_rows = flag_rows.clone();
         let serve_flag_rows = serve_flag_rows.clone();
         let serve = serve.clone();
@@ -3867,6 +3885,7 @@ pub fn quick_run_editor(
             qr.config.app.vfs_profile = vfs_profile.text().to_string();
             qr.config.app.filter_profile = filter_profile.text().to_string();
             qr.config.app.backend_profile = backend_profile.text().to_string();
+            qr.config.app.runtime_remote_profile = runtime_profile.text().to_string();
             qr.show_on_tray = tray.is_active();
             let mut rclone = serde_json::json!({
                 "srcFs": src.text().to_string(),
@@ -3892,6 +3911,12 @@ pub fn quick_run_editor(
                 ));
             }
             if let Some(obj) = rclone.as_object_mut() {
+                let inline = runtime_json.text().to_string();
+                if !inline.trim().is_empty() {
+                    if let Ok(value) = serde_json::from_str::<serde_json::Value>(inline.trim()) {
+                        obj.insert("runtimeRemote".into(), value);
+                    }
+                }
                 for (field, row, type_name) in flag_rows.borrow().iter() {
                     let text = row.text().to_string();
                     if text.is_empty() {
@@ -5223,13 +5248,7 @@ pub fn job_detail(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, job_id: u64) {
                 &dialog,
                 &job.operation,
             );
-            let check_source = job
-                .stats
-                .get("checks")
-                .or_else(|| job.output.get("results"))
-                .or_else(|| job.output.get("cryptcheck").and_then(|v| v.get("results")))
-                .cloned()
-                .unwrap_or(serde_json::json!([]));
+            let check_source = crate::checks::check_source_from_job(&job.stats, &job.output);
             let results = crate::checks::parse_check_items(&check_source, &job.src, &job.dst);
             if !results.is_empty() {
                 let heading = adw::ActionRow::new();
@@ -7253,10 +7272,10 @@ fn populate_serve_flag_rows(
     });
 }
 
-fn check_result_row(
+pub(super) fn check_result_row(
     ctx: &AppCtx,
     item: &crate::checks::CheckResult,
-    parent: &adw::Dialog,
+    parent: &impl IsA<gtk::Widget>,
 ) -> adw::ActionRow {
     let row = adw::ActionRow::new();
     row.set_title(&item.name);
@@ -7329,10 +7348,37 @@ fn resolve_check_item(ctx: &AppCtx, item: &crate::checks::CheckResult, kind: &st
     } else {
         (item.src_fs.as_str(), item.dst_fs.as_str())
     };
-    if let Err(e) = client.copy_file(src_fs, &item.name, dst_fs, &item.name) {
-        log::warn!("check resolve failed: {e}");
-    } else {
-        ctx.refresh_runtime();
+    let payload = serde_json::json!({
+        "srcFs": src_fs,
+        "srcRemote": item.name,
+        "dstFs": dst_fs,
+        "dstRemote": item.name,
+    });
+    match client.start_job("operations/copyfile", payload) {
+        Ok(id) => {
+            let (remote, _) = crate::rclone::split_remote_path(src_fs);
+            crate::jobs::remember_started(
+                &mut ctx.store.borrow_mut().job_meta,
+                &format!("#{id}"),
+                crate::store::JobMeta {
+                    origin: "check-resolve".into(),
+                    profile: "default".into(),
+                    remote,
+                    backend: ctx.backend_key(),
+                    quick_run_id: String::new(),
+                    execute_id: uuid::Uuid::new_v4().to_string(),
+                },
+            );
+            ctx.persist();
+            ctx.refresh_runtime();
+        }
+        Err(e) => {
+            if let Err(fallback) = client.copy_file(src_fs, &item.name, dst_fs, &item.name) {
+                log::warn!("check resolve failed: {e}; fallback {fallback}");
+            } else {
+                ctx.refresh_runtime();
+            }
+        }
     }
 }
 

@@ -119,6 +119,22 @@ fn normalize_status(status: &str) -> String {
     }
 }
 
+pub fn is_check_operation(op: &str) -> bool {
+    matches!(
+        op.trim().to_ascii_lowercase().as_str(),
+        "check" | "cryptcheck"
+    )
+}
+
+pub fn check_source_from_job(stats: &Value, output: &Value) -> Value {
+    stats
+        .get("checks")
+        .or_else(|| output.get("results"))
+        .or_else(|| output.get("cryptcheck").and_then(|v| v.get("results")))
+        .cloned()
+        .unwrap_or_else(|| serde_json::json!([]))
+}
+
 pub fn parent_remote_path(path: &str) -> String {
     if let Some((parent, _)) = path.rsplit_once('/') {
         parent.to_string()
@@ -170,5 +186,22 @@ mod tests {
     #[test]
     fn ignores_empty_and_unknown_lines() {
         assert!(parse_check_items(&json!(["hello", ""]), "a:", "b:").is_empty());
+    }
+
+    #[test]
+    fn detects_check_operations_and_job_source() {
+        assert!(is_check_operation("check"));
+        assert!(is_check_operation("CryptCheck"));
+        assert!(!is_check_operation("sync"));
+        let source = check_source_from_job(
+            &json!({ "bytes": 1 }),
+            &json!({ "results": [{ "name": "a.txt", "status": "differ" }] }),
+        );
+        assert_eq!(source[0]["name"], "a.txt");
+        let from_stats = check_source_from_job(
+            &json!({ "checks": [{ "name": "b.bin", "status": "missing_dst" }] }),
+            &json!({}),
+        );
+        assert_eq!(from_stats[0]["name"], "b.bin");
     }
 }

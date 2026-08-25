@@ -308,10 +308,18 @@ This client is the GTK 4 + libadwaita rewrite of the Angular/Tauri desktop UI. I
 - General-tab quick runs have Start / Stop / Edit / Browse
 - Profile rename relabels live serve cards
 - Runtime-remote helper page uses provider-typed fields; helper dialog includes runtime
+- Flow Mount/Serve starts use the saved quick-run profile (serve type, mount type, helpers)
+- Named runtime-remote helpers merge with inline `runtimeRemote` on job start
+- Quick Run editor persists a runtime-remote profile and optional inline JSON
+- Remote wizard runtime step uses provider-typed fields plus the JSON editor
+- Operations/detail transfer activity shows check/cryptcheck result rows with resolve/delete
+- Transfer activity toolbar resets live stats or deletes a finished job from history
+- Check resolve starts a tracked `copyfile` job (falls back to a synchronous copy)
+- Remote-detail serve rows can stop the serve
+- Native xdg Share portal (`org.freedesktop.portal.Share`) with email/opener fallback
 
 ## Still deepening toward pixel-level Angular parity
 
 - Workflow builder (stub in both apps)
 - Live GUI session against rclone rcd (no display in this environment)
-- Native share portal / Android share intent (Linux uses `--share-intake` + Files banner)
 - Remaining dialogs/Files English labels (core chrome now localized)

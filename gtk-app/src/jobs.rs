@@ -468,6 +468,7 @@ pub fn apply_helper_options(
     let Some(meta) = meta else {
         return;
     };
+    let inline = inline_runtime_remote(rclone);
     let Some(obj) = rclone.as_object_mut() else {
         return;
     };
@@ -481,11 +482,33 @@ pub fn apply_helper_options(
         merge_options_block(obj, "_config", &backend);
     }
     if let Some(runtime) = meta.helper_profile("runtime", &profile.app.runtime_remote_profile) {
-        if let Some(map) = runtime.as_object() {
-            for (k, v) in map {
-                obj.entry(k.clone()).or_insert(v.clone());
-            }
+        merge_runtime_overrides(obj, &runtime);
+    }
+    if let Some(inline) = inline {
+        merge_runtime_overrides(obj, &inline);
+        obj.remove("runtimeRemote");
+    }
+}
+
+fn inline_runtime_remote(rclone: &Value) -> Option<Value> {
+    rclone
+        .get("runtimeRemote")
+        .filter(|value| value.is_object())
+        .cloned()
+}
+
+fn merge_runtime_overrides(obj: &mut Map<String, Value>, value: &Value) {
+    let Some(map) = value.as_object() else {
+        return;
+    };
+    for (key, entry) in map {
+        if key == "runtimeRemote" || key == "remotes" {
+            continue;
         }
+        if entry.is_null() || matches!(entry, Value::String(s) if s.is_empty()) {
+            continue;
+        }
+        obj.entry(key.clone()).or_insert(entry.clone());
     }
 }
 
@@ -1930,6 +1953,33 @@ mod tests {
         apply_helper_options(&mut rclone, &profile, Some(&meta));
         assert_eq!(rclone["vfsOpt"]["CacheMode"], "full");
         assert_eq!(rclone["_filter"]["IncludeRule"][0], "*.md");
+    }
+
+    #[test]
+    fn merges_inline_runtime_remote_without_clobbering() {
+        let mut meta = crate::store::RemoteMeta::default();
+        meta.runtime_remote_configs.insert(
+            "live".into(),
+            json!({ "token": "named", "chunk_size": "8M" }),
+        );
+        let profile = ProfileConfig {
+            name: "default".into(),
+            app: crate::store::AppConfig {
+                runtime_remote_profile: "live".into(),
+                ..Default::default()
+            },
+            rclone: json!({
+                "srcFs": "drive:a",
+                "dstFs": "/tmp",
+                "runtimeRemote": { "token": "inline", "drive_id": "abc" }
+            }),
+        };
+        let mut rclone = flatten_rclone(&profile.rclone);
+        apply_helper_options(&mut rclone, &profile, Some(&meta));
+        assert_eq!(rclone["token"], "named");
+        assert_eq!(rclone["chunk_size"], "8M");
+        assert_eq!(rclone["drive_id"], "abc");
+        assert!(rclone.get("runtimeRemote").is_none());
     }
 
     #[test]

@@ -1517,6 +1517,28 @@ impl Dashboard {
                 });
                 row.add_suffix(&copy_url);
             }
+            if !serve.id.is_empty() {
+                let stop = gtk::Button::from_icon_name("media-playback-stop-symbolic");
+                stop.set_valign(gtk::Align::Center);
+                stop.set_tooltip_text(Some(
+                    &self
+                        .ctx
+                        .t_or("shared.serveCard.tooltips.stop", "Stop this serve"),
+                ));
+                {
+                    let ctx = self.ctx.clone();
+                    let id = serve.id.clone();
+                    let dash = self.clone();
+                    stop.connect_clicked(move |_| {
+                        if let Some(client) = ctx.client() {
+                            let _ = client.serve_stop(&id);
+                            ctx.refresh_runtime();
+                            dash.refresh();
+                        }
+                    });
+                }
+                row.add_suffix(&stop);
+            }
             {
                 let ctx = self.ctx.clone();
                 let id = serve.id.clone();
@@ -2111,14 +2133,89 @@ impl Dashboard {
             }
         }
         rows.truncate(12);
+        let mut check_items = Vec::new();
+        for job in &jobs {
+            if crate::checks::is_check_operation(&job.operation) {
+                let source = crate::checks::check_source_from_job(&job.stats, &job.output);
+                check_items.extend(crate::checks::parse_check_items(
+                    &source, &job.src, &job.dst,
+                ));
+            }
+        }
+        check_items.truncate(40);
+        if rows.is_empty() && check_items.is_empty() {
+            return;
+        }
+        let title = if jobs
+            .iter()
+            .any(|job| crate::checks::is_check_operation(&job.operation))
+        {
+            self.ctx
+                .t_or("shared.transferActivity.titleCheck", "Check Results")
+        } else {
+            self.ctx
+                .t_or("shared.transferActivity.title", "Transfer Activity")
+        };
+        self.detail.append(&section_label(&title));
+        if let Some(job) = jobs.first() {
+            let toolbar = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+            let running = job.status == "running" || job.status == "starting";
+            if running {
+                let reset_label = self
+                    .ctx
+                    .t_or("shared.transferActivity.resetStats", "Reset stats");
+                let reset = gtk::Button::with_label(&reset_label);
+                reset.set_tooltip_text(Some(&reset_label));
+                {
+                    let ctx = self.ctx.clone();
+                    let group = if job.group.is_empty() {
+                        format!("job/{}", job.id)
+                    } else {
+                        job.group.clone()
+                    };
+                    let dash = self.clone();
+                    reset.connect_clicked(move |_| {
+                        if let Some(client) = ctx.client() {
+                            let _ = client.reset_stats(Some(&group));
+                            ctx.refresh_runtime();
+                            dash.refresh();
+                        }
+                    });
+                }
+                toolbar.append(&reset);
+            } else {
+                let delete_label = self
+                    .ctx
+                    .t_or("detailShared.jobs.actions.delete", "Delete from history");
+                let delete = gtk::Button::with_label(&delete_label);
+                delete.add_css_class("destructive-action");
+                delete.set_tooltip_text(Some(&delete_label));
+                {
+                    let ctx = self.ctx.clone();
+                    let id = job.id;
+                    let dash = self.clone();
+                    delete.connect_clicked(move |_| {
+                        ctx.store.borrow_mut().dismiss_job(id);
+                        ctx.persist();
+                        ctx.refresh_runtime();
+                        dash.refresh();
+                    });
+                }
+                toolbar.append(&delete);
+            }
+            self.detail.append(&toolbar);
+        }
+        if !check_items.is_empty() {
+            let list = gtk::ListBox::new();
+            list.add_css_class("boxed-list");
+            for item in check_items {
+                list.append(&dialogs::check_result_row(&self.ctx, &item, &self.root));
+            }
+            self.detail.append(&list);
+        }
         if rows.is_empty() {
             return;
         }
-        self.detail.append(&section_label(
-            &self
-                .ctx
-                .t_or("shared.transferActivity.title", "Transfer Activity"),
-        ));
         let list = gtk::ListBox::new();
         list.add_css_class("boxed-list");
         for (operation, row, completed) in rows {

@@ -1660,15 +1660,7 @@ fn extra_source_row(ctx: &AppCtx, value: &str) -> adw::EntryRow {
     row
 }
 
-fn runtime_provider_flags(ctx: &AppCtx, remote: &str) -> Vec<FlagOption> {
-    let remote_type = ctx
-        .snapshot
-        .borrow()
-        .remotes
-        .iter()
-        .find(|item| item.name == remote)
-        .map(|item| item.r#type.clone())
-        .unwrap_or_default();
+pub(super) fn runtime_flags_for_type(ctx: &AppCtx, remote_type: &str) -> Vec<FlagOption> {
     if remote_type.is_empty() {
         return Vec::new();
     }
@@ -1681,8 +1673,8 @@ fn runtime_provider_flags(ctx: &AppCtx, remote: &str) -> Vec<FlagOption> {
     crate::providers::parse_providers(&value)
         .into_iter()
         .find(|provider| {
-            provider.prefix.eq_ignore_ascii_case(&remote_type)
-                || provider.name.eq_ignore_ascii_case(&remote_type)
+            provider.prefix.eq_ignore_ascii_case(remote_type)
+                || provider.name.eq_ignore_ascii_case(remote_type)
         })
         .map(|provider| {
             provider
@@ -1692,6 +1684,18 @@ fn runtime_provider_flags(ctx: &AppCtx, remote: &str) -> Vec<FlagOption> {
                 .collect()
         })
         .unwrap_or_default()
+}
+
+fn runtime_provider_flags(ctx: &AppCtx, remote: &str) -> Vec<FlagOption> {
+    let remote_type = ctx
+        .snapshot
+        .borrow()
+        .remotes
+        .iter()
+        .find(|item| item.name == remote)
+        .map(|item| item.r#type.clone())
+        .unwrap_or_default();
+    runtime_flags_for_type(ctx, &remote_type)
 }
 
 fn flag_entry(ctx: &AppCtx, flag: &FlagOption, current: &Value) -> adw::EntryRow {

@@ -1,7 +1,6 @@
 use super::dialogs;
 use super::AppCtx;
 use crate::navigation::NavTarget;
-use crate::operations::OperationType;
 use crate::store::QuickRun;
 use adw::prelude::*;
 use gtk::prelude::*;
@@ -567,90 +566,59 @@ impl FlowView {
             ));
             return;
         };
-        match qr.operation_type {
-            OperationType::Mount => {
-                let (_, dest) = qr.paths();
-                let point = dest.unwrap_or_else(|| {
-                    format!(
-                        "{}/mnt/{}",
-                        dirs::home_dir().unwrap_or_default().display(),
-                        qr.remote_name
-                    )
-                });
-                let _ = std::fs::create_dir_all(&point);
-                match client.mount(
-                    &crate::rclone::remote_fs(&qr.remote_name, ""),
-                    &point,
-                    "mount",
-                ) {
-                    Ok(_) => self.set_status(&qr.id, "running"),
-                    Err(e) => self
-                        .toast
-                        .add_toast(adw::Toast::new(&self.ctx.translate_error(&e.to_string()))),
-                }
-            }
-            OperationType::Serve => {
-                match client.serve_start(
-                    "webdav",
-                    &crate::rclone::remote_fs(&qr.remote_name, ""),
-                    "127.0.0.1:0",
-                ) {
-                    Ok(_) => self.set_status(&qr.id, "running"),
-                    Err(e) => self
-                        .toast
-                        .add_toast(adw::Toast::new(&self.ctx.translate_error(&e.to_string()))),
-                }
-            }
-            other => {
-                let meta = self
+        let meta = self
+            .ctx
+            .store
+            .borrow()
+            .remotes
+            .get(&qr.remote_name)
+            .cloned();
+        match crate::jobs::start_profile(
+            &client,
+            &qr.remote_name,
+            qr.operation_type,
+            &qr.config,
+            meta.as_ref(),
+            "flow",
+        ) {
+            Ok(id) => {
+                crate::jobs::remember_started(
+                    &mut self.ctx.store.borrow_mut().job_meta,
+                    &id,
+                    crate::jobs::job_meta_for(
+                        &qr.remote_name,
+                        &qr.config,
+                        "flow",
+                        &self.ctx.backend_key(),
+                        &qr.id,
+                    ),
+                );
+                self.ctx.store.borrow_mut().log_operation(
+                    &qr.remote_name,
+                    qr.operation_type.as_str(),
+                    &format!("started quick run {id}"),
+                    Some(&crate::restrict::redact_value(&qr.config.rclone)),
+                );
+                if let Some(run) = self
                     .ctx
                     .store
-                    .borrow()
-                    .remotes
-                    .get(&qr.remote_name)
-                    .cloned();
-                match crate::jobs::start_profile(
-                    &client,
-                    &qr.remote_name,
-                    other,
-                    &qr.config,
-                    meta.as_ref(),
-                    "flow",
-                ) {
-                    Ok(id) => {
-                        crate::jobs::remember_started(
-                            &mut self.ctx.store.borrow_mut().job_meta,
-                            &id,
-                            crate::jobs::job_meta_for(
-                                &qr.remote_name,
-                                &qr.config,
-                                "flow",
-                                &self.ctx.backend_key(),
-                                &qr.id,
-                            ),
-                        );
-                        if let Some(run) = self
-                            .ctx
-                            .store
-                            .borrow_mut()
-                            .quick_runs
-                            .iter_mut()
-                            .find(|q| q.id == qr.id)
-                        {
-                            run.status = "running".into();
-                            run.run_count += 1;
-                            if let Some(num) = id.trim_start_matches('#').split(',').next() {
-                                run.last_job_id = num.trim().parse().ok();
-                            }
-                        }
-                        self.ctx.persist();
-                        self.refresh();
+                    .borrow_mut()
+                    .quick_runs
+                    .iter_mut()
+                    .find(|q| q.id == qr.id)
+                {
+                    run.status = "running".into();
+                    run.run_count += 1;
+                    if let Some(num) = id.trim_start_matches('#').split(',').next() {
+                        run.last_job_id = num.trim().parse().ok();
                     }
-                    Err(e) => self
-                        .toast
-                        .add_toast(adw::Toast::new(&self.ctx.translate_error(&e))),
                 }
+                self.ctx.persist();
+                self.refresh();
             }
+            Err(e) => self
+                .toast
+                .add_toast(adw::Toast::new(&self.ctx.translate_error(&e))),
         }
     }
 

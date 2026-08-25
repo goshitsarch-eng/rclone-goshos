@@ -1,4 +1,5 @@
 use super::AppCtx;
+use crate::flags::parse_flag_value;
 use crate::interactive::{
     apply_interactive_response, is_continue_disabled, update_interactive_answer, InteractiveAnswer,
     InteractiveFlowState,
@@ -834,8 +835,39 @@ pub fn present(
         "These options are applied to jobs at runtime and are not written into rclone.conf.",
     )));
     runtime_group.add(&runtime_name);
+    let runtime_typed = adw::PreferencesGroup::new();
+    runtime_typed.set_title(&ctx.t_or("remoteConfig.options", "Provider options"));
+    let runtime_flag_rows: Rc<RefCell<Vec<(String, adw::EntryRow, String)>>> =
+        Rc::new(RefCell::new(Vec::new()));
+    let initial_runtime_json = parse_runtime_json(&textview_text(&runtime_view));
+    let initial_runtime_type = provider_type(&state.borrow().providers, type_row.selected());
+    fill_runtime_flag_rows(
+        &ctx,
+        &runtime_typed,
+        &runtime_flag_rows,
+        &initial_runtime_type,
+        &initial_runtime_json,
+    );
+    {
+        let ctx = ctx.clone();
+        let runtime_typed = runtime_typed.clone();
+        let runtime_flag_rows = runtime_flag_rows.clone();
+        let runtime_view = runtime_view.clone();
+        let state = state.clone();
+        type_row.connect_selected_notify(move |row| {
+            let remote_type = provider_type(&state.borrow().providers, row.selected());
+            fill_runtime_flag_rows(
+                &ctx,
+                &runtime_typed,
+                &runtime_flag_rows,
+                &remote_type,
+                &parse_runtime_json(&textview_text(&runtime_view)),
+            );
+        });
+    }
+    runtime_page.add(&runtime_typed);
     let runtime_scroll = gtk::ScrolledWindow::new();
-    runtime_scroll.set_min_content_height(220);
+    runtime_scroll.set_min_content_height(160);
     runtime_scroll.set_hexpand(true);
     runtime_scroll.set_vexpand(true);
     runtime_scroll.set_child(Some(&runtime_view));
@@ -1004,6 +1036,7 @@ pub fn present(
         let json_view = json_view.clone();
         let runtime_name = runtime_name.clone();
         let runtime_view = runtime_view.clone();
+        let runtime_flag_rows = runtime_flag_rows.clone();
         save.connect_clicked(move |_| {
             let remote_name = name.text().to_string();
             let existing_names = ctx.store.borrow().remote_names();
@@ -1150,7 +1183,7 @@ pub fn present(
                             &cli.text(),
                             &op_flags.borrow(),
                             &runtime_name.text(),
-                            &textview_text(&runtime_view),
+                            &collect_runtime_json(&runtime_view, &runtime_flag_rows.borrow()),
                         );
                         on_done();
                         dialog.close();
@@ -1835,4 +1868,58 @@ fn persist_meta(
         .remotes
         .insert(remote_name.to_string(), meta);
     ctx.persist();
+}
+
+fn parse_runtime_json(text: &str) -> Value {
+    serde_json::from_str(text.trim()).unwrap_or_else(|_| json!({}))
+}
+
+fn fill_runtime_flag_rows(
+    ctx: &AppCtx,
+    group: &adw::PreferencesGroup,
+    rows: &Rc<RefCell<Vec<(String, adw::EntryRow, String)>>>,
+    remote_type: &str,
+    current: &Value,
+) {
+    for (_, row, _) in rows.borrow().iter() {
+        group.remove(row);
+    }
+    rows.borrow_mut().clear();
+    for flag in super::remote_config::runtime_flags_for_type(ctx, remote_type) {
+        let row = adw::EntryRow::new();
+        row.set_title(&ctx.option_label(&flag.name, "title", &flag.name));
+        let help = ctx.option_label(&flag.name, "help", &flag.help);
+        if !help.is_empty() {
+            row.set_tooltip_text(Some(&help));
+        }
+        let text = current
+            .get(&flag.field_name)
+            .or_else(|| current.get(&flag.name))
+            .map(|value| match value {
+                Value::String(s) => s.clone(),
+                Value::Bool(b) => b.to_string(),
+                Value::Number(n) => n.to_string(),
+                Value::Null => String::new(),
+                other => other.to_string().trim_matches('"').to_string(),
+            })
+            .unwrap_or_else(|| flag.default_str.clone());
+        row.set_text(&text);
+        group.add(&row);
+        rows.borrow_mut()
+            .push((flag.field_name, row, flag.type_name));
+    }
+}
+
+fn collect_runtime_json(view: &gtk::TextView, rows: &[(String, adw::EntryRow, String)]) -> String {
+    let mut value = parse_runtime_json(&textview_text(view));
+    if let Some(obj) = value.as_object_mut() {
+        for (field, row, type_name) in rows {
+            let text = row.text().to_string();
+            if text.is_empty() {
+                continue;
+            }
+            obj.insert(field.clone(), parse_flag_value(type_name, &text));
+        }
+    }
+    serde_json::to_string_pretty(&value).unwrap_or_else(|_| "{}".into())
 }

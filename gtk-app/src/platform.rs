@@ -807,11 +807,49 @@ pub fn enqueue_share_intake(files: &[PathBuf]) {
     let _ = store.save();
 }
 
+pub fn file_uri(path: &Path) -> String {
+    format!("file://{}", path.display())
+}
+
+pub fn share_portal_options(
+) -> std::collections::HashMap<String, dbus::arg::Variant<Box<dyn dbus::arg::RefArg>>> {
+    let mut options = std::collections::HashMap::new();
+    options.insert(
+        "handle_token".into(),
+        dbus::arg::Variant(
+            Box::new(format!("rclone{}", uuid::Uuid::new_v4().as_simple()))
+                as Box<dyn dbus::arg::RefArg>,
+        ),
+    );
+    options
+}
+
+pub fn request_share_portal(uri: &str) -> Result<String, String> {
+    let conn = dbus::blocking::Connection::new_session().map_err(|e| e.to_string())?;
+    let proxy = conn.with_proxy(
+        "org.freedesktop.portal.Desktop",
+        "/org/freedesktop/portal/desktop",
+        std::time::Duration::from_secs(5),
+    );
+    let options = share_portal_options();
+    let (path,): (dbus::strings::Path<'static>,) = proxy
+        .method_call(
+            "org.freedesktop.portal.Share",
+            "ShareFile",
+            ("", uri, options),
+        )
+        .map_err(|e| e.to_string())?;
+    Ok(path.to_string())
+}
+
 /// Stage a local file for the desktop "share" action.
-/// Prefers `xdg-email --attach` when available, then the default opener.
+/// Prefers the xdg Share portal, then `xdg-email --attach`, then the default opener.
 pub fn share_file(path: &Path) -> Result<(), String> {
     if !path.exists() {
         return Err(format!("File not found: {}", path.display()));
+    }
+    if request_share_portal(&file_uri(path)).is_ok() {
+        return Ok(());
     }
     if Command::new("xdg-email")
         .arg("--attach")
@@ -992,6 +1030,13 @@ mod tests {
         let err = share_file(Path::new("/tmp/rclone-manager-missing-share-file"))
             .expect_err("missing file");
         assert!(err.contains("not found"));
+    }
+
+    #[test]
+    fn share_portal_options_include_handle_token() {
+        let options = share_portal_options();
+        assert!(options.contains_key("handle_token"));
+        assert_eq!(file_uri(Path::new("/tmp/a.txt")), "file:///tmp/a.txt");
     }
 
     #[test]
