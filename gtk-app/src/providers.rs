@@ -345,11 +345,12 @@ mod tests {
                 ]}
             ]
         }));
-        assert_eq!(provider_index_by_name(&providers, "DRIVE"), Some(1));
-        apply_dump_to_options(&mut providers[1].options, &params);
-        assert_eq!(providers[1].options[0].value_str, "abc");
-        assert_eq!(providers[1].options[1].value_str, "true");
-        assert_eq!(providers[1].options[2].value_str, "8");
+        let drive_idx = provider_index_by_name(&providers, "DRIVE").expect("drive");
+        assert_eq!(providers[drive_idx].name, "drive");
+        apply_dump_to_options(&mut providers[drive_idx].options, &params);
+        assert_eq!(providers[drive_idx].options[0].value_str, "abc");
+        assert_eq!(providers[drive_idx].options[1].value_str, "true");
+        assert_eq!(providers[drive_idx].options[2].value_str, "8");
         assert_eq!(dump_field_text(&params, "token"), None);
     }
 }
