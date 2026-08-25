@@ -3409,7 +3409,15 @@ impl Dashboard {
                     done_count,
                 ),
             ] {
-                let label = format!("{} ({count})", self.ctx.t_or(key, fallback));
+                let template = self.ctx.t_or(key, fallback);
+                let count_s = count.to_string();
+                let label = if template.contains("{{count}}") || template.contains("{count}") {
+                    template
+                        .replace("{{count}}", &count_s)
+                        .replace("{count}", &count_s)
+                } else {
+                    format!("{template} ({count})")
+                };
                 let btn = gtk::ToggleButton::with_label(&label);
                 btn.set_active(current == id);
                 {
