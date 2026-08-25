@@ -78,6 +78,25 @@ pub fn present_with(
     side_scroll.set_child(Some(&sidebar));
     let side_col = gtk::Box::new(gtk::Orientation::Vertical, 8);
     side_col.append(&side_scroll);
+    let obscure_in = adw::EntryRow::new();
+    obscure_in.set_title(&ctx.t_or("wizards.obscure.clearPlaceholder", "Obscure a secret"));
+    let obscure_btn = gtk::Button::with_label(&ctx.t_or("wizards.obscure.action", "Obscure"));
+    {
+        let ctx = ctx.clone();
+        let obscure_in = obscure_in.clone();
+        obscure_btn.connect_clicked(move |_| {
+            if let Some(client) = ctx.client() {
+                if let Ok(out) = client.obscure(&obscure_in.text()) {
+                    obscure_in.set_text(&out);
+                    if let Some(display) = gtk::gdk::Display::default() {
+                        display.clipboard().set_text(&out);
+                    }
+                }
+            }
+        });
+    }
+    side_col.append(&obscure_in);
+    side_col.append(&obscure_btn);
     split.set_sidebar(Some(&side_col));
 
     let content = gtk::Box::new(gtk::Orientation::Vertical, 8);

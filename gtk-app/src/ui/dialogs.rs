@@ -2635,6 +2635,24 @@ pub fn alerts(parent: &impl IsA<gtk::Widget>, ctx: AppCtx) {
     let remote_dd = gtk::DropDown::from_strings(&remote_refs);
     let profile_dd = gtk::DropDown::from_strings(&profile_refs);
     let backend_dd = gtk::DropDown::from_strings(&backend_refs);
+    let mut rule_labels = vec!["All rules".to_string()];
+    rule_labels.extend(
+        ctx.store
+            .borrow()
+            .alert_rules
+            .iter()
+            .map(|rule| rule.id.clone()),
+    );
+    let mut origin_labels = vec!["All origins".to_string()];
+    for event in &ctx.store.borrow().alert_history {
+        if !event.origin.is_empty() && !origin_labels.iter().any(|item| item == &event.origin) {
+            origin_labels.push(event.origin.clone());
+        }
+    }
+    let rule_refs: Vec<&str> = rule_labels.iter().map(|s| s.as_str()).collect();
+    let origin_refs: Vec<&str> = origin_labels.iter().map(|s| s.as_str()).collect();
+    let rule_dd = gtk::DropDown::from_strings(&rule_refs);
+    let origin_dd = gtk::DropDown::from_strings(&origin_refs);
     let fill_cell: Rc<RefCell<Rc<dyn Fn()>>> = Rc::new(RefCell::new(Rc::new(|| {})));
     let fill: Rc<dyn Fn()> = {
         let history = history.clone();
@@ -2645,9 +2663,13 @@ pub fn alerts(parent: &impl IsA<gtk::Widget>, ctx: AppCtx) {
         let remote_dd = remote_dd.clone();
         let profile_dd = profile_dd.clone();
         let backend_dd = backend_dd.clone();
+        let rule_dd = rule_dd.clone();
+        let origin_dd = origin_dd.clone();
         let remote_labels = remote_labels.clone();
         let profile_labels = profile_labels.clone();
         let backend_labels = backend_labels.clone();
+        let rule_labels = rule_labels.clone();
+        let origin_labels = origin_labels.clone();
         let ctx = ctx.clone();
         let fill_cell = fill_cell.clone();
         Rc::new(move || {
@@ -2708,6 +2730,8 @@ pub fn alerts(parent: &impl IsA<gtk::Widget>, ctx: AppCtx) {
                     profile: pick(&profile_dd, &profile_labels),
                     backend: pick(&backend_dd, &backend_labels),
                     acknowledged: ack,
+                    rule_id: pick(&rule_dd, &rule_labels),
+                    origins: pick(&origin_dd, &origin_labels).into_iter().collect(),
                     ..crate::store::AlertHistoryFilter::default()
                 });
             let mut shown = 0;
@@ -2775,6 +2799,14 @@ pub fn alerts(parent: &impl IsA<gtk::Widget>, ctx: AppCtx) {
         let fill = fill.clone();
         backend_dd.connect_selected_notify(move |_| fill());
     }
+    {
+        let fill = fill.clone();
+        rule_dd.connect_selected_notify(move |_| fill());
+    }
+    {
+        let fill = fill.clone();
+        origin_dd.connect_selected_notify(move |_| fill());
+    }
     let ack = gtk::Button::with_label(&ctx.t_or("alerts.acknowledgeAll", "Acknowledge all"));
     {
         let ctx = ctx.clone();
@@ -2807,6 +2839,8 @@ pub fn alerts(parent: &impl IsA<gtk::Widget>, ctx: AppCtx) {
     scope_row.append(&remote_dd);
     scope_row.append(&profile_dd);
     scope_row.append(&backend_dd);
+    scope_row.append(&rule_dd);
+    scope_row.append(&origin_dd);
     filters.append(&filter_row);
     filters.append(&scope_row);
     let buttons = gtk::Box::new(gtk::Orientation::Horizontal, 8);
@@ -7398,6 +7432,7 @@ fn resolve_check_item(ctx: &AppCtx, item: &crate::checks::CheckResult, kind: &st
                     backend: ctx.backend_key(),
                     quick_run_id: String::new(),
                     execute_id: uuid::Uuid::new_v4().to_string(),
+                    parent_job_id: None,
                 },
             );
             ctx.persist();

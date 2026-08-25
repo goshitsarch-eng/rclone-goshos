@@ -317,6 +317,15 @@ This client is the GTK 4 + libadwaita rewrite of the Angular/Tauri desktop UI. I
 - Check resolve starts a tracked `copyfile` job (falls back to a synchronous copy)
 - Remote-detail serve rows can stop the serve
 - Native xdg Share portal (`org.freedesktop.portal.Share`) with email/opener fallback
+- Files operations panel lists only file-manager jobs, with progress bars and byte stats
+- Child jobs from grouped transfers carry `parent_job_id` and stay out of overviews
+- Dashboard transfer activity has search plus Active/Recent tabs
+- Remote detail Configuration shortcuts open remote-config steps
+- Mount tab shows live `core/du` usage for the active mount point
+- Status overview card reports active vs total remotes
+- Alert history filters by rule id and origin
+- Remote-config sidebar includes the Obscure tool
+- System panel shows rclone PID and job-group count (`core/pid`, `core/group-list`)
 
 ## Still deepening toward pixel-level Angular parity
 

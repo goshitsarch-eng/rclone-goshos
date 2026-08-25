@@ -812,6 +812,18 @@ impl RcClient {
         self.call("core/memstats", json!({}))
     }
 
+    pub fn group_list(&self) -> Result<Value, RcError> {
+        self.call("core/group-list", json!({}))
+    }
+
+    pub fn pid(&self) -> Result<u64, RcError> {
+        let value = self.call("core/pid", json!({}))?;
+        value
+            .get("pid")
+            .and_then(|v| v.as_u64())
+            .ok_or_else(|| RcError::message("rclone did not return a pid"))
+    }
+
     pub fn gc(&self) -> Result<Value, RcError> {
         self.call("core/gc", json!({}))
     }

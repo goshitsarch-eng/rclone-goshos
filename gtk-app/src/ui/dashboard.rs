@@ -24,6 +24,8 @@ pub struct Dashboard {
     dry_run: Rc<Cell<bool>>,
     resync: Rc<Cell<bool>>,
     origin_filter: Rc<RefCell<String>>,
+    transfer_query: Rc<RefCell<String>>,
+    transfer_tab: Rc<RefCell<String>>,
 }
 
 impl Dashboard {
@@ -108,6 +110,8 @@ impl Dashboard {
             dry_run: Rc::new(Cell::new(false)),
             resync: Rc::new(Cell::new(false)),
             origin_filter: Rc::new(RefCell::new("all".into())),
+            transfer_query: Rc::new(RefCell::new(String::new())),
+            transfer_tab: Rc::new(RefCell::new("all".into())),
         };
 
         let mut group_anchor: Option<gtk::ToggleButton> = None;
@@ -528,6 +532,22 @@ impl Dashboard {
         let (active, idle): (Vec<_>, Vec<_>) = remotes.iter().cloned().partition(|remote| {
             tab.remote_is_active(remote.mounted, remote.serving, remote.job_active)
         });
+        let total = remotes.len();
+        if total > 0 {
+            let summary = adw::ActionRow::new();
+            summary.set_title(
+                &self
+                    .ctx
+                    .t_or("dashboard.statusOverview.title", "Status overview"),
+            );
+            let pct = (active.len() * 100) / total;
+            summary.set_subtitle(&format!(
+                "{} / {total} {} · {pct}%",
+                active.len(),
+                self.ctx.t_or("dashboard.statusOverview.active", "active")
+            ));
+            self.overview.append(&summary);
+        }
         if !active.is_empty() {
             self.overview.append(&section_label(
                 &self
@@ -723,7 +743,10 @@ impl Dashboard {
         let filtered: Vec<_> = snap
             .jobs
             .iter()
-            .filter(|job| crate::jobs::origin_matches(&job.origin, &filter))
+            .filter(|job| {
+                crate::jobs::is_overview_job(job)
+                    && crate::jobs::origin_matches(&job.origin, &filter)
+            })
             .cloned()
             .collect();
         if filtered.is_empty() {
@@ -998,6 +1021,28 @@ impl Dashboard {
         ver_row.set_title("rclone");
         ver_row.set_subtitle(&version);
         sys.append(&ver_row);
+        if let Some(client) = self.ctx.client() {
+            if let Ok(pid) = client.pid() {
+                let row = adw::ActionRow::new();
+                row.set_title(&self.ctx.t_or("dashboard.system.pid", "rclone PID"));
+                row.set_subtitle(&pid.to_string());
+                sys.append(&row);
+            }
+            if let Ok(groups) = client.group_list() {
+                let count = groups
+                    .get("groups")
+                    .or_else(|| groups.get("list"))
+                    .and_then(|v| v.as_array())
+                    .map(|arr| arr.len())
+                    .unwrap_or(0);
+                if count > 0 {
+                    let row = adw::ActionRow::new();
+                    row.set_title(&self.ctx.t_or("dashboard.system.groups", "Job groups"));
+                    row.set_subtitle(&count.to_string());
+                    sys.append(&row);
+                }
+            }
+        }
         if let Some(mem) = self.ctx.client().and_then(|c| c.memstats().ok()) {
             let alloc = mem.get("Alloc").and_then(|x| x.as_i64()).unwrap_or(0);
             let sys_bytes = mem.get("Sys").and_then(|x| x.as_i64()).unwrap_or(0);
@@ -1014,7 +1059,10 @@ impl Dashboard {
         jobs_row.set_title(&self.ctx.t_or("dashboard.system.activity", "Activity"));
         jobs_row.set_subtitle(&format!(
             "{} running jobs · {} mounts · {} serves",
-            snap.jobs.iter().filter(|j| j.status == "running").count(),
+            snap.jobs
+                .iter()
+                .filter(|j| crate::jobs::is_overview_job(j) && j.status == "running")
+                .count(),
             snap.mounts.len(),
             snap.serves.len()
         ));
@@ -1181,6 +1229,7 @@ impl Dashboard {
         }
 
         self.append_status_chips(&name, remote.as_ref());
+        self.append_configuration_links(&name);
         if tab == AppTab::Operations {
             self.append_sync_op_picker(&name);
             self.append_profile_picker(&name, self.selected_sync_op(&name));
@@ -1445,6 +1494,9 @@ impl Dashboard {
         self.detail.append(&actions);
 
         self.append_disk_usage(&name);
+        if tab == AppTab::Mount {
+            self.append_mount_disk_usage(&name, &snap);
+        }
 
         self.detail.append(&section_label(
             &self.ctx.t_or("generalOverview.activity", "Activity"),
@@ -2050,6 +2102,92 @@ impl Dashboard {
         self.detail.append(&chips);
     }
 
+    fn append_configuration_links(&self, name: &str) {
+        self.detail.append(&section_label(
+            &self
+                .ctx
+                .t_or("dashboard.appDetail.configuration", "Configuration"),
+        ));
+        let row = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+        row.add_css_class("linked");
+        for (step, key, fallback) in [
+            ("remote", "modals.remoteConfig.steps.remote", "Remote"),
+            ("vfs", "general.remoteConfig.steps.vfs", "VFS"),
+            ("filter", "general.remoteConfig.steps.filter", "Filter"),
+            ("backend", "general.remoteConfig.steps.backend", "Backend"),
+            (
+                "runtime",
+                "modals.remoteConfig.steps.runtimeRemote",
+                "Runtime",
+            ),
+        ] {
+            let btn = gtk::Button::with_label(&self.ctx.t_or(key, fallback));
+            {
+                let ctx = self.ctx.clone();
+                let name = name.to_string();
+                let dash = self.clone();
+                let step = step.to_string();
+                btn.connect_clicked(move |_| {
+                    if let Some(win) = dash.root.root().and_downcast::<gtk::Window>() {
+                        super::remote_config::present_with(
+                            &win,
+                            ctx.clone(),
+                            name.clone(),
+                            super::remote_config::RemoteConfigOpen {
+                                initial: Some(step.clone()),
+                                ..Default::default()
+                            },
+                            {
+                                let dash = dash.clone();
+                                Rc::new(move || dash.refresh())
+                            },
+                        );
+                    }
+                });
+            }
+            row.append(&btn);
+        }
+        self.detail.append(&row);
+    }
+
+    fn append_mount_disk_usage(&self, name: &str, snap: &crate::store::RuntimeSnapshot) {
+        let Some(mount) = snap
+            .mounts
+            .iter()
+            .find(|item| item.fs.contains(name) || item.fs.starts_with(&format!("{name}:")))
+        else {
+            return;
+        };
+        let Some(client) = self.ctx.client() else {
+            return;
+        };
+        let Ok(usage) = client.du(Some(&mount.mount_point)) else {
+            return;
+        };
+        let row = adw::ActionRow::new();
+        row.set_title(
+            &self
+                .ctx
+                .t_or("dashboard.appDetail.mountDiskUsage", "Mount point usage"),
+        );
+        row.set_subtitle(&format!(
+            "{} · {} used / {} free · {}",
+            mount.mount_point,
+            crate::rclone::format_bytes(usage.used),
+            crate::rclone::format_bytes(usage.free),
+            crate::rclone::format_bytes(usage.total)
+        ));
+        self.detail.append(&row);
+        if usage.total > 0 {
+            let bar = gtk::LevelBar::new();
+            bar.set_min_value(0.0);
+            bar.set_max_value(1.0);
+            bar.set_value(usage.used as f64 / usage.total as f64);
+            bar.set_hexpand(true);
+            self.detail.append(&bar);
+        }
+    }
+
     fn append_disk_usage(&self, name: &str) {
         let box_ = gtk::Box::new(gtk::Orientation::Vertical, 6);
         let usage = adw::ActionRow::new();
@@ -2098,7 +2236,8 @@ impl Dashboard {
             .jobs
             .iter()
             .filter(|job| {
-                job.remote == name
+                crate::jobs::is_overview_job(job)
+                    && job.remote == name
                     && profile.is_none_or(|wanted| {
                         job.profile == wanted || job.profile.is_empty() || job.profile == "default"
                     })
@@ -2157,6 +2296,58 @@ impl Dashboard {
                 .t_or("shared.transferActivity.title", "Transfer Activity")
         };
         self.detail.append(&section_label(&title));
+        let search = gtk::SearchEntry::new();
+        search.set_placeholder_text(Some(
+            &self.ctx.t_or("shared.search.toggle", "Search transfers"),
+        ));
+        search.set_text(&self.transfer_query.borrow());
+        {
+            let dash = self.clone();
+            search.connect_search_changed(move |entry| {
+                let text = entry.text().to_string();
+                if *dash.transfer_query.borrow() == text {
+                    return;
+                }
+                *dash.transfer_query.borrow_mut() = text;
+                dash.refresh();
+            });
+        }
+        self.detail.append(&search);
+        let active_count = rows.iter().filter(|(_, _, completed)| !*completed).count();
+        let done_count = rows.iter().filter(|(_, _, completed)| *completed).count();
+        if active_count > 0 && done_count > 0 {
+            let tabs = gtk::Box::new(gtk::Orientation::Horizontal, 0);
+            tabs.add_css_class("linked");
+            let current = self.transfer_tab.borrow().clone();
+            for (id, key, fallback, count) in [
+                (
+                    "active",
+                    "shared.transferActivity.tabs.active",
+                    "Active",
+                    active_count,
+                ),
+                (
+                    "recent",
+                    "shared.transferActivity.tabs.recent",
+                    "Recent",
+                    done_count,
+                ),
+            ] {
+                let label = format!("{} ({count})", self.ctx.t_or(key, fallback));
+                let btn = gtk::ToggleButton::with_label(&label);
+                btn.set_active(current == id);
+                {
+                    let dash = self.clone();
+                    let id = id.to_string();
+                    btn.connect_clicked(move |_| {
+                        *dash.transfer_tab.borrow_mut() = id.clone();
+                        dash.refresh();
+                    });
+                }
+                tabs.append(&btn);
+            }
+            self.detail.append(&tabs);
+        }
         if let Some(job) = jobs.first() {
             let toolbar = gtk::Box::new(gtk::Orientation::Horizontal, 8);
             let running = job.status == "running" || job.status == "starting";
@@ -2216,9 +2407,23 @@ impl Dashboard {
         if rows.is_empty() {
             return;
         }
+        let query = self.transfer_query.borrow().to_ascii_lowercase();
+        let tab = self.transfer_tab.borrow().clone();
         let list = gtk::ListBox::new();
         list.add_css_class("boxed-list");
         for (operation, row, completed) in rows {
+            if tab == "active" && completed {
+                continue;
+            }
+            if tab == "recent" && !completed {
+                continue;
+            }
+            if !query.is_empty() {
+                let hay = format!("{} {} {}", row.name, row.src, row.dst).to_ascii_lowercase();
+                if !hay.contains(&query) {
+                    continue;
+                }
+            }
             let item = adw::ActionRow::new();
             item.set_title(&row.name);
             let src = if row.src.is_empty() {

@@ -1419,6 +1419,7 @@ impl NautilusView {
                 let transfers = crate::dnd::transfer_items(items, &dest, move_items);
                 match crate::fileops::start_grouped_transfers(&client, &transfers, "filemanager") {
                     Ok((group, ids)) => {
+                        self.remember_file_jobs(&ids, "filemanager");
                         for item in &transfers {
                             self.push_undo(item.file_op().encode());
                         }
@@ -3262,6 +3263,7 @@ impl NautilusView {
             .collect();
         match crate::fileops::start_grouped_transfers(&client, &transfers, "filemanager") {
             Ok((group, ids)) => {
+                self.remember_file_jobs(&ids, "filemanager");
                 for item in &transfers {
                     self.push_undo(item.file_op().encode());
                 }
@@ -3914,6 +3916,7 @@ impl NautilusView {
         }
         let (_, ids) =
             crate::fileops::start_grouped_transfers(&client, &items, "filemanager-upload")?;
+        self.remember_file_jobs(&ids, "filemanager");
         if let Some(id) = ids.first().copied() {
             let bytes: u64 = items
                 .iter()
@@ -4167,12 +4170,50 @@ impl NautilusView {
         self.open_target_in_new_window(&self.formatted_path(None));
     }
 
+    fn remember_file_jobs(&self, ids: &[u64], origin: &str) {
+        let remote = self.current.borrow().remote.clone();
+        crate::jobs::remember_grouped(
+            &mut self.ctx.store.borrow_mut().job_meta,
+            ids,
+            crate::store::JobMeta {
+                origin: origin.into(),
+                profile: "default".into(),
+                remote,
+                backend: self.ctx.backend_key(),
+                ..Default::default()
+            },
+        );
+        self.ctx.persist();
+    }
+
     fn reload_ops(&self) {
         while let Some(child) = self.ops.first_child() {
             self.ops.remove(&child);
         }
-        let jobs = self.ctx.snapshot.borrow().jobs.clone();
-        let history = self.ctx.store.borrow().job_history.clone();
+        let jobs: Vec<_> = self
+            .ctx
+            .snapshot
+            .borrow()
+            .jobs
+            .iter()
+            .filter(|job| {
+                crate::jobs::is_overview_job(job)
+                    && crate::jobs::origin_matches(&job.origin, "filemanager")
+            })
+            .cloned()
+            .collect();
+        let history: Vec<_> = self
+            .ctx
+            .store
+            .borrow()
+            .job_history
+            .iter()
+            .filter(|job| {
+                crate::jobs::is_overview_job(job)
+                    && crate::jobs::origin_matches(&job.origin, "filemanager")
+            })
+            .cloned()
+            .collect();
         if jobs.is_empty() && history.is_empty() {
             let row = adw::ActionRow::new();
             row.set_title(
@@ -4205,8 +4246,24 @@ impl NautilusView {
         } else {
             job.src.clone()
         };
-        row.set_subtitle(&format!("#{id} · {percent}% · {src}", id = job.id));
+        let bytes = crate::jobs::stats_i64(&job.stats, &["bytes"]);
+        let total = crate::jobs::stats_i64(&job.stats, &["totalBytes", "size"]);
+        row.set_subtitle(&format!(
+            "#{id} · {percent}% · {src} · {} / {}",
+            crate::rclone::format_bytes(bytes),
+            crate::rclone::format_bytes(total),
+            id = job.id
+        ));
         row.set_activatable(true);
+        if live && (job.status == "running" || job.status == "preparing") {
+            let bar = gtk::ProgressBar::new();
+            bar.set_fraction(job.progress.clamp(0.0, 1.0));
+            bar.set_show_text(true);
+            bar.set_text(Some(&format!("{percent}%")));
+            bar.set_valign(gtk::Align::Center);
+            bar.set_width_request(96);
+            row.add_suffix(&bar);
+        }
         {
             let ctx = self.ctx.clone();
             let id = job.id;
@@ -4220,7 +4277,7 @@ impl NautilusView {
         if live && job.status == "running" {
             let stop = gtk::Button::from_icon_name("media-playback-stop-symbolic");
             stop.set_valign(gtk::Align::Center);
-            stop.set_tooltip_text(Some("Stop"));
+            stop.set_tooltip_text(Some(&self.ctx.t_or("flow.quickRun.actions.stop", "Stop")));
             let ctx = self.ctx.clone();
             let id = job.id;
             let view = self.clone();
@@ -4235,7 +4292,11 @@ impl NautilusView {
         } else {
             let dismiss = gtk::Button::from_icon_name("window-close-symbolic");
             dismiss.set_valign(gtk::Align::Center);
-            dismiss.set_tooltip_text(Some("Remove from history"));
+            dismiss.set_tooltip_text(Some(
+                &self
+                    .ctx
+                    .t_or("fileBrowser.operations.removeJob", "Remove from history"),
+            ));
             let ctx = self.ctx.clone();
             let id = job.id;
             let view = self.clone();

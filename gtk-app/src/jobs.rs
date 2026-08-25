@@ -656,6 +656,24 @@ pub fn apply_job_meta(job: &mut JobInfo, meta: Option<&JobMeta>) {
     if job.remote.is_empty() && !meta.remote.is_empty() {
         job.remote = meta.remote.clone();
     }
+    if job.parent_job_id.is_none() {
+        job.parent_job_id = meta.parent_job_id;
+    }
+}
+
+pub fn is_overview_job(job: &JobInfo) -> bool {
+    job.parent_job_id.is_none()
+}
+
+pub fn remember_grouped(map: &mut HashMap<u64, JobMeta>, ids: &[u64], meta: JobMeta) {
+    let parent = ids.first().copied();
+    for (index, id) in ids.iter().enumerate() {
+        let mut item = meta.clone();
+        if index > 0 {
+            item.parent_job_id = parent;
+        }
+        map.insert(*id, item);
+    }
 }
 
 pub fn job_meta_for(
@@ -676,6 +694,7 @@ pub fn job_meta_for(
         backend: backend.to_string(),
         quick_run_id: quick_run_id.to_string(),
         execute_id: uuid::Uuid::new_v4().to_string(),
+        parent_job_id: None,
     }
 }
 
@@ -1074,6 +1093,10 @@ pub fn job_from_status(jobid: u64, status: &Value, stats: Option<&Value>) -> Job
         .and_then(|x| x.as_f64())
         .unwrap_or(0.0);
     let progress = progress_from_stats(&stats_value);
+    let parent_job_id = output
+        .get("parent_job_id")
+        .or_else(|| status.get("parent_job_id"))
+        .and_then(|value| value.as_u64());
     let mut job = JobInfo {
         id: jobid,
         operation,
@@ -1113,6 +1136,7 @@ pub fn job_from_status(jobid: u64, status: &Value, stats: Option<&Value>) -> Job
         progress,
         output,
         completed,
+        parent_job_id,
     };
     if finished {
         apply_cryptcheck_outcome(&mut job);
@@ -1162,6 +1186,7 @@ pub fn preparing_job(
         progress: 0.0,
         output: json!({ "operation": "upload", "origin": "filemanager" }),
         completed: json!([]),
+        parent_job_id: None,
     }
 }
 
@@ -1760,11 +1785,25 @@ mod tests {
                 backend: "extra".into(),
                 quick_run_id: "qr-1".into(),
                 execute_id: "exec-9".into(),
+                parent_job_id: None,
             },
         );
         let mut job = running_job(9, "", "sync", "default");
         apply_job_meta(&mut job, map.get(&9));
         assert_eq!(job.origin, "flow");
+        assert!(is_overview_job(&job));
+        remember_grouped(
+            &mut map,
+            &[9, 10, 11],
+            JobMeta {
+                origin: "filemanager".into(),
+                ..Default::default()
+            },
+        );
+        assert_eq!(map.get(&10).and_then(|m| m.parent_job_id), Some(9));
+        let mut child = running_job(10, "drive", "copy", "default");
+        apply_job_meta(&mut child, map.get(&10));
+        assert!(!is_overview_job(&child));
         assert_eq!(job.profile, "photos");
         assert_eq!(job.remote, "drive");
     }
@@ -1855,6 +1894,7 @@ mod tests {
             progress: 0.0,
             output: json!({}),
             completed: json!([]),
+            parent_job_id: None,
         }
     }
 

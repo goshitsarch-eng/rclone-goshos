@@ -99,6 +99,7 @@ mod tests {
             progress: 0.0,
             output: json!({}),
             completed: json!([]),
+            parent_job_id: None,
         }
     }
 

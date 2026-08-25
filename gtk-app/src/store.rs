@@ -288,6 +288,8 @@ pub struct JobInfo {
     pub output: Value,
     #[serde(default)]
     pub completed: Value,
+    #[serde(default)]
+    pub parent_job_id: Option<u64>,
 }
 
 /// Local start-time metadata for a job id (not persisted).
@@ -299,6 +301,7 @@ pub struct JobMeta {
     pub backend: String,
     pub quick_run_id: String,
     pub execute_id: String,
+    pub parent_job_id: Option<u64>,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
@@ -2057,6 +2060,7 @@ mod tests {
             progress: 0.0,
             output: json!({}),
             completed: json!([]),
+            parent_job_id: None,
         };
         for id in 1..=82u64 {
             store.remember_job(mk(id, "completed"));
@@ -2412,6 +2416,7 @@ mod tests {
             progress: 0.0,
             output: json!({}),
             completed: json!([]),
+            parent_job_id: None,
         });
         store.remote_order = vec!["drive".into(), "photos".into()];
         store
@@ -2450,6 +2455,7 @@ mod tests {
                 progress: 0.0,
                 output: json!({}),
                 completed: json!([]),
+                parent_job_id: None,
             }],
             ..RuntimeSnapshot::default()
         };
@@ -2521,6 +2527,7 @@ mod tests {
                 backend: "local".into(),
                 quick_run_id: String::new(),
                 execute_id: "exec-7".into(),
+                parent_job_id: None,
             },
         );
         store.job_history.push(JobInfo {
@@ -2542,6 +2549,7 @@ mod tests {
             progress: 0.0,
             output: json!({}),
             completed: json!([]),
+            parent_job_id: None,
         });
         store
             .automation_last_run

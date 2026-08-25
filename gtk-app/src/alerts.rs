@@ -190,6 +190,7 @@ mod tests {
             progress: 1.0,
             output: serde_json::json!({}),
             completed: serde_json::json!([]),
+            parent_job_id: None,
         }
     }
 
