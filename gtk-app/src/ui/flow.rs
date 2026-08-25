@@ -1180,7 +1180,7 @@ impl FlowView {
         let jobs: Vec<_> = snap
             .jobs
             .iter()
-            .filter(|j| j.remote == name)
+            .filter(|j| j.remote == name && crate::jobs::is_overview_job(j))
             .cloned()
             .collect();
         if jobs.is_empty() {

@@ -1729,7 +1729,7 @@ impl Dashboard {
         let remote_jobs: Vec<_> = snap
             .jobs
             .iter()
-            .filter(|j| j.remote == name)
+            .filter(|j| j.remote == name && crate::jobs::is_overview_job(j))
             .cloned()
             .collect();
         if remote_jobs.is_empty() {
@@ -3342,7 +3342,10 @@ impl Dashboard {
             }
         }
         check_items.truncate(40);
-        if rows.is_empty() && check_items.is_empty() {
+        let has_live_job = jobs
+            .iter()
+            .any(|job| crate::jobs::job_is_running(job) || crate::jobs::job_is_pending(job));
+        if rows.is_empty() && check_items.is_empty() && !has_live_job {
             return;
         }
         let title = if jobs

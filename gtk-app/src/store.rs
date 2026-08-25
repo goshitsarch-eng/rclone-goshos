@@ -303,6 +303,8 @@ pub struct JobMeta {
     pub execute_id: String,
     pub parent_job_id: Option<u64>,
     pub target: String,
+    pub group: String,
+    pub transfer_snapshot: Value,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
@@ -2530,6 +2532,7 @@ mod tests {
                 execute_id: "exec-7".into(),
                 parent_job_id: None,
                 target: String::new(),
+                ..Default::default()
             },
         );
         store.job_history.push(JobInfo {

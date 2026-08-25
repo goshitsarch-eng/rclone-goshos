@@ -1446,7 +1446,12 @@ impl NautilusView {
                 let transfers = crate::dnd::transfer_items(items, &dest, move_items);
                 match crate::fileops::start_grouped_transfers(&client, &transfers, "filemanager") {
                     Ok((group, ids)) => {
-                        self.remember_file_jobs(&ids, "filemanager");
+                        self.remember_file_jobs_ex(
+                            &ids,
+                            "filemanager",
+                            &group,
+                            crate::jobs::transfer_snapshot_from_items(&transfers),
+                        );
                         for item in &transfers {
                             self.push_undo(item.file_op().encode());
                         }
@@ -2889,8 +2894,13 @@ impl NautilusView {
             let _ = client.mkdir(&fs, &path);
         }
         match crate::fileops::start_grouped_transfers(&client, &items, "filemanager-upload") {
-            Ok((_, ids)) => {
-                self.remember_file_jobs(&ids, "filemanager");
+            Ok((group, ids)) => {
+                self.remember_file_jobs_ex(
+                    &ids,
+                    "filemanager",
+                    &group,
+                    crate::jobs::transfer_snapshot_from_items(&items),
+                );
                 if let Some(id) = ids.first().copied() {
                     let bytes: u64 = items
                         .iter()
@@ -3434,7 +3444,12 @@ impl NautilusView {
             .collect();
         match crate::fileops::start_grouped_transfers(&client, &transfers, "filemanager") {
             Ok((group, ids)) => {
-                self.remember_file_jobs(&ids, "filemanager");
+                self.remember_file_jobs_ex(
+                    &ids,
+                    "filemanager",
+                    &group,
+                    crate::jobs::transfer_snapshot_from_items(&transfers),
+                );
                 for item in &transfers {
                     self.push_undo(item.file_op().encode());
                 }
@@ -4311,6 +4326,16 @@ impl NautilusView {
     }
 
     fn remember_file_jobs(&self, ids: &[u64], origin: &str) {
+        self.remember_file_jobs_ex(ids, origin, "", serde_json::json!([]));
+    }
+
+    fn remember_file_jobs_ex(
+        &self,
+        ids: &[u64],
+        origin: &str,
+        group: &str,
+        snapshot: serde_json::Value,
+    ) {
         let remote = self.current.borrow().remote.clone();
         crate::jobs::remember_grouped(
             &mut self.ctx.store.borrow_mut().job_meta,
@@ -4320,6 +4345,8 @@ impl NautilusView {
                 profile: "default".into(),
                 remote,
                 backend: self.ctx.backend_key(),
+                group: group.into(),
+                transfer_snapshot: snapshot,
                 ..Default::default()
             },
         );

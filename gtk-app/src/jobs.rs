@@ -835,6 +835,9 @@ pub fn apply_job_meta(job: &mut JobInfo, meta: Option<&JobMeta>) {
     if job.parent_job_id.is_none() {
         job.parent_job_id = meta.parent_job_id;
     }
+    if !meta.group.is_empty() && (job.group.is_empty() || job.group.starts_with("job/")) {
+        job.group = meta.group.clone();
+    }
 }
 
 pub fn is_overview_job(job: &JobInfo) -> bool {
@@ -849,6 +852,185 @@ pub fn remember_grouped(map: &mut HashMap<u64, JobMeta>, ids: &[u64], meta: JobM
             item.parent_job_id = parent;
         }
         map.insert(*id, item);
+    }
+}
+
+pub fn transfer_snapshot_from_items(items: &[crate::fileops::TransferItem]) -> Value {
+    Value::Array(
+        items
+            .iter()
+            .map(|item| {
+                let size = std::fs::metadata(&item.src).map(|m| m.len()).unwrap_or(0);
+                let name = item
+                    .src
+                    .rsplit(['/', '\\'])
+                    .next()
+                    .unwrap_or(item.src.as_str());
+                json!({
+                    "name": name,
+                    "src": item.src,
+                    "dst": item.dst,
+                    "size": size,
+                    "bytes": 0,
+                    "percentage": 0
+                })
+            })
+            .collect(),
+    )
+}
+
+fn transfer_list_empty(value: &Value) -> bool {
+    value.as_array().map(|arr| arr.is_empty()).unwrap_or(true)
+}
+
+fn child_finished(status: &str) -> bool {
+    matches!(status, "completed" | "failed")
+}
+
+/// Fill empty `transferring` / `completed` lists on grouped overview jobs from
+/// the start-time snapshot and child job statuses (rclone 1.60 `copyfile` jobs
+/// often omit per-file `core/stats` transferring rows).
+pub fn hydrate_grouped_transfers(jobs: &mut [JobInfo], meta: &HashMap<u64, JobMeta>) {
+    let mut children: HashMap<u64, Vec<usize>> = HashMap::new();
+    for (idx, job) in jobs.iter().enumerate() {
+        if let Some(parent) = job.parent_job_id {
+            children.entry(parent).or_default().push(idx);
+        }
+    }
+    let parents: Vec<usize> = jobs
+        .iter()
+        .enumerate()
+        .filter(|(_, job)| job.parent_job_id.is_none())
+        .map(|(idx, _)| idx)
+        .collect();
+    for parent_idx in parents {
+        let parent_id = jobs[parent_idx].id;
+        let empty_active = transfer_list_empty(&jobs[parent_idx].transferring);
+        let empty_done = transfer_list_empty(&jobs[parent_idx].completed);
+        if !empty_active && !empty_done {
+            continue;
+        }
+        let snapshot = meta
+            .get(&parent_id)
+            .map(|item| item.transfer_snapshot.clone())
+            .unwrap_or(json!([]));
+        let child_idxs = children.get(&parent_id).cloned().unwrap_or_default();
+        if let Some(arr) = snapshot.as_array() {
+            if !arr.is_empty() {
+                let parent_done = child_finished(&jobs[parent_idx].status);
+                let children_done = !child_idxs.is_empty()
+                    && child_idxs.len() >= arr.len()
+                    && child_idxs
+                        .iter()
+                        .all(|&idx| child_finished(&jobs[idx].status));
+                let all_done = parent_done || children_done;
+                let mut transferring = Vec::new();
+                let mut completed = Vec::new();
+                for item in arr {
+                    let src = item
+                        .get("src")
+                        .or_else(|| item.get("name"))
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("");
+                    let matching = child_idxs.iter().copied().find(|&idx| {
+                        jobs[idx].src == src
+                            || jobs[idx].src.ends_with(src)
+                            || (!src.is_empty() && src.ends_with(&jobs[idx].src))
+                    });
+                    let size = item.get("size").and_then(|v| v.as_u64()).unwrap_or(0);
+                    let (done, bytes) = if let Some(idx) = matching {
+                        let done = child_finished(&jobs[idx].status);
+                        let bytes = jobs[idx]
+                            .stats
+                            .get("bytes")
+                            .and_then(|v| v.as_u64())
+                            .unwrap_or(if done { size } else { 0 });
+                        (done, bytes)
+                    } else {
+                        (all_done, if all_done { size } else { 0 })
+                    };
+                    let mut row = item.clone();
+                    if let Some(obj) = row.as_object_mut() {
+                        obj.insert("bytes".into(), json!(bytes));
+                        obj.insert("percentage".into(), json!(if done { 100 } else { 0 }));
+                    }
+                    if done {
+                        completed.push(row);
+                    } else {
+                        transferring.push(row);
+                    }
+                }
+                apply_hydrated_rows(
+                    &mut jobs[parent_idx],
+                    empty_active,
+                    empty_done,
+                    transferring,
+                    completed,
+                );
+                continue;
+            }
+        }
+        if child_idxs.is_empty() {
+            continue;
+        }
+        let mut transferring = Vec::new();
+        let mut completed = Vec::new();
+        for idx in child_idxs {
+            let size = jobs[idx]
+                .stats
+                .get("totalBytes")
+                .or_else(|| jobs[idx].stats.get("size"))
+                .and_then(|v| v.as_u64())
+                .unwrap_or(0);
+            let bytes = jobs[idx]
+                .stats
+                .get("bytes")
+                .and_then(|v| v.as_u64())
+                .unwrap_or(0);
+            let row = json!({
+                "name": jobs[idx].src,
+                "src": jobs[idx].src,
+                "dst": jobs[idx].dst,
+                "size": size,
+                "bytes": bytes,
+                "percentage": if child_finished(&jobs[idx].status) { 100 } else { 0 }
+            });
+            if child_finished(&jobs[idx].status) {
+                completed.push(row);
+            } else {
+                transferring.push(row);
+            }
+        }
+        apply_hydrated_rows(
+            &mut jobs[parent_idx],
+            empty_active,
+            empty_done,
+            transferring,
+            completed,
+        );
+    }
+}
+
+fn apply_hydrated_rows(
+    job: &mut JobInfo,
+    empty_active: bool,
+    empty_done: bool,
+    transferring: Vec<Value>,
+    completed: Vec<Value>,
+) {
+    if empty_active {
+        job.transferring = Value::Array(transferring);
+    }
+    if empty_done {
+        job.completed = Value::Array(completed);
+    }
+    if let Some(obj) = job.stats.as_object_mut() {
+        if empty_active {
+            obj.insert("transferring".into(), job.transferring.clone());
+        }
+        if empty_done {
+            obj.insert("completed".into(), job.completed.clone());
+        }
     }
 }
 
@@ -872,6 +1054,8 @@ pub fn job_meta_for(
         execute_id: uuid::Uuid::new_v4().to_string(),
         parent_job_id: None,
         target: String::new(),
+        group: String::new(),
+        transfer_snapshot: json!([]),
     }
 }
 
@@ -2173,6 +2357,7 @@ mod tests {
                 execute_id: "exec-9".into(),
                 parent_job_id: None,
                 target: String::new(),
+                ..Default::default()
             },
         );
         let mut job = running_job(9, "", "sync", "default");
@@ -2630,6 +2815,42 @@ mod tests {
             Some(&json!({ "preparing": true, "bytes": 0 })),
         );
         assert_eq!(from_stats.status, "preparing");
+    }
+
+    #[test]
+    fn hydrates_grouped_transfer_rows_from_snapshot_and_children() {
+        let snapshot = json!([
+            { "name": "a.txt", "src": "/tmp/a.txt", "dst": "Inbox/a.txt", "size": 4, "bytes": 0 },
+            { "name": "b.txt", "src": "/tmp/b.txt", "dst": "Inbox/b.txt", "size": 4, "bytes": 0 }
+        ]);
+        let mut map = HashMap::new();
+        remember_grouped(
+            &mut map,
+            &[20, 21],
+            JobMeta {
+                origin: "filemanager".into(),
+                group: "filemanager-upload/abc".into(),
+                transfer_snapshot: snapshot,
+                ..Default::default()
+            },
+        );
+        let mut parent = preparing_job(20, "testdrive", "/tmp/a.txt", "Inbox", 2, 8);
+        parent.transferring = json!([]);
+        parent.completed = json!([]);
+        let mut child = running_job(21, "testdrive", "upload", "default");
+        child.src = "/tmp/b.txt".into();
+        child.dst = "Inbox/b.txt".into();
+        child.status = "completed".into();
+        child.parent_job_id = Some(20);
+        let mut jobs = vec![parent, child];
+        apply_job_meta(&mut jobs[0], map.get(&20));
+        apply_job_meta(&mut jobs[1], map.get(&21));
+        hydrate_grouped_transfers(&mut jobs, &map);
+        assert_eq!(jobs[0].transferring.as_array().unwrap().len(), 1);
+        assert_eq!(jobs[0].completed.as_array().unwrap().len(), 1);
+        assert_eq!(jobs[0].completed[0]["name"], "b.txt");
+        assert_eq!(jobs[0].transferring[0]["name"], "a.txt");
+        assert_eq!(jobs[0].group, "filemanager-upload/abc");
     }
 
     #[test]

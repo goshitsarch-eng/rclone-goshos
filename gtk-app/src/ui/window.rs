@@ -95,49 +95,66 @@ fn upload_send_to(ctx: &AppCtx, send: &crate::platform::SendToArgs) {
         return;
     };
     let dest_fs = crate::rclone::remote_fs(&send.remote, &send.path);
-    let mut ids = Vec::new();
-    for file in &send.files {
-        let name = file
-            .file_name()
-            .and_then(|n| n.to_str())
-            .unwrap_or("upload");
-        let dest = if send.path.is_empty() {
-            name.to_string()
-        } else {
-            format!("{}/{}", send.path.trim_end_matches('/'), name)
-        };
-        match crate::jobs::start_request(
-            &client,
-            &crate::jobs::JobRequest::Async {
-                endpoint: "operations/copyfile",
-                params: serde_json::json!({
-                    "srcFs": "/",
-                    "srcRemote": file.to_string_lossy(),
-                    "dstFs": dest_fs,
-                    "dstRemote": dest,
-                    "_group": format!("send-to-{}", send.remote),
-                }),
-            },
-        ) {
-            Ok(id) => {
-                if let Some(parsed) = crate::jobs::parse_started_ids(&id).first() {
-                    ids.push(*parsed);
-                }
-            }
-            Err(e) => log::error!("Send-to failed for {}: {e}", file.display()),
+    let items = match crate::fileops::collect_local_upload_items(&send.files, &dest_fs, &send.path)
+    {
+        Ok(items) => items,
+        Err(e) => {
+            log::error!("Send-to collect failed: {e}");
+            return;
         }
+    };
+    if items.is_empty() {
+        return;
     }
-    crate::jobs::remember_grouped(
-        &mut ctx.store.borrow_mut().job_meta,
-        &ids,
-        crate::store::JobMeta {
-            origin: "filemanager".into(),
-            profile: "default".into(),
-            remote: send.remote.clone(),
-            backend: ctx.backend_key(),
-            ..Default::default()
-        },
-    );
+    for (fs, path) in crate::fileops::upload_dest_dirs(&items) {
+        let _ = client.mkdir(&fs, &path);
+    }
+    match crate::fileops::start_grouped_transfers(&client, &items, "send-to") {
+        Ok((group, ids)) => {
+            crate::jobs::remember_grouped(
+                &mut ctx.store.borrow_mut().job_meta,
+                &ids,
+                crate::store::JobMeta {
+                    origin: "filemanager".into(),
+                    profile: "default".into(),
+                    remote: send.remote.clone(),
+                    backend: ctx.backend_key(),
+                    group,
+                    transfer_snapshot: crate::jobs::transfer_snapshot_from_items(&items),
+                    ..Default::default()
+                },
+            );
+            if let Some(id) = ids.first().copied() {
+                let bytes: u64 = items
+                    .iter()
+                    .map(|item| std::fs::metadata(&item.src).map(|m| m.len()).unwrap_or(0))
+                    .sum();
+                let preparing = crate::jobs::preparing_job(
+                    id,
+                    &send.remote,
+                    &items
+                        .first()
+                        .map(|item| item.src.clone())
+                        .unwrap_or_default(),
+                    &send.path,
+                    items.len() as u64,
+                    bytes,
+                );
+                ctx.store.borrow_mut().remember_job(preparing);
+                ctx.store.borrow_mut().update_job_stats(
+                    id,
+                    crate::jobs::preparing_progress_stats(
+                        0,
+                        bytes,
+                        0,
+                        items.len() as u64,
+                        crate::jobs::transfer_snapshot_from_items(&items),
+                    ),
+                );
+            }
+        }
+        Err(e) => log::error!("Send-to failed: {e}"),
+    }
     ctx.request_browse(&send.remote, &send.path);
     ctx.request_show();
     ctx.refresh_runtime();

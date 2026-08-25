@@ -2574,6 +2574,10 @@ pub fn backends(parent: &impl IsA<gtk::Widget>, ctx: AppCtx) {
                 let client =
                     crate::rclone::RcClient::new(&backend.host, backend.port).with_auth(user, pass);
                 let msg = if client.ping() {
+                    if let Ok(info) = client.version_info() {
+                        let identity = crate::rclone::backend_identity(&info);
+                        ctx.remember_backend_identity(&backend.name, &identity);
+                    }
                     format!(
                         "{} — {}",
                         ctx.t_or("modals.backend.status.connected", "Connected"),
@@ -2870,6 +2874,7 @@ fn backend_editor(
                 pass: pass.text().to_string(),
                 config_path: config_path.text().to_string(),
                 config_password: config_pass.text().to_string(),
+                ..Default::default()
             };
             if entry.name.is_empty() || entry.host.is_empty() {
                 return;
@@ -6347,9 +6352,21 @@ fn append_transfer_rows(
             "No completed transfers",
         )
     };
+    let empty_hint = if active {
+        ctx.t_or(
+            "shared.transferActivity.empty.activeHint",
+            "Transfers will appear here when an operation starts",
+        )
+    } else {
+        ctx.t_or(
+            "shared.transferActivity.empty.recentHint",
+            "Completed transfers will appear here when jobs finish",
+        )
+    };
     let Some(arr) = items else {
         let row = adw::ActionRow::new();
         row.set_title(&empty_title);
+        row.set_subtitle(&empty_hint);
         list.append(&row);
         return;
     };
@@ -6367,6 +6384,7 @@ fn append_transfer_rows(
     if shown == 0 {
         let row = adw::ActionRow::new();
         row.set_title(&empty_title);
+        row.set_subtitle(&empty_hint);
         list.append(&row);
     }
 }
@@ -9446,6 +9464,7 @@ fn resolve_check_item(ctx: &AppCtx, item: &crate::checks::CheckResult, kind: &st
                     execute_id: uuid::Uuid::new_v4().to_string(),
                     parent_job_id: None,
                     target: item.name.clone(),
+                    ..Default::default()
                 },
             );
             ctx.persist();

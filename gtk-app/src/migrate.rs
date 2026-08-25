@@ -227,6 +227,7 @@ pub fn parse_backend_entry(name: &str, value: &Value) -> Option<BackendEntry> {
         pass: string_field(value, &["pass", "password"]),
         config_path: string_field(value, &["config_path", "configPath"]),
         config_password: string_field(value, &["config_password", "configPassword"]),
+        ..Default::default()
     })
 }
 

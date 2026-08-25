@@ -372,6 +372,42 @@ impl AppCtx {
         crate::layout::backend_key(&self.settings.borrow().core.active_backend)
     }
 
+    /// OS of the active extra RC backend, or this process (`linux` / `windows` / `macos`).
+    pub fn engine_os(&self) -> String {
+        let active = self.settings.borrow().core.active_backend.clone();
+        if !active.is_empty() {
+            if let Some(os) = self
+                .settings
+                .borrow()
+                .core
+                .extra_backends
+                .iter()
+                .find(|backend| backend.name == active)
+                .map(|backend| backend.os.clone())
+            {
+                if !os.is_empty() && os != "unknown" {
+                    return os;
+                }
+            }
+        }
+        std::env::consts::OS.to_string()
+    }
+
+    pub fn remember_backend_identity(&self, name: &str, identity: &crate::rclone::BackendIdentity) {
+        if let Some(entry) = self
+            .settings
+            .borrow_mut()
+            .core
+            .extra_backends
+            .iter_mut()
+            .find(|backend| backend.name == name)
+        {
+            entry.os = identity.os.clone();
+            entry.arch = identity.arch.clone();
+        }
+        self.persist();
+    }
+
     pub fn apply_remote_layout(&self) {
         let key = self.backend_key();
         let layout =
@@ -568,7 +604,7 @@ impl AppCtx {
         let stats = client.stats(None).unwrap_or(serde_json::json!({}));
         let disks = client
             .local_disks()
-            .unwrap_or_else(|_| local_fallback_disks());
+            .unwrap_or_else(|_| local_fallback_disks(&self.engine_os()));
         let hidden = self.store.borrow().hidden_remotes.clone();
         let known: Vec<u64> = self.store.borrow().job_meta.keys().copied().collect();
         let mut jobs = crate::jobs::merge_preparing_jobs(
@@ -580,6 +616,7 @@ impl AppCtx {
             for job in &mut jobs {
                 crate::jobs::apply_job_meta(job, registry.get(&job.id));
             }
+            crate::jobs::hydrate_grouped_transfers(&mut jobs, &registry);
         }
         let remotes = crate::store::build_remote_infos(&dump, &mounts, &serves, &jobs, &hidden);
         let previous = self.snapshot.borrow().jobs.clone();
@@ -964,8 +1001,12 @@ fn emit_runtime_alerts(
     }
 }
 
-fn local_fallback_disks() -> Vec<String> {
-    let mut disks = vec!["/".to_string()];
+fn local_fallback_disks(engine_os: &str) -> Vec<String> {
+    let mut disks = if engine_os.eq_ignore_ascii_case("windows") || cfg!(windows) {
+        vec!["C:\\".to_string()]
+    } else {
+        vec!["/".to_string()]
+    };
     if let Some(home) = dirs::home_dir() {
         disks.push(home.to_string_lossy().into_owned());
     }

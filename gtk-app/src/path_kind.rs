@@ -30,12 +30,30 @@ pub fn expand_user(path: &str) -> String {
     path.to_string()
 }
 
+pub fn is_windows_local_path(path: &str) -> bool {
+    let bytes = path.trim().as_bytes();
+    if bytes.len() < 2 || !bytes[0].is_ascii_alphabetic() || bytes[1] != b':' {
+        return false;
+    }
+    bytes.len() == 2 || bytes[2] == b'\\' || bytes[2] == b'/'
+}
+
+pub fn is_unc_path(path: &str) -> bool {
+    let trimmed = path.trim();
+    trimmed.starts_with("\\\\") || trimmed.starts_with("//")
+}
+
 pub fn infer_path_kind(raw: &str, current_remote: &str) -> PathKind {
     let trimmed = raw.trim();
     if trimmed.is_empty() {
         return PathKind::CurrentRemote;
     }
-    if trimmed.starts_with('/') || trimmed.starts_with('~') || trimmed == "local" {
+    if trimmed.starts_with('/')
+        || trimmed.starts_with('~')
+        || trimmed == "local"
+        || is_windows_local_path(trimmed)
+        || is_unc_path(trimmed)
+    {
         return PathKind::Local;
     }
     if !trimmed.contains(':') {
@@ -198,6 +216,13 @@ mod tests {
             infer_path_kind("photos:Inbox", "drive"),
             PathKind::OtherRemote
         );
+        assert_eq!(infer_path_kind(r"C:\Users\me", "drive"), PathKind::Local);
+        assert_eq!(infer_path_kind("D:/data", "drive"), PathKind::Local);
+        assert_eq!(infer_path_kind("E:", "drive"), PathKind::Local);
+        assert_eq!(infer_path_kind(r"\\nas\share", "drive"), PathKind::Local);
+        assert_eq!(infer_path_kind("C:Photos", "drive"), PathKind::OtherRemote);
+        assert!(is_windows_local_path("c:/tmp"));
+        assert!(!is_windows_local_path("drive:Photos"));
     }
 
     #[test]
@@ -206,6 +231,7 @@ mod tests {
         assert_eq!(resolve_job_path("drive:Photos", "drive"), "drive:Photos");
         assert_eq!(resolve_job_path("photos:Inbox", "drive"), "photos:Inbox");
         assert_eq!(resolve_job_path("/tmp/out", "drive"), "/tmp/out");
+        assert_eq!(resolve_job_path(r"C:\out", "drive"), r"C:\out");
         assert!(resolve_job_path("~", "drive").starts_with('/'));
     }
 
