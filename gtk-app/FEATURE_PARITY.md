@@ -410,7 +410,7 @@ This client is the GTK 4 + libadwaita rewrite of the Angular/Tauri desktop UI. I
 - Backends editor can Test connection before Save
 - General remote activity has Stop / Delete; General can create a Quick Run for that remote
 - Operations dry-run / resync toggles persist on the selected profile
-- Flow overview groups Quick Runs with remote filter chips
+- Flow overview groups Quick Runs with remote filter chips (includes remotes that have no Quick Runs yet; those chips open remote detail)
 - Flow remote detail matches Angular general-detail: disk-usage bar + retry, transfer/check rows, jobs with stop/delete, automations with pause/resume and folder-open, QR Start/Stop/Edit, configuration shortcuts, and a settings panel from `config/dump`
 - Flow Quick Run detail shows a flattened configuration panel (`flow.quickRun.detail.configuration`)
 - Dashboard remote settings include rclone dump keys plus saved profile flags

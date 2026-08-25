@@ -165,54 +165,67 @@ impl FlowView {
             })
             .collect();
 
-        if filtered.is_empty() && remote_filter.is_none() {
-            let empty = adw::StatusPage::new();
-            empty.set_icon_name(Some("media-playlist-consecutive-symbolic"));
-            empty.set_title(&self.ctx.t_or("flow.quickRun.title", "No quick runs"));
-            empty.set_description(Some(&self.ctx.t_or(
-                "flow.empty.description",
-                "Create a reusable rclone operation with cron, watcher, or autostart.",
-            )));
-            self.sidebar.append(&adw::ActionRow::new());
-            self.content.append(&empty);
-            return;
-        }
-
-        for qr in &filtered {
-            let row = adw::ActionRow::new();
-            row.set_title(&qr.name);
-            let mut badges = vec![qr.operation_type.as_str().to_string()];
-            if qr.config.app.cron_enabled {
-                badges.push("cron".into());
-            }
-            if qr.config.app.watch_enabled {
-                badges.push("watch".into());
-            }
-            if qr.config.app.auto_start {
-                badges.push("autostart".into());
-            }
-            row.set_subtitle(&format!("{} · {}", qr.remote_name, badges.join(" · ")));
-            let view = self.clone();
-            let id = qr.id.clone();
-            row.connect_activated(move |_| {
-                *view.ctx.selected_quick_run.borrow_mut() = Some(id.clone());
-                *view.selected_flow_remote.borrow_mut() = None;
-                view.refresh();
-            });
-            self.sidebar.append(&row);
-        }
-
         if let Some(id) = self.ctx.selected_quick_run.borrow().clone() {
-            if let Some(qr) = filtered.iter().find(|q| q.id == id).cloned() {
+            if let Some(qr) = self
+                .ctx
+                .store
+                .borrow()
+                .quick_runs
+                .iter()
+                .find(|q| q.id == id)
+                .cloned()
+            {
+                for item in &filtered {
+                    self.append_sidebar_quick_run(item);
+                }
+                if filtered.iter().all(|item| item.id != qr.id) {
+                    self.append_sidebar_quick_run(&qr);
+                }
                 self.fill_detail(&qr);
                 return;
             }
         }
         if let Some(remote) = self.selected_flow_remote.borrow().clone() {
+            for item in &filtered {
+                self.append_sidebar_quick_run(item);
+            }
             self.fill_remote_detail(&remote);
             return;
         }
+        if filtered.is_empty() && remote_filter.is_none() {
+            self.sidebar.append(&adw::ActionRow::new());
+            self.fill_overview(&[]);
+            return;
+        }
+
+        for qr in &filtered {
+            self.append_sidebar_quick_run(qr);
+        }
         self.fill_overview(&filtered);
+    }
+
+    fn append_sidebar_quick_run(&self, qr: &QuickRun) {
+        let row = adw::ActionRow::new();
+        row.set_title(&qr.name);
+        let mut badges = vec![qr.operation_type.as_str().to_string()];
+        if qr.config.app.cron_enabled {
+            badges.push("cron".into());
+        }
+        if qr.config.app.watch_enabled {
+            badges.push("watch".into());
+        }
+        if qr.config.app.auto_start {
+            badges.push("autostart".into());
+        }
+        row.set_subtitle(&format!("{} · {}", qr.remote_name, badges.join(" · ")));
+        let view = self.clone();
+        let id = qr.id.clone();
+        row.connect_activated(move |_| {
+            *view.ctx.selected_quick_run.borrow_mut() = Some(id.clone());
+            *view.selected_flow_remote.borrow_mut() = None;
+            view.refresh();
+        });
+        self.sidebar.append(&row);
     }
 
     fn fill_overview(&self, runs: &[QuickRun]) {
@@ -235,11 +248,17 @@ impl FlowView {
                 .map(|qr| qr.remote_name.clone())
                 .filter(|name| !name.is_empty())
                 .collect();
+            names.extend(
+                snap.remotes
+                    .iter()
+                    .map(|remote| remote.name.clone())
+                    .filter(|name| !name.is_empty()),
+            );
             names.sort();
             names.dedup();
             names
         };
-        if remotes.len() > 1 {
+        if !remotes.is_empty() {
             let chips = gtk::Box::new(gtk::Orientation::Horizontal, 6);
             chips.add_css_class("linked");
             let selected = self.remote_filter.borrow().clone();
@@ -263,8 +282,19 @@ impl FlowView {
                     let view = self.clone();
                     let remote = remote.clone();
                     btn.connect_clicked(move |_| {
-                        *view.remote_filter.borrow_mut() = Some(remote.clone());
-                        view.refresh();
+                        let has_runs = view
+                            .ctx
+                            .store
+                            .borrow()
+                            .quick_runs
+                            .iter()
+                            .any(|qr| qr.remote_name == remote);
+                        if has_runs {
+                            *view.remote_filter.borrow_mut() = Some(remote.clone());
+                            view.refresh();
+                        } else {
+                            view.open_remote_detail(&remote);
+                        }
                     });
                 }
                 chips.append(&btn);
@@ -316,6 +346,15 @@ impl FlowView {
                 "quickRuns" => {
                     let list = gtk::ListBox::new();
                     list.add_css_class("boxed-list");
+                    if runs.is_empty() {
+                        let row = adw::ActionRow::new();
+                        row.set_title(&self.ctx.t_or("dashboard.quickRuns.empty", "No quick runs"));
+                        row.set_subtitle(&self.ctx.t_or(
+                            "flow.empty.description",
+                            "Create a reusable rclone operation with cron, watcher, or autostart.",
+                        ));
+                        list.append(&row);
+                    }
                     for qr in runs {
                         let row = adw::ActionRow::new();
                         row.set_title(&qr.name);
