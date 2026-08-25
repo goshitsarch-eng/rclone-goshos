@@ -1,4 +1,5 @@
 mod action_order;
+mod alerts;
 mod automation;
 mod backup;
 mod connection;
@@ -28,6 +29,7 @@ mod settings;
 mod smtp;
 mod store;
 mod syntax;
+mod transfers;
 mod ui;
 mod updater;
 mod watch;

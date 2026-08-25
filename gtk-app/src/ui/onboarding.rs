@@ -88,6 +88,10 @@ fn page_features() -> adw::NavigationPage {
 }
 
 fn page_install(ctx: &AppCtx) -> adw::NavigationPage {
+    let box_ = gtk::Box::new(gtk::Orientation::Vertical, 12);
+    box_.set_margin_top(24);
+    box_.set_margin_start(24);
+    box_.set_margin_end(24);
     let status = adw::StatusPage::new();
     let exists = rclone_exists(&ctx.settings.borrow().core.rclone_binary);
     if exists {
@@ -98,18 +102,65 @@ fn page_install(ctx: &AppCtx) -> adw::NavigationPage {
         status.set_icon_name(Some("dialog-warning-symbolic"));
         status.set_title("rclone was not found");
         status.set_description(Some(
-            "Install rclone from https://rclone.org/install/ or set a custom binary in Preferences after setup.",
+            "Install rclone from rclone.org or download a binary into ~/.local/bin.",
         ));
+        let install = gtk::Button::with_label("Download rclone");
+        install.add_css_class("suggested-action");
         let open = gtk::LinkButton::builder()
             .uri("https://rclone.org/install/")
             .label("Open install guide")
             .build();
-        status.set_child(Some(&open));
+        let status_btn = status.clone();
+        let ctx_install = ctx.clone();
+        install.connect_clicked(move |_| {
+            let dest = dirs::home_dir()
+                .unwrap_or_else(|| std::path::PathBuf::from("."))
+                .join(".local/bin");
+            match crate::updater::install_rclone_binary(&dest) {
+                Ok(path) => {
+                    ctx_install.settings.borrow_mut().core.rclone_binary =
+                        path.to_string_lossy().into_owned();
+                    ctx_install.persist();
+                    status_btn.set_icon_name(Some("emblem-ok-symbolic"));
+                    status_btn.set_title("rclone is installed");
+                    status_btn.set_description(Some(&format!("Installed to {}", path.display())));
+                }
+                Err(e) => {
+                    status_btn.set_description(Some(&e));
+                }
+            }
+        });
+        let actions = gtk::Box::new(gtk::Orientation::Vertical, 8);
+        actions.append(&install);
+        actions.append(&open);
+        status.set_child(Some(&actions));
     }
+    box_.append(&status);
+    let password = adw::PasswordEntryRow::new();
+    password.set_title("rclone.conf password (optional)");
+    password.set_text(&crate::keyring::resolve_config_password(
+        &ctx.settings.borrow().core.config_password,
+    ));
+    {
+        let ctx = ctx.clone();
+        password.connect_changed(move |row| {
+            let mut settings = ctx.settings.borrow_mut();
+            crate::keyring::persist_password_setting(
+                &mut settings.core.config_password,
+                &row.text(),
+            );
+            drop(settings);
+            ctx.persist();
+        });
+    }
+    let group = adw::PreferencesGroup::new();
+    group.set_title("Config password");
+    group.add(&password);
+    box_.append(&group);
     adw::NavigationPage::builder()
         .tag("install")
         .title("Install rclone")
-        .child(&status)
+        .child(&box_)
         .build()
 }
 

@@ -1,7 +1,8 @@
-//! Encoded file-browser undo/redo operations.
+//! Encoded file-browser undo/redo operations and grouped transfers.
 
 use crate::rclone::RcClient;
 use serde::{Deserialize, Serialize};
+use serde_json::{json, Value};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "op", rename_all = "snake_case")]
@@ -152,6 +153,77 @@ impl FileOp {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TransferItem {
+    pub src_fs: String,
+    pub src: String,
+    pub dst_fs: String,
+    pub dst: String,
+    pub cut: bool,
+}
+
+impl TransferItem {
+    pub fn endpoint(&self) -> &'static str {
+        if self.cut {
+            "operations/movefile"
+        } else {
+            "operations/copyfile"
+        }
+    }
+
+    pub fn file_op(&self) -> FileOp {
+        if self.cut {
+            FileOp::Move {
+                src_fs: self.src_fs.clone(),
+                src: self.src.clone(),
+                dst_fs: self.dst_fs.clone(),
+                dst: self.dst.clone(),
+            }
+        } else {
+            FileOp::Copy {
+                src_fs: self.src_fs.clone(),
+                src: self.src.clone(),
+                dst_fs: self.dst_fs.clone(),
+                dst: self.dst.clone(),
+            }
+        }
+    }
+}
+
+pub fn transfer_group_id(origin: &str) -> String {
+    format!("{origin}/{}", uuid::Uuid::new_v4().simple())
+}
+
+pub fn transfer_payload(item: &TransferItem, group: &str) -> Value {
+    json!({
+        "srcFs": item.src_fs,
+        "srcRemote": item.src,
+        "dstFs": item.dst_fs,
+        "dstRemote": item.dst,
+        "_async": true,
+        "_group": group,
+    })
+}
+
+pub fn start_grouped_transfers(
+    client: &RcClient,
+    items: &[TransferItem],
+    origin: &str,
+) -> Result<(String, Vec<u64>), String> {
+    if items.is_empty() {
+        return Err("nothing to transfer".into());
+    }
+    let group = transfer_group_id(origin);
+    let mut ids = Vec::new();
+    for item in items {
+        let id = client
+            .start_job(item.endpoint(), transfer_payload(item, &group))
+            .map_err(|e| e.to_string())?;
+        ids.push(id);
+    }
+    Ok((group, ids))
+}
+
 pub fn trash_dir() -> std::path::PathBuf {
     crate::settings::AppSettings::cache_dir().join("trash")
 }
@@ -274,5 +346,28 @@ mod tests {
             trash: Some(trash),
         };
         assert!(op.invert().is_some());
+    }
+
+    #[test]
+    fn grouped_transfer_payload_shares_group_and_endpoint() {
+        let item = TransferItem {
+            src_fs: "drive:".into(),
+            src: "Photos/a.jpg".into(),
+            dst_fs: "/".into(),
+            dst: "Inbox/a.jpg".into(),
+            cut: false,
+        };
+        let payload = transfer_payload(&item, "filemanager/abc");
+        assert_eq!(payload["_group"], "filemanager/abc");
+        assert_eq!(payload["_async"], true);
+        assert_eq!(payload["srcRemote"], "Photos/a.jpg");
+        assert_eq!(item.endpoint(), "operations/copyfile");
+        let cut = TransferItem {
+            cut: true,
+            ..item.clone()
+        };
+        assert_eq!(cut.endpoint(), "operations/movefile");
+        assert!(matches!(cut.file_op(), FileOp::Move { .. }));
+        assert!(transfer_group_id("filemanager").starts_with("filemanager/"));
     }
 }

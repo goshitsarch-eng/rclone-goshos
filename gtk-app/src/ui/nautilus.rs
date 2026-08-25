@@ -2130,42 +2130,35 @@ impl NautilusView {
             return;
         };
         let current = self.current.borrow().clone();
-        let mut error = None;
-        for (src_remote, src_path, cut) in items {
-            let name = src_path.rsplit('/').next().unwrap_or(&src_path).to_string();
-            let dst_path = join_remote_path(&current.path, &name);
-            let (src_fs, src_remote_path) = fs_remote(&src_remote, &src_path);
-            let (dst_fs, dst_remote_path) = fs_remote(&current.remote, &dst_path);
-            let result = if cut {
-                client.move_file(&src_fs, &src_remote_path, &dst_fs, &dst_remote_path)
-            } else {
-                client.copy_file(&src_fs, &src_remote_path, &dst_fs, &dst_remote_path)
-            };
-            if let Err(e) = result {
-                error = Some(e.to_string());
-                break;
+        let transfers: Vec<crate::fileops::TransferItem> = items
+            .into_iter()
+            .map(|(src_remote, src_path, cut)| {
+                let name = src_path.rsplit('/').next().unwrap_or(&src_path).to_string();
+                let dst_path = join_remote_path(&current.path, &name);
+                let (src_fs, src_remote_path) = fs_remote(&src_remote, &src_path);
+                let (dst_fs, dst_remote_path) = fs_remote(&current.remote, &dst_path);
+                crate::fileops::TransferItem {
+                    src_fs,
+                    src: src_remote_path,
+                    dst_fs,
+                    dst: dst_remote_path,
+                    cut,
+                }
+            })
+            .collect();
+        match crate::fileops::start_grouped_transfers(&client, &transfers, "filemanager") {
+            Ok((group, ids)) => {
+                for item in &transfers {
+                    self.push_undo(item.file_op().encode());
+                }
+                self.ctx.refresh_runtime();
+                self.reload();
+                self.toast.add_toast(adw::Toast::new(&format!(
+                    "Transfer group {group} · {} job(s)",
+                    ids.len()
+                )));
             }
-            let op = if cut {
-                crate::fileops::FileOp::Move {
-                    src_fs,
-                    src: src_remote_path,
-                    dst_fs,
-                    dst: dst_remote_path,
-                }
-            } else {
-                crate::fileops::FileOp::Copy {
-                    src_fs,
-                    src: src_remote_path,
-                    dst_fs,
-                    dst: dst_remote_path,
-                }
-            };
-            self.push_undo(op.encode());
-        }
-        if let Some(e) = error {
-            self.toast.add_toast(adw::Toast::new(&e));
-        } else {
-            self.reload();
+            Err(e) => self.toast.add_toast(adw::Toast::new(&e)),
         }
     }
 
@@ -2787,9 +2780,27 @@ impl NautilusView {
             return Err("Engine offline".into());
         };
         let current = self.current.borrow().clone();
-        let (fs, remote) = fs_remote(&current.remote, dest_dir);
-        let _ = client.mkdir(&fs, &remote);
-        let mut count = 1;
+        let mut items = Vec::new();
+        self.collect_upload_items(&client, &current.remote, local, dest_dir, &mut items)?;
+        if items.is_empty() {
+            return Ok(0);
+        }
+        let (_, ids) =
+            crate::fileops::start_grouped_transfers(&client, &items, "filemanager-upload")?;
+        self.ctx.refresh_runtime();
+        Ok(ids.len())
+    }
+
+    fn collect_upload_items(
+        &self,
+        client: &crate::rclone::RcClient,
+        remote: &str,
+        local: &std::path::Path,
+        dest_dir: &str,
+        items: &mut Vec<crate::fileops::TransferItem>,
+    ) -> Result<(), String> {
+        let (fs, remote_path) = fs_remote(remote, dest_dir);
+        let _ = client.mkdir(&fs, &remote_path);
         let entries = std::fs::read_dir(local).map_err(|e| e.to_string())?;
         for entry in entries.flatten() {
             let path = entry.path();
@@ -2800,16 +2811,19 @@ impl NautilusView {
                 .to_string();
             let dest = join_remote_path(dest_dir, &name);
             if path.is_dir() {
-                count += self.upload_tree_into(&path, &dest)?;
+                self.collect_upload_items(client, remote, &path, &dest, items)?;
             } else {
-                let (dst_fs, dst_remote) = fs_remote(&current.remote, &dest);
-                client
-                    .copy_file("/", &path.to_string_lossy(), &dst_fs, &dst_remote)
-                    .map_err(|e| e.to_string())?;
-                count += 1;
+                let (dst_fs, dst_remote) = fs_remote(remote, &dest);
+                items.push(crate::fileops::TransferItem {
+                    src_fs: "/".into(),
+                    src: path.to_string_lossy().into_owned(),
+                    dst_fs,
+                    dst: dst_remote,
+                    cut: false,
+                });
             }
         }
-        Ok(count)
+        Ok(())
     }
 
     fn remove_empty_dirs(&self) {

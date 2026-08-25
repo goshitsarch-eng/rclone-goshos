@@ -2703,6 +2703,42 @@ pub fn quick_run_editor(
     group.add(&vfs_profile);
     group.add(&filter_profile);
     group.add(&backend_profile);
+    let dry = adw::SwitchRow::new();
+    dry.set_title(&ctx.t_or("detailShared.jobs.dryRun", "Dry run"));
+    dry.set_active(
+        existing
+            .as_ref()
+            .is_some_and(|qr| crate::jobs::is_dry_run(&qr.config.rclone)),
+    );
+    group.add(&dry);
+    let flags_group = adw::PreferencesGroup::new();
+    flags_group.set_title(&ctx.t_or("flow.quickRun.editor.flags", "Operation flags"));
+    let flag_rows: Rc<RefCell<Vec<(String, adw::EntryRow, String)>>> =
+        Rc::new(RefCell::new(Vec::new()));
+    let initial_op = existing
+        .as_ref()
+        .map(|qr| qr.operation_type)
+        .unwrap_or(OperationType::Sync);
+    let initial_rclone = existing
+        .as_ref()
+        .map(|qr| qr.config.rclone.clone())
+        .unwrap_or(serde_json::json!({}));
+    for flag in crate::flags::static_flags_for(initial_op) {
+        let row = adw::EntryRow::new();
+        row.set_title(&flag.name);
+        if !flag.help.is_empty() {
+            row.set_tooltip_text(Some(&flag.help));
+        }
+        let current = initial_rclone
+            .get(&flag.field_name)
+            .map(|v| v.to_string().trim_matches('"').to_string())
+            .unwrap_or_else(|| flag.default_str.clone());
+        row.set_text(&current);
+        flags_group.add(&row);
+        flag_rows
+            .borrow_mut()
+            .push((flag.field_name, row, flag.type_name));
+    }
     let save = gtk::Button::with_label(&ctx.t_or("common.save", "Save"));
     save.add_css_class("suggested-action");
     {
@@ -2712,6 +2748,8 @@ pub fn quick_run_editor(
         let vfs_profile = vfs_profile.clone();
         let filter_profile = filter_profile.clone();
         let backend_profile = backend_profile.clone();
+        let flag_rows = flag_rows.clone();
+        let dry = dry.clone();
         save.connect_clicked(move |_| {
             let expr = cron.text().to_string();
             if !expr.is_empty() {
@@ -2750,12 +2788,28 @@ pub fn quick_run_editor(
             qr.config.app.filter_profile = filter_profile.text().to_string();
             qr.config.app.backend_profile = backend_profile.text().to_string();
             qr.show_on_tray = tray.is_active();
-            qr.config.rclone = serde_json::json!({
+            let mut rclone = serde_json::json!({
                 "srcFs": src.text().to_string(),
                 "dstFs": dst.text().to_string(),
                 "mountPoint": dst.text().to_string(),
                 "fs": src.text().to_string(),
             });
+            if dry.is_active() {
+                rclone["dryRun"] = serde_json::json!(true);
+            }
+            if let Some(obj) = rclone.as_object_mut() {
+                for (field, row, type_name) in flag_rows.borrow().iter() {
+                    let text = row.text().to_string();
+                    if text.is_empty() {
+                        continue;
+                    }
+                    obj.insert(
+                        field.clone(),
+                        crate::flags::parse_flag_value(type_name, &text),
+                    );
+                }
+            }
+            qr.config.rclone = rclone;
             {
                 let mut store = ctx.store.borrow_mut();
                 if let Some(idx) = store.quick_runs.iter().position(|q| q.id == qr.id) {
@@ -2774,6 +2828,7 @@ pub fn quick_run_editor(
     box_.set_margin_bottom(12);
     box_.append(&group);
     box_.append(&cron_hint);
+    box_.append(&flags_group);
     box_.append(&save);
     dialog.set_child(Some(&box_));
     dialog.present(Some(parent));
@@ -3401,6 +3456,7 @@ pub fn job_detail(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, job_id: u64) {
         let completed = completed.clone();
         let progress = progress.clone();
         let filter = filter.clone();
+        let dialog = dialog.clone();
         move || {
             while let Some(child) = meta.first_child() {
                 meta.remove(&child);
@@ -3519,8 +3575,24 @@ pub fn job_detail(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, job_id: u64) {
                 meta.append(&row);
             }
             let query = filter.text().to_lowercase();
-            append_transfer_rows(&transfers, job.transferring.as_array(), &query, true);
-            append_transfer_rows(&completed, job.completed.as_array(), &query, false);
+            append_transfer_rows(
+                &transfers,
+                job.transferring.as_array(),
+                &query,
+                true,
+                &ctx,
+                &dialog,
+                &job.operation,
+            );
+            append_transfer_rows(
+                &completed,
+                job.completed.as_array(),
+                &query,
+                false,
+                &ctx,
+                &dialog,
+                &job.operation,
+            );
             let checks = job
                 .stats
                 .get("checks")
@@ -3579,6 +3651,9 @@ fn append_transfer_rows(
     items: Option<&Vec<serde_json::Value>>,
     query: &str,
     active: bool,
+    ctx: &AppCtx,
+    parent: &adw::Dialog,
+    job_type: &str,
 ) {
     let empty_title = if active {
         "No active transfers"
@@ -3593,22 +3668,71 @@ fn append_transfer_rows(
     };
     let mut shown = 0;
     for item in arr {
-        let name = item
-            .get("name")
-            .and_then(|x| x.as_str())
-            .unwrap_or("transfer");
-        if !query.is_empty() && !name.to_lowercase().contains(query) {
+        let parsed = crate::transfers::parse_transfer_row(item);
+        if !query.is_empty() && !parsed.name.to_lowercase().contains(query) {
             continue;
         }
         let row = adw::ActionRow::new();
-        row.set_title(name);
-        let pct = item
-            .get("percentage")
-            .or_else(|| item.get("percentageComplete"))
-            .cloned()
-            .unwrap_or(serde_json::json!(0));
-        let size = item.get("size").and_then(|x| x.as_i64()).unwrap_or(0);
-        row.set_subtitle(&format!("{pct}% · {}", crate::rclone::format_bytes(size)));
+        row.set_title(&parsed.name);
+        row.set_subtitle(&format!(
+            "{}% · {}",
+            parsed.percentage,
+            crate::rclone::format_bytes(parsed.size)
+        ));
+        let actions = gtk::Box::new(gtk::Orientation::Horizontal, 4);
+        if let Some((remote, path)) = crate::transfers::browse_for(&parsed.src)
+            .or_else(|| crate::transfers::browse_for(&parsed.dst))
+        {
+            let open = gtk::Button::from_icon_name("folder-open-symbolic");
+            open.set_tooltip_text(Some("Open in Files"));
+            open.set_valign(gtk::Align::Center);
+            let ctx = ctx.clone();
+            let parent = parent.clone();
+            open.connect_clicked(move |_| {
+                ctx.request_browse(&remote, &path);
+                parent.close();
+            });
+            actions.append(&open);
+        }
+        let copy = gtk::Button::from_icon_name("edit-copy-symbolic");
+        copy.set_tooltip_text(Some("Copy path"));
+        copy.set_valign(gtk::Align::Center);
+        let copy_text = if !parsed.dst.is_empty() {
+            parsed.dst.clone()
+        } else {
+            parsed.src.clone()
+        };
+        copy.connect_clicked(move |_| {
+            if let Some(display) = gtk::gdk::Display::default() {
+                display.clipboard().set_text(&copy_text);
+            }
+        });
+        actions.append(&copy);
+        if crate::transfers::can_delete_source(job_type) && !parsed.src.is_empty() {
+            let del = gtk::Button::from_icon_name("user-trash-symbolic");
+            del.set_tooltip_text(Some("Delete source"));
+            del.set_valign(gtk::Align::Center);
+            let ctx = ctx.clone();
+            let parent = parent.clone();
+            let src = parsed.src.clone();
+            del.connect_clicked(move |_| {
+                confirm_delete_path(&parent, ctx.clone(), &src, "Delete source file?");
+            });
+            actions.append(&del);
+        }
+        if crate::transfers::can_delete_dest(job_type, !active) && !parsed.dst.is_empty() {
+            let del = gtk::Button::from_icon_name("edit-delete-symbolic");
+            del.set_tooltip_text(Some("Delete destination"));
+            del.set_valign(gtk::Align::Center);
+            let ctx = ctx.clone();
+            let parent = parent.clone();
+            let dst = parsed.dst.clone();
+            del.connect_clicked(move |_| {
+                confirm_delete_path(&parent, ctx.clone(), &dst, "Delete destination file?");
+            });
+            actions.append(&del);
+        }
+        row.add_suffix(&actions);
         list.append(&row);
         shown += 1;
     }
@@ -3617,6 +3741,28 @@ fn append_transfer_rows(
         row.set_title(empty_title);
         list.append(&row);
     }
+}
+
+fn confirm_delete_path(parent: &adw::Dialog, ctx: AppCtx, path: &str, title: &str) {
+    let alert = adw::AlertDialog::new(Some(title), Some(path));
+    alert.add_response("cancel", "Cancel");
+    alert.add_response("delete", "Delete");
+    alert.set_response_appearance("delete", adw::ResponseAppearance::Destructive);
+    let path = path.to_string();
+    alert.connect_response(None, move |_, response| {
+        if response != "delete" {
+            return;
+        }
+        let Some(client) = ctx.client() else {
+            return;
+        };
+        let (fs, remote) = crate::transfers::fs_and_remote(&path);
+        let _ = client
+            .purge(&fs, &remote)
+            .or_else(|_| client.delete_file(&fs, &remote));
+        ctx.refresh_runtime();
+    });
+    alert.present(Some(parent));
 }
 
 pub fn file_viewer(

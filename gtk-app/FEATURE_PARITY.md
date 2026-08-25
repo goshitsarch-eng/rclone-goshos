@@ -145,6 +145,11 @@ This client is the GTK 4 + libadwaita rewrite of the Angular/Tauri desktop UI. I
 - Properties star toggle and i18n; job detail and quick-run editor titles i18n
 - Preferences Core/Developer/Security titles, plus Flags/Backends/Export/Templates/About/Repair dialog titles
 - Job detail shows start time, duration, origin, backend, and dry-run in the progress line
+- Alert pipeline emits job complete/fail, mount start/stop, serve start/stop, automation start/fail, and newly available updates
+- Files paste and folder upload start as one grouped rclone job (`_group`)
+- Job detail transfer rows: open in Files, copy path, delete source / destination
+- Quick Run editor persists dry-run plus static operation flags
+- Onboarding can download rclone into `~/.local/bin` and store an optional config password
 
 ## Still deepening toward pixel-level Angular parity
 

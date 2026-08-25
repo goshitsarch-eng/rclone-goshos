@@ -133,6 +133,7 @@ impl AppCtx {
 
     pub fn refresh_updates(&self) {
         let settings = self.settings.borrow().clone();
+        let previous = self.updates.borrow().clone();
         let mut pending = crate::updater::PendingUpdates::default();
         if settings.runtime.app_auto_check_updates {
             pending.app = crate::updater::filter_skipped(
@@ -153,6 +154,23 @@ impl AppCtx {
                     &settings.runtime.rclone_skipped_updates,
                 );
             }
+        }
+        if !previous.has_updates() && pending.has_updates() {
+            if let Some(app) = pending.app.as_ref().filter(|u| u.available) {
+                self.store
+                    .borrow_mut()
+                    .record_event(crate::alerts::update_event("app", &app.latest, &app.url));
+            }
+            if let Some(rclone) = pending.rclone.as_ref().filter(|u| u.available) {
+                self.store
+                    .borrow_mut()
+                    .record_event(crate::alerts::update_event(
+                        "rclone",
+                        &rclone.latest,
+                        &rclone.url,
+                    ));
+            }
+            self.persist();
         }
         *self.updates.borrow_mut() = pending;
         *self.last_update_check.borrow_mut() = Some(std::time::Instant::now());
@@ -339,7 +357,10 @@ impl AppCtx {
         let jobs = collect_jobs(&client);
         let remotes = crate::store::build_remote_infos(&dump, &mounts, &serves, &jobs, &hidden);
         let previous = self.snapshot.borrow().jobs.clone();
+        let previous_mounts = self.snapshot.borrow().mounts.clone();
+        let previous_serves = self.snapshot.borrow().serves.clone();
         notify_job_changes(self, &previous, &jobs);
+        emit_runtime_alerts(self, &previous_mounts, &mounts, &previous_serves, &serves);
         let mut snap = self.snapshot.borrow_mut();
         snap.remotes = remotes;
         snap.mounts = mounts;
@@ -451,9 +472,24 @@ impl AppCtx {
                 match crate::automation::fire(&client, &mut store, &record, now) {
                     Ok(id) => {
                         log::info!("automation {} started {id}", record.name);
+                        store.record_event(crate::alerts::automation_event(
+                            &record.name,
+                            &record.remote,
+                            true,
+                            &id,
+                        ));
                         fired = true;
                     }
-                    Err(e) => log::warn!("automation {} failed: {e}", record.name),
+                    Err(e) => {
+                        log::warn!("automation {} failed: {e}", record.name);
+                        store.record_event(crate::alerts::automation_event(
+                            &record.name,
+                            &record.remote,
+                            false,
+                            &e,
+                        ));
+                        fired = true;
+                    }
                 }
             }
         }
@@ -520,23 +556,12 @@ fn notify_job_changes(
     current: &[crate::store::JobInfo],
 ) {
     let mut dirty = false;
+    for event in crate::alerts::job_events(previous, current) {
+        ctx.store.borrow_mut().record_event(event);
+        dirty = true;
+    }
     for job in current {
         let was = previous.iter().find(|j| j.id == job.id);
-        if job.status == "failed" && was.map(|j| j.status.as_str()) != Some("failed") {
-            let mut event = crate::store::AlertEvent::new(
-                crate::store::AlertEventKind::Job,
-                crate::store::AlertSeverity::High,
-                format!("Job #{} failed", job.id),
-                job.error
-                    .clone()
-                    .unwrap_or_else(|| "rclone job failed".into()),
-            );
-            event.origin = job.origin.clone();
-            event.remote = job.remote.clone();
-            event.profile = job.profile.clone();
-            ctx.store.borrow_mut().record_event(event);
-            dirty = true;
-        }
         if job.status != "running" && was.map(|j| j.status.as_str()) != Some(job.status.as_str()) {
             ctx.store.borrow_mut().remember_job(job.clone());
             dirty = true;
@@ -551,6 +576,27 @@ fn notify_job_changes(
             ctx.store.borrow_mut().remember_job(finished);
             dirty = true;
         }
+    }
+    if dirty {
+        ctx.persist();
+    }
+}
+
+fn emit_runtime_alerts(
+    ctx: &AppCtx,
+    previous_mounts: &[crate::rclone::MountedRemote],
+    mounts: &[crate::rclone::MountedRemote],
+    previous_serves: &[crate::rclone::ServeItem],
+    serves: &[crate::rclone::ServeItem],
+) {
+    let mut dirty = false;
+    for event in crate::alerts::mount_events(previous_mounts, mounts) {
+        ctx.store.borrow_mut().record_event(event);
+        dirty = true;
+    }
+    for event in crate::alerts::serve_events(previous_serves, serves) {
+        ctx.store.borrow_mut().record_event(event);
+        dirty = true;
     }
     if dirty {
         ctx.persist();
