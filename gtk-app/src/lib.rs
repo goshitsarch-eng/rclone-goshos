@@ -41,6 +41,7 @@ pub mod syntax;
 pub mod transfers;
 pub mod tray_menu;
 pub mod updater;
+pub mod user_templates;
 pub mod vfs;
 pub mod watch;
 

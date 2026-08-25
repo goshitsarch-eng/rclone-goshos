@@ -40,6 +40,7 @@ mod transfers;
 mod tray_menu;
 mod ui;
 mod updater;
+mod user_templates;
 mod vfs;
 mod watch;
 
@@ -53,6 +54,9 @@ fn main() {
     if let Some(send) = platform::parse_send_to_args(&args) {
         handle_send_to(send);
         return;
+    }
+    if let Some(files) = platform::parse_share_intake_args(&args) {
+        platform::enqueue_share_intake(&files);
     }
     let app = adw::Application::builder().application_id(APP_ID).build();
     app.connect_activate(ui::activate);

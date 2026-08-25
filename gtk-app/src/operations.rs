@@ -206,6 +206,52 @@ impl OperationType {
     }
 }
 
+/// Merge live rclone type lists with the built-in fallback, keeping first-seen order.
+pub fn merge_known_types(live: &[String], fallback: &[&str]) -> Vec<String> {
+    let mut out = Vec::new();
+    let push = |out: &mut Vec<String>, item: &str| {
+        let trimmed = item.trim();
+        if trimmed.is_empty() {
+            return;
+        }
+        if !out
+            .iter()
+            .any(|existing| existing.eq_ignore_ascii_case(trimmed))
+        {
+            out.push(trimmed.to_string());
+        }
+    };
+    for item in live {
+        push(&mut out, item);
+    }
+    for item in fallback {
+        push(&mut out, item);
+    }
+    if out.is_empty() {
+        out.extend(fallback.iter().map(|s| (*s).to_string()));
+    }
+    out
+}
+
+pub fn serve_types_or_default(live: &[String]) -> Vec<String> {
+    merge_known_types(live, &OperationType::SERVE_TYPES)
+}
+
+pub fn mount_types_or_default(live: &[String]) -> Vec<String> {
+    merge_known_types(live, &["mount"])
+}
+
+pub fn combo_names(items: &[String]) -> Vec<&str> {
+    items.iter().map(String::as_str).collect()
+}
+
+pub fn selected_or<'a>(items: &'a [String], idx: u32, fallback: &'a str) -> &'a str {
+    items
+        .get(idx as usize)
+        .map(String::as_str)
+        .unwrap_or(fallback)
+}
+
 impl std::fmt::Display for OperationType {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str(self.as_str())
@@ -432,5 +478,25 @@ mod tests {
         assert_eq!(AppTab::parse("operations"), Some(AppTab::Operations));
         assert_eq!(AppTab::parse("serve"), Some(AppTab::Serve));
         assert_eq!(AppTab::parse("nope"), None);
+    }
+
+    #[test]
+    fn merges_live_types_with_fallback() {
+        let live = vec!["http".into(), "s3".into(), "webdav".into()];
+        let merged = serve_types_or_default(&live);
+        assert_eq!(merged[0], "http");
+        assert!(merged.contains(&"ftp".to_string()));
+        assert_eq!(merged.iter().filter(|s| *s == "s3").count(), 1);
+        assert_eq!(
+            mount_types_or_default(&["cmount".into()]),
+            vec!["cmount", "mount"]
+        );
+        assert_eq!(selected_or(&merged, 0, "http"), "http");
+        assert_eq!(selected_or(&merged, 99, "http"), "http");
+        assert_eq!(combo_names(&merged).len(), merged.len());
+        assert_eq!(
+            serve_types_or_default(&[]).len(),
+            OperationType::SERVE_TYPES.len()
+        );
     }
 }

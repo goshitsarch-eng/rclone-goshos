@@ -238,6 +238,7 @@ pub fn static_flags_for(op: OperationType) -> Vec<FlagOption> {
             bool_flag("differ", "Report all non-matching files."),
             bool_flag("error", "Report all files with errors."),
         ],
+        OperationType::Mount => vec![string_flag("mountType", "Mount type to use.")],
         OperationType::Serve => vec![string_flag("type", "Serve type to use.")],
         OperationType::Archivecreate => vec![
             string_flag("format", "Archive format (zip, tar, tgz, tbz, txz, etc.)"),
@@ -496,6 +497,9 @@ mod tests {
         let merged = merged_flags_for(OperationType::Copy, &blocks);
         assert!(merged.iter().any(|f| f.field_name == "createEmptySrcDirs"));
         assert!(merged.iter().any(|f| f.field_name == "transfers"));
+        assert!(static_flags_for(OperationType::Mount)
+            .iter()
+            .any(|f| f.field_name == "mountType"));
         let filtered = filter_options_for_categories(
             &json!({ "main": { "transfers": 8 }, "vfs": { "CacheMode": "full" } }),
             &blocks,
@@ -553,7 +557,9 @@ mod tests {
         assert!(!static_flags_for(OperationType::Sync).is_empty());
         assert!(!static_flags_for(OperationType::Bisync).is_empty());
         assert!(!static_flags_for(OperationType::Check).is_empty());
-        assert!(static_flags_for(OperationType::Mount).is_empty());
+        assert!(static_flags_for(OperationType::Mount)
+            .iter()
+            .any(|f| f.field_name == "mountType"));
         assert_eq!(flag_category_for_op(OperationType::Mount), Some("mount"));
         assert_eq!(flag_category_for_op(OperationType::Move), Some("copy"));
         assert_eq!(flag_category_for_op(OperationType::Serve), None);

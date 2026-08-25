@@ -633,6 +633,8 @@ pub struct AppStore {
     pub job_history: Vec<JobInfo>,
     #[serde(default)]
     pub automation_paused: Vec<String>,
+    #[serde(default)]
+    pub pending_share_paths: Vec<String>,
 }
 
 impl AppStore {

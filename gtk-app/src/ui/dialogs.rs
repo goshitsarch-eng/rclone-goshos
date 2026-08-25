@@ -3221,13 +3221,28 @@ pub fn start_operation(
         refresh_status(&dst.text());
         dst.connect_changed(move |row| refresh_status(&row.text()));
     }
+    let serve_types = Rc::new(ctx.serve_types());
+    let mount_types = Rc::new(ctx.mount_types());
     let serve = adw::ComboRow::new();
     serve.set_title("Serve type");
-    serve.set_model(Some(&gtk::StringList::new(&OperationType::SERVE_TYPES)));
+    serve.set_model(Some(&gtk::StringList::new(
+        &crate::operations::combo_names(&serve_types),
+    )));
     serve.set_visible(op == OperationType::Serve);
     if let Some(t) = rclone.get("type").and_then(|x| x.as_str()) {
-        if let Some(idx) = OperationType::SERVE_TYPES.iter().position(|s| *s == t) {
+        if let Some(idx) = serve_types.iter().position(|s| s == t) {
             serve.set_selected(idx as u32);
+        }
+    }
+    let mount_type = adw::ComboRow::new();
+    mount_type.set_title("Mount type");
+    mount_type.set_model(Some(&gtk::StringList::new(
+        &crate::operations::combo_names(&mount_types),
+    )));
+    mount_type.set_visible(op == OperationType::Mount);
+    if let Some(t) = rclone.get("mountType").and_then(|x| x.as_str()) {
+        if let Some(idx) = mount_types.iter().position(|s| s == t) {
+            mount_type.set_selected(idx as u32);
         }
     }
     let helper_names = |kind: &str| -> Vec<String> {
@@ -3272,7 +3287,7 @@ pub fn start_operation(
         if let Some(client) = ctx.client() {
             if let Ok(info) = client.options_info() {
                 let blocks = crate::flags::parse_options_info(&info);
-                for serve_type in OperationType::SERVE_TYPES {
+                for serve_type in serve_types.iter() {
                     for flag in crate::flags::collect_serve_flags(&blocks, serve_type) {
                         let row = adw::EntryRow::new();
                         row.set_title(&format!("{serve_type} · {}", flag.name));
@@ -3284,14 +3299,12 @@ pub fn start_operation(
                             .map(|v| v.to_string().trim_matches('"').to_string())
                             .unwrap_or_else(|| flag.default_str.clone());
                         row.set_text(&current);
-                        let selected = OperationType::SERVE_TYPES
-                            .get(serve.selected() as usize)
-                            .copied()
-                            .unwrap_or("http");
+                        let selected =
+                            crate::operations::selected_or(&serve_types, serve.selected(), "http");
                         row.set_visible(serve_type == selected);
                         flags_group.add(&row);
                         serve_flag_rows.borrow_mut().push((
-                            serve_type.to_string(),
+                            serve_type.clone(),
                             flag.field_name,
                             row,
                             flag.type_name,
@@ -3302,11 +3315,9 @@ pub fn start_operation(
         }
         {
             let serve_flag_rows = serve_flag_rows.clone();
+            let serve_types = serve_types.clone();
             serve.connect_selected_notify(move |row| {
-                let selected = OperationType::SERVE_TYPES
-                    .get(row.selected() as usize)
-                    .copied()
-                    .unwrap_or("http");
+                let selected = crate::operations::selected_or(&serve_types, row.selected(), "http");
                 for (serve_type, _, widget, _) in serve_flag_rows.borrow().iter() {
                     widget.set_visible(serve_type == selected);
                 }
@@ -3343,6 +3354,9 @@ pub fn start_operation(
         let src = src.clone();
         let dst = dst.clone();
         let serve = serve.clone();
+        let serve_types = serve_types.clone();
+        let mount_types = mount_types.clone();
+        let mount_type = mount_type.clone();
         let dry = dry.clone();
         let flag_rows = flag_rows.clone();
         let serve_flag_rows = serve_flag_rows.clone();
@@ -3362,10 +3376,21 @@ pub fn start_operation(
             if op == OperationType::Serve {
                 rclone.insert(
                     "type".into(),
-                    serde_json::json!(OperationType::SERVE_TYPES
-                        .get(serve.selected() as usize)
-                        .copied()
-                        .unwrap_or("webdav")),
+                    serde_json::json!(crate::operations::selected_or(
+                        &serve_types,
+                        serve.selected(),
+                        "webdav"
+                    )),
+                );
+            }
+            if op == OperationType::Mount {
+                rclone.insert(
+                    "mountType".into(),
+                    serde_json::json!(crate::operations::selected_or(
+                        &mount_types,
+                        mount_type.selected(),
+                        "mount"
+                    )),
                 );
             }
             if dry.is_active() {
@@ -3380,10 +3405,8 @@ pub fn start_operation(
                     );
                 }
             }
-            let selected_serve = OperationType::SERVE_TYPES
-                .get(serve.selected() as usize)
-                .copied()
-                .unwrap_or("webdav");
+            let selected_serve =
+                crate::operations::selected_or(&serve_types, serve.selected(), "webdav");
             for (serve_type, field, row, type_name) in serve_flag_rows.borrow().iter() {
                 if serve_type != selected_serve {
                     continue;
@@ -3495,6 +3518,7 @@ pub fn start_operation(
         row
     });
     identity.add(&serve);
+    identity.add(&mount_type);
     identity.add(&vfs_row);
     identity.add(&filter_row);
     identity.add(&backend_row);
@@ -3705,16 +3729,32 @@ pub fn quick_run_editor(
         &initial_rclone,
         &live_blocks,
     );
+    let serve_types = Rc::new(ctx.serve_types());
+    let mount_types = Rc::new(ctx.mount_types());
     let serve = adw::ComboRow::new();
     serve.set_title(&ctx.t_or("operation.serve.type", "Serve type"));
-    serve.set_model(Some(&gtk::StringList::new(&OperationType::SERVE_TYPES)));
+    serve.set_model(Some(&gtk::StringList::new(
+        &crate::operations::combo_names(&serve_types),
+    )));
     serve.set_visible(initial_op == OperationType::Serve);
     if let Some(t) = initial_rclone.get("type").and_then(|x| x.as_str()) {
-        if let Some(idx) = OperationType::SERVE_TYPES.iter().position(|s| *s == t) {
+        if let Some(idx) = serve_types.iter().position(|s| s == t) {
             serve.set_selected(idx as u32);
         }
     }
+    let mount_type = adw::ComboRow::new();
+    mount_type.set_title("Mount type");
+    mount_type.set_model(Some(&gtk::StringList::new(
+        &crate::operations::combo_names(&mount_types),
+    )));
+    mount_type.set_visible(initial_op == OperationType::Mount);
+    if let Some(t) = initial_rclone.get("mountType").and_then(|x| x.as_str()) {
+        if let Some(idx) = mount_types.iter().position(|s| s == t) {
+            mount_type.set_selected(idx as u32);
+        }
+    }
     flags_group.add(&serve);
+    flags_group.add(&mount_type);
     if initial_op == OperationType::Serve {
         populate_serve_flag_rows(
             &flags_group,
@@ -3722,6 +3762,7 @@ pub fn quick_run_editor(
             &live_blocks,
             &initial_rclone,
             &serve,
+            &serve_types,
         );
     }
     attach_cli_import(&flags_group, flag_rows.clone());
@@ -3730,6 +3771,8 @@ pub fn quick_run_editor(
         let flag_rows = flag_rows.clone();
         let serve_flag_rows = serve_flag_rows.clone();
         let serve = serve.clone();
+        let serve_types = serve_types.clone();
+        let mount_type = mount_type.clone();
         let rclone = initial_rclone.clone();
         let blocks = live_blocks.clone();
         op_row.connect_selected_notify(move |row| {
@@ -3738,11 +3781,19 @@ pub fn quick_run_editor(
                 .copied()
                 .unwrap_or(OperationType::Sync);
             serve.set_visible(op == OperationType::Serve);
+            mount_type.set_visible(op == OperationType::Mount);
             clear_flag_rows(&flags_group, &flag_rows);
             clear_serve_flag_rows(&flags_group, &serve_flag_rows);
             populate_flag_rows(&flags_group, &flag_rows, op, &rclone, &blocks);
             if op == OperationType::Serve {
-                populate_serve_flag_rows(&flags_group, &serve_flag_rows, &blocks, &rclone, &serve);
+                populate_serve_flag_rows(
+                    &flags_group,
+                    &serve_flag_rows,
+                    &blocks,
+                    &rclone,
+                    &serve,
+                    &serve_types,
+                );
             }
         });
     }
@@ -3758,6 +3809,9 @@ pub fn quick_run_editor(
         let flag_rows = flag_rows.clone();
         let serve_flag_rows = serve_flag_rows.clone();
         let serve = serve.clone();
+        let serve_types = serve_types.clone();
+        let mount_types = mount_types.clone();
+        let mount_type = mount_type.clone();
         let dry = dry.clone();
         save.connect_clicked(move |_| {
             let expr = cron.text().to_string();
@@ -3807,10 +3861,18 @@ pub fn quick_run_editor(
                 rclone["dryRun"] = serde_json::json!(true);
             }
             if op == OperationType::Serve {
-                rclone["type"] = serde_json::json!(OperationType::SERVE_TYPES
-                    .get(serve.selected() as usize)
-                    .copied()
-                    .unwrap_or("http"));
+                rclone["type"] = serde_json::json!(crate::operations::selected_or(
+                    &serve_types,
+                    serve.selected(),
+                    "http"
+                ));
+            }
+            if op == OperationType::Mount {
+                rclone["mountType"] = serde_json::json!(crate::operations::selected_or(
+                    &mount_types,
+                    mount_type.selected(),
+                    "mount"
+                ));
             }
             if let Some(obj) = rclone.as_object_mut() {
                 for (field, row, type_name) in flag_rows.borrow().iter() {
@@ -3823,10 +3885,8 @@ pub fn quick_run_editor(
                         crate::flags::parse_flag_value(type_name, &text),
                     );
                 }
-                let selected_serve = OperationType::SERVE_TYPES
-                    .get(serve.selected() as usize)
-                    .copied()
-                    .unwrap_or("http");
+                let selected_serve =
+                    crate::operations::selected_or(&serve_types, serve.selected(), "http");
                 for (serve_type, field, row, type_name) in serve_flag_rows.borrow().iter() {
                     if serve_type != selected_serve {
                         continue;
@@ -5257,19 +5317,21 @@ pub fn file_viewer(
     if remote != "local" {
         if let Some(client) = ctx.client() {
             let fs = remote_fs(remote, "");
-            let dest = std::env::temp_dir().join(name);
-            if client
-                .copy_file(&fs, path, "/", &dest.to_string_lossy())
-                .is_ok()
-            {
-                info.set_text(&format!("Downloaded preview to {}", dest.display()));
-                if matches!(category, crate::operations::FileTypeCategory::Text) {
-                    if let Ok(text) = std::fs::read_to_string(&dest) {
-                        attach_text_preview(&box_, name, &text, false, None);
-                    }
+            if matches!(category, crate::operations::FileTypeCategory::Text) {
+                if let Ok(text) = client.cat(&fs, path, Some(crate::rclone::CAT_PREVIEW_BYTES)) {
+                    info.set_text("Remote preview via operations/cat");
+                    attach_text_preview(&box_, name, &text, false, None);
                 }
-                if matches!(category, crate::operations::FileTypeCategory::Pdf) {
-                    box_.append(&pdf_panel(Some(dest.clone()), name));
+            } else {
+                let dest = std::env::temp_dir().join(name);
+                if client
+                    .copy_file(&fs, path, "/", &dest.to_string_lossy())
+                    .is_ok()
+                {
+                    info.set_text(&format!("Downloaded preview to {}", dest.display()));
+                    if matches!(category, crate::operations::FileTypeCategory::Pdf) {
+                        box_.append(&pdf_panel(Some(dest.clone()), name));
+                    }
                 }
             }
         }
@@ -5487,6 +5549,25 @@ pub fn templates(parent: &impl IsA<gtk::Widget>, ctx: AppCtx) {
             let parent = parent.clone();
             let values = template.values.clone();
             apply.connect_clicked(move |_| {
+                if crate::user_templates::is_categorized(&values) {
+                    if let Some(name) = ctx.selected_remote.borrow().clone() {
+                        let applied = crate::user_templates::apply_if_categorized(
+                            ctx.store.borrow_mut().remotes.get_mut(&name),
+                            &values,
+                            true,
+                        );
+                        if applied > 0 {
+                            ctx.persist();
+                        }
+                    }
+                    let toast = adw::AlertDialog::new(
+                        Some("Template applied"),
+                        Some("Helper and operation profiles were updated from this template."),
+                    );
+                    toast.add_response("ok", "OK");
+                    toast.present(Some(&parent));
+                    return;
+                }
                 if let Some(client) = ctx.client() {
                     match client.options_set(values.clone()) {
                         Ok(_) => {
@@ -6045,19 +6126,17 @@ fn populate_serve_flag_rows(
     blocks: &[crate::flags::FlagBlock],
     rclone: &serde_json::Value,
     serve: &adw::ComboRow,
+    serve_types: &[String],
 ) {
-    for serve_type in OperationType::SERVE_TYPES {
+    for serve_type in serve_types {
         for flag in crate::flags::collect_serve_flags(blocks, serve_type) {
             let row = flag_value_row(&flag, rclone);
             row.set_title(&format!("{serve_type} · {}", flag.name));
-            let selected = OperationType::SERVE_TYPES
-                .get(serve.selected() as usize)
-                .copied()
-                .unwrap_or("http");
+            let selected = crate::operations::selected_or(serve_types, serve.selected(), "http");
             row.set_visible(serve_type == selected);
             flags_group.add(&row);
             serve_flag_rows.borrow_mut().push((
-                serve_type.to_string(),
+                serve_type.clone(),
                 flag.field_name,
                 row,
                 flag.type_name,
@@ -6065,11 +6144,9 @@ fn populate_serve_flag_rows(
         }
     }
     let serve_flag_rows = serve_flag_rows.clone();
+    let serve_types = serve_types.to_vec();
     serve.connect_selected_notify(move |row| {
-        let selected = OperationType::SERVE_TYPES
-            .get(row.selected() as usize)
-            .copied()
-            .unwrap_or("http");
+        let selected = crate::operations::selected_or(&serve_types, row.selected(), "http");
         for (serve_type, _, widget, _) in serve_flag_rows.borrow().iter() {
             widget.set_visible(serve_type == selected);
         }

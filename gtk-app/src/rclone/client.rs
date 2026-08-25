@@ -413,6 +413,15 @@ impl RcClient {
         )
     }
 
+    pub fn cat(&self, fs: &str, remote: &str, count: Option<i64>) -> Result<String, RcError> {
+        let mut params = json!({ "fs": fs, "remote": remote });
+        if let Some(n) = count {
+            params["count"] = json!(n);
+        }
+        let value = self.call("operations/cat", params)?;
+        parse_cat_content(&value).ok_or_else(|| RcError::message("rclone cat returned no content"))
+    }
+
     pub fn stat(&self, fs: &str, remote: &str) -> Result<Option<StatItem>, RcError> {
         let value = self.call("operations/stat", json!({ "fs": fs, "remote": remote }))?;
         Ok(parse_stat(&value))
@@ -975,6 +984,18 @@ pub struct StatItem {
     pub mime: String,
 }
 
+pub const CAT_PREVIEW_BYTES: i64 = 512 * 1024;
+
+pub fn parse_cat_content(value: &Value) -> Option<String> {
+    if let Some(text) = value.get("content").and_then(|v| v.as_str()) {
+        return Some(text.to_string());
+    }
+    if let Some(text) = value.as_str() {
+        return Some(text.to_string());
+    }
+    None
+}
+
 pub fn parse_stat(value: &Value) -> Option<StatItem> {
     let item = value.get("item")?;
     if item.is_null() {
@@ -1336,6 +1357,13 @@ mod tests {
             batch_input("job/status", json!({ "jobid": 1 })),
             json!({ "_path": "job/status", "jobid": 1 })
         );
+        assert_eq!(
+            parse_cat_content(&json!({ "content": "hello" })).as_deref(),
+            Some("hello")
+        );
+        assert_eq!(parse_cat_content(&json!("plain")).as_deref(), Some("plain"));
+        assert_eq!(parse_cat_content(&json!({ "hash": "abc" })), None);
+        assert_eq!(CAT_PREVIEW_BYTES, 512 * 1024);
         assert_eq!(
             parse_batch_results(&json!({ "results": [{ "ok": true }] })).len(),
             1

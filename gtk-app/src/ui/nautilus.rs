@@ -64,6 +64,8 @@ pub struct NautilusView {
     last_listing: Rc<RefCell<Vec<DirEntry>>>,
     picker_bar: gtk::Box,
     picker_label: gtk::Label,
+    share_bar: gtk::Box,
+    share_label: gtk::Label,
     filter_bar: gtk::Box,
     icon_btn: gtk::Button,
 }
@@ -226,6 +228,23 @@ impl NautilusView {
         picker_select.add_css_class("suggested-action");
         picker_bar.append(&picker_select);
 
+        let share_bar = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+        share_bar.add_css_class("toolbar");
+        share_bar.set_margin_start(8);
+        share_bar.set_margin_end(8);
+        share_bar.set_margin_bottom(4);
+        share_bar.set_visible(false);
+        let share_label = gtk::Label::new(None);
+        share_label.set_hexpand(true);
+        share_label.set_xalign(0.0);
+        share_bar.append(&share_label);
+        let share_cancel = gtk::Button::with_label(&ctx.t("common.cancel"));
+        share_bar.append(&share_cancel);
+        let share_upload =
+            gtk::Button::with_label(&ctx.t_or("nautilus.androidShare.confirm", "Upload here"));
+        share_upload.add_css_class("suggested-action");
+        share_bar.append(&share_upload);
+
         let filter_bar = gtk::Box::new(gtk::Orientation::Horizontal, 4);
         filter_bar.add_css_class("linked");
         filter_bar.set_margin_start(8);
@@ -236,6 +255,7 @@ impl NautilusView {
         root.append(&toolbar);
         root.append(&filter_bar);
         root.append(&picker_bar);
+        root.append(&share_bar);
         root.append(&split);
         root.append(&ops_scroll);
         root.append(&status);
@@ -285,6 +305,8 @@ impl NautilusView {
             last_listing: Rc::new(RefCell::new(Vec::new())),
             picker_bar,
             picker_label,
+            share_bar,
+            share_label,
             filter_bar,
             icon_btn: icon_btn.clone(),
         };
@@ -427,6 +449,15 @@ impl NautilusView {
             let view = view.clone();
             picker_select.connect_clicked(move |_| view.finish_picker(false));
         }
+        {
+            let view = view.clone();
+            share_cancel.connect_clicked(move |_| view.cancel_share_intake());
+        }
+        {
+            let view = view.clone();
+            share_upload.connect_clicked(move |_| view.confirm_share_intake());
+        }
+        view.refresh_share_banner();
         view.sync_layout();
         view.reload_sidebar();
         view.reload();
@@ -791,6 +822,38 @@ impl NautilusView {
             glib::Propagation::Proceed
         });
         self.root.add_controller(controller);
+    }
+
+    fn refresh_share_banner(&self) {
+        let count = self.ctx.store.borrow().pending_share_paths.len();
+        self.share_bar.set_visible(count > 0);
+        if count == 0 {
+            return;
+        }
+        let count_s = count.to_string();
+        self.share_label.set_text(
+            &self
+                .ctx
+                .tf("nautilus.androidShare.uploadHere", &[("count", &count_s)]),
+        );
+    }
+
+    fn cancel_share_intake(&self) {
+        self.ctx.store.borrow_mut().pending_share_paths.clear();
+        self.ctx.persist();
+        self.refresh_share_banner();
+    }
+
+    fn confirm_share_intake(&self) {
+        let paths = {
+            let mut store = self.ctx.store.borrow_mut();
+            std::mem::take(&mut store.pending_share_paths)
+        };
+        self.ctx.persist();
+        for path in paths {
+            self.upload_local_path(std::path::Path::new(&path));
+        }
+        self.refresh_share_banner();
     }
 
     fn refresh_type_filters(&self) {

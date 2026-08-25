@@ -151,9 +151,18 @@ pub fn present(
     let dst = adw::EntryRow::new();
     dst.set_title("Default destination path");
     super::dialogs::attach_path_picker(&ctx, &dst, crate::picker::FilePickerConfig::folders());
+    let serve_types = ctx.serve_types();
+    let mount_types = ctx.mount_types();
     let serve = adw::ComboRow::new();
     serve.set_title("Default serve type");
-    serve.set_model(Some(&gtk::StringList::new(&OperationType::SERVE_TYPES)));
+    serve.set_model(Some(&gtk::StringList::new(
+        &crate::operations::combo_names(&serve_types),
+    )));
+    let mount_type = adw::ComboRow::new();
+    mount_type.set_title("Default mount type");
+    mount_type.set_model(Some(&gtk::StringList::new(
+        &crate::operations::combo_names(&mount_types),
+    )));
     let cron = adw::EntryRow::new();
     cron.set_title("Default cron");
     let tray = adw::SwitchRow::new();
@@ -199,7 +208,18 @@ pub fn present(
     }
     if let Some(ref meta) = existing_meta {
         apply_existing_meta(
-            meta, &mount, &src, &dst, &serve, &cron, &tray, &autostart, &op_flags,
+            meta,
+            &mount,
+            &src,
+            &dst,
+            &serve,
+            &serve_types,
+            &mount_type,
+            &mount_types,
+            &cron,
+            &tray,
+            &autostart,
+            &op_flags,
         );
     }
 
@@ -271,6 +291,7 @@ pub fn present(
     pgroup.add(&src);
     pgroup.add(&dst);
     pgroup.add(&serve);
+    pgroup.add(&mount_type);
     pgroup.add(&cron);
     pgroup.add(&tray);
     pgroup.add(&autostart);
@@ -438,7 +459,16 @@ pub fn present(
                             &mount.text(),
                             &src.text(),
                             &dst.text(),
-                            serve.selected(),
+                            crate::operations::selected_or(
+                                &serve_types,
+                                serve.selected(),
+                                "webdav",
+                            ),
+                            crate::operations::selected_or(
+                                &mount_types,
+                                mount_type.selected(),
+                                "mount",
+                            ),
                             &cron.text(),
                             tray.is_active(),
                             autostart.is_active(),
@@ -580,6 +610,9 @@ fn apply_existing_meta(
     src: &adw::EntryRow,
     dst: &adw::EntryRow,
     serve: &adw::ComboRow,
+    serve_types: &[String],
+    mount_type: &adw::ComboRow,
+    mount_types: &[String],
     cron: &adw::EntryRow,
     tray: &adw::SwitchRow,
     autostart: &adw::SwitchRow,
@@ -627,8 +660,16 @@ fn apply_existing_meta(
     if let Some(profile) = meta.get_profile(OperationType::Serve, "default") {
         let rclone = flatten_rclone(&profile.rclone);
         if let Some(t) = rclone.get("type").and_then(|v| v.as_str()) {
-            if let Some(idx) = OperationType::SERVE_TYPES.iter().position(|s| *s == t) {
+            if let Some(idx) = serve_types.iter().position(|s| s == t) {
                 serve.set_selected(idx as u32);
+            }
+        }
+    }
+    if let Some(profile) = meta.get_profile(OperationType::Mount, "default") {
+        let rclone = flatten_rclone(&profile.rclone);
+        if let Some(t) = rclone.get("mountType").and_then(|v| v.as_str()) {
+            if let Some(idx) = mount_types.iter().position(|s| s == t) {
+                mount_type.set_selected(idx as u32);
             }
         }
     }
@@ -749,7 +790,8 @@ fn persist_meta(
     mount: &str,
     src: &str,
     dst: &str,
-    serve_idx: u32,
+    serve_type: &str,
+    mount_type: &str,
     cron: &str,
     tray: bool,
     autostart: bool,
@@ -791,9 +833,8 @@ fn persist_meta(
             "fs": remote_fs(remote_name, ""),
             "path1": source,
             "path2": dest,
-            "type": OperationType::SERVE_TYPES
-                .get(serve_idx as usize)
-                .unwrap_or(&"webdav")
+            "type": serve_type,
+            "mountType": mount_type
         });
         if let Some(obj) = rclone.as_object_mut() {
             obj.extend(extra.clone());

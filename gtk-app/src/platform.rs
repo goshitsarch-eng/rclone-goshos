@@ -591,6 +591,40 @@ pub fn parse_send_to_args(args: &[String]) -> Option<SendToArgs> {
     })
 }
 
+/// `--share-intake FILE [FILE…]` queues local files for the Files upload banner.
+pub fn parse_share_intake_args(args: &[String]) -> Option<Vec<PathBuf>> {
+    if !args.iter().any(|arg| arg == "--share-intake") {
+        return None;
+    }
+    let mut files = Vec::new();
+    let mut i = 0;
+    while i < args.len() {
+        match args[i].as_str() {
+            "--send-to-remote" | "--send-to-path" => {
+                i += 1;
+            }
+            "--share-intake" => {}
+            other if other.starts_with('-') => {}
+            _ if i == 0 => {}
+            other => files.push(PathBuf::from(other)),
+        }
+        i += 1;
+    }
+    Some(files)
+}
+
+pub fn enqueue_share_intake(files: &[PathBuf]) {
+    let mut store = crate::store::AppStore::load();
+    for file in files {
+        let path = file.to_string_lossy().to_string();
+        if path.is_empty() || store.pending_share_paths.iter().any(|p| p == &path) {
+            continue;
+        }
+        store.pending_share_paths.push(path);
+    }
+    let _ = store.save();
+}
+
 /// Stage a local file for the desktop "share" action.
 /// Prefers `xdg-email --attach` when available, then the default opener.
 pub fn share_file(path: &Path) -> Result<(), String> {
@@ -698,6 +732,20 @@ mod tests {
         assert_eq!(parsed.path, "Inbox");
         assert_eq!(parsed.files.len(), 2);
         assert!(parse_send_to_args(&["app".into()]).is_none());
+    }
+
+    #[test]
+    fn parses_share_intake_cli() {
+        let args = [
+            "rclone-manager-gtk".into(),
+            "--share-intake".into(),
+            "/tmp/a.jpg".into(),
+            "/tmp/b.png".into(),
+        ];
+        let parsed = parse_share_intake_args(&args).unwrap();
+        assert_eq!(parsed.len(), 2);
+        assert_eq!(parsed[0], PathBuf::from("/tmp/a.jpg"));
+        assert!(parse_share_intake_args(&["app".into()]).is_none());
     }
 
     #[test]

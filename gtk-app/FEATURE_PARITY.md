@@ -20,7 +20,8 @@ This client is the GTK 4 + libadwaita rewrite of the Angular/Tauri desktop UI. I
 - Backends: local rcd plus extra RC backends with add/test/switch/remove
 - Alerts: history, rule editor, action editor (os_toast, webhook, telegram, whatsapp, script, email/mqtt logged)
 - Backup/restore zip with category picker, notes, and restore preview
-- Template manager: capture, apply (`options/set`), delete
+- Template manager: capture, apply (`options/set` or categorized helper/profile merge), delete
+- Remote-config preset bar: apply default OS/provider presets, apply/save/manage user templates
 - Archive create job dialog
 - Onboarding: welcome, features, rclone detect, default view, complete
 - Keyboard shortcuts (global + nautilus)
@@ -185,6 +186,9 @@ This client is the GTK 4 + libadwaita rewrite of the Angular/Tauri desktop UI. I
 - Dashboard profile chips and detail rows toggle start/stop
 - `core/transferred` merged into finished job stats; `job/batch` used for status poll
 - RC wrappers for `core/stats-delete`, `mount/types`, `serve/types`
+- Live `serve/types` and `mount/types` populate serve/mount combos (wizard, start, quick run, remote-config)
+- `operations/cat` for small remote text previews in the file viewer
+- `--share-intake` CLI queues files; Files shows an Upload here banner (Android share parity on Linux)
 - Alert history filters by remote / profile / backend
 - Backup restore can scope to one remote and rename it (`restore as`)
 
@@ -193,5 +197,5 @@ This client is the GTK 4 + libadwaita rewrite of the Angular/Tauri desktop UI. I
 - Embedded PDF page renderer (system viewer is used today)
 - Workflow builder (stub in both apps)
 - Live GUI session against rclone rcd (no display in this environment)
-- Native share portal / Android share intake
+- Native share portal / Android share intent (Linux uses `--share-intake` + Files banner)
 - Full UI string translation (most GTK labels still English)

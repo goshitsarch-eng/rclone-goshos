@@ -217,7 +217,11 @@ pub fn present_main(app: &adw::Application, ctx: AppCtx) {
     );
     install_shortcuts(&window);
 
-    let default_view = ctx.settings.borrow().default_view();
+    let default_view = if ctx.store.borrow().pending_share_paths.is_empty() {
+        ctx.settings.borrow().default_view()
+    } else {
+        MainView::Nautilus
+    };
     view_stack.set_visible_child_name(default_view.as_str());
 
     let tray = super::tray::start(&ctx);

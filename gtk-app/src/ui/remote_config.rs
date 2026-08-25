@@ -53,8 +53,11 @@ pub fn present(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, remote: String, on_d
     sidebar.add_css_class("navigation-sidebar");
     sidebar.set_selection_mode(gtk::SelectionMode::Single);
     let side_scroll = gtk::ScrolledWindow::new();
+    side_scroll.set_vexpand(true);
     side_scroll.set_child(Some(&sidebar));
-    split.set_sidebar(Some(&side_scroll));
+    let side_col = gtk::Box::new(gtk::Orientation::Vertical, 8);
+    side_col.append(&side_scroll);
+    split.set_sidebar(Some(&side_col));
 
     let content = gtk::Box::new(gtk::Orientation::Vertical, 8);
     content.set_hexpand(true);
@@ -144,8 +147,14 @@ pub fn present(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, remote: String, on_d
                     *persist_step.borrow_mut() = Box::new(saver);
                 }
             }
-        })
+        }) as Rc<dyn Fn()>
     };
+    side_col.append(&preset_bar(
+        parent,
+        ctx.clone(),
+        remote.clone(),
+        rebuild.clone(),
+    ));
     rebuild();
 
     {
@@ -200,6 +209,189 @@ fn step_label(step: EditorStep) -> &'static str {
             .map(|(_, label, _)| *label)
             .unwrap_or(kind),
     }
+}
+
+fn remote_type_of(ctx: &AppCtx, remote: &str) -> String {
+    ctx.snapshot
+        .borrow()
+        .remotes
+        .iter()
+        .find(|info| info.name == remote)
+        .map(|info| info.r#type.clone())
+        .unwrap_or_default()
+}
+
+fn preset_bar(
+    parent: &impl IsA<gtk::Widget>,
+    ctx: AppCtx,
+    remote: String,
+    rebuild: Rc<dyn Fn()>,
+) -> gtk::Box {
+    let box_ = gtk::Box::new(gtk::Orientation::Vertical, 6);
+    box_.set_margin_start(8);
+    box_.set_margin_end(8);
+    box_.set_margin_bottom(10);
+    let title = gtk::Label::new(Some(
+        &ctx.t_or("templates.presetTitle", "Presets & Templates"),
+    ));
+    title.add_css_class("heading");
+    title.set_xalign(0.0);
+    let defaults =
+        gtk::Button::with_label(&ctx.t_or("templates.applyPresets", "Apply Default Presets"));
+    {
+        let ctx = ctx.clone();
+        let remote = remote.clone();
+        let rebuild = rebuild.clone();
+        let parent = parent.clone();
+        defaults.connect_clicked(move |_| {
+            let r#type = remote_type_of(&ctx, &remote);
+            let presets = crate::presets::resolve_presets(&r#type, None, std::env::consts::OS);
+            if let Some(meta) = ctx.store.borrow_mut().remotes.get_mut(&remote) {
+                crate::presets::apply_to_remote_meta(meta, &presets);
+            }
+            ctx.persist();
+            rebuild();
+            let toast = adw::AlertDialog::new(
+                Some(&ctx.t_or("templates.applySuccess", "Presets applied")),
+                Some("Default provider / OS presets were merged into this remote."),
+            );
+            toast.add_response("ok", "OK");
+            toast.present(Some(&parent));
+        });
+    }
+    let names: Vec<String> = ctx
+        .store
+        .borrow()
+        .templates
+        .iter()
+        .map(|t| t.name.clone())
+        .collect();
+    let pick = adw::ComboRow::new();
+    pick.set_title(&ctx.t_or("templates.userTemplates", "Saved User Templates"));
+    let labels: Vec<&str> = names.iter().map(|s| s.as_str()).collect();
+    if labels.is_empty() {
+        pick.set_model(Some(&gtk::StringList::new(&["—"])));
+        pick.set_sensitive(false);
+    } else {
+        pick.set_model(Some(&gtk::StringList::new(&labels)));
+    }
+    let apply = gtk::Button::with_label(&ctx.t_or("common.apply", "Apply"));
+    apply.add_css_class("suggested-action");
+    apply.set_sensitive(!names.is_empty());
+    {
+        let ctx = ctx.clone();
+        let remote = remote.clone();
+        let rebuild = rebuild.clone();
+        let parent = parent.clone();
+        let pick = pick.clone();
+        apply.connect_clicked(move |_| {
+            let templates = ctx.store.borrow().templates.clone();
+            let Some(template) = templates.get(pick.selected() as usize) else {
+                return;
+            };
+            let applied = if let Some(meta) = ctx.store.borrow_mut().remotes.get_mut(&remote) {
+                crate::user_templates::apply_to_meta(meta, &template.values, None, true)
+            } else {
+                0
+            };
+            if applied == 0 && !crate::user_templates::is_categorized(&template.values) {
+                if let Some(meta) = ctx.store.borrow_mut().remotes.get_mut(&remote) {
+                    for profiles in meta.profiles.values_mut() {
+                        for profile in profiles.values_mut() {
+                            crate::jobs::merge_template_into(&mut profile.rclone, &template.values);
+                        }
+                    }
+                }
+            }
+            ctx.persist();
+            rebuild();
+            let msg = ctx.tf("templates.applySuccess", &[("name", &template.name)]);
+            let toast = adw::AlertDialog::new(Some(&msg), None::<&str>);
+            toast.add_response("ok", "OK");
+            toast.present(Some(&parent));
+        });
+    }
+    let save = gtk::Button::with_label(&ctx.t_or(
+        "templates.saveAsTemplate",
+        "Save Current Settings as Template...",
+    ));
+    {
+        let ctx = ctx.clone();
+        let remote = remote.clone();
+        let parent = parent.clone();
+        save.connect_clicked(move |_| {
+            capture_remote_template(&parent, ctx.clone(), &remote);
+        });
+    }
+    let manage =
+        gtk::Button::with_label(&ctx.t_or("templates.manageTemplates", "Manage Templates..."));
+    {
+        let ctx = ctx.clone();
+        let parent = parent.clone();
+        manage.connect_clicked(move |_| {
+            dialogs::templates(&parent, ctx.clone());
+        });
+    }
+    box_.append(&title);
+    box_.append(&defaults);
+    box_.append(&pick);
+    box_.append(&apply);
+    box_.append(&save);
+    box_.append(&manage);
+    box_
+}
+
+fn capture_remote_template(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, remote: &str) {
+    let dialog = adw::Dialog::new();
+    dialog.set_title(&ctx.t_or("templates.newTitle", "New Template"));
+    dialog.set_content_width(420);
+    let name = adw::EntryRow::new();
+    name.set_title(&ctx.t_or("templates.templateName", "Template Name"));
+    name.set_text(&format!("{remote} preset"));
+    let desc = adw::EntryRow::new();
+    desc.set_title(&ctx.t_or("templates.templateDesc", "Description (optional)"));
+    let save = gtk::Button::with_label(&ctx.t_or("common.save", "Save"));
+    save.add_css_class("suggested-action");
+    {
+        let ctx = ctx.clone();
+        let remote = remote.to_string();
+        let dialog = dialog.clone();
+        let name = name.clone();
+        let desc = desc.clone();
+        save.connect_clicked(move |_| {
+            let values = ctx
+                .store
+                .borrow()
+                .remotes
+                .get(&remote)
+                .map(|meta| crate::user_templates::capture_from_meta(meta, &[]))
+                .unwrap_or_else(|| serde_json::json!({}));
+            let now = chrono::Utc::now().to_rfc3339();
+            ctx.store
+                .borrow_mut()
+                .templates
+                .push(crate::store::UserTemplate {
+                    id: uuid::Uuid::new_v4().to_string(),
+                    name: name.text().to_string(),
+                    description: desc.text().to_string(),
+                    icon: "emblem-ok-symbolic".into(),
+                    created_at: now.clone(),
+                    updated_at: now,
+                    values,
+                });
+            ctx.persist();
+            dialog.close();
+        });
+    }
+    let group = adw::PreferencesGroup::new();
+    group.add(&name);
+    group.add(&desc);
+    let box_ = gtk::Box::new(gtk::Orientation::Vertical, 8);
+    box_.set_margin_top(12);
+    box_.append(&group);
+    box_.append(&save);
+    dialog.set_child(Some(&box_));
+    dialog.present(Some(parent));
 }
 
 fn step_icon(step: EditorStep) -> &'static str {
@@ -437,17 +629,32 @@ fn operation_page(
         dst.connect_changed(move |row| refresh_status(&row.text()));
     }
 
+    let serve_types = Rc::new(ctx.serve_types());
+    let mount_types = Rc::new(ctx.mount_types());
     let serve = adw::ComboRow::new();
     serve.set_title("Serve type");
-    serve.set_model(Some(&gtk::StringList::new(&OperationType::SERVE_TYPES)));
+    serve.set_model(Some(&gtk::StringList::new(
+        &crate::operations::combo_names(&serve_types),
+    )));
     serve.set_visible(op == OperationType::Serve);
     if let Some(t) = rclone
         .get("type")
         .and_then(|x| x.as_str())
         .or_else(|| rclone.get("typeName").and_then(|x| x.as_str()))
     {
-        if let Some(idx) = OperationType::SERVE_TYPES.iter().position(|s| *s == t) {
+        if let Some(idx) = serve_types.iter().position(|s| s == t) {
             serve.set_selected(idx as u32);
+        }
+    }
+    let mount_type = adw::ComboRow::new();
+    mount_type.set_title("Mount type");
+    mount_type.set_model(Some(&gtk::StringList::new(
+        &crate::operations::combo_names(&mount_types),
+    )));
+    mount_type.set_visible(op == OperationType::Mount);
+    if let Some(t) = rclone.get("mountType").and_then(|x| x.as_str()) {
+        if let Some(idx) = mount_types.iter().position(|s| s == t) {
+            mount_type.set_selected(idx as u32);
         }
     }
 
@@ -555,6 +762,7 @@ fn operation_page(
     identity.add(&dst);
     identity.add(&dest_status);
     identity.add(&serve);
+    identity.add(&mount_type);
 
     let automation = adw::PreferencesGroup::new();
     automation.set_title("Automation");
@@ -601,18 +809,16 @@ fn operation_page(
     let serve_flag_rows: Rc<RefCell<Vec<(String, String, adw::EntryRow, String)>>> =
         Rc::new(RefCell::new(Vec::new()));
     if op == OperationType::Serve {
-        for serve_type in OperationType::SERVE_TYPES {
+        for serve_type in serve_types.iter() {
             for flag in crate::flags::collect_serve_flags(blocks, serve_type) {
                 let row = flag_entry(&flag, &rclone);
                 row.set_title(&format!("{serve_type} · {}", flag.name));
-                let selected = OperationType::SERVE_TYPES
-                    .get(serve.selected() as usize)
-                    .copied()
-                    .unwrap_or("http");
+                let selected =
+                    crate::operations::selected_or(&serve_types, serve.selected(), "http");
                 row.set_visible(serve_type == selected);
                 flags_group.add(&row);
                 serve_flag_rows.borrow_mut().push((
-                    serve_type.to_string(),
+                    serve_type.clone(),
                     flag.field_name,
                     row,
                     flag.type_name,
@@ -621,11 +827,9 @@ fn operation_page(
         }
         {
             let serve_flag_rows = serve_flag_rows.clone();
+            let serve_types = serve_types.clone();
             serve.connect_selected_notify(move |row| {
-                let selected = OperationType::SERVE_TYPES
-                    .get(row.selected() as usize)
-                    .copied()
-                    .unwrap_or("http");
+                let selected = crate::operations::selected_or(&serve_types, row.selected(), "http");
                 for (serve_type, _, widget, _) in serve_flag_rows.borrow().iter() {
                     widget.set_visible(serve_type == selected);
                 }
@@ -658,6 +862,7 @@ fn operation_page(
         let serve_flag_rows = serve_flag_rows.clone();
         let search = search.clone();
         let serve = serve.clone();
+        let serve_types = serve_types.clone();
         json_toggle.connect_active_notify(move |row| {
             let on = row.is_active();
             ctx.settings.borrow_mut().runtime.show_json_mode = on;
@@ -667,10 +872,7 @@ fn operation_page(
             for (_, widget, _) in flag_rows.borrow().iter() {
                 widget.set_visible(!on);
             }
-            let selected = OperationType::SERVE_TYPES
-                .get(serve.selected() as usize)
-                .copied()
-                .unwrap_or("http");
+            let selected = crate::operations::selected_or(&serve_types, serve.selected(), "http");
             for (serve_type, _, widget, _) in serve_flag_rows.borrow().iter() {
                 widget.set_visible(!on && serve_type == selected);
             }
@@ -680,15 +882,13 @@ fn operation_page(
         let flag_rows = flag_rows.clone();
         let serve_flag_rows = serve_flag_rows.clone();
         let serve = serve.clone();
+        let serve_types = serve_types.clone();
         search.connect_changed(move |entry| {
             let query = entry.text().to_ascii_lowercase();
             for (field, row, _) in flag_rows.borrow().iter() {
                 row.set_visible(query.is_empty() || field.to_ascii_lowercase().contains(&query));
             }
-            let selected = OperationType::SERVE_TYPES
-                .get(serve.selected() as usize)
-                .copied()
-                .unwrap_or("http");
+            let selected = crate::operations::selected_or(&serve_types, serve.selected(), "http");
             for (serve_type, field, row, _) in serve_flag_rows.borrow().iter() {
                 let matches = query.is_empty() || field.to_ascii_lowercase().contains(&query);
                 row.set_visible(serve_type == selected && matches);
@@ -800,6 +1000,9 @@ fn operation_page(
         let serve_flag_rows = serve_flag_rows.clone();
         let json_toggle = json_toggle.clone();
         let json_view = json_view.clone();
+        let serve_types = serve_types.clone();
+        let mount_types = mount_types.clone();
+        let mount_type = mount_type.clone();
         move || {
             let name = selected.borrow().clone();
             if name.is_empty() {
@@ -809,10 +1012,21 @@ fn operation_page(
             if op == OperationType::Serve {
                 flags.insert(
                     "type".into(),
-                    json!(OperationType::SERVE_TYPES
-                        .get(serve.selected() as usize)
-                        .copied()
-                        .unwrap_or("webdav")),
+                    json!(crate::operations::selected_or(
+                        &serve_types,
+                        serve.selected(),
+                        "webdav"
+                    )),
+                );
+            }
+            if op == OperationType::Mount {
+                flags.insert(
+                    "mountType".into(),
+                    json!(crate::operations::selected_or(
+                        &mount_types,
+                        mount_type.selected(),
+                        "mount"
+                    )),
                 );
             }
             if json_toggle.is_active() {
@@ -828,10 +1042,8 @@ fn operation_page(
                         flags.insert(field.clone(), parse_flag_value(type_name, &text));
                     }
                 }
-                let selected_serve = OperationType::SERVE_TYPES
-                    .get(serve.selected() as usize)
-                    .copied()
-                    .unwrap_or("webdav");
+                let selected_serve =
+                    crate::operations::selected_or(&serve_types, serve.selected(), "webdav");
                 for (serve_type, field, row, type_name) in serve_flag_rows.borrow().iter() {
                     if serve_type != selected_serve {
                         continue;

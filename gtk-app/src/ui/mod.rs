@@ -319,6 +319,22 @@ impl AppCtx {
         self.refresh_runtime();
     }
 
+    pub fn serve_types(&self) -> Vec<String> {
+        let live = self
+            .client()
+            .and_then(|client| client.serve_types().ok())
+            .unwrap_or_default();
+        crate::operations::serve_types_or_default(&live)
+    }
+
+    pub fn mount_types(&self) -> Vec<String> {
+        let live = self
+            .client()
+            .and_then(|client| client.mount_types().ok())
+            .unwrap_or_default();
+        crate::operations::mount_types_or_default(&live)
+    }
+
     pub fn client(&self) -> Option<crate::rclone::RcClient> {
         let settings = self.settings.borrow();
         let active = settings.core.active_backend.clone();
