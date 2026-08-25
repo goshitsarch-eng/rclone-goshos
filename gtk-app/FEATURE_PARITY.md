@@ -28,10 +28,15 @@ This client is the GTK 4 + libadwaita rewrite of the Angular/Tauri desktop UI. I
 - Provider list from `config/providers` when adding remotes
 - Job detail and file properties dialogs; local text/image file viewer
 
+- Remote wizard with live `config/providers` fields, secret obscure, default profiles, OAuth start
+- Nautilus tabs (Ctrl+T/W), split toggle, right-click context menu, operations panel, bookmarks
+- VFS stats/refresh/forget/queue on remote detail
+- App + rclone update checks in About
+- Tray command bus (unmount/stop/mount/quick-run) polled from the GTK loop
+
 ## Still deepening toward pixel-level Angular parity
 
-- Full provider OAuth/interactive config wizard and flag-category editors
-- Nautilus split panes, multi-tabs, lasso, CodeMirror/PDF/media viewers
-- Native StatusNotifier tray icon process
-- App/rclone updater install flows
-- Per-profile VFS/filter/backend editors identical to the Angular forms
+- Full multi-step OAuth state machine matching every provider option page
+- Nautilus lasso, CodeMirror/PDF/media viewers
+- Native StatusNotifier tray icon (command bus is in place)
+- Per-flag category editors identical to the Angular forms

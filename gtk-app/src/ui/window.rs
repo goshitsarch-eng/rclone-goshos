@@ -106,6 +106,7 @@ pub fn present_main(app: &adw::Application, ctx: AppCtx) {
     let default_view = ctx.settings.borrow().default_view();
     view_stack.set_visible_child_name(default_view.as_str());
 
+    let tray = super::tray::start(&ctx);
     let ctx_poll = ctx.clone();
     let dash_poll = dashboard.clone();
     let flow_poll = flow.clone();
@@ -115,6 +116,9 @@ pub fn present_main(app: &adw::Application, ctx: AppCtx) {
         dash_poll.refresh();
         flow_poll.refresh();
         update_banner(&ctx_poll, &banner_poll);
+        if let Some(tray) = &tray {
+            tray.drain(&ctx_poll);
+        }
         glib::ControlFlow::Continue
     });
 

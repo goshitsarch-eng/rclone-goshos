@@ -1,10 +1,12 @@
 mod backup;
 mod i18n;
 mod operations;
+mod providers;
 mod rclone;
 mod settings;
 mod store;
 mod ui;
+mod updater;
 
 use gtk::prelude::*;
 

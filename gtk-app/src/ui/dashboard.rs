@@ -529,6 +529,39 @@ impl Dashboard {
         }
         self.detail.append(&usage);
 
+        self.detail.append(&section_label("VFS"));
+        let vfs = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+        for (label, action) in [
+            ("Stats", "stats"),
+            ("Refresh", "refresh"),
+            ("Forget cache", "forget"),
+            ("Queue", "queue"),
+        ] {
+            let btn = gtk::Button::with_label(label);
+            let ctx = self.ctx.clone();
+            let name = name.clone();
+            let toast = self.toast.clone();
+            btn.connect_clicked(move |_| {
+                let Some(client) = ctx.client() else {
+                    toast.add_toast(adw::Toast::new("Engine offline"));
+                    return;
+                };
+                let fs = remote_fs(&name, "");
+                let result = match action {
+                    "stats" => client.vfs_stats(&fs),
+                    "refresh" => client.vfs_refresh(&fs),
+                    "forget" => client.vfs_forget(&fs),
+                    _ => client.vfs_queue(&fs),
+                };
+                match result {
+                    Ok(v) => toast.add_toast(adw::Toast::new(&format!("{action}: {v}"))),
+                    Err(e) => toast.add_toast(adw::Toast::new(&e.to_string())),
+                }
+            });
+            vfs.append(&btn);
+        }
+        self.detail.append(&vfs);
+
         self.detail
             .append(&section_label("Quick Runs for this remote"));
         let qlist = gtk::ListBox::new();

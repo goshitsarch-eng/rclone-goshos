@@ -232,6 +232,16 @@ pub fn about(parent: &impl IsA<gtk::Widget>, ctx: AppCtx) {
         .as_ref()
         .map(|e| e.version.clone())
         .unwrap_or_default();
+    let app_update = crate::updater::fetch_app_update(env!("CARGO_PKG_VERSION"))
+        .ok()
+        .filter(|u| u.available)
+        .map(|u| format!("App update {} available", u.latest))
+        .unwrap_or_else(|| "App is up to date (or update check failed)".into());
+    let rclone_update = crate::updater::fetch_rclone_update(&version)
+        .ok()
+        .filter(|u| u.available)
+        .map(|u| format!("rclone update {} available", u.latest))
+        .unwrap_or_else(|| "rclone update check finished".into());
     let dialog = adw::AboutDialog::builder()
         .application_name("Rclone Manager")
         .application_icon("folder-remote-symbolic")
@@ -241,7 +251,7 @@ pub fn about(parent: &impl IsA<gtk::Widget>, ctx: AppCtx) {
         .issue_url("https://github.com/Zarestia-Dev/rclone-manager/issues")
         .license_type(gtk::License::Gpl30)
         .comments(format!(
-            "GTK 4 + libadwaita desktop client\nrclone {version}"
+            "GTK 4 + libadwaita desktop client\nrclone {version}\n{app_update}\n{rclone_update}"
         ))
         .build();
     dialog.present(Some(parent));
@@ -268,6 +278,8 @@ pub fn shortcuts(parent: &impl IsA<gtk::Widget>) {
         ("Ctrl+Shift+?", "Shortcuts"),
         ("Ctrl+Shift+M", "Refresh mounts"),
         ("Ctrl+Shift+S", "Refresh serves"),
+        ("Ctrl+T / Ctrl+W", "New / close file tab"),
+        ("Ctrl+/", "Toggle split view"),
         ("Ctrl+L / Ctrl+F", "Focus path / search (Files)"),
         ("F5", "Reload listing"),
         ("F2", "Rename"),
@@ -456,7 +468,7 @@ pub fn alerts(parent: &impl IsA<gtk::Widget>, ctx: AppCtx) {
 }
 
 pub fn quick_add_remote(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, on_done: Rc<dyn Fn()>) {
-    remote_editor(parent, ctx, None, true, on_done);
+    super::wizard::present(parent, ctx, None, on_done);
 }
 
 pub fn remote_config(
@@ -465,7 +477,7 @@ pub fn remote_config(
     existing: Option<String>,
     on_done: Rc<dyn Fn()>,
 ) {
-    remote_editor(parent, ctx, existing, false, on_done);
+    super::wizard::present(parent, ctx, existing, on_done);
 }
 
 fn remote_editor(

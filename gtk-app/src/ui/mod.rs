@@ -3,7 +3,9 @@ mod dialogs;
 mod flow;
 mod nautilus;
 mod onboarding;
+mod tray;
 mod window;
+mod wizard;
 
 use crate::i18n::I18n;
 use crate::rclone::RcloneEngine;

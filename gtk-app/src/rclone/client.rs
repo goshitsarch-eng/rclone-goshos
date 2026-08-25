@@ -134,6 +134,44 @@ impl RcClient {
         self.call("config/providers", json!({}))
     }
 
+    pub fn create_remote_interactive(
+        &self,
+        name: &str,
+        r#type: &str,
+        parameters: Value,
+        state: Option<&str>,
+        result: Option<Value>,
+    ) -> Result<Value, RcError> {
+        let mut body = json!({
+            "name": name,
+            "type": r#type,
+            "parameters": parameters,
+            "opt": { "nonInteractive": true }
+        });
+        if let Some(state) = state {
+            body["state"] = json!(state);
+        }
+        if let Some(result) = result {
+            body["opt"]["result"] = result;
+        }
+        self.call("config/create", body)
+    }
+
+    pub fn oauth_status(&self) -> Result<(bool, Option<String>), RcError> {
+        let v = self.call("config/oauthstatus", json!({}))?;
+        let running = v.get("running").and_then(|x| x.as_bool()).unwrap_or(false);
+        let url = v
+            .get("authUrl")
+            .or_else(|| v.get("auth_url"))
+            .and_then(|x| x.as_str())
+            .map(|s| s.to_string());
+        Ok((running, url))
+    }
+
+    pub fn oauth_stop(&self) -> Result<Value, RcError> {
+        self.call("config/oauthstop", json!({}))
+    }
+
     pub fn create_remote(
         &self,
         name: &str,

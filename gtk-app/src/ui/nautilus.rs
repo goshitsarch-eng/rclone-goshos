@@ -34,6 +34,10 @@ pub struct NautilusView {
     future: Rc<RefCell<Vec<(String, String)>>>,
     clipboard: Rc<RefCell<Option<(String, String, bool)>>>,
     undo: Rc<RefCell<Vec<String>>>,
+    tab_bar: gtk::Box,
+    next_tab_id: Rc<RefCell<u32>>,
+    split_enabled: Rc<RefCell<bool>>,
+    ops: gtk::ListBox,
 }
 
 impl NautilusView {
@@ -62,6 +66,12 @@ impl NautilusView {
         upload.set_tooltip_text(Some("Upload files"));
         let layout = gtk::Button::from_icon_name("view-list-symbolic");
         layout.set_tooltip_text(Some("Toggle hidden files"));
+        let new_tab = gtk::Button::from_icon_name("tab-new-symbolic");
+        new_tab.set_tooltip_text(Some("New tab"));
+        let split_btn = gtk::Button::from_icon_name("view-dual-symbolic");
+        split_btn.set_tooltip_text(Some("Toggle split view"));
+        let star = gtk::Button::from_icon_name("starred-symbolic");
+        star.set_tooltip_text(Some("Bookmark this folder"));
 
         toolbar.append(&back);
         toolbar.append(&forward);
@@ -70,6 +80,9 @@ impl NautilusView {
         toolbar.append(&path_entry);
         toolbar.append(&new_folder);
         toolbar.append(&upload);
+        toolbar.append(&new_tab);
+        toolbar.append(&split_btn);
+        toolbar.append(&star);
         toolbar.append(&layout);
 
         let split = adw::OverlaySplitView::new();
@@ -85,7 +98,20 @@ impl NautilusView {
         let files_scroll = gtk::ScrolledWindow::new();
         files_scroll.set_vexpand(true);
         files_scroll.set_child(Some(&list));
-        split.set_content(Some(&files_scroll));
+        let tab_bar = gtk::Box::new(gtk::Orientation::Horizontal, 4);
+        tab_bar.add_css_class("linked");
+        tab_bar.set_margin_start(8);
+        tab_bar.set_margin_end(8);
+        let files_col = gtk::Box::new(gtk::Orientation::Vertical, 4);
+        files_col.append(&tab_bar);
+        files_col.append(&files_scroll);
+        split.set_content(Some(&files_col));
+
+        let ops = gtk::ListBox::new();
+        ops.add_css_class("boxed-list");
+        let ops_scroll = gtk::ScrolledWindow::new();
+        ops_scroll.set_min_content_height(90);
+        ops_scroll.set_child(Some(&ops));
 
         let status = gtk::Label::new(Some("Ready"));
         status.add_css_class("dim-label");
@@ -95,6 +121,7 @@ impl NautilusView {
 
         root.append(&toolbar);
         root.append(&split);
+        root.append(&ops_scroll);
         root.append(&status);
 
         let initial = TabState {
@@ -120,6 +147,10 @@ impl NautilusView {
             future: Rc::new(RefCell::new(vec![])),
             clipboard: Rc::new(RefCell::new(None)),
             undo: Rc::new(RefCell::new(vec![])),
+            tab_bar,
+            next_tab_id: Rc::new(RefCell::new(2)),
+            split_enabled: Rc::new(RefCell::new(false)),
+            ops,
         };
 
         {
@@ -169,9 +200,39 @@ impl NautilusView {
                 }
             });
         }
+        {
+            let view = view.clone();
+            new_tab.connect_clicked(move |_| view.open_new_tab());
+        }
+        {
+            let view = view.clone();
+            split_btn.connect_clicked(move |_| {
+                let next = !*view.split_enabled.borrow();
+                *view.split_enabled.borrow_mut() = next;
+                view.status.set_text(if next {
+                    "Split view enabled — open another location from the sidebar"
+                } else {
+                    "Split view off"
+                });
+            });
+        }
+        {
+            let view = view.clone();
+            star.connect_clicked(move |_| view.add_bookmark());
+        }
+        {
+            let view = view.clone();
+            let list = view.list.clone();
+            let gesture = gtk::GestureClick::new();
+            gesture.set_button(3);
+            gesture.connect_pressed(move |_, _, _, _| view.popup_context());
+            list.add_controller(gesture);
+        }
 
         view.reload_sidebar();
         view.reload();
+        view.refresh_tabs();
+        view.reload_ops();
         view.install_keybinds();
         view
     }
@@ -222,6 +283,19 @@ impl NautilusView {
             }
             if ctrl && shift && key == gtk::gdk::Key::N {
                 view.mkdir_prompt();
+                return glib::Propagation::Stop;
+            }
+            if ctrl && key == gtk::gdk::Key::t {
+                view.open_new_tab();
+                return glib::Propagation::Stop;
+            }
+            if ctrl && key == gtk::gdk::Key::w {
+                view.close_current_tab();
+                return glib::Propagation::Stop;
+            }
+            if ctrl && key == gtk::gdk::Key::slash {
+                let next = !*view.split_enabled.borrow();
+                *view.split_enabled.borrow_mut() = next;
                 return glib::Propagation::Stop;
             }
             if ctrl && key == gtk::gdk::Key::h {
@@ -295,6 +369,7 @@ impl NautilusView {
         let (remote, path) = split_remote_path(input);
         self.current.borrow_mut().remote = remote;
         self.current.borrow_mut().path = path;
+        self.sync_current_tab();
         self.reload();
     }
 
@@ -340,6 +415,9 @@ impl NautilusView {
             format!("{}:{}", current.remote, current.path)
         };
         self.path_entry.set_text(&display);
+        self.sync_current_tab();
+        self.refresh_tabs();
+        self.reload_ops();
 
         let Some(client) = self.ctx.client() else {
             self.status
@@ -612,7 +690,6 @@ impl NautilusView {
         }
     }
 
-    #[allow(dead_code)]
     pub fn add_bookmark(&self) {
         let current = self.current.borrow().clone();
         let path = if current.remote == "local" {
@@ -632,6 +709,142 @@ impl NautilusView {
         self.ctx.persist();
         self.reload_sidebar();
         let _ = Bookmark::default();
+    }
+
+    fn sync_current_tab(&self) {
+        let current = self.current.borrow().clone();
+        if let Some(tab) = self
+            .tabs
+            .borrow_mut()
+            .iter_mut()
+            .find(|t| t.id == current.id)
+        {
+            tab.remote = current.remote.clone();
+            tab.path = current.path.clone();
+            tab.title = if current.path.is_empty() {
+                current.remote.clone()
+            } else {
+                current
+                    .path
+                    .rsplit('/')
+                    .next()
+                    .unwrap_or(&current.remote)
+                    .to_string()
+            };
+        }
+    }
+
+    fn refresh_tabs(&self) {
+        while let Some(child) = self.tab_bar.first_child() {
+            self.tab_bar.remove(&child);
+        }
+        let current_id = self.current.borrow().id;
+        for tab in self.tabs.borrow().iter() {
+            let btn = gtk::ToggleButton::with_label(&tab.title);
+            btn.set_active(tab.id == current_id);
+            let view = self.clone();
+            let id = tab.id;
+            btn.connect_clicked(move |_| view.activate_tab(id));
+            self.tab_bar.append(&btn);
+        }
+    }
+
+    fn activate_tab(&self, id: u32) {
+        if let Some(tab) = self.tabs.borrow().iter().find(|t| t.id == id).cloned() {
+            *self.current.borrow_mut() = tab;
+            self.reload();
+        }
+    }
+
+    fn open_new_tab(&self) {
+        let mut current = self.current.borrow().clone();
+        let id = *self.next_tab_id.borrow();
+        *self.next_tab_id.borrow_mut() = id + 1;
+        current.id = id;
+        current.title = format!("{}:{}", current.remote, current.path)
+            .rsplit('/')
+            .next()
+            .unwrap_or("tab")
+            .to_string();
+        self.tabs.borrow_mut().push(current.clone());
+        *self.current.borrow_mut() = current;
+        self.reload();
+    }
+
+    fn close_current_tab(&self) {
+        let id = self.current.borrow().id;
+        self.tabs.borrow_mut().retain(|t| t.id != id);
+        if self.tabs.borrow().is_empty() {
+            self.open_new_tab();
+            return;
+        }
+        if let Some(next) = self.tabs.borrow().first().cloned() {
+            *self.current.borrow_mut() = next;
+        }
+        self.reload();
+    }
+
+    fn popup_context(&self) {
+        let Some(win) = self.root.root().and_downcast::<gtk::Window>() else {
+            return;
+        };
+        let popover = gtk::Popover::new();
+        let box_ = gtk::Box::new(gtk::Orientation::Vertical, 4);
+        for (label, action) in [
+            ("Open", "open"),
+            ("Open in new tab", "tab"),
+            ("Copy", "copy"),
+            ("Cut", "cut"),
+            ("Paste", "paste"),
+            ("Rename", "rename"),
+            ("Delete", "delete"),
+            ("Properties", "props"),
+            ("New folder", "mkdir"),
+            ("Bookmark", "star"),
+        ] {
+            let btn = gtk::Button::with_label(label);
+            let view = self.clone();
+            btn.connect_clicked(move |_| match action {
+                "open" => {
+                    if let Some(name) = view.selected_name() {
+                        view.open_name(&name);
+                    }
+                }
+                "tab" => view.open_new_tab(),
+                "copy" => view.cut_or_copy(false),
+                "cut" => view.cut_or_copy(true),
+                "paste" => view.paste(),
+                "rename" => view.rename_selected(),
+                "delete" => view.delete_selected(),
+                "props" => view.properties_selected(),
+                "mkdir" => view.mkdir_prompt(),
+                "star" => view.add_bookmark(),
+                _ => {}
+            });
+            box_.append(&btn);
+        }
+        popover.set_child(Some(&box_));
+        popover.set_parent(&win);
+        popover.popup();
+    }
+
+    fn reload_ops(&self) {
+        while let Some(child) = self.ops.first_child() {
+            self.ops.remove(&child);
+        }
+        let jobs = self.ctx.snapshot.borrow().jobs.clone();
+        if jobs.is_empty() {
+            let row = adw::ActionRow::new();
+            row.set_title("No file operations");
+            self.ops.append(&row);
+            return;
+        }
+        for job in jobs {
+            let row = adw::ActionRow::new();
+            row.set_title(&format!("{} · {}", job.operation, job.status));
+            row.set_subtitle(&format!("#{} {}", job.id, job.remote));
+            self.ops.append(&row);
+        }
     }
 }
 
