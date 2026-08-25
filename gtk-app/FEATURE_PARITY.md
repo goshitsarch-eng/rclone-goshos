@@ -502,9 +502,13 @@ This client is the GTK 4 + libadwaita desktop UI. It talks to a local `rclone rc
 - Remote-config sidenav can filter pages by label or alias (mount, vfs, …)
 - Alerts Rules/Actions lists support search, enable toggles, test, and delete-with-confirm
 - Files ops panel expands a job inline (speed/ETA, transferring files) with a details row
+- Remote-order visibility, Files picker location, and alert stats use i18n keys
+- Transfer-activity Active/Recent tabs interpolate `{{count}}`
+- `fusermount3` shim on PATH so rclone 1.60 mounts on fuse3-only hosts
+- `mount/listmounts` parses rclone 1.60 arrays and marks alias remotes mounted
+- Live GUI: testdrive/dummyexport remotes, FUSE mount of testdrive, Copy start from a profile
 
 ## Still deepening
 
 - Workflow builder (stub in both apps)
 - Pixel-level layouts vs Angular CSS (non-blocking for functional parity)
-- Live remotes verified (testdrive / dummyexport). Mount needs `fusermount` or the fuse3 shim.

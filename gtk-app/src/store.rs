@@ -1818,6 +1818,26 @@ pub fn clone_remote_meta(store: &AppStore, from: &str, to: &str) -> Option<Remot
     Some(meta)
 }
 
+pub fn remote_is_mounted(name: &str, cfg: &Value, mounts: &[MountedRemote]) -> bool {
+    let prefix = format!("{name}:");
+    let alias = cfg.get("remote").and_then(|v| v.as_str()).unwrap_or("");
+    mounts.iter().any(|m| {
+        m.fs == prefix
+            || m.fs.starts_with(&prefix)
+            || (!alias.is_empty() && paths_equivalent(&m.fs, alias))
+            || mount_point_named(&m.mount_point, name)
+    })
+}
+
+fn paths_equivalent(left: &str, right: &str) -> bool {
+    left.trim_end_matches('/') == right.trim_end_matches('/')
+}
+
+fn mount_point_named(mount_point: &str, name: &str) -> bool {
+    let point = mount_point.trim_end_matches('/');
+    point.ends_with(&format!("/{name}")) || point == name
+}
+
 pub fn build_remote_infos(
     dump: &Value,
     mounts: &[MountedRemote],
@@ -1833,7 +1853,7 @@ pub fn build_remote_infos(
                 .and_then(|x| x.as_str())
                 .unwrap_or("unknown")
                 .to_string();
-            let mounted = mounts.iter().any(|m| m.fs.starts_with(&format!("{name}:")));
+            let mounted = remote_is_mounted(name, cfg, mounts);
             let serving = serves.iter().any(|s| s.fs.starts_with(&format!("{name}:")));
             let job_active = jobs
                 .iter()
@@ -1945,6 +1965,39 @@ pub fn sort_entries(entries: &mut [DirEntry], sort_by: &str, desc: bool) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn mounts_alias_target_and_named_point() {
+        let alias = json!({ "type": "alias", "remote": "/tmp/rclone-test-remote" });
+        let mounts = vec![MountedRemote {
+            fs: "/tmp/rclone-test-remote".into(),
+            mount_point: "/home/ubuntu/rclone-manager/testdrive".into(),
+        }];
+        assert!(remote_is_mounted("testdrive", &alias, &mounts));
+        assert!(!remote_is_mounted(
+            "dummyexport",
+            &json!({ "type": "local" }),
+            &mounts
+        ));
+        let named = vec![MountedRemote {
+            fs: "/home/ubuntu".into(),
+            mount_point: "/tmp/mnt/dummyexport".into(),
+        }];
+        assert!(remote_is_mounted(
+            "dummyexport",
+            &json!({ "type": "local" }),
+            &named
+        ));
+        let prefixed = vec![MountedRemote {
+            fs: "drive:Photos".into(),
+            mount_point: "/mnt/drive".into(),
+        }];
+        assert!(remote_is_mounted(
+            "drive",
+            &json!({ "type": "drive" }),
+            &prefixed
+        ));
+    }
 
     #[test]
     fn quick_run_path_extraction() {

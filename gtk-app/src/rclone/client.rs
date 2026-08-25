@@ -684,19 +684,7 @@ impl RcClient {
 
     pub fn list_mounts(&self) -> Result<Vec<MountedRemote>, RcError> {
         let v = self.call("mount/listmounts", json!({}))?;
-        let mounts = v
-            .get("mountPoints")
-            .and_then(|x| x.as_object())
-            .map(|obj| {
-                obj.iter()
-                    .map(|(point, fs)| MountedRemote {
-                        fs: fs.as_str().unwrap_or_default().to_string(),
-                        mount_point: point.clone(),
-                    })
-                    .collect()
-            })
-            .unwrap_or_default();
-        Ok(mounts)
+        Ok(parse_mount_points(&v))
     }
 
     pub fn serve_start(&self, serve_type: &str, fs: &str, addr: &str) -> Result<Value, RcError> {
@@ -980,6 +968,42 @@ impl DirEntry {
 pub struct MountedRemote {
     pub fs: String,
     pub mount_point: String,
+}
+
+/// rclone ≥1.64 returns `{ mountPoint: fs }`. 1.60 returns
+/// `[{ Fs, MountPoint, MountedOn }, ...]`.
+pub fn parse_mount_points(value: &Value) -> Vec<MountedRemote> {
+    let Some(points) = value.get("mountPoints") else {
+        return Vec::new();
+    };
+    if let Some(obj) = points.as_object() {
+        return obj
+            .iter()
+            .map(|(point, fs)| MountedRemote {
+                fs: fs.as_str().unwrap_or_default().to_string(),
+                mount_point: point.clone(),
+            })
+            .collect();
+    }
+    let Some(arr) = points.as_array() else {
+        return Vec::new();
+    };
+    arr.iter()
+        .filter_map(|item| {
+            let mount_point = item
+                .get("MountPoint")
+                .or_else(|| item.get("mountPoint"))
+                .and_then(|v| v.as_str())?
+                .to_string();
+            let fs = item
+                .get("Fs")
+                .or_else(|| item.get("fs"))
+                .and_then(|v| v.as_str())
+                .unwrap_or_default()
+                .to_string();
+            Some(MountedRemote { fs, mount_point })
+        })
+        .collect()
 }
 
 #[derive(Debug, Clone, Default)]
@@ -1911,6 +1935,27 @@ pub fn backend_identity(info: &Value) -> BackendIdentity {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn parses_mount_points_map_and_array() {
+        let map = parse_mount_points(&json!({
+            "mountPoints": { "/mnt/drive": "drive:" }
+        }));
+        assert_eq!(map.len(), 1);
+        assert_eq!(map[0].fs, "drive:");
+        assert_eq!(map[0].mount_point, "/mnt/drive");
+        let arr = parse_mount_points(&json!({
+            "mountPoints": [{
+                "Fs": "/tmp/rclone-test-remote",
+                "MountPoint": "/home/ubuntu/rclone-manager/testdrive",
+                "MountedOn": "2026-08-25T23:14:23Z"
+            }]
+        }));
+        assert_eq!(arr.len(), 1);
+        assert_eq!(arr[0].fs, "/tmp/rclone-test-remote");
+        assert_eq!(arr[0].mount_point, "/home/ubuntu/rclone-manager/testdrive");
+        assert!(parse_mount_points(&json!({})).is_empty());
+    }
 
     #[test]
     fn remote_path_helpers() {
