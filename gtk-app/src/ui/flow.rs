@@ -416,9 +416,9 @@ impl FlowView {
                                 job.progress * 100.0
                             ));
                             let ctx = self.ctx.clone();
-                            let id = job.id;
+                            let job = job.clone();
                             row.connect_activated(move |_| {
-                                ctx.request_nav(NavTarget::Job { id });
+                                ctx.request_nav(NavTarget::for_job(&job));
                             });
                             jobs.append(&row);
                         }
@@ -444,17 +444,12 @@ impl FlowView {
                         serves.append(&row);
                     } else {
                         for serve in &snap.serves {
-                            let row = adw::ActionRow::new();
-                            row.set_title(&format!("{} · {}", serve.serve_type, serve.fs));
-                            row.set_subtitle(&serve.addr);
-                            {
-                                let ctx = self.ctx.clone();
-                                let id = serve.id.clone();
-                                row.connect_activated(move |_| {
-                                    ctx.request_nav(NavTarget::Serve { id: id.clone() });
-                                });
-                            }
-                            serves.append(&row);
+                            let view = self.clone();
+                            serves.append(&super::dashboard::serve_card_row(
+                                &self.ctx,
+                                serve,
+                                move || view.refresh(),
+                            ));
                         }
                     }
                     self.append_expandable(

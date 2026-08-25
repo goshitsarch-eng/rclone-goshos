@@ -678,14 +678,14 @@ pub fn memory_stats(parent: &impl IsA<gtk::Widget>, ctx: AppCtx) {
     let list = gtk::ListBox::new();
     list.add_css_class("boxed-list");
     if let Some(mem) = ctx.client().and_then(|c| c.memstats().ok()) {
-        for (key, label) in [
-            ("Alloc", "Allocated"),
-            ("Sys", "System"),
-            ("HeapAlloc", "Heap"),
-            ("NumGC", "GC cycles"),
+        for (key, i18n_key, fallback) in [
+            ("Alloc", "modals.about.memAlloc", "Allocated"),
+            ("Sys", "modals.about.memSys", "System"),
+            ("HeapAlloc", "modals.about.memHeapAlloc", "Heap"),
+            ("NumGC", "modals.about.gc", "GC cycles"),
         ] {
             let row = adw::ActionRow::new();
-            row.set_title(label);
+            row.set_title(&ctx.t_or(i18n_key, fallback));
             let value = mem.get(key).cloned().unwrap_or(serde_json::json!(0));
             row.set_subtitle(&if key == "NumGC" {
                 value.to_string()
@@ -696,7 +696,10 @@ pub fn memory_stats(parent: &impl IsA<gtk::Widget>, ctx: AppCtx) {
         }
     } else {
         let row = adw::ActionRow::new();
-        row.set_title("Memory stats unavailable");
+        row.set_title(&ctx.t_or(
+            "titlebar.menu.memoryUnavailable",
+            "Memory stats unavailable",
+        ));
         list.append(&row);
     }
     let gc = gtk::Button::with_label(&ctx.t_or("titlebar.menu.runGc", "Run GC"));
@@ -1827,7 +1830,7 @@ pub fn rclone_flags(parent: &impl IsA<gtk::Widget>, ctx: AppCtx) {
         let page = adw::PreferencesPage::new();
         let group = adw::PreferencesGroup::new();
         let row = adw::ActionRow::new();
-        row.set_title("Engine offline");
+        row.set_title(&ctx.t_or("common.engineOffline", "Engine offline"));
         group.add(&row);
         page.add(&group);
         dialog.add(&page);

@@ -411,6 +411,11 @@ mod tests {
             "nautilus.contextMenu.openNewTab",
             "developerTools.debugInfo",
             "wizards.remoteConfig.togglePassword",
+            "common.engineOffline",
+            "titlebar.menu.memoryUnavailable",
+            "tray.tooltipSubtitle",
+            "nautilus.notifications.nothingToUndo",
+            "nautilus.titles.editPath",
         ] {
             assert!(i18n.has(key), "missing i18n key {key}");
         }

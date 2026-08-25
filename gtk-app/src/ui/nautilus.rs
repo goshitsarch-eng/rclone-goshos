@@ -2146,7 +2146,9 @@ impl NautilusView {
             self.add_crumb(&label, &target);
         }
         let edit = gtk::Button::from_icon_name("document-edit-symbolic");
-        edit.set_tooltip_text(Some("Edit path"));
+        edit.set_tooltip_text(Some(
+            &self.ctx.t_or("nautilus.titles.editPath", "Edit path"),
+        ));
         edit.set_has_frame(false);
         let view = self.clone();
         edit.connect_clicked(move |_| view.show_path_entry());
@@ -2979,22 +2981,38 @@ impl NautilusView {
 
     fn undo_last(&self) {
         let Some(op) = self.undo.borrow_mut().pop() else {
-            self.toast.add_toast(adw::Toast::new("Nothing to undo"));
+            self.toast.add_toast(adw::Toast::new(
+                &self
+                    .ctx
+                    .t_or("nautilus.notifications.nothingToUndo", "Nothing to undo"),
+            ));
             return;
         };
         self.invert_file_op(&op);
         self.redo.borrow_mut().push(op);
-        self.toast.add_toast(adw::Toast::new("Undid last action"));
+        self.toast.add_toast(adw::Toast::new(
+            &self
+                .ctx
+                .t_or("nautilus.notifications.undoComplete", "Undid last action"),
+        ));
     }
 
     fn redo_last(&self) {
         let Some(op) = self.redo.borrow_mut().pop() else {
-            self.toast.add_toast(adw::Toast::new("Nothing to redo"));
+            self.toast.add_toast(adw::Toast::new(
+                &self
+                    .ctx
+                    .t_or("nautilus.notifications.nothingToRedo", "Nothing to redo"),
+            ));
             return;
         };
         self.replay_file_op(&op);
         self.undo.borrow_mut().push(op);
-        self.toast.add_toast(adw::Toast::new("Redid last action"));
+        self.toast.add_toast(adw::Toast::new(
+            &self
+                .ctx
+                .t_or("nautilus.notifications.redoComplete", "Redid last action"),
+        ));
     }
 
     fn invert_file_op(&self, op: &str) {
@@ -3010,9 +3028,10 @@ impl NautilusView {
                     self.toast.add_toast(adw::Toast::new(&e));
                 }
             }
-            None => self
-                .toast
-                .add_toast(adw::Toast::new("This action cannot be undone")),
+            None => self.toast.add_toast(adw::Toast::new(&self.ctx.t_or(
+                "nautilus.notifications.cannotUndo",
+                "This action cannot be undone",
+            ))),
         }
         self.reload();
     }
@@ -3305,8 +3324,11 @@ impl NautilusView {
             })
             .collect();
         *self.clipboard.borrow_mut() = items;
-        self.toast
-            .add_toast(adw::Toast::new(if cut { "Cut" } else { "Copied" }));
+        self.toast.add_toast(adw::Toast::new(&if cut {
+            self.ctx.t_or("nautilus.contextMenu.cut", "Cut")
+        } else {
+            self.ctx.t_or("common.copy", "Copied")
+        }));
     }
 
     fn paste(&self) {
@@ -3962,7 +3984,9 @@ impl NautilusView {
     fn copy_text(&self, text: &str) {
         if let Some(display) = gtk::gdk::Display::default() {
             display.clipboard().set_text(text);
-            self.toast.add_toast(adw::Toast::new("Copied to clipboard"));
+            self.toast.add_toast(adw::Toast::new(
+                &self.ctx.t_or("common.copied", "Copied to clipboard"),
+            ));
         }
     }
 
@@ -4053,7 +4077,7 @@ impl NautilusView {
 
     fn upload_tree_into(&self, local: &std::path::Path, dest_dir: &str) -> Result<usize, String> {
         let Some(client) = self.ctx.client() else {
-            return Err("Engine offline".into());
+            return Err(self.ctx.t_or("common.engineOffline", "Engine offline"));
         };
         let current = self.current.borrow().clone();
         let mut items = Vec::new();

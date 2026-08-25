@@ -49,7 +49,8 @@
     "category": "Category",
     "other": "Other",
     "ready": "Ready",
-    "configure": "Configure"
+    "configure": "Configure",
+    "engineOffline": "Motor çevrimdışı"
   },
   "cron": {
     "everyMinute": "Her dakika",
@@ -849,7 +850,8 @@
       "quickRun": "New Quick Run",
       "add": "Add remote or quick run",
       "developer": "Developer",
-      "trayActions": "Tray actions"
+      "trayActions": "Tray actions",
+      "memoryUnavailable": "Bellek istatistikleri kullanılamıyor"
     },
     "detach": "Detach the current workspace into a new window"
   },
@@ -2610,6 +2612,7 @@
       "selectFolder": "Klasör Seç",
       "selectFile": "Dosya Seç",
       "selectItems": "Ögeleri Seç",
+      "editPath": "Yolu düzenle",
       "files": "Dosyalar",
       "starred": "Yıldızlı",
       "searchPlaceholder": "Dosyaları ara...",
@@ -2815,6 +2818,9 @@
       "moveStarted": "{{count}} öge taşınıyor...",
       "renameStarted": "Yeniden adlandırma işlemi başlatıldı",
       "undoComplete": "Geri alma başarılı",
+      "nothingToUndo": "Geri alınacak işlem yok",
+      "nothingToRedo": "Yinelenecek işlem yok",
+      "cannotUndo": "Bu işlem geri alınamaz",
       "redoComplete": "Yineleme başarılı",
       "copyUrlStarted": "URL'den indiriliyor...",
       "getPublicLinkStarted": "Ortak bağlantı oluşturuluyor...",
@@ -3254,7 +3260,8 @@
     "tooltipMount": "1 Bağlama",
     "tooltipMounts": "{{count}} Bağlama",
     "tooltipServe": "1 Sunucu",
-    "tooltipServes": "{{count}} Sunucu"
+    "tooltipServes": "{{count}} Sunucu",
+    "tooltipSubtitle": "Uzaklar, bağlama noktaları ve aktarımlar"
   },
   "powerInhibitor": {
     "reason": "Aktif işlemler devam ediyor: {{details}}",

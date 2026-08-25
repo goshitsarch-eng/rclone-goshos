@@ -27,6 +27,8 @@ struct StatusIcon {
     tx: Sender<TrayAction>,
     items: Vec<TrayMenuItem>,
     icon_name: String,
+    tooltip_title: String,
+    tooltip_description: String,
 }
 
 impl ksni::Tray for StatusIcon {
@@ -35,13 +37,13 @@ impl ksni::Tray for StatusIcon {
     }
 
     fn title(&self) -> String {
-        "Rclone Manager".into()
+        self.tooltip_title.clone()
     }
 
     fn tool_tip(&self) -> ksni::ToolTip {
         ksni::ToolTip {
-            title: "Rclone Manager".into(),
-            description: "Remotes, mounts, and transfers".into(),
+            title: self.tooltip_title.clone(),
+            description: self.tooltip_description.clone(),
             ..Default::default()
         }
     }
@@ -217,6 +219,8 @@ pub fn start(ctx: &AppCtx) -> Option<TrayBus> {
         tx: tx.clone(),
         items,
         icon_name: tray_icon_name(&ctx.settings.borrow().general.tray_icon_theme).into(),
+        tooltip_title: ctx.t_or("tray.tooltipDefault", "RClone Manager"),
+        tooltip_description: ctx.t_or("tray.tooltipSubtitle", "Remotes, mounts, and transfers"),
     };
     std::thread::Builder::new()
         .name("rclone-manager-sni".into())

@@ -434,6 +434,11 @@ This client is the GTK 4 + libadwaita rewrite of the Angular/Tauri desktop UI. I
 - Logs Clear truncates `rclone.log` for engine logs so the tailed file does not refill the dialog
 - Repair auth-failed uses Angular `clear_engine_auth_error` behavior (restart/retry) and still opens Backends
 - Standalone dialogs cover VFS, Repair, Start operation, and File viewer
+- `--dialog` / spawn accept `vfs`, `repair`, `start-operation`, and `file-viewer`
+- Overview job rows navigate to dashboard/Flow context (`NavTarget::for_job`); activity panels still open Job detail
+- Repair banner with a password diagnosis opens the unlock sheet instead of the full repair dialog
+- Shared serve cards (copy URL/ID, Open, option count, Stop) on dashboard overview, remote Serve monitoring, and Flow
+- Files undo/redo/copy toasts, tray tooltip, engine-offline, and memory-stats labels use i18n keys
 
 ## Still deepening toward pixel-level Angular parity
 

@@ -49,7 +49,8 @@
     "category": "Category",
     "other": "Other",
     "ready": "Ready",
-    "configure": "Configure"
+    "configure": "Configure",
+    "engineOffline": "Рушій офлайн"
   },
   "cron": {
     "everyMinute": "Щохвилини",
@@ -849,7 +850,8 @@
       "quickRun": "New Quick Run",
       "add": "Add remote or quick run",
       "developer": "Developer",
-      "trayActions": "Tray actions"
+      "trayActions": "Tray actions",
+      "memoryUnavailable": "Статистика пам’яті недоступна"
     },
     "detach": "Detach the current workspace into a new window"
   },
@@ -2610,6 +2612,7 @@
       "selectFolder": "Вибрати теку",
       "selectFile": "Вибрати файл",
       "selectItems": "Вибрати елементи",
+      "editPath": "Редагувати шлях",
       "files": "Файли",
       "starred": "Позначені",
       "searchPlaceholder": "Пошук файлів...",
@@ -2815,6 +2818,9 @@
       "moveStarted": "Переміщення елементів: {{count}}...",
       "renameStarted": "Операцію перейменування розпочато",
       "undoComplete": "Дію успішно скасовано",
+      "nothingToUndo": "Немає що скасувати",
+      "nothingToRedo": "Немає що повторити",
+      "cannotUndo": "Цю дію не можна скасувати",
       "redoComplete": "Дію успішно повторено",
       "copyUrlStarted": "Завантаження з URL...",
       "getPublicLinkStarted": "Створення публічного посилання...",
@@ -3254,7 +3260,8 @@
     "tooltipMount": "1 монтування",
     "tooltipMounts": "Монтувань: {{count}}",
     "tooltipServe": "1 роздача",
-    "tooltipServes": "Роздач: {{count}}"
+    "tooltipServes": "Роздач: {{count}}",
+    "tooltipSubtitle": "Віддалені, монтування та передачі"
   },
   "powerInhibitor": {
     "reason": "Виконуються активні операції: {{details}}",

@@ -49,7 +49,8 @@
     "category": "Category",
     "other": "Other",
     "ready": "Ready",
-    "configure": "Configure"
+    "configure": "Configure",
+    "engineOffline": "引擎离线"
   },
   "cron": {
     "everyMinute": "每分钟",
@@ -849,7 +850,8 @@
       "quickRun": "New Quick Run",
       "add": "Add remote or quick run",
       "developer": "Developer",
-      "trayActions": "Tray actions"
+      "trayActions": "Tray actions",
+      "memoryUnavailable": "内存统计不可用"
     },
     "detach": "Detach the current workspace into a new window"
   },
@@ -2610,6 +2612,7 @@
       "selectFolder": "选择文件夹",
       "selectFile": "选择文件",
       "selectItems": "选择项目",
+      "editPath": "编辑路径",
       "files": "文件",
       "starred": "已收藏",
       "searchPlaceholder": "搜索文件...",
@@ -2815,6 +2818,9 @@
       "moveStarted": "正在移动 {{count}} 项...",
       "renameStarted": "重命名操作已开始",
       "undoComplete": "撤销成功",
+      "nothingToUndo": "没有可撤销的操作",
+      "nothingToRedo": "没有可重做的操作",
+      "cannotUndo": "此操作无法撤销",
       "redoComplete": "重做成功",
       "copyUrlStarted": "正在从 URL 下载...",
       "getPublicLinkStarted": "正在生成公共链接...",
@@ -3254,7 +3260,8 @@
     "tooltipMount": "1 个挂载",
     "tooltipMounts": "{{count}} 个挂载",
     "tooltipServe": "1 个服务",
-    "tooltipServes": "{{count}} 个服务"
+    "tooltipServes": "{{count}} 个服务",
+    "tooltipSubtitle": "远程、挂载和传输"
   },
   "powerInhibitor": {
     "reason": "正在运行活动操作：{{details}}",

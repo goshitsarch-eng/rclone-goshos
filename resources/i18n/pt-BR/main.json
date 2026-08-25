@@ -49,7 +49,8 @@
     "category": "Category",
     "other": "Other",
     "ready": "Ready",
-    "configure": "Configure"
+    "configure": "Configure",
+    "engineOffline": "Mecanismo offline"
   },
   "cron": {
     "everyMinute": "A cada minuto",
@@ -849,7 +850,8 @@
       "quickRun": "New Quick Run",
       "add": "Add remote or quick run",
       "developer": "Developer",
-      "trayActions": "Tray actions"
+      "trayActions": "Tray actions",
+      "memoryUnavailable": "Estatísticas de memória indisponíveis"
     },
     "detach": "Detach the current workspace into a new window"
   },
@@ -2610,6 +2612,7 @@
       "selectFolder": "Selecione a Pasta",
       "selectFile": "Selecione Arquivo",
       "selectItems": "Selecione Itens",
+      "editPath": "Editar caminho",
       "files": "Arquivos",
       "starred": "Estrelar",
       "searchPlaceholder": "Procure arquivos...",
@@ -2815,6 +2818,9 @@
       "moveStarted": "Movendo {{count}} itens...",
       "renameStarted": "Operação de renomeação iniciada",
       "undoComplete": "Desfazer bem-sucedido",
+      "nothingToUndo": "Nada para desfazer",
+      "nothingToRedo": "Nada para refazer",
+      "cannotUndo": "Esta ação não pode ser desfeita",
       "redoComplete": "A operação de refazer foi bem-sucedida",
       "copyUrlStarted": "Baixando do URL...",
       "getPublicLinkStarted": "Gerando link público...",
@@ -3254,7 +3260,8 @@
     "tooltipMount": "1 Montagem",
     "tooltipMounts": "{{count}} Montagens",
     "tooltipServe": "1 Serviço",
-    "tooltipServes": "{{count}} Serviços"
+    "tooltipServes": "{{count}} Serviços",
+    "tooltipSubtitle": "Remotos, montagens e transferências"
   },
   "powerInhibitor": {
     "reason": "Operações ativas em andamento: {{details}}",

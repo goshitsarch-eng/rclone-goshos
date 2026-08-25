@@ -49,7 +49,8 @@
     "category": "Category",
     "other": "Other",
     "ready": "Ready",
-    "configure": "Configure"
+    "configure": "Configure",
+    "engineOffline": "Motor sin conexión"
   },
   "cron": {
     "everyMinute": "Cada minuto",
@@ -849,7 +850,8 @@
       "quickRun": "New Quick Run",
       "add": "Add remote or quick run",
       "developer": "Developer",
-      "trayActions": "Tray actions"
+      "trayActions": "Tray actions",
+      "memoryUnavailable": "Estadísticas de memoria no disponibles"
     },
     "detach": "Detach the current workspace into a new window"
   },
@@ -2610,6 +2612,7 @@
       "selectFolder": "Seleccionar carpeta",
       "selectFile": "Seleccionar archivo",
       "selectItems": "Seleccionar elementos",
+      "editPath": "Editar ruta",
       "files": "Archivos",
       "starred": "Favoritos",
       "searchPlaceholder": "Buscar archivos...",
@@ -2815,6 +2818,9 @@
       "moveStarted": "Moviendo {{count}} elementos...",
       "renameStarted": "Operación de renombrado iniciada",
       "undoComplete": "Deshacer exitoso",
+      "nothingToUndo": "Nada que deshacer",
+      "nothingToRedo": "Nada que rehacer",
+      "cannotUndo": "Esta acción no se puede deshacer",
       "redoComplete": "Rehacer exitoso",
       "copyUrlStarted": "Descargando desde URL...",
       "getPublicLinkStarted": "Generando enlace público...",
@@ -3254,7 +3260,8 @@
     "tooltipMount": "1 Montaje",
     "tooltipMounts": "{{count}} Montajes",
     "tooltipServe": "1 Servicio",
-    "tooltipServes": "{{count}} Servicios"
+    "tooltipServes": "{{count}} Servicios",
+    "tooltipSubtitle": "Remotos, montajes y transferencias"
   },
   "powerInhibitor": {
     "reason": "Operaciones activas en curso: {{details}}",

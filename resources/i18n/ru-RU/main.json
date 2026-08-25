@@ -49,7 +49,8 @@
     "category": "Category",
     "other": "Other",
     "ready": "Ready",
-    "configure": "Configure"
+    "configure": "Configure",
+    "engineOffline": "Движок офлайн"
   },
   "cron": {
     "everyMinute": "Каждую минуту",
@@ -849,7 +850,8 @@
       "quickRun": "New Quick Run",
       "add": "Add remote or quick run",
       "developer": "Developer",
-      "trayActions": "Tray actions"
+      "trayActions": "Tray actions",
+      "memoryUnavailable": "Статистика памяти недоступна"
     },
     "detach": "Detach the current workspace into a new window"
   },
@@ -2610,6 +2612,7 @@
       "selectFolder": "Выберите папку",
       "selectFile": "Выберите файл",
       "selectItems": "Выберите элементы",
+      "editPath": "Изменить путь",
       "files": "Файлы",
       "starred": "Избранное",
       "searchPlaceholder": "Поиск файлов...",
@@ -2815,6 +2818,9 @@
       "moveStarted": "Перемещение элементов: {{count}}...",
       "renameStarted": "Переименование запущено",
       "undoComplete": "Действие отменено",
+      "nothingToUndo": "Нечего отменять",
+      "nothingToRedo": "Нечего повторять",
+      "cannotUndo": "Это действие нельзя отменить",
       "redoComplete": "Действие повторено",
       "copyUrlStarted": "Загрузка по URL...",
       "getPublicLinkStarted": "Создание публичной ссылки...",
@@ -3254,7 +3260,8 @@
     "tooltipMount": "1 подключённый диск",
     "tooltipMounts": "Подключённых дисков: {{count}}",
     "tooltipServe": "1 сервер",
-    "tooltipServes": "Серверов: {{count}}"
+    "tooltipServes": "Серверов: {{count}}",
+    "tooltipSubtitle": "Удалённые, монтирования и передачи"
   },
   "powerInhibitor": {
     "reason": "Выполняются активные операции: {{details}}",

@@ -49,7 +49,8 @@
     "category": "Category",
     "other": "Other",
     "ready": "Ready",
-    "configure": "Configure"
+    "configure": "Configure",
+    "engineOffline": "Engine offline"
   },
   "cron": {
     "everyMinute": "Every minute",
@@ -855,7 +856,8 @@
       "quickRun": "New Quick Run",
       "add": "Add remote or quick run",
       "developer": "Developer",
-      "trayActions": "Tray actions"
+      "trayActions": "Tray actions",
+      "memoryUnavailable": "Memory stats unavailable"
     },
     "detach": "Detach the current workspace into a new window"
   },
@@ -2616,6 +2618,7 @@
       "selectFolder": "Select Folder",
       "selectFile": "Select File",
       "selectItems": "Select Items",
+      "editPath": "Edit path",
       "files": "Files",
       "starred": "Starred",
       "searchPlaceholder": "Search files...",
@@ -2826,6 +2829,9 @@
       "moveStarted": "Moving {{count}} items...",
       "renameStarted": "Rename operation started",
       "undoComplete": "Undo successful",
+      "nothingToUndo": "Nothing to undo",
+      "nothingToRedo": "Nothing to redo",
+      "cannotUndo": "This action cannot be undone",
       "redoComplete": "Redo successful",
       "copyUrlStarted": "Downloading from URL...",
       "getPublicLinkStarted": "Generating public link...",
@@ -3265,7 +3271,8 @@
     "tooltipMount": "1 Mount",
     "tooltipMounts": "{{count}} Mounts",
     "tooltipServe": "1 Serve",
-    "tooltipServes": "{{count}} Serves"
+    "tooltipServes": "{{count}} Serves",
+    "tooltipSubtitle": "Remotes, mounts, and transfers"
   },
   "powerInhibitor": {
     "reason": "Active operations running: {{details}}",

@@ -1258,7 +1258,7 @@ impl Dashboard {
                     let job = job.clone();
                     let ctx = self.ctx.clone();
                     row.connect_activated(move |_| {
-                        ctx.request_nav(NavTarget::Job { id: job.id });
+                        ctx.request_nav(NavTarget::for_job(&job));
                     });
                 }
                 jobs.append(&row);
@@ -1287,92 +1287,8 @@ impl Dashboard {
             serves.append(&row);
         } else {
             for serve in &filtered {
-                let row = adw::ActionRow::new();
-                row.set_title(&format!("{} · {}", serve.serve_type, serve.fs));
-                let mut subtitle = serve.addr.clone();
-                if !serve.profile.is_empty() {
-                    subtitle.push_str(&format!(" · {}", serve.profile));
-                }
-                if !serve.origin.is_empty() {
-                    subtitle.push_str(&format!(" · {}", serve.origin));
-                }
-                if serve.option_count > 0 {
-                    subtitle.push_str(&format!(
-                        " · {} {}",
-                        serve.option_count,
-                        self.ctx.t_or("shared.serveCard.labels.active", "active")
-                    ));
-                }
-                row.set_subtitle(&subtitle);
-                let stop = gtk::Button::from_icon_name("media-playback-stop-symbolic");
-                stop.set_valign(gtk::Align::Center);
-                stop.set_tooltip_text(Some(
-                    &self
-                        .ctx
-                        .t_or("shared.serveCard.tooltips.stop", "Stop this serve"),
-                ));
-                {
-                    let ctx = self.ctx.clone();
-                    let id = serve.id.clone();
-                    let dash = self.clone();
-                    stop.connect_clicked(move |_| {
-                        if let Some(c) = ctx.client() {
-                            let _ = c.serve_stop(&id);
-                            ctx.refresh_runtime();
-                            dash.refresh();
-                        }
-                    });
-                }
-                let url = serve.url();
-                if !url.is_empty() {
-                    let copy_url = gtk::Button::from_icon_name("edit-copy-symbolic");
-                    copy_url.set_valign(gtk::Align::Center);
-                    copy_url.set_tooltip_text(Some(
-                        &self
-                            .ctx
-                            .t_or("shared.serveCard.tooltips.copyUrl", "Click to copy URL"),
-                    ));
-                    {
-                        let url = url.clone();
-                        copy_url.connect_clicked(move |_| {
-                            if let Some(display) = gtk::gdk::Display::default() {
-                                display.clipboard().set_text(&url);
-                            }
-                        });
-                    }
-                    row.add_suffix(&copy_url);
-                    let open = gtk::LinkButton::new(&url);
-                    open.set_label(&self.ctx.t_or("common.open", "Open"));
-                    open.set_valign(gtk::Align::Center);
-                    row.add_suffix(&open);
-                }
-                if !serve.id.is_empty() {
-                    let copy_id = gtk::Button::from_icon_name("edit-select-all-symbolic");
-                    copy_id.set_valign(gtk::Align::Center);
-                    copy_id.set_tooltip_text(Some(
-                        &self
-                            .ctx
-                            .t_or("shared.serveCard.tooltips.copyId", "Click to copy ID"),
-                    ));
-                    {
-                        let id = serve.id.clone();
-                        copy_id.connect_clicked(move |_| {
-                            if let Some(display) = gtk::gdk::Display::default() {
-                                display.clipboard().set_text(&id);
-                            }
-                        });
-                    }
-                    row.add_suffix(&copy_id);
-                }
-                row.add_suffix(&stop);
-                {
-                    let ctx = self.ctx.clone();
-                    let id = serve.id.clone();
-                    row.connect_activated(move |_| {
-                        ctx.request_nav(NavTarget::Serve { id: id.clone() });
-                    });
-                }
-                serves.append(&row);
+                let dash = self.clone();
+                serves.append(&serve_card_row(&self.ctx, serve, move || dash.refresh()));
             }
         }
         self.host().append(&serves);
@@ -1889,62 +1805,8 @@ impl Dashboard {
             .cloned()
             .collect();
         for serve in remote_serves {
-            let row = adw::ActionRow::new();
-            row.set_title(&format!("Serve · {}", serve.serve_type));
-            let mut subtitle = serve.addr.clone();
-            if !serve.profile.is_empty() {
-                subtitle.push_str(&format!(" · {}", serve.profile));
-            }
-            if !serve.origin.is_empty() {
-                subtitle.push_str(&format!(" · {}", serve.origin));
-            }
-            row.set_subtitle(&subtitle);
-            let url = serve.url();
-            if !url.is_empty() {
-                let copy_url = gtk::Button::from_icon_name("edit-copy-symbolic");
-                copy_url.set_valign(gtk::Align::Center);
-                copy_url.set_tooltip_text(Some(
-                    &self
-                        .ctx
-                        .t_or("shared.serveCard.tooltips.copyUrl", "Click to copy URL"),
-                ));
-                copy_url.connect_clicked(move |_| {
-                    if let Some(display) = gtk::gdk::Display::default() {
-                        display.clipboard().set_text(&url);
-                    }
-                });
-                row.add_suffix(&copy_url);
-            }
-            if !serve.id.is_empty() {
-                let stop = gtk::Button::from_icon_name("media-playback-stop-symbolic");
-                stop.set_valign(gtk::Align::Center);
-                stop.set_tooltip_text(Some(
-                    &self
-                        .ctx
-                        .t_or("shared.serveCard.tooltips.stop", "Stop this serve"),
-                ));
-                {
-                    let ctx = self.ctx.clone();
-                    let id = serve.id.clone();
-                    let dash = self.clone();
-                    stop.connect_clicked(move |_| {
-                        if let Some(client) = ctx.client() {
-                            let _ = client.serve_stop(&id);
-                            ctx.refresh_runtime();
-                            dash.refresh();
-                        }
-                    });
-                }
-                row.add_suffix(&stop);
-            }
-            {
-                let ctx = self.ctx.clone();
-                let id = serve.id.clone();
-                row.connect_activated(move |_| {
-                    ctx.request_nav(NavTarget::Serve { id: id.clone() });
-                });
-            }
-            activity.append(&row);
+            let dash = self.clone();
+            activity.append(&serve_card_row(&self.ctx, &serve, move || dash.refresh()));
         }
         self.detail_box().append(&activity);
         self.append_transfer_activity(&name, &snap, selected_profile.as_deref());
@@ -4136,6 +3998,92 @@ fn remote_state_label(ctx: &AppCtx, mounted: bool, serving: bool, job: bool) -> 
     } else {
         parts.join(" · ")
     }
+}
+
+pub(super) fn serve_card_row(
+    ctx: &AppCtx,
+    serve: &crate::rclone::ServeItem,
+    on_changed: impl Fn() + 'static,
+) -> adw::ActionRow {
+    let row = adw::ActionRow::new();
+    row.set_title(&format!("{} · {}", serve.serve_type, serve.fs));
+    let mut subtitle = serve.addr.clone();
+    if !serve.profile.is_empty() {
+        subtitle.push_str(&format!(" · {}", serve.profile));
+    }
+    if !serve.origin.is_empty() {
+        subtitle.push_str(&format!(" · {}", serve.origin));
+    }
+    if serve.option_count > 0 {
+        subtitle.push_str(&format!(
+            " · {} {}",
+            serve.option_count,
+            ctx.t_or("shared.serveCard.labels.active", "active")
+        ));
+    }
+    row.set_subtitle(&subtitle);
+    let stop = gtk::Button::from_icon_name("media-playback-stop-symbolic");
+    stop.set_valign(gtk::Align::Center);
+    stop.set_tooltip_text(Some(
+        &ctx.t_or("shared.serveCard.tooltips.stop", "Stop this serve"),
+    ));
+    {
+        let ctx = ctx.clone();
+        let id = serve.id.clone();
+        stop.connect_clicked(move |_| {
+            if let Some(client) = ctx.client() {
+                let _ = client.serve_stop(&id);
+                ctx.refresh_runtime();
+                on_changed();
+            }
+        });
+    }
+    let url = serve.url();
+    if !url.is_empty() {
+        let copy_url = gtk::Button::from_icon_name("edit-copy-symbolic");
+        copy_url.set_valign(gtk::Align::Center);
+        copy_url.set_tooltip_text(Some(
+            &ctx.t_or("shared.serveCard.tooltips.copyUrl", "Click to copy URL"),
+        ));
+        {
+            let url = url.clone();
+            copy_url.connect_clicked(move |_| {
+                if let Some(display) = gtk::gdk::Display::default() {
+                    display.clipboard().set_text(&url);
+                }
+            });
+        }
+        row.add_suffix(&copy_url);
+        let open = gtk::LinkButton::new(&url);
+        open.set_label(&ctx.t_or("common.open", "Open"));
+        open.set_valign(gtk::Align::Center);
+        row.add_suffix(&open);
+    }
+    if !serve.id.is_empty() {
+        let copy_id = gtk::Button::from_icon_name("edit-select-all-symbolic");
+        copy_id.set_valign(gtk::Align::Center);
+        copy_id.set_tooltip_text(Some(
+            &ctx.t_or("shared.serveCard.tooltips.copyId", "Click to copy ID"),
+        ));
+        {
+            let id = serve.id.clone();
+            copy_id.connect_clicked(move |_| {
+                if let Some(display) = gtk::gdk::Display::default() {
+                    display.clipboard().set_text(&id);
+                }
+            });
+        }
+        row.add_suffix(&copy_id);
+    }
+    row.add_suffix(&stop);
+    {
+        let ctx = ctx.clone();
+        let id = serve.id.clone();
+        row.connect_activated(move |_| {
+            ctx.request_nav(NavTarget::Serve { id: id.clone() });
+        });
+    }
+    row
 }
 
 fn section_label(text: &str) -> gtk::Label {

@@ -307,7 +307,20 @@ fn present_main_with(app: &adw::Application, ctx: AppCtx, hidden: bool) {
         let banner_kind = banner_kind.clone();
         let banner_ref = banner.clone();
         banner.connect_button_clicked(move |_| match *banner_kind.borrow() {
-            BannerKind::Repair => dialogs::repair(&window, ctx.clone(), toast.clone()),
+            BannerKind::Repair => {
+                let version = ctx.client().and_then(|c| c.version().ok());
+                let issues = crate::repair::diagnose(
+                    &ctx.settings.borrow(),
+                    ctx.engine_ready(),
+                    ctx.client().as_ref(),
+                    version.as_deref(),
+                );
+                if crate::repair::banner_opens_password(&issues) {
+                    dialogs::password_prompt(&window, ctx.clone(), toast.clone());
+                } else {
+                    dialogs::repair(&window, ctx.clone(), toast.clone());
+                }
+            }
             BannerKind::Flatpak => {
                 ctx.settings.borrow_mut().runtime.flatpak_warn = false;
                 ctx.persist();

@@ -49,7 +49,8 @@
     "category": "Category",
     "other": "Other",
     "ready": "Ready",
-    "configure": "Configure"
+    "configure": "Configure",
+    "engineOffline": "Moteur hors ligne"
   },
   "cron": {
     "everyMinute": "Toutes les minutes",
@@ -849,7 +850,8 @@
       "quickRun": "New Quick Run",
       "add": "Add remote or quick run",
       "developer": "Developer",
-      "trayActions": "Tray actions"
+      "trayActions": "Tray actions",
+      "memoryUnavailable": "Statistiques mémoire indisponibles"
     },
     "detach": "Detach the current workspace into a new window"
   },
@@ -2610,6 +2612,7 @@
       "selectFolder": "Sélectionner un dossier",
       "selectFile": "Sélectionner Fichier",
       "selectItems": "Sélectionner des éléments",
+      "editPath": "Modifier le chemin",
       "files": "Fichiers",
       "starred": "Favoris",
       "searchPlaceholder": "Rechercher des fichiers…",
@@ -2815,6 +2818,9 @@
       "moveStarted": "Déplacement des éléments en cours {{count}}...",
       "renameStarted": "Opération de renommage démarrée",
       "undoComplete": "Annulation réussie",
+      "nothingToUndo": "Rien à annuler",
+      "nothingToRedo": "Rien à rétablir",
+      "cannotUndo": "Cette action ne peut pas être annulée",
       "redoComplete": "Rétablissement réussi",
       "copyUrlStarted": "Téléchargement depuis l'URL...",
       "getPublicLinkStarted": "Génération du lien public...",
@@ -3254,7 +3260,8 @@
     "tooltipMount": "1 montage",
     "tooltipMounts": "{{count}} Montages",
     "tooltipServe": "1 Partage",
-    "tooltipServes": "{{count}} Service de partage"
+    "tooltipServes": "{{count}} Service de partage",
+    "tooltipSubtitle": "Distants, montages et transferts"
   },
   "powerInhibitor": {
     "reason": "Opérations actives en cours : {{details}}",

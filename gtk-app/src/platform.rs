@@ -678,6 +678,10 @@ pub const DIALOG_KINDS: &[&str] = &[
     "remote-config",
     "quick-add-remote",
     "restore-preview",
+    "vfs",
+    "repair",
+    "start-operation",
+    "file-viewer",
 ];
 
 pub fn parse_dialog_args(args: &[String]) -> Option<DialogRequest> {
@@ -1013,6 +1017,11 @@ mod tests {
         );
         assert!(parse_dialog_args(&["app".into(), "--dialog".into(), "nope".into()]).is_none());
         assert!(spawn_standalone_dialog("nope", &serde_json::json!({})).is_err());
+        for kind in ["vfs", "repair", "start-operation", "file-viewer"] {
+            let parsed =
+                parse_dialog_args(&["app".into(), "--dialog".into(), kind.into()]).unwrap();
+            assert_eq!(parsed.kind, kind);
+        }
         let tmp = tempfile::tempdir().unwrap();
         let path = tmp.path().join("result.json");
         write_dialog_result(Some(&path), true, "about", serde_json::json!({})).unwrap();

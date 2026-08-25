@@ -246,6 +246,11 @@ pub fn issue_i18n_keys(kind: RepairKind) -> (&'static str, &'static str, &'stati
     }
 }
 
+/// Angular password diagnosis opens the unlock sheet instead of the full repair dialog.
+pub fn banner_opens_password(issues: &[RepairIssue]) -> bool {
+    banner_from_issues(issues).is_some_and(|issue| issue.kind == RepairKind::PasswordRequired)
+}
+
 pub fn banner_from_issues(issues: &[RepairIssue]) -> Option<&RepairIssue> {
     const ORDER: &[RepairKind] = &[
         RepairKind::MissingBinary,
@@ -350,6 +355,18 @@ mod tests {
                 "banners.engine.password.subtitle"
             ))
         );
+        assert!(banner_opens_password(&[RepairIssue {
+            kind: RepairKind::PasswordRequired,
+            title: "pw".into(),
+            detail: String::new(),
+            action: String::new(),
+        }]));
+        assert!(!banner_opens_password(&[RepairIssue {
+            kind: RepairKind::VersionTooOld,
+            title: "old".into(),
+            detail: String::new(),
+            action: String::new(),
+        }]));
         assert!(engine_banner_keys(RepairKind::FuseMissing).is_none());
         assert_eq!(
             issue_i18n_keys(RepairKind::MissingBinary).0,

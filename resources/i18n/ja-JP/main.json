@@ -49,7 +49,8 @@
     "category": "Category",
     "other": "Other",
     "ready": "Ready",
-    "configure": "Configure"
+    "configure": "Configure",
+    "engineOffline": "エンジンオフライン"
   },
   "cron": {
     "everyMinute": "毎分",
@@ -849,7 +850,8 @@
       "quickRun": "New Quick Run",
       "add": "Add remote or quick run",
       "developer": "Developer",
-      "trayActions": "Tray actions"
+      "trayActions": "Tray actions",
+      "memoryUnavailable": "メモリ統計を取得できません"
     },
     "detach": "Detach the current workspace into a new window"
   },
@@ -2610,6 +2612,7 @@
       "selectFolder": "フォルダを選択",
       "selectFile": "ファイルを選択",
       "selectItems": "項目を選択",
+      "editPath": "パスを編集",
       "files": "ファイル",
       "starred": "スター付き",
       "searchPlaceholder": "ファイルを検索...",
@@ -2815,6 +2818,9 @@
       "moveStarted": "{{count}} 個の項目を移動中...",
       "renameStarted": "名前変更操作を開始しました",
       "undoComplete": "取り消しました",
+      "nothingToUndo": "元に戻す操作はありません",
+      "nothingToRedo": "やり直す操作はありません",
+      "cannotUndo": "この操作は元に戻せません",
       "redoComplete": "やり直しました",
       "copyUrlStarted": "URLからダウンロード中...",
       "getPublicLinkStarted": "公開リンクを生成中...",
@@ -3254,7 +3260,8 @@
     "tooltipMount": "マウント 1件",
     "tooltipMounts": "マウント {{count}}件",
     "tooltipServe": "公開サーバー 1件",
-    "tooltipServes": "公開サーバー {{count}}件"
+    "tooltipServes": "公開サーバー {{count}}件",
+    "tooltipSubtitle": "リモート、マウント、転送"
   },
   "powerInhibitor": {
     "reason": "アクティブな操作を実行中: {{details}}",
