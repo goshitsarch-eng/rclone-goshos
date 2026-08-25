@@ -2,11 +2,13 @@ mod dashboard;
 mod dialogs;
 mod flow;
 mod interactive;
+mod job_panels;
 mod nautilus;
 mod onboarding;
 mod preferences;
 mod remote_config;
 mod tray;
+mod vfs_panel;
 mod window;
 mod wizard;
 

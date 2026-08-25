@@ -272,7 +272,7 @@ pub fn parse_route_url(input: &str) -> Option<NavTarget> {
     let path = route_path(input)?;
     let mut parts = path.split('/');
     match parts.next()? {
-        "dashboard" => {
+        "dashboard" | "main" => {
             let tab = parts
                 .next()
                 .and_then(AppTab::parse)
@@ -544,6 +544,20 @@ mod tests {
             parse_route_url("/automation/quick%3Anightly"),
             Some(NavTarget::Automation {
                 id: "quick:nightly".into(),
+            })
+        );
+        assert_eq!(
+            parse_route_url("#/main"),
+            Some(NavTarget::Dashboard {
+                tab: AppTab::General,
+                remote: None,
+            })
+        );
+        assert_eq!(
+            parse_route_url("#/main/operations/testdrive"),
+            Some(NavTarget::Dashboard {
+                tab: AppTab::Operations,
+                remote: Some("testdrive".into()),
             })
         );
         assert_eq!(parse_route_url("#/updates"), Some(NavTarget::Updates));

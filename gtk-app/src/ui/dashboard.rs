@@ -1,4 +1,6 @@
 use super::dialogs;
+use super::job_panels;
+use super::vfs_panel;
 use super::AppCtx;
 use crate::navigation::NavTarget;
 use crate::operations::{AppTab, OperationType};
@@ -1852,47 +1854,13 @@ impl Dashboard {
         let selected_profile = (tab == AppTab::Operations)
             .then(|| self.selected_profile_name(&name, self.selected_sync_op(&name)));
         if let Some(job) = remote_jobs_preview(&snap.jobs, &name, selected_profile.as_deref()) {
-            let stats = adw::PreferencesGroup::new();
-            stats.set_title(
-                &self
-                    .ctx
-                    .t_or("modals.jobDetail.sections.overview", "Live job"),
-            );
-            for (title, value) in [
-                (
-                    self.ctx.t_or("modals.jobDetail.fields.status", "Status"),
-                    format!("{} · {:.0}%", job.status, job.progress * 100.0),
-                ),
-                (
-                    self.ctx.t_or("modals.jobDetail.fields.speed", "Speed"),
-                    format!(
-                        "{:.1} KiB/s",
-                        crate::jobs::stats_f64(&job.stats, &["speed"]) / 1024.0
-                    ),
-                ),
-                (
-                    self.ctx
-                        .t_or("modals.jobDetail.fields.speedAvg", "Average speed"),
-                    format!(
-                        "{:.1} KiB/s",
-                        crate::jobs::stats_f64(&job.stats, &["speedAvg", "speedAverage"]) / 1024.0
-                    ),
-                ),
-                (
-                    self.ctx.t_or("modals.jobDetail.fields.files", "Files"),
-                    format!(
-                        "{} / {}",
-                        crate::jobs::stats_i64(&job.stats, &["transfers"]),
-                        crate::jobs::stats_i64(&job.stats, &["checks"])
-                    ),
-                ),
-            ] {
-                let row = adw::ActionRow::new();
-                row.set_title(&title);
-                row.set_subtitle(&value);
-                stats.add(&row);
-            }
-            self.detail_box().append(&stats);
+            self.detail_box()
+                .append(&job_panels::job_info_group(&self.ctx, job));
+            self.detail_box()
+                .append(&job_panels::job_stats_group(&self.ctx, job));
+        } else if tab == AppTab::Operations {
+            self.detail_box()
+                .append(&job_panels::empty_stats_group(&self.ctx));
         }
 
         self.append_disk_usage(&name);
@@ -2042,54 +2010,11 @@ impl Dashboard {
         }
 
         if tab == AppTab::General || detail_op.supports_vfs() {
-            self.detail_box()
-                .append(&section_label(&self.ctx.t_or("remote.vfs", "VFS")));
-            let vfs = gtk::Box::new(gtk::Orientation::Horizontal, 8);
-            let open_vfs = gtk::Button::with_label(&self.ctx.t_or("remote.vfsPanel", "VFS panel"));
-            open_vfs.add_css_class("suggested-action");
-            {
-                let ctx = self.ctx.clone();
-                let name = name.clone();
-                let toast = self.toast.clone();
-                let root = self.root.clone();
-                open_vfs.connect_clicked(move |_| {
-                    if let Some(win) = root.root().and_downcast::<gtk::Window>() {
-                        dialogs::vfs_control(&win, ctx.clone(), &name, toast.clone());
-                    }
-                });
-            }
-            vfs.append(&open_vfs);
-            for (key, fallback, action) in [
-                ("common.refresh", "Refresh", "refresh"),
-                ("remote.forgetCache", "Forget cache", "forget"),
-            ] {
-                let btn = gtk::Button::with_label(&self.ctx.t_or(key, fallback));
-                let ctx = self.ctx.clone();
-                let name = name.clone();
-                let toast = self.toast.clone();
-                btn.connect_clicked(move |_| {
-                    let Some(client) = ctx.client() else {
-                        toast.add_toast(adw::Toast::new(&ctx.t_or(
-                            "notification.title.engineConnectionFailed",
-                            "Engine Connection Error",
-                        )));
-                        return;
-                    };
-                    let fs = remote_fs(&name, "");
-                    let result = match action {
-                        "refresh" => client.vfs_refresh_ex(&fs, None, true),
-                        _ => client.vfs_forget(&fs),
-                    };
-                    match result {
-                        Ok(_) => toast.add_toast(adw::Toast::new(
-                            &ctx.t_or("remote.vfsActionFinished", "VFS action finished"),
-                        )),
-                        Err(e) => toast.add_toast(adw::Toast::new(&e.to_string())),
-                    }
-                });
-                vfs.append(&btn);
-            }
-            self.detail_box().append(&vfs);
+            self.detail_box().append(&vfs_panel::vfs_panel(
+                self.ctx.clone(),
+                &name,
+                self.toast.clone(),
+            ));
         }
 
         if use_tabs {
@@ -3118,13 +3043,19 @@ impl Dashboard {
             &snap.mounts,
             &snap.serves,
         );
-        let row = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+        let row = adw::ExpanderRow::new();
+        row.set_title(if profile.is_empty() {
+            "default"
+        } else {
+            profile
+        });
+        row.set_subtitle(op.api_label());
         let start = gtk::Button::with_label(&self.ctx.t_or("actions.start", "Start"));
         start.add_css_class("suggested-action");
-        start.set_hexpand(true);
+        start.set_valign(gtk::Align::Center);
         let stop = gtk::Button::with_label(&self.ctx.t_or("actions.stop", "Stop"));
         stop.add_css_class("destructive-action");
-        stop.set_hexpand(true);
+        stop.set_valign(gtk::Align::Center);
         start.set_sensitive(!active);
         stop.set_sensitive(active);
         mark_action_busy(
@@ -3162,8 +3093,8 @@ impl Dashboard {
                 dash.refresh();
             });
         }
-        row.append(&start);
-        row.append(&stop);
+        row.add_suffix(&start);
+        row.add_suffix(&stop);
         self.detail_box().append(&row);
     }
 

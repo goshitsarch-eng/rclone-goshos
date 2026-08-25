@@ -1552,6 +1552,11 @@ pub fn vfs_refresh_payload(fs: &str, dir: Option<&str>, recursive: bool) -> Valu
 }
 
 pub fn vfs_queue_expiry_payload(fs: &str, id: &str, expiry: &str, relative: bool) -> Value {
+    let expiry = expiry
+        .parse::<i64>()
+        .map(Value::from)
+        .or_else(|_| expiry.parse::<f64>().map(|n| json!(n)))
+        .unwrap_or_else(|_| json!(expiry));
     json!({ "fs": fs, "id": id, "expiry": expiry, "relative": relative })
 }
 
@@ -2128,6 +2133,10 @@ mod tests {
         assert_eq!(
             vfs_queue_expiry_payload("drive:", "3", "1m", true),
             json!({ "fs": "drive:", "id": "3", "expiry": "1m", "relative": true })
+        );
+        assert_eq!(
+            vfs_queue_expiry_payload("drive:", "3", "-999999999", false),
+            json!({ "fs": "drive:", "id": "3", "expiry": -999_999_999, "relative": false })
         );
     }
 

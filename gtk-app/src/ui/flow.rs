@@ -1525,39 +1525,8 @@ impl FlowView {
                         .cloned()
                 })
         }) {
-            let stats = adw::PreferencesGroup::new();
-            stats.set_title(
-                &self
-                    .ctx
-                    .t_or("modals.jobDetail.sections.overview", "Last job"),
-            );
-            for (title, value) in [
-                (
-                    self.ctx.t_or("modals.jobDetail.fields.status", "Status"),
-                    job.status.clone(),
-                ),
-                (
-                    self.ctx.t_or("modals.jobDetail.fields.speed", "Speed"),
-                    format!(
-                        "{:.1} KiB/s",
-                        crate::jobs::stats_f64(&job.stats, &["speed"]) / 1024.0
-                    ),
-                ),
-                (
-                    self.ctx
-                        .t_or("modals.jobDetail.fields.transferred", "Transferred"),
-                    crate::rclone::format_bytes(crate::jobs::stats_i64(&job.stats, &["bytes"])),
-                ),
-                (
-                    self.ctx.t_or("modals.jobDetail.fields.files", "Files"),
-                    crate::jobs::stats_i64(&job.stats, &["transfers"]).to_string(),
-                ),
-            ] {
-                let row = adw::ActionRow::new();
-                row.set_title(&title);
-                row.set_subtitle(&value);
-                stats.add(&row);
-            }
+            monitoring.append(&super::job_panels::job_info_group(&self.ctx, &job));
+            monitoring.append(&super::job_panels::job_stats_group(&self.ctx, &job));
             let open =
                 gtk::Button::with_label(&self.ctx.t_or("modals.jobDetail.title", "Job detail"));
             let logs = gtk::Button::with_label(&self.ctx.t_or("logs.title", "View logs"));
@@ -1580,7 +1549,6 @@ impl FlowView {
             let buttons = gtk::Box::new(gtk::Orientation::Horizontal, 8);
             buttons.append(&open);
             buttons.append(&logs);
-            monitoring.append(&stats);
             monitoring.append(&buttons);
             self.append_transfers(&monitoring, std::slice::from_ref(&job));
         } else {
@@ -1598,17 +1566,11 @@ impl FlowView {
         }
 
         if qr.operation_type.supports_vfs() {
-            let vfs = gtk::Button::with_label(&self.ctx.t_or("remote.vfsPanel", "VFS panel"));
-            {
-                let view = self.clone();
-                let remote = qr.remote_name.clone();
-                vfs.connect_clicked(move |_| {
-                    if let Some(win) = view.root.root().and_downcast::<gtk::Window>() {
-                        dialogs::vfs_control(&win, view.ctx.clone(), &remote, view.toast.clone());
-                    }
-                });
-            }
-            monitoring.append(&vfs);
+            monitoring.append(&super::vfs_panel::vfs_panel(
+                self.ctx.clone(),
+                &qr.remote_name,
+                self.toast.clone(),
+            ));
         }
 
         let tray = adw::SwitchRow::new();

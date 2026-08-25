@@ -932,6 +932,23 @@ pub fn stats_f64(stats: &Value, keys: &[&str]) -> f64 {
     0.0
 }
 
+pub fn format_seconds(secs: f64) -> String {
+    if !secs.is_finite() || secs <= 0.0 {
+        return "—".into();
+    }
+    let total = secs.round() as i64;
+    let hours = total / 3600;
+    let minutes = (total % 3600) / 60;
+    let seconds = total % 60;
+    if hours > 0 {
+        format!("{hours}h {minutes}m {seconds}s")
+    } else if minutes > 0 {
+        format!("{minutes}m {seconds}s")
+    } else {
+        format!("{seconds}s")
+    }
+}
+
 pub fn stats_bool(stats: &Value, keys: &[&str]) -> bool {
     for key in keys {
         match stats.get(*key) {
@@ -2480,6 +2497,15 @@ mod tests {
         assert_eq!(dest["main"]["transfers"], 8);
         assert_eq!(dest["main"]["checkers"], 2);
         assert_eq!(dest["keep"], true);
+    }
+
+    #[test]
+    fn formats_elapsed_and_eta_seconds() {
+        assert_eq!(format_seconds(0.0), "—");
+        assert_eq!(format_seconds(-1.0), "—");
+        assert_eq!(format_seconds(9.4), "9s");
+        assert_eq!(format_seconds(75.0), "1m 15s");
+        assert_eq!(format_seconds(3723.0), "1h 2m 3s");
     }
 
     #[test]

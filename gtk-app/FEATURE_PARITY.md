@@ -426,6 +426,10 @@ This client is the GTK 4 + libadwaita rewrite of the Angular/Tauri desktop UI. I
 - Monitoring/Configuration use linked toggle buttons instead of ViewSwitcher
 - Dashboard remote detail has Angular-style Start/Stop for the selected profile
 - Config dump is cached for 5s to avoid creating more leftover RC jobs on rclone 1.60
+- `#/main` and `#/main/{tab}/{remote}` deep links open the dashboard (same as `--standalone=main`)
+- Dashboard/Flow Monitoring embed an inline VFS control panel: `vfs/list` instance picker, 5s poll, stats, cache paths, advanced `opt`, and queue Prioritize / Delay / custom expiry (`PRIORITY_EXPIRY` / `DELAY_EXPIRY`)
+- Monitoring shows Angular-style Job Information + transfer statistics (progress/ETA bars, files, checks, errors)
+- Selected-profile Start/Stop is an expander row matching `app-operation-control`
 
 ## Still deepening toward pixel-level Angular parity
 
