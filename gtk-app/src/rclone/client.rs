@@ -567,7 +567,11 @@ impl RcClient {
     }
 
     pub fn config_unlock(&self, password: &str) -> Result<Value, RcError> {
-        self.call("config/unlock", json!({ "configPassword": password }))
+        self.call("config/unlock", config_unlock_payload(password))
+    }
+
+    pub fn config_setpath(&self, path: &str) -> Result<Value, RcError> {
+        self.call("config/setpath", config_setpath_payload(path))
     }
 
     pub fn cat(&self, fs: &str, remote: &str, count: Option<i64>) -> Result<String, RcError> {
@@ -1344,6 +1348,32 @@ pub fn parse_named_list(value: &Value, keys: &[&str]) -> Vec<String> {
     Vec::new()
 }
 
+pub fn config_setpath_payload(path: &str) -> Value {
+    json!({ "path": path })
+}
+
+pub fn config_unlock_payload(password: &str) -> Value {
+    json!({ "configPassword": password })
+}
+
+/// Point a running RC at a rclone.conf and unlock it (Tauri `configure_remote_backend`).
+pub fn apply_backend_rc_config(
+    client: &RcClient,
+    config_path: Option<&str>,
+    password: Option<&str>,
+) {
+    if let Some(path) = config_path.map(str::trim).filter(|p| !p.is_empty()) {
+        if let Err(e) = client.config_setpath(path) {
+            log::warn!("config/setpath failed: {e}");
+        }
+    }
+    if let Some(pass) = password.map(str::trim).filter(|p| !p.is_empty()) {
+        if let Err(e) = client.config_unlock(pass) {
+            log::warn!("config/unlock failed: {e}");
+        }
+    }
+}
+
 pub fn public_link_payload(fs: &str, remote: &str, expire: Option<&str>, unlink: bool) -> Value {
     let mut body = json!({ "fs": fs, "remote": remote });
     if let Some(obj) = body.as_object_mut() {
@@ -1522,6 +1552,11 @@ pub fn vfs_refresh_payload(fs: &str, dir: Option<&str>, recursive: bool) -> Valu
 }
 
 pub fn vfs_queue_expiry_payload(fs: &str, id: &str, expiry: &str, relative: bool) -> Value {
+    let expiry = expiry
+        .parse::<i64>()
+        .map(Value::from)
+        .or_else(|_| expiry.parse::<f64>().map(|n| json!(n)))
+        .unwrap_or_else(|_| json!(expiry));
     json!({ "fs": fs, "id": id, "expiry": expiry, "relative": relative })
 }
 
@@ -2099,6 +2134,10 @@ mod tests {
             vfs_queue_expiry_payload("drive:", "3", "1m", true),
             json!({ "fs": "drive:", "id": "3", "expiry": "1m", "relative": true })
         );
+        assert_eq!(
+            vfs_queue_expiry_payload("drive:", "3", "-999999999", false),
+            json!({ "fs": "drive:", "id": "3", "expiry": -999_999_999, "relative": false })
+        );
     }
 
     #[test]
@@ -2186,5 +2225,17 @@ mod tests {
         );
         assert!(!client.probe_rc_serve("http://127.0.0.1:1/[drive:]/missing.bin"));
         assert!(!client.probe_rc_serve(""));
+    }
+
+    #[test]
+    fn config_setpath_and_unlock_payloads() {
+        assert_eq!(
+            config_setpath_payload("/tmp/rclone.conf"),
+            json!({ "path": "/tmp/rclone.conf" })
+        );
+        assert_eq!(
+            config_unlock_payload("secret"),
+            json!({ "configPassword": "secret" })
+        );
     }
 }

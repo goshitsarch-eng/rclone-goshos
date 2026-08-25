@@ -39,7 +39,18 @@
     "moreActions": "More Actions",
     "duplicate": "Duplicate",
     "clearAll": "Clear All",
-    "acknowledge": "Acknowledge"
+    "acknowledge": "Acknowledge",
+    "done": "Done",
+    "open": "Open",
+    "apply": "Apply",
+    "off": "off",
+    "install": "Install",
+    "use": "Use",
+    "category": "Category",
+    "other": "Other",
+    "ready": "Ready",
+    "configure": "Configure",
+    "engineOffline": "Engine offline"
   },
   "cron": {
     "everyMinute": "Every minute",
@@ -95,7 +106,8 @@
       "10": "October",
       "11": "November",
       "12": "December"
-    }
+    },
+    "invalid": "Invalid cron"
   },
   "remoteConfig": {
     "pathStatus": {
@@ -104,7 +116,89 @@
       "colliding": "In use by {{details}}",
       "willCreate": "Folder will be created after remote creation.",
       "checking": "Checking path..."
-    }
+    },
+    "guidance": "Guidance",
+    "vfs": "VFS",
+    "vfsMetadataDirs": "Metadata dirs",
+    "vfsMetadataFiles": "Metadata files",
+    "vfsUploads": "Uploads",
+    "vfsErrors": "Errors",
+    "vfsDiskCache": "Disk cache",
+    "vfsStatsUnavailable": "VFS stats unavailable",
+    "vfsQueueEmpty": "Queue is empty",
+    "vfsQueueUnavailable": "Queue unavailable",
+    "vfsForgetFile": "Forget file / refresh dir",
+    "vfsForget": "Forget file",
+    "vfsForgot": "Forgot cached file",
+    "vfsRefreshDir": "Refresh dir",
+    "vfsRefreshed": "Refreshed directory",
+    "vfsPollUpdated": "Poll interval updated",
+    "vfsQueueExpiry": "Queue id / expiry",
+    "vfsExpiryUpdated": "Queue expiry updated",
+    "flagsApplyHelp": "Edits are sent to rclone via options/set. Categories match the Angular flag panels.",
+    "flagsWriteEngine": "Write flags to the running engine",
+    "jsonMode": "JSON",
+    "jsonPayload": "Raw options/set payload",
+    "jsonPayloadHelp": "Edit the current rclone options as JSON. Apply writes the object via options/set.",
+    "applyJson": "Apply JSON",
+    "flagsWriteJson": "Write JSON to the running engine",
+    "source": "Source",
+    "mountPoint": "Mount point",
+    "listenAddress": "Listen address",
+    "destinationFs": "Destination fs",
+    "dest": "Destination",
+    "serveType": "Serve type",
+    "mountType": "Mount type",
+    "vfsProfile": "VFS profile",
+    "filterProfile": "Filter profile",
+    "backendProfile": "Backend profile",
+    "dryRun": "Dry run",
+    "flags": "Operation flags",
+    "startFailed": "Start failed",
+    "addSource": "Add source",
+    "multipleSources": "Multiple sources",
+    "pathStatusTitle": "Path check",
+    "applyTemplate": "Apply",
+    "archiveFormat": "Format",
+    "archivePrefix": "Prefix",
+    "archiveFullPath": "Use full paths in the archive",
+    "cronParts": {
+      "daily": "Daily",
+      "weekly": "Weekly",
+      "monthly": "Monthly",
+      "interval": "Interval",
+      "hour": "Hour",
+      "minute": "Minute",
+      "dow": "Day of week",
+      "dom": "Day of month",
+      "everyHours": "Every N hours"
+    },
+    "showOnTray": "Show on tray",
+    "hideFromSidebar": "Hide from sidebar",
+    "primaryActions": "Primary actions",
+    "syncActions": "Sync actions",
+    "editProvider": "Edit provider fields…",
+    "helperJsonEditor": "Helper JSON editor…",
+    "metadata": "Remote metadata",
+    "provider": "Provider",
+    "rcloneDefinition": "Rclone remote definition",
+    "namedHelpers": "Named helper profiles",
+    "url": "URL",
+    "unusedDestination": "Unused destination",
+    "scheduledCron": "Scheduled (cron)",
+    "cronExpression": "Cron expression",
+    "runtimeProfile": "Runtime profile",
+    "automation": "Automation",
+    "cron": "Cron schedule",
+    "linkedHelpers": "Linked helper profiles",
+    "filterFlags": "Filter flags",
+    "importCliFlags": "Import rclone CLI flags",
+    "cliImport": "CLI import",
+    "jsonDocument": "JSON document",
+    "options": "Options",
+    "jsonObject": "JSON object",
+    "additionalSource": "Additional source",
+    "autoStart": "Auto-start mount / jobs"
   },
   "validators": {
     "integer": "Must be a valid integer",
@@ -167,7 +261,8 @@
     "toggleCopyurl": "Toggle Copy URL as Quick Action",
     "toggleArchivecreate": "Toggle Archive as Quick Action",
     "successStart": "Successfully started {{type}} for {{remote}} ({{profile}})",
-    "failedStart": "Failed to start {{type}} for {{remote}}: {{error}}"
+    "failedStart": "Failed to start {{type}} for {{remote}}: {{error}}",
+    "start": "Start"
   },
   "serve": {
     "noActive": "No active serves",
@@ -244,7 +339,9 @@
       "mountStatus": "Mount status",
       "syncStatus": "Sync operations status",
       "serveStatus": "Serve status"
-    }
+    },
+    "quickAdd": "Quick add remote",
+    "detailedConfig": "Detailed remote config"
   },
   "detailShared": {
     "jobInfo": {
@@ -392,7 +489,8 @@
       "noActionsHint": "You need to create an alert action first before you can assign it to a rule.",
       "filtersEmptyHint": "Leave empty to match all events.",
       "scopeFilters": "Scope Filters",
-      "allEvents": "All Events"
+      "allEvents": "All Events",
+      "editorTitle": "Alert rule"
     },
     "events": {
       "job": "Jobs & File Operations",
@@ -463,10 +561,22 @@
       "discord": "Discord",
       "slack": "Slack",
       "headerKey": "Header Name",
-      "headerValue": "Value"
+      "headerValue": "Value",
+      "editorTitle": "Alert action",
+      "telegramMode": "Telegram mode",
+      "envVars": "Environment variables (KEY=value)",
+      "whatsappProvider": "WhatsApp provider",
+      "smtpHost": "SMTP host",
+      "brokerUrl": "Broker URL"
     },
     "noRulesHint": "No alert rules configured yet. Create a rule to receive notifications.",
-    "noActionsHint": "No alert actions configured yet. Create an action to define how alerts are delivered."
+    "noActionsHint": "No alert actions configured yet. Create an action to define how alerts are delivered.",
+    "search": "Search history",
+    "stats": "History stats",
+    "acknowledge": "Acknowledge",
+    "addRule": "Add rule",
+    "addAction": "Add action",
+    "templateKeys": "Insert template key"
   },
   "settings": {
     "resetAll": {
@@ -633,6 +743,9 @@
           "compact": "Compact",
           "detailed": "Detailed"
         }
+      },
+      "show_json_mode": {
+        "label": "Remember JSON mode"
       }
     },
     "nautilus": {
@@ -643,6 +756,13 @@
       "bookmarks": {
         "label": "Bookmarks",
         "description": "List of bookmarked locations for quick access."
+      }
+    },
+    "rcloneFlags": {
+      "mainCategories": {
+        "network": {
+          "title": "Network"
+        }
       }
     }
   },
@@ -722,8 +842,24 @@
       "shortcuts": "Keyboard Shortcuts",
       "about": "About RClone Manager",
       "quickRemote": "Quick Remote",
-      "detailedRemote": "Detailed Remote"
-    }
+      "detailedRemote": "Detailed Remote",
+      "runGc": "Run GC",
+      "installRclone": "Install",
+      "openConfig": "Config folder",
+      "openCache": "Cache folder",
+      "openLog": "Logs folder",
+      "backends": "Backends",
+      "templates": "Templates",
+      "remoteOrder": "Remote order and visibility",
+      "clearFsCache": "Clear FS cache",
+      "checkConnectivity": "Check connectivity",
+      "quickRun": "New Quick Run",
+      "add": "Add remote or quick run",
+      "developer": "Developer",
+      "trayActions": "Tray actions",
+      "memoryUnavailable": "Memory stats unavailable"
+    },
+    "detach": "Detach the current workspace into a new window"
   },
   "onboarding": {
     "loadingTitle": "Initializing RClone Manager",
@@ -1268,7 +1404,8 @@
           "label": "No Output",
           "description": "Suppress any stdout output from the RC config call"
         }
-      }
+      },
+      "togglePassword": "Toggle password visibility"
     },
     "appOperation": {
       "multiSourceOneWayInfo": "Multiple source paths detected. One-way checking has been automatically enabled to ensure rclone verifies each source against the destination.",
@@ -1298,6 +1435,7 @@
       "otherRemotes": "Other Remotes",
       "enterDestPath": "Enter destination path...",
       "enterDownloadUrl": "Enter download URL (e.g., https://example.com/file.zip)",
+      "copyUrlFilename": "Filename (optional)",
       "copyUrlCustomFilenamePlaceholder": "Auto filename (optional)",
       "copyUrlFileSettingsWarning": "Custom filenames are set individually per URL row above. Any row with an empty filename will use auto-determined names.",
       "urlLabel": "URL",
@@ -1428,6 +1566,9 @@
         "title": "First of month",
         "description": "1st day at midnight"
       }
+    },
+    "quickAdd": {
+      "title": "Quick Add Remote"
     }
   },
   "backup": {
@@ -1546,7 +1687,10 @@
       "metadata": {
         "system": "System Metadata",
         "standard": "Standard Metadata"
-      }
+      },
+      "usageUnavailable": "Unable to query disk usage",
+      "objects": "Objects",
+      "root": "Root"
     },
     "properties": {
       "title": "Properties",
@@ -1591,7 +1735,11 @@
       "generatedChecksums": "Generated Checksums",
       "calculateAnother": "Calculate Another",
       "bulkHashInstruction": "Select a hash type to calculate checksums for all files in this directory.",
-      "noHashesFound": "No hashes returned"
+      "noHashesFound": "No hashes returned",
+      "kind": "Kind",
+      "localDisk": "Local disk",
+      "noPublicLink": "Remote did not return a public link",
+      "linkRemoved": "Link removed"
     },
     "operations": {
       "title": "Operations",
@@ -1658,6 +1806,15 @@
       "largeRemotePreview": "This remote file is {{size}}. Downloading the whole file for preview may take a while.",
       "downloadPreview": "Download preview",
       "downloadedPreview": "Downloaded preview to {{path}}"
+    },
+    "pathKind": {
+      "title": "Path type",
+      "local": "Local",
+      "currentRemote": "Current remote",
+      "otherRemote": "Other remote"
+    },
+    "errors": {
+      "connectionFailed": "Connection Failed"
     }
   },
   "dashboard": {
@@ -1741,7 +1898,10 @@
       "dryRunActive": "Dry run is active — no changes will be made",
       "resync": "Resync",
       "resyncActive": "Resync is active — performing full resynchronization",
-      "remoteSettings": "Remote Settings"
+      "remoteSettings": "Remote Settings",
+      "settings": "Settings",
+      "configureActions": "Configure primary actions",
+      "mountDiskUsage": "Mount point usage"
     },
     "generalDetail": {
       "automations": "Automations",
@@ -1767,6 +1927,29 @@
       "remoteConfiguration": "Remote Configuration",
       "editConfiguration": "Edit Configuration",
       "remoteActionQuickSelection": "Remote action quick selection"
+    },
+    "statusOverview": {
+      "title": "Status overview",
+      "active": "active"
+    },
+    "bandwidth": {
+      "savedLimit": "Saved limit",
+      "unlimited": "Unlimited",
+      "liveLimit": "Live limit",
+      "customLimit": "Custom limit (e.g. 2M or 1M:10M)"
+    },
+    "system": {
+      "pid": "rclone PID",
+      "groups": "Job groups",
+      "memory": "Memory",
+      "activity": "Activity"
+    },
+    "quickRuns": {
+      "empty": "No quick runs",
+      "createForRemote": "Create quick run for this remote"
+    },
+    "settings": {
+      "empty": "No saved profile settings"
     }
   },
   "shortcuts": {
@@ -1864,7 +2047,12 @@
         "fatalError": "Fatal Error",
         "speedAvg": "Average Speed",
         "transferred": "Transferred"
-      }
+      },
+      "filterTransfers": "Filter transfers",
+      "stopGroup": "Stop group",
+      "resetStats": "Reset stats",
+      "openSource": "Open source in Files",
+      "openDestination": "Open destination in Files"
     },
     "about": {
       "title": "About",
@@ -2037,7 +2225,9 @@
         "folderPathFor": "Folder path for {{name}}",
         "scrollToPending": "Scroll to pending changes section"
       },
-      "pendingChangesTooltip": "You have {{count}} unsaved changes that require engine restart. Click to scroll to them."
+      "pendingChangesTooltip": "You have {{count}} unsaved changes that require engine restart. Click to scroll to them.",
+      "pendingRestart": "Pending engine restart",
+      "onePendingChange": "1 setting waiting for Save & Restart"
     },
     "export": {
       "title": "Export Settings",
@@ -2088,7 +2278,8 @@
           "label": "Alerts",
           "description": "Alert rules and actions configuration"
         }
-      }
+      },
+      "backend": "Rclone backend"
     },
     "backend": {
       "title": "Backend Management",
@@ -2153,6 +2344,7 @@
       "status": {
         "notTested": "Connection not tested",
         "connected": "Connected",
+        "failed": "Connection failed",
         "error": "Error: {{message}}"
       },
       "notifications": {
@@ -2199,7 +2391,8 @@
         "passwordStoredInKeyring": "Password stored in system keyring",
         "passwordRemoved": "Password removed from keychain",
         "passwordsMismatch": "Passwords do not match"
-      }
+      },
+      "addTitle": "Remote RC backend"
     },
     "quickAdd": {
       "title": "Quick Add Remote",
@@ -2271,7 +2464,9 @@
         "filter": "Filter",
         "vfs": "VFS",
         "backend": "Backend",
-        "runtimeRemote": "Runtime Remote"
+        "runtimeRemote": "Runtime Remote",
+        "remote": "Remote",
+        "profiles": "Per-operation profiles"
       },
       "advancedProfiles": {
         "title": "Advanced Profiles",
@@ -2319,7 +2514,17 @@
       "profileSaveFailed": "Failed to save profile",
       "warnings": {
         "selectRemoteToSave": "Please select a remote to save profile"
-      }
+      },
+      "pollInterval": "Poll interval",
+      "cancelOauth": "Cancel OAuth",
+      "newName": "New name",
+      "saveStep": "Save step",
+      "oauthCancelled": "OAuth cancelled",
+      "addProfile": "Add profile",
+      "cloneProfile": "Clone profile",
+      "renameProfile": "Rename profile",
+      "deleteProfile": "Delete profile",
+      "profiles": "Profiles"
     },
     "rcloneFlags": {
       "search": {
@@ -2393,6 +2598,12 @@
         "MetricsAuth": "Metrics authentication",
         "MetricsHTTP": "Metrics HTTP settings"
       }
+    },
+    "updates": {
+      "title": "Updates"
+    },
+    "flags": {
+      "emptyCategory": "No flags in this category"
     }
   },
   "nautilus": {
@@ -2407,6 +2618,7 @@
       "selectFolder": "Select Folder",
       "selectFile": "Select File",
       "selectItems": "Select Items",
+      "editPath": "Edit path",
       "files": "Files",
       "starred": "Starred",
       "searchPlaceholder": "Search files...",
@@ -2414,7 +2626,8 @@
       "cloud": "Cloud",
       "fileSystem": "File System",
       "bookmarks": "Bookmarks",
-      "localDisk": "Local Disk"
+      "localDisk": "Local Disk",
+      "pathPlaceholder": "remote:path or /local/path"
     },
     "bookmarks": {
       "emptyHint": "No bookmarks"
@@ -2443,7 +2656,8 @@
     },
     "empty": {
       "noStarred": "No Starred Files",
-      "folderEmpty": "Folder is Empty"
+      "folderEmpty": "Folder is Empty",
+      "noFiles": "Archive is empty"
     },
     "selection": {
       "selected": "selected",
@@ -2509,7 +2723,9 @@
         "counter": "Counter",
         "date": "Date",
         "extension": "Extension",
-        "duplicateOrInvalid": "Duplicate or invalid name"
+        "duplicateOrInvalid": "Duplicate or invalid name",
+        "originalName": "Original name",
+        "insertPlaceholder": "Insert placeholder"
       }
     },
     "errors": {
@@ -2578,7 +2794,17 @@
       "createFolderWithItems": "New Folder with Selection...",
       "renameMultiple": "Rename Multiple...",
       "star": "Star / Unstar",
-      "bookmark": "Bookmark"
+      "bookmark": "Bookmark",
+      "pathOptions": "Path options",
+      "move": "Move",
+      "openNative": "Open native",
+      "copyUrl": "Copy URL into folder…",
+      "download": "Download…",
+      "browseArchive": "Browse archive contents",
+      "extract": "Extract archive…",
+      "undo": "Undo",
+      "redo": "Redo",
+      "pasteSystem": "Paste from system clipboard"
     },
     "view": {
       "iconSize": "Icon Size",
@@ -2587,7 +2813,9 @@
       "viewOptions": "View Options",
       "star": "Star this folder",
       "starred": "Starred",
-      "unstarred": "Removed from Starred"
+      "unstarred": "Removed from Starred",
+      "smaller": "Smaller",
+      "larger": "Larger"
     },
     "notifications": {
       "mkdirFailed": "Failed to create directory: {{path}}",
@@ -2601,6 +2829,9 @@
       "moveStarted": "Moving {{count}} items...",
       "renameStarted": "Rename operation started",
       "undoComplete": "Undo successful",
+      "nothingToUndo": "Nothing to undo",
+      "nothingToRedo": "Nothing to redo",
+      "cannotUndo": "This action cannot be undone",
       "redoComplete": "Redo successful",
       "copyUrlStarted": "Downloading from URL...",
       "getPublicLinkStarted": "Generating public link...",
@@ -2611,7 +2842,10 @@
     "androidShare": {
       "uploadHere": "Upload {{count}} shared file(s) to this folder",
       "confirm": "Upload here"
-    }
+    },
+    "splitOn": "Split view — two listings",
+    "splitOff": "Split view off",
+    "noFileOperations": "No file operations"
   },
   "home": {
     "emptyState": {
@@ -2709,7 +2943,8 @@
       "uptime": "Engine Uptime:",
       "active": "Active",
       "inactive": "Inactive",
-      "error": "Error"
+      "error": "Error",
+      "unknown": "unknown"
     },
     "jobs": {
       "activeCount": "{{count}} active job{{s}}",
@@ -2738,13 +2973,23 @@
       "activeCount": "{{active}} active / {{total}} total",
       "noScheduled": "No automations",
       "noConfigured": "No automations configured. Configure operations with cron schedules or real-time file monitoring to create automations.",
-      "nextRun": "Next Run:"
+      "nextRun": "Next Run:",
+      "title": "Automations"
     },
     "serves": {
       "activeCount": "{{count}} active serve{{s}}",
       "noActive": "No active serves",
       "noRunning": "No active serves running. Start serving a remote to make it accessible via network protocols like HTTP, WebDAV, FTP, or SFTP."
-    }
+    },
+    "editLayout": "Edit layout",
+    "reorderRemotes": "Reorder remotes…",
+    "resetPanels": "Reset panels",
+    "hidePanel": "Hide or show this panel",
+    "moveUp": "Move panel up",
+    "moveDown": "Move panel down",
+    "showRemote": "Show on overview",
+    "hideRemote": "Hide from overview",
+    "activity": "Activity"
   },
   "appOverview": {
     "labels": {
@@ -2956,7 +3201,8 @@
         "unmounted": "Unmounted",
         "mounted": "Mounted",
         "active": "Active",
-        "inactive": "Inactive"
+        "inactive": "Inactive",
+        "serving": "Serving"
       }
     },
     "remoteCard": {
@@ -3025,7 +3271,8 @@
     "tooltipMount": "1 Mount",
     "tooltipMounts": "{{count}} Mounts",
     "tooltipServe": "1 Serve",
-    "tooltipServes": "{{count}} Serves"
+    "tooltipServes": "{{count}} Serves",
+    "tooltipSubtitle": "Remotes, mounts, and transfers"
   },
   "powerInhibitor": {
     "reason": "Active operations running: {{details}}",
@@ -3230,7 +3477,13 @@
     "clearCache": "Clear Cache",
     "openDevTools": "Open Developer Tools",
     "openDevToolsError": "Failed to open DevTools",
-    "cleared": "Data Cleared"
+    "cleared": "Data Cleared",
+    "debugInfo": "Debug Info",
+    "mode": "Mode",
+    "folders": "Folders",
+    "maintenance": "Maintenance",
+    "relaunch": "Relaunch",
+    "gcStarted": "Garbage collection started"
   },
   "flow": {
     "title": "Flow",
@@ -3245,6 +3498,7 @@
     "quickRun": {
       "title": "Quick Runs",
       "new": "New Quick Run",
+      "openRemote": "Open remote detail",
       "actions": {
         "start": "Start",
         "stop": "Stop"
@@ -3253,10 +3507,12 @@
         "scheduled": "Scheduled Task",
         "watcher": "Folder Watcher Active",
         "watcherChangedOnly": "Folder Watcher Active (Subdirectories only)",
-        "autostart": "Auto-Start Enabled"
+        "autostart": "Auto-Start Enabled",
+        "cron": "cron"
       },
       "status": {
-        "running": "Running"
+        "running": "Running",
+        "paused": "paused"
       },
       "overview": {
         "stats": {
@@ -3283,8 +3539,13 @@
         "tabVfs": "VFS",
         "tabFilter": "Filter",
         "tabBackend": "Backend",
-        "tabRuntimeRemote": "Runtime Remote"
-      }
+        "tabRuntimeRemote": "Runtime Remote",
+        "cron": "Cron expression",
+        "showOnTray": "Show on tray",
+        "runtimeRemoteJson": "Runtime remote JSON",
+        "flags": "Operation flags"
+      },
+      "showInTray": "Show in tray"
     },
     "tabs": {
       "quickRun": "Quick Run",
@@ -3344,5 +3605,68 @@
       "cancelled": "Operation cancelled",
       "error": "Error"
     }
+  },
+  "remote": {
+    "mountToggle": "Mount / Unmount",
+    "actionInProgress": "Action already in progress",
+    "stopProfile": "Stop this profile",
+    "startProfile": "Start this profile",
+    "showInTray": "Show in tray",
+    "resetSettings": "Reset remote settings?",
+    "resetSettingsBody": "Profiles, helpers, and automations for this remote will be removed. The rclone remote stays.",
+    "resetSettingsConfirm": "Reset",
+    "vfs": "VFS",
+    "vfsPanel": "VFS panel",
+    "vfsActionFinished": "VFS action finished",
+    "profiles": "Profiles",
+    "noProfiles": "No saved profiles — configure the remote to add them",
+    "addProfile": "Add profile",
+    "editHelpers": "Edit helper profiles",
+    "quickRuns": "Quick Runs for this remote",
+    "diskUsage": "Disk usage"
+  },
+  "bandwidth": {
+    "currentTransfer": "Current transfer"
+  },
+  "general": {
+    "remoteConfig": {
+      "title": {
+        "add": "Remote Configuration"
+      },
+      "advancedProfiles": {
+        "title": "Helper profiles"
+      },
+      "steps": {
+        "backend": "Backend / main",
+        "filter": "Filter",
+        "vfs": "VFS",
+        "mount": "Mount",
+        "copy": "Copy",
+        "sync": "Sync",
+        "check": "Check"
+      }
+    }
+  },
+  "operation": {
+    "serve": {
+      "type": "Serve type"
+    }
+  },
+  "repair": {
+    "passwordPrompt": "Enter the rclone.conf password to unlock the engine.",
+    "unlock": "Unlock",
+    "passwordEmpty": "Password is empty",
+    "passwordUnlocked": "Config unlocked",
+    "title": "Repair rclone",
+    "noIssues": "No issues detected",
+    "healthy": "rclone, FUSE, config, and the RC engine look healthy.",
+    "chooseConfig": "Choose rclone.conf…",
+    "engineRestarted": "Engine restart requested",
+    "installRclone": "Install rclone",
+    "chooseBinary": "Choose binary…",
+    "restartEngine": "Restart engine"
+  },
+  "logs": {
+    "title": "View logs"
   }
 }

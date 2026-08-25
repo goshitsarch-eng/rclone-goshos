@@ -16,6 +16,9 @@ pub struct FlowView {
     search: gtk::SearchEntry,
     content: gtk::Box,
     editing_layout: Rc<RefCell<bool>>,
+    remote_filter: Rc<RefCell<Option<String>>>,
+    selected_flow_remote: Rc<RefCell<Option<String>>>,
+    detail_page: Rc<RefCell<String>>,
 }
 
 impl FlowView {
@@ -90,6 +93,9 @@ impl FlowView {
             search,
             content,
             editing_layout: Rc::new(RefCell::new(false)),
+            remote_filter: Rc::new(RefCell::new(None)),
+            selected_flow_remote: Rc::new(RefCell::new(None)),
+            detail_page: Rc::new(RefCell::new("monitoring".into())),
         };
 
         {
@@ -117,6 +123,19 @@ impl FlowView {
     pub fn select_quick_run(&self, id: Option<&str>) {
         *self.ctx.selected_quick_run.borrow_mut() =
             id.filter(|s| !s.is_empty()).map(|s| s.to_string());
+        if id.is_some() {
+            *self.selected_flow_remote.borrow_mut() = None;
+        }
+        self.refresh();
+    }
+
+    fn open_remote_detail(&self, remote: &str) {
+        let clean = remote.trim_end_matches(':');
+        if clean.is_empty() {
+            return;
+        }
+        *self.ctx.selected_quick_run.borrow_mut() = None;
+        *self.selected_flow_remote.borrow_mut() = Some(clean.to_string());
         self.refresh();
     }
 
@@ -129,10 +148,16 @@ impl FlowView {
         }
 
         let query = self.search.text().to_lowercase();
+        let remote_filter = self.remote_filter.borrow().clone();
         let runs = self.ctx.store.borrow().quick_runs.clone();
         let filtered: Vec<QuickRun> = runs
             .into_iter()
             .filter(|qr| {
+                if let Some(remote) = &remote_filter {
+                    if qr.remote_name != *remote {
+                        return false;
+                    }
+                }
                 if query.is_empty() {
                     return true;
                 }
@@ -142,49 +167,67 @@ impl FlowView {
             })
             .collect();
 
-        if filtered.is_empty() {
-            let empty = adw::StatusPage::new();
-            empty.set_icon_name(Some("media-playlist-consecutive-symbolic"));
-            empty.set_title(&self.ctx.t_or("flow.quickRun.title", "No quick runs"));
-            empty.set_description(Some(&self.ctx.t_or(
-                "flow.empty.description",
-                "Create a reusable rclone operation with cron, watcher, or autostart.",
-            )));
-            self.sidebar.append(&adw::ActionRow::new());
-            self.content.append(&empty);
-            return;
-        }
-
-        for qr in &filtered {
-            let row = adw::ActionRow::new();
-            row.set_title(&qr.name);
-            let mut badges = vec![qr.operation_type.as_str().to_string()];
-            if qr.config.app.cron_enabled {
-                badges.push("cron".into());
-            }
-            if qr.config.app.watch_enabled {
-                badges.push("watch".into());
-            }
-            if qr.config.app.auto_start {
-                badges.push("autostart".into());
-            }
-            row.set_subtitle(&format!("{} · {}", qr.remote_name, badges.join(" · ")));
-            let view = self.clone();
-            let id = qr.id.clone();
-            row.connect_activated(move |_| {
-                *view.ctx.selected_quick_run.borrow_mut() = Some(id.clone());
-                view.refresh();
-            });
-            self.sidebar.append(&row);
-        }
-
         if let Some(id) = self.ctx.selected_quick_run.borrow().clone() {
-            if let Some(qr) = filtered.iter().find(|q| q.id == id).cloned() {
+            if let Some(qr) = self
+                .ctx
+                .store
+                .borrow()
+                .quick_runs
+                .iter()
+                .find(|q| q.id == id)
+                .cloned()
+            {
+                for item in &filtered {
+                    self.append_sidebar_quick_run(item);
+                }
+                if filtered.iter().all(|item| item.id != qr.id) {
+                    self.append_sidebar_quick_run(&qr);
+                }
                 self.fill_detail(&qr);
                 return;
             }
         }
+        if let Some(remote) = self.selected_flow_remote.borrow().clone() {
+            for item in &filtered {
+                self.append_sidebar_quick_run(item);
+            }
+            self.fill_remote_detail(&remote);
+            return;
+        }
+        if filtered.is_empty() && remote_filter.is_none() {
+            self.sidebar.append(&adw::ActionRow::new());
+            self.fill_overview(&[]);
+            return;
+        }
+
+        for qr in &filtered {
+            self.append_sidebar_quick_run(qr);
+        }
         self.fill_overview(&filtered);
+    }
+
+    fn append_sidebar_quick_run(&self, qr: &QuickRun) {
+        let row = adw::ActionRow::new();
+        row.set_title(&qr.name);
+        let mut badges = vec![qr.operation_type.as_str().to_string()];
+        if qr.config.app.cron_enabled {
+            badges.push("cron".into());
+        }
+        if qr.config.app.watch_enabled {
+            badges.push("watch".into());
+        }
+        if qr.config.app.auto_start {
+            badges.push("autostart".into());
+        }
+        row.set_subtitle(&format!("{} · {}", qr.remote_name, badges.join(" · ")));
+        let view = self.clone();
+        let id = qr.id.clone();
+        row.connect_activated(move |_| {
+            *view.ctx.selected_quick_run.borrow_mut() = Some(id.clone());
+            *view.selected_flow_remote.borrow_mut() = None;
+            view.refresh();
+        });
+        self.sidebar.append(&row);
     }
 
     fn fill_overview(&self, runs: &[QuickRun]) {
@@ -197,6 +240,69 @@ impl FlowView {
         title.add_css_class("title-1");
         title.set_xalign(0.0);
         self.content.append(&title);
+        let remotes: Vec<String> = {
+            let mut names: Vec<String> = self
+                .ctx
+                .store
+                .borrow()
+                .quick_runs
+                .iter()
+                .map(|qr| qr.remote_name.clone())
+                .filter(|name| !name.is_empty())
+                .collect();
+            names.extend(
+                snap.remotes
+                    .iter()
+                    .map(|remote| remote.name.clone())
+                    .filter(|name| !name.is_empty()),
+            );
+            names.sort();
+            names.dedup();
+            names
+        };
+        if !remotes.is_empty() {
+            let chips = gtk::Box::new(gtk::Orientation::Horizontal, 6);
+            chips.add_css_class("linked");
+            let selected = self.remote_filter.borrow().clone();
+            let all = gtk::ToggleButton::with_label(&self.ctx.t_or("common.all", "All"));
+            all.set_active(selected.is_none());
+            {
+                let view = self.clone();
+                all.connect_clicked(move |_| {
+                    *view.remote_filter.borrow_mut() = None;
+                    view.refresh();
+                });
+            }
+            chips.append(&all);
+            let mut group_anchor = all.clone();
+            for remote in remotes {
+                let btn = gtk::ToggleButton::with_label(&remote);
+                btn.set_group(Some(&group_anchor));
+                group_anchor = btn.clone();
+                btn.set_active(selected.as_deref() == Some(remote.as_str()));
+                {
+                    let view = self.clone();
+                    let remote = remote.clone();
+                    btn.connect_clicked(move |_| {
+                        let has_runs = view
+                            .ctx
+                            .store
+                            .borrow()
+                            .quick_runs
+                            .iter()
+                            .any(|qr| qr.remote_name == remote);
+                        if has_runs {
+                            *view.remote_filter.borrow_mut() = Some(remote.clone());
+                            view.refresh();
+                        } else {
+                            view.open_remote_detail(&remote);
+                        }
+                    });
+                }
+                chips.append(&btn);
+            }
+            self.content.append(&chips);
+        }
         let layout_bar = gtk::Box::new(gtk::Orientation::Horizontal, 6);
         let edit_label = if editing {
             self.ctx.t_or("common.done", "Done")
@@ -242,6 +348,15 @@ impl FlowView {
                 "quickRuns" => {
                     let list = gtk::ListBox::new();
                     list.add_css_class("boxed-list");
+                    if runs.is_empty() {
+                        let row = adw::ActionRow::new();
+                        row.set_title(&self.ctx.t_or("dashboard.quickRuns.empty", "No quick runs"));
+                        row.set_subtitle(&self.ctx.t_or(
+                            "flow.empty.description",
+                            "Create a reusable rclone operation with cron, watcher, or autostart.",
+                        ));
+                        list.append(&row);
+                    }
                     for qr in runs {
                         let row = adw::ActionRow::new();
                         row.set_title(&qr.name);
@@ -258,71 +373,20 @@ impl FlowView {
                                 .push(self.ctx.t_or("flow.quickRun.badges.autostart", "autostart"));
                         }
                         row.set_subtitle(&format!("{} · {}", qr.remote_name, badges.join(" · ")));
-                        let start = gtk::Button::from_icon_name("media-playback-start-symbolic");
-                        start.set_valign(gtk::Align::Center);
-                        start.set_tooltip_text(Some(
-                            &self.ctx.t_or("flow.quickRun.actions.start", "Start"),
+                        let remote_btn = gtk::Button::with_label(&qr.remote_name);
+                        remote_btn.set_valign(gtk::Align::Center);
+                        remote_btn.set_tooltip_text(Some(
+                            &self
+                                .ctx
+                                .t_or("flow.quickRun.openRemote", "Open remote detail"),
                         ));
-                        let stop = gtk::Button::from_icon_name("media-playback-stop-symbolic");
-                        stop.set_valign(gtk::Align::Center);
-                        stop.set_tooltip_text(Some(
-                            &self.ctx.t_or("flow.quickRun.actions.stop", "Stop"),
-                        ));
-                        let edit = gtk::Button::from_icon_name("document-edit-symbolic");
-                        edit.set_valign(gtk::Align::Center);
-                        edit.set_tooltip_text(Some(&self.ctx.t_or("common.edit", "Edit")));
-                        let busy =
-                            self.ctx
-                                .is_busy(&qr.remote_name, qr.operation_type.as_str(), &qr.id);
-                        start.set_sensitive(!busy);
-                        stop.set_sensitive(!busy);
                         {
                             let view = self.clone();
-                            let qr = qr.clone();
-                            start.connect_clicked(move |_| view.start_run(&qr));
-                        }
-                        {
-                            let view = self.clone();
-                            let qr = qr.clone();
-                            stop.connect_clicked(move |_| view.stop_run(&qr));
-                        }
-                        {
-                            let view = self.clone();
-                            let qr = qr.clone();
-                            edit.connect_clicked(move |_| {
-                                if let Some(win) = view.root.root().and_downcast::<gtk::Window>() {
-                                    dialogs::quick_run_editor(
-                                        &win,
-                                        view.ctx.clone(),
-                                        Some(qr.clone()),
-                                        {
-                                            let view = view.clone();
-                                            Rc::new(move || view.refresh())
-                                        },
-                                    );
-                                }
-                            });
-                        }
-                        row.add_suffix(&start);
-                        row.add_suffix(&stop);
-                        row.add_suffix(&edit);
-                        let (src, dst) = qr.paths();
-                        let mut open_paths = Vec::new();
-                        if let Some(src) = src {
-                            open_paths.extend(crate::jobs::split_job_paths(&src));
-                        }
-                        if let Some(dst) = dst {
-                            open_paths.extend(crate::jobs::split_job_paths(&dst));
-                        }
-                        for path in open_paths {
-                            let folder = gtk::Button::from_icon_name("folder-open-symbolic");
-                            folder.set_valign(gtk::Align::Center);
-                            folder.set_tooltip_text(Some(&path));
-                            let ctx = self.ctx.clone();
                             let remote = qr.remote_name.clone();
-                            folder.connect_clicked(move |_| ctx.open_typed_path(&remote, &path));
-                            row.add_suffix(&folder);
+                            remote_btn.connect_clicked(move |_| view.open_remote_detail(&remote));
                         }
+                        row.add_suffix(&remote_btn);
+                        self.decorate_quick_run_row(&row, &qr);
                         list.append(&row);
                     }
                     self.append_expandable(
@@ -352,9 +416,9 @@ impl FlowView {
                                 job.progress * 100.0
                             ));
                             let ctx = self.ctx.clone();
-                            let id = job.id;
+                            let job = job.clone();
                             row.connect_activated(move |_| {
-                                ctx.request_nav(NavTarget::Job { id });
+                                ctx.request_nav(NavTarget::for_job(&job));
                             });
                             jobs.append(&row);
                         }
@@ -380,17 +444,12 @@ impl FlowView {
                         serves.append(&row);
                     } else {
                         for serve in &snap.serves {
-                            let row = adw::ActionRow::new();
-                            row.set_title(&format!("{} · {}", serve.serve_type, serve.fs));
-                            row.set_subtitle(&serve.addr);
-                            {
-                                let ctx = self.ctx.clone();
-                                let id = serve.id.clone();
-                                row.connect_activated(move |_| {
-                                    ctx.request_nav(NavTarget::Serve { id: id.clone() });
-                                });
-                            }
-                            serves.append(&row);
+                            let view = self.clone();
+                            serves.append(&super::dashboard::serve_card_row(
+                                &self.ctx,
+                                serve,
+                                move || view.refresh(),
+                            ));
                         }
                     }
                     self.append_expandable(
@@ -669,6 +728,619 @@ impl FlowView {
         self.write_flow_layout(layout);
     }
 
+    fn heading(&self, text: &str) -> gtk::Label {
+        let label = gtk::Label::new(Some(text));
+        label.add_css_class("heading");
+        label.set_xalign(0.0);
+        label
+    }
+
+    fn decorate_quick_run_row(&self, row: &adw::ActionRow, qr: &QuickRun) {
+        let start = gtk::Button::from_icon_name("media-playback-start-symbolic");
+        start.set_valign(gtk::Align::Center);
+        start.set_tooltip_text(Some(&self.ctx.t_or("flow.quickRun.actions.start", "Start")));
+        let stop = gtk::Button::from_icon_name("media-playback-stop-symbolic");
+        stop.set_valign(gtk::Align::Center);
+        stop.set_tooltip_text(Some(&self.ctx.t_or("flow.quickRun.actions.stop", "Stop")));
+        let edit = gtk::Button::from_icon_name("document-edit-symbolic");
+        edit.set_valign(gtk::Align::Center);
+        edit.set_tooltip_text(Some(&self.ctx.t_or("common.edit", "Edit")));
+        let busy = self
+            .ctx
+            .is_busy(&qr.remote_name, qr.operation_type.as_str(), &qr.id);
+        start.set_sensitive(!busy);
+        stop.set_sensitive(!busy);
+        {
+            let view = self.clone();
+            let qr = qr.clone();
+            start.connect_clicked(move |_| view.start_run(&qr));
+        }
+        {
+            let view = self.clone();
+            let qr = qr.clone();
+            stop.connect_clicked(move |_| view.stop_run(&qr));
+        }
+        {
+            let view = self.clone();
+            let qr = qr.clone();
+            edit.connect_clicked(move |_| {
+                if let Some(win) = view.root.root().and_downcast::<gtk::Window>() {
+                    dialogs::quick_run_editor(&win, view.ctx.clone(), Some(qr.clone()), {
+                        let view = view.clone();
+                        Rc::new(move || view.refresh())
+                    });
+                }
+            });
+        }
+        row.add_suffix(&start);
+        row.add_suffix(&stop);
+        row.add_suffix(&edit);
+        let (src, dst) = qr.paths();
+        let mut open_paths = Vec::new();
+        if let Some(src) = src {
+            open_paths.extend(crate::jobs::split_job_paths(&src));
+        }
+        if let Some(dst) = dst {
+            open_paths.extend(crate::jobs::split_job_paths(&dst));
+        }
+        for path in open_paths {
+            let folder = gtk::Button::from_icon_name("folder-open-symbolic");
+            folder.set_valign(gtk::Align::Center);
+            folder.set_tooltip_text(Some(&path));
+            let ctx = self.ctx.clone();
+            let remote = qr.remote_name.clone();
+            folder.connect_clicked(move |_| ctx.open_typed_path(&remote, &path));
+            row.add_suffix(&folder);
+        }
+    }
+
+    fn open_remote_config_step(&self, name: &str, step: &str) {
+        if let Some(win) = self.root.root().and_downcast::<gtk::Window>() {
+            super::remote_config::present_with(
+                &win,
+                self.ctx.clone(),
+                name.to_string(),
+                super::remote_config::RemoteConfigOpen {
+                    initial: Some(step.to_string()),
+                    ..Default::default()
+                },
+                {
+                    let view = self.clone();
+                    Rc::new(move || view.refresh())
+                },
+            );
+        }
+    }
+
+    fn append_disk_usage(&self, name: &str) {
+        let box_ = gtk::Box::new(gtk::Orientation::Vertical, 6);
+        let usage = adw::ActionRow::new();
+        usage.set_title(&self.ctx.t_or("remote.diskUsage", "Disk usage"));
+        let retry = gtk::Button::from_icon_name("view-refresh-symbolic");
+        retry.set_valign(gtk::Align::Center);
+        retry.set_tooltip_text(Some(&self.ctx.t_or("common.retry", "Retry")));
+        {
+            let view = self.clone();
+            retry.connect_clicked(move |_| view.refresh());
+        }
+        usage.add_suffix(&retry);
+        if let Some(client) = self.ctx.client() {
+            match client.about(&crate::rclone::remote_fs(name, "")) {
+                Ok(about) => {
+                    usage.set_subtitle(&crate::store::disk_label_from_about(&about));
+                    box_.append(&usage);
+                    if let Some(ratio) = crate::store::disk_usage_ratio(&about) {
+                        let bar = gtk::LevelBar::new();
+                        bar.set_min_value(0.0);
+                        bar.set_max_value(1.0);
+                        bar.set_value(ratio);
+                        bar.set_hexpand(true);
+                        box_.append(&bar);
+                    }
+                }
+                Err(err) => {
+                    usage.set_subtitle(&err.to_string());
+                    box_.append(&usage);
+                }
+            }
+        } else {
+            usage.set_subtitle(&self.ctx.t_or(
+                "notification.title.engineConnectionFailed",
+                "Engine Connection Error",
+            ));
+            box_.append(&usage);
+        }
+        self.content.append(&box_);
+    }
+
+    fn append_configuration_links(&self, name: &str) {
+        self.content.append(
+            &self.heading(
+                &self
+                    .ctx
+                    .t_or("dashboard.appDetail.configuration", "Configuration"),
+            ),
+        );
+        let row = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+        row.add_css_class("linked");
+        for (step, key, fallback) in [
+            ("remote", "modals.remoteConfig.steps.remote", "Remote"),
+            ("vfs", "general.remoteConfig.steps.vfs", "VFS"),
+            ("filter", "general.remoteConfig.steps.filter", "Filter"),
+            ("backend", "general.remoteConfig.steps.backend", "Backend"),
+            (
+                "runtime",
+                "modals.remoteConfig.steps.runtimeRemote",
+                "Runtime",
+            ),
+        ] {
+            let btn = gtk::Button::with_label(&self.ctx.t_or(key, fallback));
+            {
+                let view = self.clone();
+                let remote = name.to_string();
+                btn.connect_clicked(move |_| view.open_remote_config_step(&remote, step));
+            }
+            row.append(&btn);
+        }
+        self.content.append(&row);
+    }
+
+    fn append_transfer_activity(&self, name: &str, snap: &crate::store::RuntimeSnapshot) {
+        let jobs: Vec<_> = snap
+            .jobs
+            .iter()
+            .filter(|job| crate::jobs::is_overview_job(job) && job.remote == name)
+            .cloned()
+            .collect();
+        self.append_transfers(&self.content, &jobs);
+    }
+
+    fn append_transfers(&self, host: &gtk::Box, jobs: &[crate::store::JobInfo]) {
+        let mut rows = Vec::new();
+        for job in jobs {
+            if let Some(arr) = job.transferring.as_array() {
+                for item in arr {
+                    rows.push((
+                        job.operation.clone(),
+                        crate::transfers::parse_transfer_row(item),
+                        false,
+                    ));
+                }
+            }
+            for source in [
+                job.completed.as_array(),
+                job.stats.get("completed").and_then(|v| v.as_array()),
+            ]
+            .into_iter()
+            .flatten()
+            {
+                for item in source {
+                    rows.push((
+                        job.operation.clone(),
+                        crate::transfers::parse_transfer_row(item),
+                        true,
+                    ));
+                }
+            }
+        }
+        rows.truncate(12);
+        let mut check_items = Vec::new();
+        for job in jobs {
+            if crate::checks::is_check_operation(&job.operation) {
+                let source = crate::checks::check_source_from_job(&job.stats, &job.output);
+                check_items.extend(crate::checks::parse_check_items(
+                    &source, &job.src, &job.dst,
+                ));
+            }
+        }
+        check_items.truncate(40);
+        if rows.is_empty() && check_items.is_empty() {
+            return;
+        }
+        let title = if jobs
+            .iter()
+            .any(|job| crate::checks::is_check_operation(&job.operation))
+        {
+            self.ctx
+                .t_or("shared.transferActivity.titleCheck", "Check Results")
+        } else {
+            self.ctx
+                .t_or("shared.transferActivity.title", "Transfer Activity")
+        };
+        host.append(&self.heading(&title));
+        if !check_items.is_empty() {
+            let list = gtk::ListBox::new();
+            list.add_css_class("boxed-list");
+            for item in check_items {
+                list.append(&dialogs::check_result_row(&self.ctx, &item, &self.root));
+            }
+            host.append(&list);
+        }
+        if rows.is_empty() {
+            return;
+        }
+        let list = gtk::ListBox::new();
+        list.add_css_class("boxed-list");
+        for (operation, row, completed) in rows {
+            let item = adw::ActionRow::new();
+            item.set_title(&row.name);
+            let src = if row.src.is_empty() {
+                "—".into()
+            } else {
+                row.src.clone()
+            };
+            let dst = if row.dst.is_empty() {
+                "—".into()
+            } else {
+                row.dst.clone()
+            };
+            let state = if completed {
+                self.ctx
+                    .t_or("shared.transferActivity.status.completed", "Completed")
+            } else {
+                format!("{}%", row.percentage)
+            };
+            item.set_subtitle(&format!("{state} · {src} → {dst}"));
+            item.add_suffix(&dialogs::transfer_row_actions(
+                &self.ctx,
+                &self.toast,
+                &row,
+                &operation,
+                completed,
+            ));
+            list.append(&item);
+        }
+        host.append(&list);
+    }
+
+    fn append_remote_automations(&self, name: &str) {
+        let records: Vec<_> = crate::automation::collect(&self.ctx.store.borrow())
+            .into_iter()
+            .filter(|record| record.remote == name)
+            .collect();
+        if records.is_empty() {
+            return;
+        }
+        self.content.append(
+            &self.heading(
+                &self
+                    .ctx
+                    .t_or("dashboard.generalDetail.automations", "Automations"),
+            ),
+        );
+        let list = gtk::ListBox::new();
+        list.add_css_class("boxed-list");
+        for record in records {
+            let paused = self.ctx.store.borrow().is_automation_paused(&record.id);
+            let row = adw::ActionRow::new();
+            row.set_title(&record.name);
+            let schedule = if record.cron_enabled {
+                crate::rclone::describe_cron_i18n(&record.cron, &self.ctx.i18n.borrow())
+            } else if record.watch_enabled {
+                format!(
+                    "{} {}s{}",
+                    self.ctx
+                        .t_or("automation.monitoring.debounce", "Debounce Delay"),
+                    record.watch_delay,
+                    if record.watch_changed_only {
+                        format!(
+                            " · {}",
+                            self.ctx.t_or(
+                                "automation.monitoring.changedOnlyShort",
+                                "Changed files only",
+                            )
+                        )
+                    } else {
+                        String::new()
+                    }
+                )
+            } else {
+                self.ctx.t_or("common.off", "off")
+            };
+            let paused_label = if paused {
+                format!(
+                    " · {}",
+                    self.ctx.t_or("flow.quickRun.status.paused", "paused")
+                )
+            } else {
+                String::new()
+            };
+            row.set_subtitle(&format!("{} · {schedule}{paused_label}", record.operation));
+            let enabled = gtk::Switch::new();
+            enabled.set_valign(gtk::Align::Center);
+            enabled.set_active(!paused);
+            {
+                let ctx = self.ctx.clone();
+                let id = record.id.clone();
+                let view = self.clone();
+                enabled.connect_active_notify(move |switch| {
+                    let mut store = ctx.store.borrow_mut();
+                    let paused = store.is_automation_paused(&id);
+                    if switch.is_active() == paused {
+                        store.toggle_automation_paused(&id);
+                        drop(store);
+                        ctx.persist();
+                        view.refresh();
+                    }
+                });
+            }
+            row.add_suffix(&enabled);
+            for path in record.sources.iter().filter(|path| !path.is_empty()) {
+                let folder = gtk::Button::from_icon_name("folder-open-symbolic");
+                folder.set_valign(gtk::Align::Center);
+                folder.set_tooltip_text(Some(path));
+                let ctx = self.ctx.clone();
+                let remote = record.remote.clone();
+                let path = path.clone();
+                folder.connect_clicked(move |_| ctx.open_typed_path(&remote, &path));
+                row.add_suffix(&folder);
+            }
+            list.append(&row);
+        }
+        self.content.append(&list);
+    }
+
+    fn append_settings_panel(&self, name: &str) {
+        self.content.append(&self.heading(&self.ctx.t_or(
+            "dashboard.generalDetail.remoteConfiguration",
+            "Remote Configuration",
+        )));
+        let dump = self
+            .ctx
+            .client()
+            .and_then(|client| client.dump_config().ok())
+            .unwrap_or(serde_json::json!({}));
+        let params =
+            crate::providers::dump_remote_params(&dump, name).unwrap_or(serde_json::json!({}));
+        self.content
+            .append(&dialogs::settings_list(&self.ctx, &params, 24));
+        let edit = gtk::Button::with_label(&self.ctx.t_or(
+            "dashboard.generalDetail.editConfiguration",
+            "Edit Configuration",
+        ));
+        edit.add_css_class("suggested-action");
+        {
+            let view = self.clone();
+            let remote = name.to_string();
+            edit.connect_clicked(move |_| view.open_remote_config_step(&remote, "remote"));
+        }
+        self.content.append(&edit);
+    }
+
+    fn fill_remote_detail(&self, name: &str) {
+        let header = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+        let back = gtk::Button::from_icon_name("go-previous-symbolic");
+        back.set_tooltip_text(Some(&self.ctx.t_or("common.back", "Back to overview")));
+        {
+            let view = self.clone();
+            back.connect_clicked(move |_| {
+                *view.selected_flow_remote.borrow_mut() = None;
+                view.refresh();
+            });
+        }
+        let title = gtk::Label::new(Some(name));
+        title.add_css_class("title-2");
+        title.set_xalign(0.0);
+        title.set_hexpand(true);
+        header.append(&back);
+        let snap = self.ctx.snapshot.borrow().clone();
+        let remote = snap.remotes.iter().find(|r| r.name == name).cloned();
+        if let Some(info) = remote.as_ref() {
+            header.append(&gtk::Image::from_icon_name(
+                crate::providers::provider_icon(&info.r#type),
+            ));
+        }
+        header.append(&title);
+        self.content.append(&header);
+        if let Some(info) = remote.as_ref() {
+            let subtitle = gtk::Label::new(Some(&format!(
+                "{} · {}",
+                info.r#type,
+                if info.mounted {
+                    self.ctx.t_or("overviews.status.labels.mounted", "Mounted")
+                } else if info.serving {
+                    self.ctx.t_or("overviews.status.labels.serving", "Serving")
+                } else if info.job_active {
+                    self.ctx.t_or("overviews.status.labels.active", "Active")
+                } else {
+                    self.ctx
+                        .t_or("overviews.status.labels.inactive", "Inactive")
+                }
+            )));
+            subtitle.add_css_class("dim-label");
+            subtitle.set_xalign(0.0);
+            self.content.append(&subtitle);
+        }
+
+        let actions = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+        let browse = gtk::Button::with_label(&self.ctx.t_or("common.browse", "Browse"));
+        {
+            let ctx = self.ctx.clone();
+            let remote = name.to_string();
+            browse.connect_clicked(move |_| ctx.request_browse(&remote, ""));
+        }
+        let configure = gtk::Button::with_label(&self.ctx.t_or(
+            "dashboard.generalDetail.editConfiguration",
+            "Edit Configuration",
+        ));
+        {
+            let view = self.clone();
+            let remote = name.to_string();
+            configure.connect_clicked(move |_| view.open_remote_config_step(&remote, "remote"));
+        }
+        let helpers =
+            gtk::Button::with_label(&self.ctx.t_or("remote.editHelpers", "Edit helper profiles"));
+        {
+            let view = self.clone();
+            let remote = name.to_string();
+            helpers.connect_clicked(move |_| {
+                if let Some(win) = view.root.root().and_downcast::<gtk::Window>() {
+                    dialogs::helper_profiles(&win, view.ctx.clone(), &remote);
+                }
+            });
+        }
+        actions.append(&browse);
+        actions.append(&configure);
+        actions.append(&helpers);
+        self.content.append(&actions);
+        self.append_configuration_links(name);
+        self.append_disk_usage(name);
+        self.append_transfer_activity(name, &snap);
+
+        self.content
+            .append(&self.heading(&self.ctx.t_or("generalOverview.activity", "Activity")));
+        let activity = gtk::ListBox::new();
+        activity.add_css_class("boxed-list");
+        let jobs: Vec<_> = snap
+            .jobs
+            .iter()
+            .filter(|j| j.remote == name)
+            .cloned()
+            .collect();
+        if jobs.is_empty() {
+            let row = adw::ActionRow::new();
+            row.set_title(&self.ctx.t_or(
+                "generalOverview.jobs.noRunning",
+                "No active jobs for this remote",
+            ));
+            activity.append(&row);
+        } else {
+            for job in jobs {
+                let row = adw::ActionRow::new();
+                row.set_title(&format!("{} · {}", job.operation, job.status));
+                row.set_subtitle(&format!(
+                    "{:.0}% · {} · {}",
+                    job.progress * 100.0,
+                    crate::rclone::format_bytes(
+                        job.stats.get("bytes").and_then(|x| x.as_i64()).unwrap_or(0)
+                    ),
+                    job.profile
+                ));
+                let id = job.id;
+                {
+                    let ctx = self.ctx.clone();
+                    row.connect_activated(move |_| {
+                        ctx.request_nav(NavTarget::Job { id });
+                    });
+                }
+                if crate::jobs::job_is_running(&job) || crate::jobs::job_is_pending(&job) {
+                    let stop = gtk::Button::from_icon_name("media-playback-stop-symbolic");
+                    stop.set_valign(gtk::Align::Center);
+                    stop.set_tooltip_text(Some(
+                        &self.ctx.t_or("flow.quickRun.actions.stop", "Stop"),
+                    ));
+                    let ctx = self.ctx.clone();
+                    let view = self.clone();
+                    stop.connect_clicked(move |_| {
+                        if let Some(c) = ctx.client() {
+                            let _ = c.job_stop(id);
+                            ctx.refresh_runtime();
+                            view.refresh();
+                        }
+                    });
+                    row.add_suffix(&stop);
+                } else {
+                    let delete = gtk::Button::from_icon_name("user-trash-symbolic");
+                    delete.set_valign(gtk::Align::Center);
+                    delete.set_tooltip_text(Some(
+                        &self
+                            .ctx
+                            .t_or("fileBrowser.operations.removeJob", "Remove from history"),
+                    ));
+                    let ctx = self.ctx.clone();
+                    let view = self.clone();
+                    delete.connect_clicked(move |_| {
+                        ctx.store.borrow_mut().dismiss_job(id);
+                        ctx.persist();
+                        view.refresh();
+                    });
+                    row.add_suffix(&delete);
+                }
+                activity.append(&row);
+            }
+        }
+        self.content.append(&activity);
+        self.append_remote_automations(name);
+
+        let qrs: Vec<_> = self
+            .ctx
+            .store
+            .borrow()
+            .quick_runs
+            .iter()
+            .filter(|q| q.remote_name == name)
+            .cloned()
+            .collect();
+        let qr_title = if qrs.is_empty() {
+            self.ctx
+                .t_or("remote.quickRuns", "Quick Runs for this remote")
+        } else {
+            format!(
+                "{} ({})",
+                self.ctx.t_or("flow.quickRun.title", "Quick Runs"),
+                qrs.len()
+            )
+        };
+        self.content.append(&self.heading(&qr_title));
+        let qlist = gtk::ListBox::new();
+        qlist.add_css_class("boxed-list");
+        if qrs.is_empty() {
+            let row = adw::ActionRow::new();
+            row.set_title(&self.ctx.tf(
+                "flow.quickRun.overview.noRunsForRemote",
+                &[("remote", name)],
+            ));
+            qlist.append(&row);
+        } else {
+            for qr in qrs {
+                let row = adw::ActionRow::new();
+                row.set_title(&qr.name);
+                let mut badges = vec![qr.operation_type.as_str().to_string(), qr.status.clone()];
+                if qr.config.app.cron_enabled {
+                    badges.push(self.ctx.t_or("flow.quickRun.badges.cron", "cron"));
+                }
+                if qr.config.app.watch_enabled {
+                    badges.push(self.ctx.t_or("flow.quickRun.badges.watcher", "watch"));
+                }
+                if qr.config.app.auto_start {
+                    badges.push(self.ctx.t_or("flow.quickRun.badges.autostart", "autostart"));
+                }
+                row.set_subtitle(&badges.join(" · "));
+                {
+                    let view = self.clone();
+                    let id = qr.id.clone();
+                    row.connect_activated(move |_| view.select_quick_run(Some(&id)));
+                }
+                self.decorate_quick_run_row(&row, &qr);
+                qlist.append(&row);
+            }
+        }
+        self.content.append(&qlist);
+        let add_qr = gtk::Button::with_label(&self.ctx.tf(
+            "flow.quickRun.overview.createForRemote",
+            &[("remote", name)],
+        ));
+        {
+            let view = self.clone();
+            let remote = name.to_string();
+            add_qr.connect_clicked(move |_| {
+                if let Some(win) = view.root.root().and_downcast::<gtk::Window>() {
+                    let draft = QuickRun::new(
+                        String::new(),
+                        crate::operations::OperationType::Sync,
+                        remote.clone(),
+                    );
+                    dialogs::quick_run_editor(&win, view.ctx.clone(), Some(draft), {
+                        let view = view.clone();
+                        Rc::new(move || view.refresh())
+                    });
+                }
+            });
+        }
+        self.content.append(&add_qr);
+        self.append_settings_panel(name);
+    }
+
     fn fill_detail(&self, qr: &QuickRun) {
         let title = gtk::Label::new(Some(&qr.name));
         title.add_css_class("title-1");
@@ -682,14 +1354,29 @@ impl FlowView {
             self.content.append(&desc);
         }
         let sub = gtk::Label::new(Some(&format!(
-            "{} · {} · {}",
+            "{} · {}",
             qr.operation_type.api_label(),
-            qr.remote_name,
             qr.status
         )));
         sub.add_css_class("dim-label");
         sub.set_xalign(0.0);
         self.content.append(&sub);
+        let remote_btn = gtk::Button::with_label(&qr.remote_name);
+        remote_btn.set_halign(gtk::Align::Start);
+        remote_btn.set_tooltip_text(Some(
+            &self
+                .ctx
+                .t_or("flow.quickRun.openRemote", "Open remote detail"),
+        ));
+        {
+            let view = self.clone();
+            let remote = qr.remote_name.clone();
+            remote_btn.connect_clicked(move |_| view.open_remote_detail(&remote));
+        }
+        self.content.append(&remote_btn);
+
+        let monitoring = gtk::Box::new(gtk::Orientation::Vertical, 12);
+        let configuration = gtk::Box::new(gtk::Orientation::Vertical, 12);
 
         let (src, dst) = qr.paths();
         let paths = adw::ActionRow::new();
@@ -699,7 +1386,7 @@ impl FlowView {
             src.unwrap_or_else(|| "—".into()),
             dst.unwrap_or_else(|| "—".into())
         ));
-        self.content.append(&paths);
+        monitoring.append(&paths);
 
         let dry = adw::SwitchRow::new();
         dry.set_title(&self.ctx.t_or("dashboard.appDetail.dryRun", "Dry run"));
@@ -730,28 +1417,90 @@ impl FlowView {
                 ctx.persist();
             });
         }
-        self.content.append(&dry);
+        monitoring.append(&dry);
 
-        let tray = adw::SwitchRow::new();
-        tray.set_title(&self.ctx.t_or("flow.quickRun.showInTray", "Show in tray"));
-        tray.set_active(qr.show_on_tray);
-        {
-            let ctx = self.ctx.clone();
-            let id = qr.id.clone();
-            tray.connect_active_notify(move |row| {
-                if let Some(run) = ctx
-                    .store
-                    .borrow_mut()
-                    .quick_runs
-                    .iter_mut()
-                    .find(|q| q.id == id)
-                {
-                    run.show_on_tray = row.is_active();
-                }
-                ctx.persist();
-            });
+        if qr.operation_type == crate::operations::OperationType::Bisync {
+            let resync = adw::SwitchRow::new();
+            resync.set_title(&self.ctx.t_or("dashboard.appDetail.resync", "Resync"));
+            resync.set_subtitle(&self.ctx.t_or(
+                "dashboard.appDetail.resyncActive",
+                "Force a bisync resync on the next start",
+            ));
+            resync.set_active(crate::jobs::is_resync(&qr.config.rclone));
+            {
+                let ctx = self.ctx.clone();
+                let id = qr.id.clone();
+                resync.connect_active_notify(move |row| {
+                    if let Some(run) = ctx
+                        .store
+                        .borrow_mut()
+                        .quick_runs
+                        .iter_mut()
+                        .find(|q| q.id == id)
+                    {
+                        let dry = crate::jobs::is_dry_run(&run.config.rclone);
+                        crate::jobs::apply_session_flags(
+                            &mut run.config.rclone,
+                            dry,
+                            row.is_active(),
+                        );
+                    }
+                    ctx.persist();
+                });
+            }
+            monitoring.append(&resync);
         }
-        self.content.append(&tray);
+
+        if qr.config.app.cron_enabled && !qr.config.app.cron_expression.is_empty() {
+            let row = adw::ActionRow::new();
+            row.set_title(&self.ctx.t_or("flow.quickRun.badges.scheduled", "Scheduled"));
+            row.set_subtitle(&crate::rclone::describe_cron_i18n(
+                &qr.config.app.cron_expression,
+                &self.ctx.i18n.borrow(),
+            ));
+            monitoring.append(&row);
+        }
+        if qr.config.app.watch_enabled {
+            let row = adw::ActionRow::new();
+            row.set_title(&self.ctx.t_or(
+                "automation.monitoring.realtimeSchedule",
+                "Real-time File Watcher",
+            ));
+            let mut subtitle = format!(
+                "{}: {} {}",
+                self.ctx
+                    .t_or("automation.monitoring.debounce", "Debounce Delay"),
+                qr.config.app.watch_delay,
+                self.ctx.t_or("automation.monitoring.seconds", "seconds")
+            );
+            if qr.config.app.watch_changed_only {
+                subtitle.push_str(" · ");
+                subtitle.push_str(&self.ctx.t_or(
+                    "automation.monitoring.changedOnlyShort",
+                    "Changed files only",
+                ));
+            }
+            row.set_subtitle(&subtitle);
+            monitoring.append(&row);
+        }
+
+        let run_actions = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+        let start = gtk::Button::with_label(&self.ctx.t_or("flow.quickRun.actions.start", "Start"));
+        let stop = gtk::Button::with_label(&self.ctx.t_or("flow.quickRun.actions.stop", "Stop"));
+        start.add_css_class("suggested-action");
+        {
+            let view = self.clone();
+            let qr = qr.clone();
+            start.connect_clicked(move |_| view.start_run(&qr));
+        }
+        {
+            let view = self.clone();
+            let qr = qr.clone();
+            stop.connect_clicked(move |_| view.stop_run(&qr));
+        }
+        run_actions.append(&start);
+        run_actions.append(&stop);
+        monitoring.append(&run_actions);
 
         if let Some(job) = qr.last_job_id.and_then(|id| {
             self.ctx
@@ -771,39 +1520,8 @@ impl FlowView {
                         .cloned()
                 })
         }) {
-            let stats = adw::PreferencesGroup::new();
-            stats.set_title(
-                &self
-                    .ctx
-                    .t_or("modals.jobDetail.sections.overview", "Last job"),
-            );
-            for (title, value) in [
-                (
-                    self.ctx.t_or("modals.jobDetail.fields.status", "Status"),
-                    job.status.clone(),
-                ),
-                (
-                    self.ctx.t_or("modals.jobDetail.fields.speed", "Speed"),
-                    format!(
-                        "{:.1} KiB/s",
-                        crate::jobs::stats_f64(&job.stats, &["speed"]) / 1024.0
-                    ),
-                ),
-                (
-                    self.ctx
-                        .t_or("modals.jobDetail.fields.transferred", "Transferred"),
-                    crate::rclone::format_bytes(crate::jobs::stats_i64(&job.stats, &["bytes"])),
-                ),
-                (
-                    self.ctx.t_or("modals.jobDetail.fields.files", "Files"),
-                    crate::jobs::stats_i64(&job.stats, &["transfers"]).to_string(),
-                ),
-            ] {
-                let row = adw::ActionRow::new();
-                row.set_title(&title);
-                row.set_subtitle(&value);
-                stats.add(&row);
-            }
+            monitoring.append(&super::job_panels::job_info_group(&self.ctx, &job));
+            monitoring.append(&super::job_panels::job_stats_group(&self.ctx, &job));
             let open =
                 gtk::Button::with_label(&self.ctx.t_or("modals.jobDetail.title", "Job detail"));
             let logs = gtk::Button::with_label(&self.ctx.t_or("logs.title", "View logs"));
@@ -826,8 +1544,8 @@ impl FlowView {
             let buttons = gtk::Box::new(gtk::Orientation::Horizontal, 8);
             buttons.append(&open);
             buttons.append(&logs);
-            self.content.append(&stats);
-            self.content.append(&buttons);
+            monitoring.append(&buttons);
+            self.append_transfers(&monitoring, std::slice::from_ref(&job));
         } else {
             let logs = gtk::Button::with_label(&self.ctx.t_or("logs.title", "View logs"));
             {
@@ -839,26 +1557,52 @@ impl FlowView {
                     }
                 });
             }
-            self.content.append(&logs);
+            monitoring.append(&logs);
         }
 
+        if qr.operation_type.supports_vfs() {
+            monitoring.append(&super::vfs_panel::vfs_panel(
+                self.ctx.clone(),
+                &qr.remote_name,
+                self.toast.clone(),
+            ));
+        }
+
+        let tray = adw::SwitchRow::new();
+        tray.set_title(&self.ctx.t_or("flow.quickRun.showInTray", "Show in tray"));
+        tray.set_active(qr.show_on_tray);
+        {
+            let ctx = self.ctx.clone();
+            let id = qr.id.clone();
+            tray.connect_active_notify(move |row| {
+                if let Some(run) = ctx
+                    .store
+                    .borrow_mut()
+                    .quick_runs
+                    .iter_mut()
+                    .find(|q| q.id == id)
+                {
+                    run.show_on_tray = row.is_active();
+                }
+                ctx.persist();
+            });
+        }
+        configuration.append(&tray);
+        configuration.append(
+            &self.heading(
+                &self
+                    .ctx
+                    .t_or("flow.quickRun.detail.configuration", "Configuration"),
+            ),
+        );
+        let config_value = serde_json::to_value(&qr.config).unwrap_or(serde_json::json!({}));
+        configuration.append(&dialogs::settings_list(&self.ctx, &config_value, 24));
+
         let actions = gtk::Box::new(gtk::Orientation::Horizontal, 8);
-        let start = gtk::Button::with_label(&self.ctx.t_or("flow.quickRun.actions.start", "Start"));
-        let stop = gtk::Button::with_label(&self.ctx.t_or("flow.quickRun.actions.stop", "Stop"));
         let edit = gtk::Button::with_label(&self.ctx.t_or("common.edit", "Edit"));
         let dup = gtk::Button::with_label(&self.ctx.t_or("common.duplicate", "Duplicate"));
         let delete = gtk::Button::with_label(&self.ctx.t_or("common.delete", "Delete"));
         delete.add_css_class("destructive-action");
-        {
-            let view = self.clone();
-            let qr = qr.clone();
-            start.connect_clicked(move |_| view.start_run(&qr));
-        }
-        {
-            let view = self.clone();
-            let qr = qr.clone();
-            stop.connect_clicked(move |_| view.stop_run(&qr));
-        }
         {
             let view = self.clone();
             let qr = qr.clone();
@@ -879,9 +1623,14 @@ impl FlowView {
                 clone.id = uuid::Uuid::new_v4().to_string();
                 clone.name = format!("{} copy", qr.name);
                 clone.status = "idle".into();
-                view.ctx.store.borrow_mut().quick_runs.push(clone);
-                view.ctx.persist();
-                view.refresh();
+                clone.last_job_id = None;
+                clone.run_count = 0;
+                if let Some(win) = view.root.root().and_downcast::<gtk::Window>() {
+                    dialogs::quick_run_editor(&win, view.ctx.clone(), Some(clone), {
+                        let view = view.clone();
+                        Rc::new(move || view.refresh())
+                    });
+                }
             });
         }
         {
@@ -898,12 +1647,45 @@ impl FlowView {
                 view.refresh();
             });
         }
-        actions.append(&start);
-        actions.append(&stop);
         actions.append(&edit);
         actions.append(&dup);
         actions.append(&delete);
-        self.content.append(&actions);
+        configuration.append(&actions);
+
+        let stack = adw::ViewStack::new();
+        stack.set_vhomogeneous(false);
+        stack.add_titled(
+            &monitoring,
+            Some("monitoring"),
+            &self
+                .ctx
+                .t_or("dashboard.appDetail.monitoring", "Monitoring"),
+        );
+        stack.add_titled(
+            &configuration,
+            Some("configuration"),
+            &self
+                .ctx
+                .t_or("dashboard.appDetail.configuration", "Configuration"),
+        );
+        let switcher = super::detail_page_switcher(
+            &stack,
+            &self.detail_page,
+            &[
+                (
+                    "monitoring",
+                    self.ctx
+                        .t_or("dashboard.appDetail.monitoring", "Monitoring"),
+                ),
+                (
+                    "configuration",
+                    self.ctx
+                        .t_or("dashboard.appDetail.configuration", "Configuration"),
+                ),
+            ],
+        );
+        self.content.append(&switcher);
+        self.content.append(&stack);
     }
 
     fn start_run(&self, qr: &QuickRun) {

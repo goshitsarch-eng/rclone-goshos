@@ -2,7 +2,7 @@ use super::AppCtx;
 use crate::jobs::{find_active_quick_run, start_profile, stop_profile};
 use crate::operations::OperationType;
 use crate::rclone::remote_fs;
-use crate::tray_menu::{plan_tray, TrayAction, TrayMenuItem};
+use crate::tray_menu::{plan_tray, TrayAction, TrayCaption, TrayMenuItem};
 use std::sync::mpsc::{self, Receiver, Sender};
 use std::sync::{Arc, Mutex};
 
@@ -27,6 +27,8 @@ struct StatusIcon {
     tx: Sender<TrayAction>,
     items: Vec<TrayMenuItem>,
     icon_name: String,
+    tooltip_title: String,
+    tooltip_description: String,
 }
 
 impl ksni::Tray for StatusIcon {
@@ -35,13 +37,13 @@ impl ksni::Tray for StatusIcon {
     }
 
     fn title(&self) -> String {
-        "Rclone Manager".into()
+        self.tooltip_title.clone()
     }
 
     fn tool_tip(&self) -> ksni::ToolTip {
         ksni::ToolTip {
-            title: "Rclone Manager".into(),
-            description: "Remotes, mounts, and transfers".into(),
+            title: self.tooltip_title.clone(),
+            description: self.tooltip_description.clone(),
             ..Default::default()
         }
     }
@@ -98,6 +100,44 @@ fn remote_mounts(ctx: &AppCtx, name: &str) -> Vec<String> {
 
 fn localize_plan(ctx: &AppCtx, items: &mut [TrayMenuItem]) {
     for item in items {
+        match &item.caption {
+            TrayCaption::Jobs { active, total } => {
+                item.label = if *total == 0 {
+                    ctx.t_or("tray.jobsNone", "Jobs [—]")
+                } else {
+                    ctx.tf(
+                        "tray.jobsCount",
+                        &[
+                            ("active", &active.to_string()),
+                            ("total", &total.to_string()),
+                        ],
+                    )
+                };
+            }
+            TrayCaption::OpCount { op, active, total } => {
+                let key = format!("tray.{op}Count");
+                item.label = ctx.tf(
+                    &key,
+                    &[
+                        ("active", &active.to_string()),
+                        ("total", &total.to_string()),
+                    ],
+                );
+                if item.label == key {
+                    item.label = format!("{op} [{active}/{total}]");
+                }
+            }
+            TrayCaption::QuickRuns { active, total } => {
+                item.label = ctx.tf(
+                    "tray.quickRunsCount",
+                    &[
+                        ("active", &active.to_string()),
+                        ("total", &total.to_string()),
+                    ],
+                );
+            }
+            TrayCaption::Literal => {}
+        }
         if let Some(action) = &item.action {
             item.label = match action {
                 TrayAction::ShowWindow => ctx.t_or("tray.showApp", "Show Window"),
@@ -106,11 +146,12 @@ fn localize_plan(ctx: &AppCtx, items: &mut [TrayMenuItem]) {
                 TrayAction::UnmountAll => ctx.t_or("tray.unmountAll", "Unmount All"),
                 TrayAction::StopJobs => ctx.t_or("tray.stopAllJobs", "Stop All Jobs"),
                 TrayAction::StopServes => ctx.t_or("tray.stopAllServes", "Stop All Serves"),
-                TrayAction::MountRemote { remote, .. } => {
-                    format!("{} {remote}", ctx.t_or("tray.mount", "Mount"))
+                TrayAction::Status => item.label.clone(),
+                TrayAction::MountRemote { profile, .. } => {
+                    format!("{} · {profile}", ctx.t_or("tray.mount", "Mount"))
                 }
-                TrayAction::UnmountRemote { remote } => {
-                    format!("{} {remote}", ctx.t_or("tray.unmount", "Unmount"))
+                TrayAction::UnmountRemote { profile, .. } => {
+                    format!("{} · {profile}", ctx.t_or("tray.unmount", "Unmount"))
                 }
                 TrayAction::BrowseRemote(_) => ctx.t_or("tray.browse", "Browse"),
                 TrayAction::BrowseInApp(_) => ctx.t_or("tray.browseInApp", "Browse (In App)"),
@@ -135,13 +176,6 @@ fn localize_plan(ctx: &AppCtx, items: &mut [TrayMenuItem]) {
                     }
                 }
             };
-        } else if item.children.iter().any(|child| {
-            matches!(
-                child.action,
-                Some(TrayAction::StartQuickRun(_)) | Some(TrayAction::StopQuickRun(_))
-            )
-        }) {
-            item.label = ctx.t_or("flow.quickRun.title", "Quick Runs");
         }
         localize_plan(ctx, &mut item.children);
     }
@@ -185,6 +219,8 @@ pub fn start(ctx: &AppCtx) -> Option<TrayBus> {
         tx: tx.clone(),
         items,
         icon_name: tray_icon_name(&ctx.settings.borrow().general.tray_icon_theme).into(),
+        tooltip_title: ctx.t_or("tray.tooltipDefault", "RClone Manager"),
+        tooltip_description: ctx.t_or("tray.tooltipSubtitle", "Remotes, mounts, and transfers"),
     };
     std::thread::Builder::new()
         .name("rclone-manager-sni".into())
@@ -207,14 +243,18 @@ pub fn handle(ctx: &AppCtx, cmd: TrayAction) {
         }
         TrayAction::StopJobs => {
             if let Some(c) = ctx.client() {
-                if let Ok(list) = c.job_list() {
-                    if let Some(arr) = list.get("jobids").and_then(|x| x.as_array()) {
-                        for id in arr {
-                            if let Some(jobid) = id.as_u64() {
-                                let _ = c.job_stop(jobid);
-                            }
-                        }
-                    }
+                let ids: Vec<u64> = ctx
+                    .snapshot
+                    .borrow()
+                    .jobs
+                    .iter()
+                    .filter(|job| {
+                        crate::jobs::job_is_running(job) || crate::jobs::job_is_pending(job)
+                    })
+                    .map(|job| job.id)
+                    .collect();
+                for jobid in ids {
+                    let _ = c.job_stop(jobid);
                 }
             }
             ctx.refresh_runtime();
@@ -251,14 +291,14 @@ pub fn handle(ctx: &AppCtx, cmd: TrayAction) {
             }
             ctx.refresh_runtime();
         }
-        TrayAction::UnmountRemote { remote } => {
+        TrayAction::UnmountRemote { remote, profile } => {
             if let Some(c) = ctx.client() {
                 let mounts = ctx.snapshot.borrow().mounts.clone();
                 if let Err(e) = stop_profile(
                     &c,
                     &remote,
                     OperationType::Mount,
-                    "default",
+                    &profile,
                     &[],
                     &mounts,
                     &[],
@@ -372,5 +412,6 @@ pub fn handle(ctx: &AppCtx, cmd: TrayAction) {
         }
         TrayAction::ShowWindow => ctx.request_show(),
         TrayAction::Quit => ctx.request_quit(),
+        TrayAction::Status => {}
     }
 }

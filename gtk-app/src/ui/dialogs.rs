@@ -1,8 +1,9 @@
 use super::AppCtx;
 use crate::backup;
+use crate::guidance::{operation_banners, BannerKind};
 use crate::jobs::{
-    build_job_params, default_dest, default_source, flatten_rclone, job_from_status,
-    merge_template_into, start_request,
+    assemble_rclone, build_job_params, default_dest, default_source, flatten_rclone,
+    job_from_status, merge_template_into, path_list, start_request, SOURCE_KEYS,
 };
 use crate::operations::OperationType;
 use crate::rclone::{
@@ -19,6 +20,84 @@ use gtk::glib;
 use gtk::prelude::*;
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
+
+pub(super) fn attach_operation_guidance(
+    ctx: &AppCtx,
+    is_new_remote: bool,
+    watch: &adw::SwitchRow,
+    src: &adw::EntryRow,
+    extra_sources: &Rc<RefCell<Vec<adw::EntryRow>>>,
+    dst: &adw::EntryRow,
+    current_op: Rc<dyn Fn() -> OperationType>,
+) -> (adw::PreferencesGroup, Rc<dyn Fn()>) {
+    let group = adw::PreferencesGroup::new();
+    group.set_title(&ctx.t_or("remoteConfig.guidance", "Guidance"));
+    let refresh = {
+        let ctx = ctx.clone();
+        let group = group.clone();
+        let watch = watch.clone();
+        let src = src.clone();
+        let extra_sources = extra_sources.clone();
+        let dst = dst.clone();
+        let current_op = current_op.clone();
+        Rc::new(move || {
+            let mut sources = vec![src.text().to_string()];
+            sources.extend(
+                extra_sources
+                    .borrow()
+                    .iter()
+                    .map(|row| row.text().to_string()),
+            );
+            let banners = operation_banners(
+                current_op(),
+                is_new_remote,
+                watch.is_active(),
+                &sources,
+                &dst.text(),
+            );
+            while let Some(child) = group.first_child() {
+                group.remove(&child);
+            }
+            for banner in &banners {
+                let row = adw::ActionRow::new();
+                row.set_title(&ctx.t_or(banner.key, banner.key));
+                row.set_subtitle(&ctx.t_or(
+                    match banner.kind {
+                        BannerKind::Warning => "common.warning",
+                        BannerKind::Info => "common.info",
+                    },
+                    match banner.kind {
+                        BannerKind::Warning => "Warning",
+                        BannerKind::Info => "Note",
+                    },
+                ));
+                if banner.kind == BannerKind::Warning {
+                    row.add_css_class("warning");
+                }
+                group.add(&row);
+            }
+            group.set_visible(!banners.is_empty());
+        }) as Rc<dyn Fn()>
+    };
+    refresh();
+    {
+        let refresh = refresh.clone();
+        watch.connect_active_notify(move |_| refresh());
+    }
+    {
+        let refresh = refresh.clone();
+        src.connect_changed(move |_| refresh());
+    }
+    {
+        let refresh = refresh.clone();
+        dst.connect_changed(move |_| refresh());
+    }
+    for row in extra_sources.borrow().iter() {
+        let refresh = refresh.clone();
+        row.connect_changed(move |_| refresh());
+    }
+    (group, refresh)
+}
 
 fn try_spawn_standalone(ctx: &AppCtx, kind: &str, data: serde_json::Value) -> bool {
     if crate::platform::is_standalone_dialog() {
@@ -47,6 +126,40 @@ fn try_spawn_standalone(ctx: &AppCtx, kind: &str, data: serde_json::Value) -> bo
         glib::ControlFlow::Continue
     });
     true
+}
+
+pub(super) fn settings_list(
+    ctx: &AppCtx,
+    settings: &serde_json::Value,
+    limit: usize,
+) -> gtk::ListBox {
+    let restrict = ctx.settings.borrow().general.restrict;
+    let entries = crate::restrict::flatten_settings("", settings, restrict);
+    let list = gtk::ListBox::new();
+    list.add_css_class("boxed-list");
+    if entries.is_empty() {
+        let row = adw::ActionRow::new();
+        row.set_title(&ctx.t_or(
+            "detailShared.settings.noData",
+            "No configuration data available",
+        ));
+        row.set_subtitle(&ctx.t_or("detailShared.settings.notConfigured", "Not configured"));
+        list.append(&row);
+        return list;
+    }
+    let count = adw::ActionRow::new();
+    count.set_title(&ctx.tf(
+        "detailShared.settings.metrics",
+        &[("count", &entries.len().to_string())],
+    ));
+    list.append(&count);
+    for (key, value) in entries.into_iter().take(limit) {
+        let row = adw::ActionRow::new();
+        row.set_title(&key);
+        row.set_subtitle(&value);
+        list.append(&row);
+    }
+    list
 }
 
 pub fn present_standalone(
@@ -105,7 +218,10 @@ pub fn present_standalone(
         "keyboard-shortcuts" => shortcuts(&window, &ctx),
         "alerts" => alerts(&window, ctx.clone()),
         "archive-create" => archive_create(&window, ctx.clone(), &remote, &path, &[]),
-        "quick-run-editor" => quick_run_editor(&window, ctx.clone(), None, noop),
+        "quick-run-editor" => {
+            let existing = serde_json::from_value::<QuickRun>(req.data.clone()).ok();
+            quick_run_editor(&window, ctx.clone(), existing, noop);
+        }
         "template-manager" => templates(&window, ctx.clone()),
         "delete-remote" => delete_remote(&window, ctx.clone(), &remote, noop),
         "remote-config" => remote_config_open(
@@ -137,8 +253,45 @@ pub fn present_standalone(
             },
             noop,
         ),
+        "vfs" => vfs_control(&window, ctx.clone(), &remote, toast.clone()),
+        "repair" => repair(&window, ctx.clone(), toast.clone()),
+        "start-operation" => {
+            let op = req
+                .data
+                .get("operation")
+                .and_then(|v| v.as_str())
+                .and_then(OperationType::parse)
+                .unwrap_or(OperationType::Sync);
+            start_operation(&window, ctx.clone(), &remote, op, toast.clone(), noop);
+        }
+        "file-viewer" => file_viewer(
+            &window,
+            ctx.clone(),
+            &remote,
+            &path,
+            &name,
+            req.data
+                .get("isDir")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false),
+            &[],
+        ),
         "quick-add-remote" => quick_add_remote(&window, ctx.clone(), noop),
-        "restore-preview" => {}
+        "restore-preview" => {
+            let backup = req
+                .data
+                .get("path")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string();
+            restore_preview(
+                &window,
+                ctx.clone(),
+                toast.clone(),
+                std::path::PathBuf::from(backup),
+                noop,
+            );
+        }
         _ => {}
     }
     let result_path = req.result_path.clone();
@@ -152,6 +305,58 @@ pub fn present_standalone(
         );
         glib::Propagation::Proceed
     });
+}
+
+pub fn pick_destination(
+    parent: &impl IsA<gtk::Widget>,
+    ctx: &AppCtx,
+    title: &str,
+    initial: &str,
+    on_ok: impl Fn(String) + 'static,
+) {
+    let dialog = adw::Dialog::new();
+    dialog.set_title(title);
+    dialog.set_content_width(480);
+    let dest = adw::EntryRow::new();
+    dest.set_title(&ctx.t_or(
+        "fileBrowser.operations.details.destination",
+        "Destination path",
+    ));
+    dest.set_text(initial);
+    attach_path_picker(ctx, &dest, crate::picker::FilePickerConfig::folders());
+    let ok = gtk::Button::with_label(&ctx.t_or("common.ok", "OK"));
+    ok.add_css_class("suggested-action");
+    let cancel = gtk::Button::with_label(&ctx.t("common.cancel"));
+    {
+        let dialog = dialog.clone();
+        cancel.connect_clicked(move |_| {
+            dialog.close();
+        });
+    }
+    {
+        let dialog = dialog.clone();
+        let dest = dest.clone();
+        ok.connect_clicked(move |_| {
+            on_ok(dest.text().to_string());
+            dialog.close();
+        });
+    }
+    let buttons = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+    buttons.set_halign(gtk::Align::End);
+    buttons.set_margin_top(8);
+    buttons.append(&cancel);
+    buttons.append(&ok);
+    let group = adw::PreferencesGroup::new();
+    group.add(&dest);
+    let box_ = gtk::Box::new(gtk::Orientation::Vertical, 12);
+    box_.set_margin_top(12);
+    box_.set_margin_bottom(12);
+    box_.set_margin_start(12);
+    box_.set_margin_end(12);
+    box_.append(&group);
+    box_.append(&buttons);
+    dialog.set_child(Some(&box_));
+    dialog.present(Some(parent));
 }
 
 pub fn prompt(
@@ -473,14 +678,14 @@ pub fn memory_stats(parent: &impl IsA<gtk::Widget>, ctx: AppCtx) {
     let list = gtk::ListBox::new();
     list.add_css_class("boxed-list");
     if let Some(mem) = ctx.client().and_then(|c| c.memstats().ok()) {
-        for (key, label) in [
-            ("Alloc", "Allocated"),
-            ("Sys", "System"),
-            ("HeapAlloc", "Heap"),
-            ("NumGC", "GC cycles"),
+        for (key, i18n_key, fallback) in [
+            ("Alloc", "modals.about.memAlloc", "Allocated"),
+            ("Sys", "modals.about.memSys", "System"),
+            ("HeapAlloc", "modals.about.memHeapAlloc", "Heap"),
+            ("NumGC", "modals.about.gc", "GC cycles"),
         ] {
             let row = adw::ActionRow::new();
-            row.set_title(label);
+            row.set_title(&ctx.t_or(i18n_key, fallback));
             let value = mem.get(key).cloned().unwrap_or(serde_json::json!(0));
             row.set_subtitle(&if key == "NumGC" {
                 value.to_string()
@@ -491,7 +696,10 @@ pub fn memory_stats(parent: &impl IsA<gtk::Widget>, ctx: AppCtx) {
         }
     } else {
         let row = adw::ActionRow::new();
-        row.set_title("Memory stats unavailable");
+        row.set_title(&ctx.t_or(
+            "titlebar.menu.memoryUnavailable",
+            "Memory stats unavailable",
+        ));
         list.append(&row);
     }
     let gc = gtk::Button::with_label(&ctx.t_or("titlebar.menu.runGc", "Run GC"));
@@ -804,6 +1012,9 @@ fn run_progress_job<T, F, OnOk>(
 }
 
 pub fn shortcuts(parent: &impl IsA<gtk::Widget>, ctx: &AppCtx) {
+    if try_spawn_standalone(ctx, "keyboard-shortcuts", serde_json::json!({})) {
+        return;
+    }
     let dialog = adw::Dialog::new();
     dialog.set_title(&ctx.t_or("shortcuts.title", "Keyboard Shortcuts"));
     dialog.set_content_width(560);
@@ -1102,242 +1313,25 @@ pub fn vfs_control(
     remote: &str,
     toast: adw::ToastOverlay,
 ) {
+    if try_spawn_standalone(&ctx, "vfs", serde_json::json!({ "remote": remote })) {
+        return;
+    }
     let dialog = adw::Dialog::new();
     dialog.set_title(&format!(
         "{} · {remote}",
         ctx.t_or("remoteConfig.vfs", "VFS")
     ));
     dialog.set_content_width(560);
-    dialog.set_content_height(520);
-    let fs = remote_fs(remote, "");
-    let list = gtk::ListBox::new();
-    list.add_css_class("boxed-list");
-    let queue_list = gtk::ListBox::new();
-    queue_list.add_css_class("boxed-list");
-    let refresh_ui = {
-        let ctx = ctx.clone();
-        let fs = fs.clone();
-        let list = list.clone();
-        let queue_list = queue_list.clone();
-        move || {
-            while let Some(child) = list.first_child() {
-                list.remove(&child);
-            }
-            while let Some(child) = queue_list.first_child() {
-                queue_list.remove(&child);
-            }
-            let Some(client) = ctx.client() else {
-                let row = adw::ActionRow::new();
-                row.set_title(&ctx.t_or(
-                    "notification.title.engineConnectionFailed",
-                    "Engine Connection Error",
-                ));
-                list.append(&row);
-                return;
-            };
-            match client.vfs_stats(&fs) {
-                Ok(value) => {
-                    let stats = crate::vfs::parse_vfs_stats(&value);
-                    for (title, value) in [
-                        (
-                            ctx.t_or("remoteConfig.vfsMetadataDirs", "Metadata dirs"),
-                            stats.metadata_dirs.to_string(),
-                        ),
-                        (
-                            ctx.t_or("remoteConfig.vfsMetadataFiles", "Metadata files"),
-                            stats.metadata_files.to_string(),
-                        ),
-                        (
-                            ctx.t_or("remoteConfig.vfsUploads", "Uploads"),
-                            stats.uploads_in_progress.to_string(),
-                        ),
-                        (
-                            ctx.t_or("remoteConfig.vfsErrors", "Errors"),
-                            stats.errored.to_string(),
-                        ),
-                        (
-                            ctx.t_or("remoteConfig.vfsDiskCache", "Disk cache"),
-                            stats.disk_path,
-                        ),
-                    ] {
-                        let row = adw::ActionRow::new();
-                        row.set_title(&title);
-                        row.set_subtitle(&value);
-                        list.append(&row);
-                    }
-                }
-                Err(e) => {
-                    let row = adw::ActionRow::new();
-                    row.set_title(
-                        &ctx.t_or("remoteConfig.vfsStatsUnavailable", "VFS stats unavailable"),
-                    );
-                    row.set_subtitle(&e.to_string());
-                    list.append(&row);
-                }
-            }
-            match client.vfs_queue(&fs) {
-                Ok(value) => {
-                    let items = crate::vfs::parse_vfs_queue(&value);
-                    if items.is_empty() {
-                        let row = adw::ActionRow::new();
-                        row.set_title(&ctx.t_or("remoteConfig.vfsQueueEmpty", "Queue is empty"));
-                        queue_list.append(&row);
-                    }
-                    for item in items {
-                        let row = adw::ActionRow::new();
-                        row.set_title(&if item.name.is_empty() {
-                            format!("#{}", item.id)
-                        } else {
-                            item.name.clone()
-                        });
-                        row.set_subtitle(&format!(
-                            "id {} · {} · expiry {}",
-                            item.id,
-                            crate::rclone::format_bytes(item.size),
-                            item.expiry
-                        ));
-                        queue_list.append(&row);
-                    }
-                }
-                Err(e) => {
-                    let row = adw::ActionRow::new();
-                    row.set_title(
-                        &ctx.t_or("remoteConfig.vfsQueueUnavailable", "Queue unavailable"),
-                    );
-                    row.set_subtitle(&e.to_string());
-                    queue_list.append(&row);
-                }
-            }
-        }
-    };
-    refresh_ui();
-    let file = adw::EntryRow::new();
-    file.set_title(&ctx.t_or("remoteConfig.vfsForgetFile", "Forget file / refresh dir"));
-    let forget = gtk::Button::with_label(&ctx.t_or("remoteConfig.vfsForget", "Forget file"));
-    {
-        let ctx = ctx.clone();
-        let fs = fs.clone();
-        let file = file.clone();
-        let toast = toast.clone();
-        let refresh_ui = refresh_ui.clone();
-        forget.connect_clicked(move |_| {
-            if let Some(client) = ctx.client() {
-                match client.vfs_forget_ex(&fs, Some(&file.text())) {
-                    Ok(_) => {
-                        toast.add_toast(adw::Toast::new(
-                            &ctx.t_or("remoteConfig.vfsForgot", "Forgot cached file"),
-                        ));
-                        refresh_ui();
-                    }
-                    Err(e) => toast.add_toast(adw::Toast::new(&e.to_string())),
-                }
-            }
-        });
-    }
-    let refresh_dir =
-        gtk::Button::with_label(&ctx.t_or("remoteConfig.vfsRefreshDir", "Refresh dir"));
-    {
-        let ctx = ctx.clone();
-        let fs = fs.clone();
-        let file = file.clone();
-        let toast = toast.clone();
-        let refresh_ui = refresh_ui.clone();
-        refresh_dir.connect_clicked(move |_| {
-            if let Some(client) = ctx.client() {
-                let dir = file.text();
-                match client.vfs_refresh_ex(&fs, Some(&dir), true) {
-                    Ok(_) => {
-                        toast.add_toast(adw::Toast::new(
-                            &ctx.t_or("remoteConfig.vfsRefreshed", "Refreshed directory"),
-                        ));
-                        refresh_ui();
-                    }
-                    Err(e) => toast.add_toast(adw::Toast::new(&e.to_string())),
-                }
-            }
-        });
-    }
-    let poll = adw::EntryRow::new();
-    poll.set_title(&ctx.t_or("modals.remoteConfig.pollInterval", "Poll interval"));
-    poll.set_text("1m");
-    let apply_poll = gtk::Button::with_label(&ctx.t_or("common.apply", "Set interval"));
-    {
-        let ctx = ctx.clone();
-        let fs = fs.clone();
-        let poll = poll.clone();
-        let toast = toast.clone();
-        apply_poll.connect_clicked(move |_| {
-            if let Some(client) = ctx.client() {
-                match client.vfs_poll_interval(&fs, Some(&poll.text())) {
-                    Ok(_) => toast.add_toast(adw::Toast::new(
-                        &ctx.t_or("remoteConfig.vfsPollUpdated", "Poll interval updated"),
-                    )),
-                    Err(e) => toast.add_toast(adw::Toast::new(&e.to_string())),
-                }
-            }
-        });
-    }
-    let expiry = adw::EntryRow::new();
-    expiry.set_title(&ctx.t_or("remoteConfig.vfsQueueExpiry", "Queue id / expiry"));
-    expiry.set_text("id=1 expiry=1m");
-    let apply_exp = gtk::Button::with_label(&ctx.t_or("common.apply", "Set expiry"));
-    {
-        let ctx = ctx.clone();
-        let fs = fs.clone();
-        let expiry = expiry.clone();
-        let toast = toast.clone();
-        let refresh_ui = refresh_ui.clone();
-        apply_exp.connect_clicked(move |_| {
-            let (id, exp) = crate::vfs::parse_expiry_pair(&expiry.text());
-            if let Some(client) = ctx.client() {
-                match client.vfs_queue_set_expiry_ex(&fs, &id, &exp, true) {
-                    Ok(_) => {
-                        toast.add_toast(adw::Toast::new(
-                            &ctx.t_or("remoteConfig.vfsExpiryUpdated", "Queue expiry updated"),
-                        ));
-                        refresh_ui();
-                    }
-                    Err(e) => toast.add_toast(adw::Toast::new(&e.to_string())),
-                }
-            }
-        });
-    }
-    let reload = gtk::Button::with_label(&ctx.t("common.refresh"));
-    {
-        let refresh_ui = refresh_ui.clone();
-        reload.connect_clicked(move |_| refresh_ui());
-    }
-    let actions = gtk::Box::new(gtk::Orientation::Horizontal, 8);
-    actions.append(&forget);
-    actions.append(&refresh_dir);
-    actions.append(&apply_poll);
-    actions.append(&apply_exp);
-    actions.append(&reload);
-    let box_ = gtk::Box::new(gtk::Orientation::Vertical, 8);
-    box_.set_margin_top(12);
-    box_.set_margin_start(12);
-    box_.set_margin_end(12);
-    box_.set_margin_bottom(12);
-    let stats_label = gtk::Label::new(Some("Stats"));
-    stats_label.add_css_class("heading");
-    stats_label.set_xalign(0.0);
-    let queue_label = gtk::Label::new(Some("Queue"));
-    queue_label.add_css_class("heading");
-    queue_label.set_xalign(0.0);
+    dialog.set_content_height(640);
     let scroll = gtk::ScrolledWindow::new();
     scroll.set_vexpand(true);
-    let inner = gtk::Box::new(gtk::Orientation::Vertical, 8);
-    inner.append(&stats_label);
-    inner.append(&list);
-    inner.append(&queue_label);
-    inner.append(&queue_list);
-    scroll.set_child(Some(&inner));
-    box_.append(&scroll);
-    box_.append(&file);
-    box_.append(&poll);
-    box_.append(&expiry);
-    box_.append(&actions);
-    dialog.set_child(Some(&box_));
+    let panel = super::vfs_panel::vfs_panel(ctx.clone(), remote, toast);
+    panel.set_margin_top(12);
+    panel.set_margin_bottom(12);
+    panel.set_margin_start(12);
+    panel.set_margin_end(12);
+    scroll.set_child(Some(&panel));
+    dialog.set_child(Some(&scroll));
     present_window_or_dialog(parent, &ctx, &dialog);
 }
 
@@ -1526,6 +1520,7 @@ pub fn logs(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, remote: Option<String>)
         clear.connect_clicked(move |_| {
             if key == "_engine" {
                 ctx.store.borrow_mut().logs.clear();
+                crate::logs::clear_log_file();
             } else {
                 ctx.store.borrow_mut().logs.remove(&key);
             }
@@ -1835,7 +1830,7 @@ pub fn rclone_flags(parent: &impl IsA<gtk::Widget>, ctx: AppCtx) {
         let page = adw::PreferencesPage::new();
         let group = adw::PreferencesGroup::new();
         let row = adw::ActionRow::new();
-        row.set_title("Engine offline");
+        row.set_title(&ctx.t_or("common.engineOffline", "Engine offline"));
         group.add(&row);
         page.add(&group);
         dialog.add(&page);
@@ -2000,15 +1995,18 @@ pub fn action_order(
     title: &str,
     catalog: &[&str],
     current: &[String],
+    max_visible: Option<usize>,
     on_save: impl Fn(Vec<String>) + 'static,
 ) {
     let dialog = adw::Dialog::new();
     dialog.set_title(title);
     dialog.set_content_width(480);
     dialog.set_content_height(560);
-    let items = Rc::new(RefCell::new(crate::action_order::build_items(
-        current, catalog,
-    )));
+    let items = Rc::new(RefCell::new({
+        let mut built = crate::action_order::build_items(current, catalog);
+        crate::action_order::cap_visible(&mut built, max_visible);
+        built
+    }));
     let list = gtk::ListBox::new();
     list.add_css_class("boxed-list");
     let rebuild: Rc<RefCell<Box<dyn Fn()>>> = Rc::new(RefCell::new(Box::new(|| {})));
@@ -2024,23 +2022,41 @@ pub fn action_order(
         let hidden_l = hidden_l.clone();
         let up_tip = up_tip.clone();
         let down_tip = down_tip.clone();
+        let ctx = ctx.clone();
         Rc::new(move || {
             while let Some(child) = list.first_child() {
                 list.remove(&child);
             }
             let snapshot = items.borrow().clone();
+            let can_show_more = crate::action_order::can_show_more(&snapshot, max_visible);
             for (idx, item) in snapshot.iter().enumerate() {
                 let row = adw::ActionRow::new();
-                row.set_title(&item.id);
+                let title = OperationType::parse(&item.id)
+                    .map(|op| ctx.t_or(op.action_label_key(), op.api_label()))
+                    .unwrap_or_else(|| item.id.clone());
+                row.set_title(&title);
                 row.set_subtitle(if item.visible { &visible_l } else { &hidden_l });
                 let visible = gtk::Switch::new();
                 visible.set_active(item.visible);
                 visible.set_valign(gtk::Align::Center);
+                if !item.visible && !can_show_more {
+                    visible.set_sensitive(false);
+                }
                 {
                     let items = items.clone();
                     let rebuild = rebuild.clone();
                     let id = item.id.clone();
                     visible.connect_active_notify(move |sw| {
+                        if sw.is_active()
+                            && !crate::action_order::can_show_more(&items.borrow(), max_visible)
+                            && !items
+                                .borrow()
+                                .iter()
+                                .any(|item| item.id == id && item.visible)
+                        {
+                            sw.set_active(false);
+                            return;
+                        }
                         crate::action_order::apply_visibility(
                             &mut items.borrow_mut(),
                             &id,
@@ -2090,7 +2106,9 @@ pub fn action_order(
         let dialog = dialog.clone();
         let items = items.clone();
         save.connect_clicked(move |_| {
-            on_save(crate::action_order::visible_ids(&items.borrow()));
+            let mut snapshot = items.borrow().clone();
+            crate::action_order::cap_visible(&mut snapshot, max_visible);
+            on_save(crate::action_order::visible_ids(&snapshot));
             dialog.close();
         });
     }
@@ -2108,7 +2126,9 @@ pub fn action_order(
         let catalog: Vec<String> = catalog.iter().map(|s| (*s).to_string()).collect();
         reset.connect_clicked(move |_| {
             let refs: Vec<&str> = catalog.iter().map(|s| s.as_str()).collect();
-            *items.borrow_mut() = crate::action_order::build_items(&[], &refs);
+            let mut built = crate::action_order::build_items(&[], &refs);
+            crate::action_order::cap_visible(&mut built, max_visible);
+            *items.borrow_mut() = built;
             rebuild.borrow()();
         });
     }
@@ -2125,10 +2145,17 @@ pub fn action_order(
     box_.set_margin_bottom(12);
     box_.set_margin_start(12);
     box_.set_margin_end(12);
-    let hint = gtk::Label::new(Some(&ctx.t_or(
-        "modals.actionSelection.description",
-        "Toggle visibility and reorder. Hidden actions stay available in Configure.",
-    )));
+    let hint = gtk::Label::new(Some(&if let Some(max) = max_visible {
+        ctx.tf(
+            "modals.actionSelection.description",
+            &[("name", title), ("max", &max.to_string())],
+        )
+    } else {
+        ctx.t_or(
+            "modals.actionSelection.description",
+            "Toggle visibility and reorder. Hidden actions stay available in Configure.",
+        )
+    }));
     hint.add_css_class("dim-label");
     hint.set_wrap(true);
     hint.set_xalign(0.0);
@@ -2227,6 +2254,9 @@ pub fn backends(parent: &impl IsA<gtk::Widget>, ctx: AppCtx) {
                 &row.text(),
             );
             ctx.persist();
+            if let Some(client) = ctx.client() {
+                crate::rclone::apply_backend_rc_config(&client, Some(row.text().as_str()), None);
+            }
         });
     }
     list.append(&config_path);
@@ -2525,8 +2555,47 @@ fn backend_editor(
         "Optional: clone remotes from another RC backend after saving",
     ));
     copy_row.add_suffix(&copy_from);
+    let test =
+        gtk::Button::with_label(&ctx.t_or("modals.backend.testConnection", "Test connection"));
     let save = gtk::Button::with_label(&ctx.t_or("modals.backend.save", "Save"));
     save.add_css_class("suggested-action");
+    {
+        let ctx = ctx.clone();
+        let dialog = dialog.clone();
+        let host = host.clone();
+        let port = port.clone();
+        let user = user.clone();
+        let pass = pass.clone();
+        test.connect_clicked(move |_| {
+            let port_n = port.text().parse::<u16>().unwrap_or(5573);
+            let entry = crate::settings::BackendEntry {
+                name: "test".into(),
+                host: host.text().to_string(),
+                port: port_n,
+                user: user.text().to_string(),
+                pass: pass.text().to_string(),
+                ..Default::default()
+            };
+            let client = rc_client_for_entry(&entry);
+            let msg = if client.ping() {
+                format!(
+                    "{} — {}",
+                    ctx.t_or("modals.backend.status.connected", "Connected"),
+                    client
+                        .version()
+                        .unwrap_or_else(|_| ctx.t_or("backup.restore.unknown", "unknown"))
+                )
+            } else {
+                ctx.t_or("modals.backend.status.failed", "Connection failed")
+            };
+            let alert = adw::AlertDialog::new(
+                Some(&ctx.t_or("modals.backend.testConnection", "Test connection")),
+                Some(&msg),
+            );
+            alert.add_response("ok", &ctx.t("common.ok"));
+            alert.present(Some(&dialog));
+        });
+    }
     {
         let ctx = ctx.clone();
         let dialog = dialog.clone();
@@ -2583,6 +2652,11 @@ fn backend_editor(
                     }
                 }
             }
+            crate::rclone::apply_backend_rc_config(
+                &rc_client_for_entry(&entry),
+                Some(entry.config_path.as_str()),
+                Some(entry.config_password.as_str()),
+            );
             if !source_id.is_empty() {
                 if let (Some(source), dest) =
                     (rc_client_for(&ctx, &source_id), rc_client_for_entry(&entry))
@@ -2596,7 +2670,7 @@ fn backend_editor(
                                 )),
                                 Some(&e.to_string()),
                             );
-                        alert.add_response("ok", "OK");
+                        alert.add_response("ok", &ctx.t_or("common.ok", "OK"));
                         alert.present(Some(&parent));
                     }
                 }
@@ -2617,7 +2691,11 @@ fn backend_editor(
     let box_ = gtk::Box::new(gtk::Orientation::Vertical, 8);
     box_.set_margin_top(12);
     box_.append(&group);
-    box_.append(&save);
+    let buttons = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+    buttons.set_halign(gtk::Align::End);
+    buttons.append(&test);
+    buttons.append(&save);
+    box_.append(&buttons);
     dialog.set_child(Some(&box_));
     dialog.present(Some(parent));
 }
@@ -2983,6 +3061,9 @@ pub fn alerts(parent: &impl IsA<gtk::Widget>, ctx: AppCtx) {
 }
 
 pub fn quick_add_remote(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, on_done: Rc<dyn Fn()>) {
+    if try_spawn_standalone(&ctx, "quick-add-remote", serde_json::json!({})) {
+        return;
+    }
     super::wizard::present_quick_add(parent, ctx, on_done);
 }
 
@@ -3135,7 +3216,7 @@ fn remote_editor(
                     }
                     Err(e) => {
                         let toast = adw::AlertDialog::new(Some("Error"), Some(&e.to_string()));
-                        toast.add_response("ok", "OK");
+                        toast.add_response("ok", &ctx.t_or("common.ok", "OK"));
                         toast.present(Some(&dialog));
                     }
                 }
@@ -3159,6 +3240,13 @@ pub fn start_operation(
     toast: adw::ToastOverlay,
     on_done: Rc<dyn Fn()>,
 ) {
+    if try_spawn_standalone(
+        &ctx,
+        "start-operation",
+        serde_json::json!({ "remote": remote, "operation": op.as_str() }),
+    ) {
+        return;
+    }
     let dialog = adw::Dialog::new();
     dialog.set_title(&format!("{} — {remote}", op.api_label()));
     dialog.set_content_width(560);
@@ -3535,7 +3623,7 @@ pub fn start_operation(
                     Some(&ctx.t_or("remoteConfig.startFailed", "Start failed")),
                     Some(&e),
                 );
-                err.add_response("ok", "OK");
+                err.add_response("ok", &ctx.t_or("common.ok", "OK"));
                 err.present(Some(&dialog));
             } else {
                 ctx.store
@@ -3620,6 +3708,9 @@ pub fn delete_remote(
     name: &str,
     on_done: Rc<dyn Fn()>,
 ) {
+    if try_spawn_standalone(&ctx, "delete-remote", serde_json::json!({ "remote": name })) {
+        return;
+    }
     let plan = crate::store::plan_delete_remote(name, &ctx.store.borrow(), &ctx.snapshot.borrow());
     let dialog = adw::AlertDialog::new(Some("Delete remote"), Some(&plan.summary()));
     dialog.add_response("cancel", "Cancel");
@@ -3662,14 +3753,14 @@ pub fn clone_remote(
             Some("Clone failed"),
             Some("No saved settings were found for this remote."),
         );
-        toast.add_response("ok", "OK");
+        toast.add_response("ok", &ctx.t_or("common.ok", "OK"));
         toast.present(Some(parent));
         return;
     };
     if let Some(client) = ctx.client() {
         if let Err(e) = client.clone_remote_config(name, &new_name) {
             let toast = adw::AlertDialog::new(Some("Clone failed"), Some(&e.to_string()));
-            toast.add_response("ok", "OK");
+            toast.add_response("ok", &ctx.t_or("common.ok", "OK"));
             toast.present(Some(parent));
             return;
         }
@@ -3690,6 +3781,13 @@ pub fn quick_run_editor(
     existing: Option<QuickRun>,
     on_done: Rc<dyn Fn()>,
 ) {
+    let spawn_data = existing
+        .as_ref()
+        .and_then(|qr| serde_json::to_value(qr).ok())
+        .unwrap_or_else(|| serde_json::json!({}));
+    if try_spawn_standalone(&ctx, "quick-run-editor", spawn_data) {
+        return;
+    }
     let dialog = adw::Dialog::new();
     dialog.set_title(&if existing.is_some() {
         ctx.t_or("flow.quickRun.editor.editTitle", "Edit Quick Run")
@@ -3706,8 +3804,13 @@ pub fn quick_run_editor(
     remote.set_title(&ctx.t_or("flow.quickRun.editor.remote", "Remote"));
     let src = adw::EntryRow::new();
     src.set_title(&ctx.t_or("fileBrowser.operations.details.source", "Source"));
-    attach_path_picker(&ctx, &src, crate::picker::FilePickerConfig::folders());
     let extra_sources: Rc<RefCell<Vec<adw::EntryRow>>> = Rc::new(RefCell::new(Vec::new()));
+    let extra_filenames: Rc<RefCell<Vec<adw::EntryRow>>> = Rc::new(RefCell::new(Vec::new()));
+    let url_filename = adw::EntryRow::new();
+    url_filename.set_title(&ctx.t_or(
+        "wizards.appOperation.copyUrlFilename",
+        "Filename (optional)",
+    ));
     let dst = adw::EntryRow::new();
     dst.set_title(&ctx.t_or(
         "fileBrowser.operations.details.destination",
@@ -3752,17 +3855,6 @@ pub fn quick_run_editor(
     ));
     let tray = adw::SwitchRow::new();
     tray.set_title(&ctx.t_or("flow.quickRun.editor.showOnTray", "Show on tray"));
-    let vfs_profile = adw::EntryRow::new();
-    vfs_profile.set_title(&ctx.t_or("flow.quickRun.editor.tabVfs", "VFS profile name"));
-    let filter_profile = adw::EntryRow::new();
-    filter_profile.set_title(&ctx.t_or("flow.quickRun.editor.tabFilter", "Filter profile name"));
-    let backend_profile = adw::EntryRow::new();
-    backend_profile.set_title(&ctx.t_or("flow.quickRun.editor.tabBackend", "Backend profile name"));
-    let runtime_profile = adw::EntryRow::new();
-    runtime_profile.set_title(&ctx.t_or(
-        "flow.quickRun.editor.tabRuntimeRemote",
-        "Runtime remote profile",
-    ));
     let runtime_json = adw::EntryRow::new();
     runtime_json.set_title(&ctx.t_or(
         "flow.quickRun.editor.runtimeRemoteJson",
@@ -3773,19 +3865,52 @@ pub fn quick_run_editor(
         description.set_text(&qr.description);
         remote.set_text(&qr.remote_name);
         let (s, d) = qr.paths();
-        let sources = crate::jobs::path_list(&qr.config.rclone, crate::jobs::SOURCE_KEYS);
+        let copyurl = qr.operation_type == OperationType::Copyurl;
+        let sources = if copyurl {
+            path_list(&qr.config.rclone, &["url", "srcFs", "source"])
+        } else {
+            path_list(&qr.config.rclone, SOURCE_KEYS)
+        };
         if let Some(first) = sources.first() {
             src.set_text(first);
         } else if let Some(s) = s {
             src.set_text(&s);
         }
         dst.set_text(&d.unwrap_or_default());
+        let saved_filenames: Vec<String> = qr
+            .config
+            .rclone
+            .get("filenames")
+            .and_then(|v| v.as_array())
+            .map(|arr| {
+                arr.iter()
+                    .map(|v| v.as_str().unwrap_or("").to_string())
+                    .collect()
+            })
+            .unwrap_or_default();
+        if let Some(first) = saved_filenames.first() {
+            url_filename.set_text(first);
+        }
         for extra in sources.iter().skip(1) {
             let row = adw::EntryRow::new();
             row.set_title(&ctx.t_or("wizards.appOperation.addSource", "Additional source"));
-            attach_path_picker(&ctx, &row, crate::picker::FilePickerConfig::folders());
+            if !copyurl {
+                attach_path_picker(&ctx, &row, crate::picker::FilePickerConfig::folders());
+            }
             row.set_text(extra);
             extra_sources.borrow_mut().push(row);
+        }
+        if copyurl {
+            for name in saved_filenames.iter().skip(1) {
+                extra_filenames
+                    .borrow_mut()
+                    .push(quick_run_filename_row(&ctx, name));
+            }
+            while extra_filenames.borrow().len() < extra_sources.borrow().len() {
+                extra_filenames
+                    .borrow_mut()
+                    .push(quick_run_filename_row(&ctx, ""));
+            }
         }
         cron.set_text(&qr.config.app.cron_expression);
         auto.set_active(qr.config.app.auto_start);
@@ -3795,10 +3920,6 @@ pub fn quick_run_editor(
         }
         watch_changed.set_active(qr.config.app.watch_changed_only);
         tray.set_active(qr.show_on_tray);
-        vfs_profile.set_text(&qr.config.app.vfs_profile);
-        filter_profile.set_text(&qr.config.app.filter_profile);
-        backend_profile.set_text(&qr.config.app.backend_profile);
-        runtime_profile.set_text(&qr.config.app.runtime_remote_profile);
         if let Some(value) = qr.config.rclone.get("runtimeRemote") {
             runtime_json.set_text(&value.to_string());
         }
@@ -3809,6 +3930,91 @@ pub fn quick_run_editor(
             op_row.set_selected(idx as u32);
         }
     }
+    let remote_name = existing
+        .as_ref()
+        .map(|qr| qr.remote_name.clone())
+        .unwrap_or_else(|| remote.text().to_string());
+    let vfs_names = Rc::new(RefCell::new(qr_helper_names(&ctx, &remote_name, "vfs")));
+    let filter_names = Rc::new(RefCell::new(qr_helper_names(&ctx, &remote_name, "filter")));
+    let backend_names = Rc::new(RefCell::new(qr_helper_names(&ctx, &remote_name, "backend")));
+    let runtime_names = Rc::new(RefCell::new(qr_helper_names(&ctx, &remote_name, "runtime")));
+    let vfs_sel = existing
+        .as_ref()
+        .map(|qr| qr.config.app.vfs_profile.clone())
+        .unwrap_or_default();
+    let filter_sel = existing
+        .as_ref()
+        .map(|qr| qr.config.app.filter_profile.clone())
+        .unwrap_or_default();
+    let backend_sel = existing
+        .as_ref()
+        .map(|qr| qr.config.app.backend_profile.clone())
+        .unwrap_or_default();
+    let runtime_sel = existing
+        .as_ref()
+        .map(|qr| qr.config.app.runtime_remote_profile.clone())
+        .unwrap_or_default();
+    let vfs_profile = helper_combo(
+        &ctx.t_or("flow.quickRun.editor.tabVfs", "VFS profile"),
+        &vfs_names.borrow(),
+        &vfs_sel,
+    );
+    let filter_profile = helper_combo(
+        &ctx.t_or("flow.quickRun.editor.tabFilter", "Filter profile"),
+        &filter_names.borrow(),
+        &filter_sel,
+    );
+    let backend_profile = helper_combo(
+        &ctx.t_or("flow.quickRun.editor.tabBackend", "Backend profile"),
+        &backend_names.borrow(),
+        &backend_sel,
+    );
+    let runtime_profile = helper_combo(
+        &ctx.t_or(
+            "flow.quickRun.editor.tabRuntimeRemote",
+            "Runtime remote profile",
+        ),
+        &runtime_names.borrow(),
+        &runtime_sel,
+    );
+    let edit_helpers =
+        gtk::Button::with_label(&ctx.t_or("remote.editHelpers", "Edit helper profiles"));
+    {
+        let ctx = ctx.clone();
+        let remote = remote.clone();
+        let parent = parent.clone();
+        edit_helpers.connect_clicked(move |_| {
+            helper_profiles(&parent, ctx.clone(), &remote.text());
+        });
+    }
+    let helpers_row = adw::ActionRow::new();
+    helpers_row.set_title(&ctx.t_or(
+        "general.remoteConfig.advancedProfiles.title",
+        "Helper profiles",
+    ));
+    helpers_row.add_suffix(&edit_helpers);
+    {
+        let ctx = ctx.clone();
+        let vfs_profile = vfs_profile.clone();
+        let filter_profile = filter_profile.clone();
+        let backend_profile = backend_profile.clone();
+        let runtime_profile = runtime_profile.clone();
+        let vfs_names = vfs_names.clone();
+        let filter_names = filter_names.clone();
+        let backend_names = backend_names.clone();
+        let runtime_names = runtime_names.clone();
+        remote.connect_changed(move |row| {
+            let name = row.text().to_string();
+            *vfs_names.borrow_mut() = qr_helper_names(&ctx, &name, "vfs");
+            *filter_names.borrow_mut() = qr_helper_names(&ctx, &name, "filter");
+            *backend_names.borrow_mut() = qr_helper_names(&ctx, &name, "backend");
+            *runtime_names.borrow_mut() = qr_helper_names(&ctx, &name, "runtime");
+            refresh_helper_combo(&vfs_profile, &vfs_names.borrow(), "");
+            refresh_helper_combo(&filter_profile, &filter_names.borrow(), "");
+            refresh_helper_combo(&backend_profile, &backend_names.borrow(), "");
+            refresh_helper_combo(&runtime_profile, &runtime_names.borrow(), "");
+        });
+    }
     group.add(&name);
     group.add(&description);
     group.add(&remote);
@@ -3816,22 +4022,73 @@ pub fn quick_run_editor(
         .as_ref()
         .map(|qr| qr.operation_type)
         .unwrap_or(OperationType::Sync);
+    if initial_op != OperationType::Copyurl {
+        attach_path_picker(&ctx, &src, crate::picker::FilePickerConfig::folders());
+    }
+    apply_quick_run_path_titles(&ctx, initial_op, &src, &dst);
+    url_filename.set_visible(initial_op == OperationType::Copyurl);
+    let src_kind = attach_path_kind(&ctx, &src, &remote.text());
+    let dst_kind = attach_path_kind(&ctx, &dst, &remote.text());
+    src_kind.set_visible(initial_op != OperationType::Copyurl);
+    dst_kind.set_visible(!matches!(
+        initial_op,
+        OperationType::Mount | OperationType::Serve | OperationType::Delete
+    ));
+    let current_op = {
+        let op_row = op_row.clone();
+        Rc::new(move || {
+            OperationType::ALL
+                .get(op_row.selected() as usize)
+                .copied()
+                .unwrap_or(OperationType::Sync)
+        }) as Rc<dyn Fn() -> OperationType>
+    };
+    let (guidance, refresh_guidance) = attach_operation_guidance(
+        &ctx,
+        false,
+        &watch,
+        &src,
+        &extra_sources,
+        &dst,
+        current_op.clone(),
+    );
     group.add(&op_row);
+    group.add(&src_kind);
     group.add(&src);
-    for row in extra_sources.borrow().iter() {
+    group.add(&url_filename);
+    for (idx, row) in extra_sources.borrow().iter().enumerate() {
         group.add(row);
+        if let Some(name) = extra_filenames.borrow().get(idx) {
+            group.add(name);
+        }
     }
     let add_src = gtk::Button::with_label(&ctx.t_or("remoteConfig.addSource", "Add source"));
     {
         let extra_sources = extra_sources.clone();
+        let extra_filenames = extra_filenames.clone();
         let group = group.clone();
         let ctx = ctx.clone();
+        let refresh_guidance = refresh_guidance.clone();
+        let current_op = current_op.clone();
         add_src.connect_clicked(move |_| {
+            let op = current_op();
             let row = adw::EntryRow::new();
             row.set_title(&ctx.t_or("wizards.appOperation.addSource", "Additional source"));
-            attach_path_picker(&ctx, &row, crate::picker::FilePickerConfig::folders());
+            if op != OperationType::Copyurl {
+                attach_path_picker(&ctx, &row, crate::picker::FilePickerConfig::folders());
+            }
+            {
+                let refresh_guidance = refresh_guidance.clone();
+                row.connect_changed(move |_| refresh_guidance());
+            }
             group.add(&row);
             extra_sources.borrow_mut().push(row);
+            if op == OperationType::Copyurl {
+                let name = quick_run_filename_row(&ctx, "");
+                group.add(&name);
+                extra_filenames.borrow_mut().push(name);
+            }
+            refresh_guidance();
         });
     }
     let add_src_row = adw::ActionRow::new();
@@ -3839,6 +4096,7 @@ pub fn quick_run_editor(
     add_src_row.add_suffix(&add_src);
     add_src_row.set_visible(initial_op.supports_multi_source());
     group.add(&add_src_row);
+    group.add(&dst_kind);
     group.add(&dst);
     group.add(&cron);
     let cron_preset_row = adw::ActionRow::new();
@@ -3850,11 +4108,12 @@ pub fn quick_run_editor(
     group.add(&watch_delay);
     group.add(&watch_changed);
     group.add(&tray);
+    vfs_profile.set_visible(initial_op.supports_vfs());
     group.add(&vfs_profile);
     group.add(&filter_profile);
     group.add(&backend_profile);
     group.add(&runtime_profile);
-    group.add(&runtime_json);
+    group.add(&helpers_row);
     let dry = adw::SwitchRow::new();
     dry.set_title(&ctx.t_or("detailShared.jobs.dryRun", "Dry run"));
     dry.set_active(
@@ -3942,6 +4201,17 @@ pub fn quick_run_editor(
         let rclone = initial_rclone.clone();
         let blocks = live_blocks.clone();
         let add_src_row = add_src_row.clone();
+        let refresh_guidance = refresh_guidance.clone();
+        let src = src.clone();
+        let dst = dst.clone();
+        let url_filename = url_filename.clone();
+        let extra_filenames = extra_filenames.clone();
+        let extra_sources = extra_sources.clone();
+        let src_kind = src_kind.clone();
+        let dst_kind = dst_kind.clone();
+        let ctx_titles = ctx.clone();
+        let group = group.clone();
+        let vfs_profile = vfs_profile.clone();
         op_row.connect_selected_notify(move |row| {
             let op = OperationType::ALL
                 .get(row.selected() as usize)
@@ -3951,6 +4221,23 @@ pub fn quick_run_editor(
             mount_type.set_visible(op == OperationType::Mount);
             resync.set_visible(op == OperationType::Bisync);
             add_src_row.set_visible(op.supports_multi_source());
+            apply_quick_run_path_titles(&ctx_titles, op, &src, &dst);
+            url_filename.set_visible(op == OperationType::Copyurl);
+            src_kind.set_visible(op != OperationType::Copyurl);
+            dst_kind.set_visible(!matches!(
+                op,
+                OperationType::Mount | OperationType::Serve | OperationType::Delete
+            ));
+            if op == OperationType::Copyurl {
+                while extra_filenames.borrow().len() < extra_sources.borrow().len() {
+                    let name = quick_run_filename_row(&ctx_titles, "");
+                    group.add(&name);
+                    extra_filenames.borrow_mut().push(name);
+                }
+            }
+            for row in extra_filenames.borrow().iter() {
+                row.set_visible(op == OperationType::Copyurl);
+            }
             clear_flag_rows(&flags_group, &flag_rows);
             clear_serve_flag_rows(&flags_group, &serve_flag_rows);
             populate_flag_rows(&flags_group, &flag_rows, op, &rclone, &blocks);
@@ -3964,6 +4251,154 @@ pub fn quick_run_editor(
                     &serve_types,
                 );
             }
+            vfs_profile.set_visible(op.supports_vfs());
+            refresh_guidance();
+        });
+    }
+    let vfs_flag_rows: Rc<RefCell<Vec<(String, adw::EntryRow, String)>>> =
+        Rc::new(RefCell::new(Vec::new()));
+    let filter_flag_rows: Rc<RefCell<Vec<(String, adw::EntryRow, String)>>> =
+        Rc::new(RefCell::new(Vec::new()));
+    let backend_flag_rows: Rc<RefCell<Vec<(String, adw::EntryRow, String)>>> =
+        Rc::new(RefCell::new(Vec::new()));
+    let vfs_flags = adw::PreferencesGroup::new();
+    vfs_flags.set_title(&ctx.t_or("flow.quickRun.editor.tabVfs", "VFS"));
+    let filter_flags = adw::PreferencesGroup::new();
+    filter_flags.set_title(&ctx.t_or("flow.quickRun.editor.tabFilter", "Filter"));
+    let backend_flags = adw::PreferencesGroup::new();
+    backend_flags.set_title(&ctx.t_or("flow.quickRun.editor.tabBackend", "Backend"));
+    let runtime_flags = adw::PreferencesGroup::new();
+    runtime_flags.set_title(&ctx.t_or("flow.quickRun.editor.tabRuntimeRemote", "Runtime Remote"));
+    runtime_flags.add(&runtime_json);
+    let flag_stack = adw::ViewStack::new();
+    flag_stack.set_vhomogeneous(false);
+    flag_stack.add_titled(
+        &flags_group,
+        Some("operation"),
+        &ctx.t_or("flow.quickRun.editor.flags", "Operation flags"),
+    );
+    let vfs_page = flag_stack.add_titled(
+        &vfs_flags,
+        Some("vfs"),
+        &ctx.t_or("flow.quickRun.editor.tabVfs", "VFS"),
+    );
+    flag_stack.add_titled(
+        &filter_flags,
+        Some("filter"),
+        &ctx.t_or("flow.quickRun.editor.tabFilter", "Filter"),
+    );
+    flag_stack.add_titled(
+        &backend_flags,
+        Some("backend"),
+        &ctx.t_or("flow.quickRun.editor.tabBackend", "Backend"),
+    );
+    flag_stack.add_titled(
+        &runtime_flags,
+        Some("runtime"),
+        &ctx.t_or("flow.quickRun.editor.tabRuntimeRemote", "Runtime Remote"),
+    );
+    vfs_page.set_visible(initial_op.supports_vfs());
+    let flag_switcher = adw::ViewSwitcher::new();
+    flag_switcher.set_stack(Some(&flag_stack));
+    flag_switcher.set_policy(adw::ViewSwitcherPolicy::Wide);
+    populate_helper_flag_rows(
+        &ctx,
+        &vfs_flags,
+        &vfs_flag_rows,
+        "vfs",
+        &live_blocks,
+        &remote.text(),
+        &helper_selected(&vfs_profile, &vfs_names.borrow()),
+    );
+    populate_helper_flag_rows(
+        &ctx,
+        &filter_flags,
+        &filter_flag_rows,
+        "filter",
+        &live_blocks,
+        &remote.text(),
+        &helper_selected(&filter_profile, &filter_names.borrow()),
+    );
+    populate_helper_flag_rows(
+        &ctx,
+        &backend_flags,
+        &backend_flag_rows,
+        "backend",
+        &live_blocks,
+        &remote.text(),
+        &helper_selected(&backend_profile, &backend_names.borrow()),
+    );
+    {
+        let ctx = ctx.clone();
+        let vfs_flags = vfs_flags.clone();
+        let vfs_flag_rows = vfs_flag_rows.clone();
+        let blocks = live_blocks.clone();
+        let remote = remote.clone();
+        let vfs_names = vfs_names.clone();
+        vfs_profile.connect_selected_notify(move |row| {
+            populate_helper_flag_rows(
+                &ctx,
+                &vfs_flags,
+                &vfs_flag_rows,
+                "vfs",
+                &blocks,
+                &remote.text(),
+                &helper_selected(row, &vfs_names.borrow()),
+            );
+        });
+    }
+    {
+        let ctx = ctx.clone();
+        let filter_flags = filter_flags.clone();
+        let filter_flag_rows = filter_flag_rows.clone();
+        let blocks = live_blocks.clone();
+        let remote = remote.clone();
+        let filter_names = filter_names.clone();
+        filter_profile.connect_selected_notify(move |row| {
+            populate_helper_flag_rows(
+                &ctx,
+                &filter_flags,
+                &filter_flag_rows,
+                "filter",
+                &blocks,
+                &remote.text(),
+                &helper_selected(row, &filter_names.borrow()),
+            );
+        });
+    }
+    {
+        let ctx = ctx.clone();
+        let backend_flags = backend_flags.clone();
+        let backend_flag_rows = backend_flag_rows.clone();
+        let blocks = live_blocks.clone();
+        let remote = remote.clone();
+        let backend_names = backend_names.clone();
+        backend_profile.connect_selected_notify(move |row| {
+            populate_helper_flag_rows(
+                &ctx,
+                &backend_flags,
+                &backend_flag_rows,
+                "backend",
+                &blocks,
+                &remote.text(),
+                &helper_selected(row, &backend_names.borrow()),
+            );
+        });
+    }
+    {
+        let vfs_profile = vfs_profile.clone();
+        let vfs_page = vfs_page.clone();
+        let flag_stack = flag_stack.clone();
+        op_row.connect_selected_notify(move |row| {
+            let op = OperationType::ALL
+                .get(row.selected() as usize)
+                .copied()
+                .unwrap_or(OperationType::Sync);
+            vfs_profile.set_visible(op.supports_vfs());
+            vfs_page.set_visible(op.supports_vfs());
+            if !op.supports_vfs() && flag_stack.visible_child_name().as_deref() == Some("vfs") {
+                flag_stack.set_visible_child_name("operation");
+            }
         });
     }
     let save = gtk::Button::with_label(&ctx.t_or("common.save", "Save"));
@@ -3976,6 +4411,13 @@ pub fn quick_run_editor(
         let filter_profile = filter_profile.clone();
         let backend_profile = backend_profile.clone();
         let runtime_profile = runtime_profile.clone();
+        let vfs_names = vfs_names.clone();
+        let filter_names = filter_names.clone();
+        let backend_names = backend_names.clone();
+        let runtime_names = runtime_names.clone();
+        let vfs_flag_rows = vfs_flag_rows.clone();
+        let filter_flag_rows = filter_flag_rows.clone();
+        let backend_flag_rows = backend_flag_rows.clone();
         let runtime_json = runtime_json.clone();
         let flag_rows = flag_rows.clone();
         let serve_flag_rows = serve_flag_rows.clone();
@@ -3989,12 +4431,17 @@ pub fn quick_run_editor(
         let watch_delay = watch_delay.clone();
         let watch_changed = watch_changed.clone();
         let extra_sources = extra_sources.clone();
+        let extra_filenames = extra_filenames.clone();
+        let url_filename = url_filename.clone();
         save.connect_clicked(move |_| {
             let expr = cron.text().to_string();
             if !expr.is_empty() {
                 if let Err(e) = validate_cron(&expr) {
-                    let err = adw::AlertDialog::new(Some("Invalid cron"), Some(&e));
-                    err.add_response("ok", "OK");
+                    let err = adw::AlertDialog::new(
+                        Some(&ctx.t_or("flow.quickRun.editor.cron", "Cron schedule")),
+                        Some(&e),
+                    );
+                    err.add_response("ok", &ctx.t_or("common.ok", "OK"));
                     err.present(Some(&dialog));
                     return;
                 }
@@ -4026,10 +4473,33 @@ pub fn quick_run_editor(
             qr.config.app.watch_changed_only = watch_changed.is_active();
             qr.config.app.cron_enabled = !expr.is_empty();
             qr.config.app.cron_expression = expr;
-            qr.config.app.vfs_profile = vfs_profile.text().to_string();
-            qr.config.app.filter_profile = filter_profile.text().to_string();
-            qr.config.app.backend_profile = backend_profile.text().to_string();
-            qr.config.app.runtime_remote_profile = runtime_profile.text().to_string();
+            qr.config.app.vfs_profile = helper_selected(&vfs_profile, &vfs_names.borrow());
+            qr.config.app.filter_profile = helper_selected(&filter_profile, &filter_names.borrow());
+            qr.config.app.backend_profile =
+                helper_selected(&backend_profile, &backend_names.borrow());
+            qr.config.app.runtime_remote_profile =
+                helper_selected(&runtime_profile, &runtime_names.borrow());
+            save_helper_from_rows(
+                &ctx,
+                &remote.text(),
+                "vfs",
+                &qr.config.app.vfs_profile,
+                &vfs_flag_rows.borrow(),
+            );
+            save_helper_from_rows(
+                &ctx,
+                &remote.text(),
+                "filter",
+                &qr.config.app.filter_profile,
+                &filter_flag_rows.borrow(),
+            );
+            save_helper_from_rows(
+                &ctx,
+                &remote.text(),
+                "backend",
+                &qr.config.app.backend_profile,
+                &backend_flag_rows.borrow(),
+            );
             qr.show_on_tray = tray.is_active();
             let mut sources = vec![src.text().to_string()];
             for row in extra_sources.borrow().iter() {
@@ -4039,71 +4509,86 @@ pub fn quick_run_editor(
                 }
             }
             sources.retain(|s| !s.is_empty());
-            let src_value = if sources.len() > 1 {
-                serde_json::json!(sources)
-            } else {
-                serde_json::json!(sources.first().cloned().unwrap_or_default())
-            };
-            let mut rclone = serde_json::json!({
-                "srcFs": src_value,
-                "dstFs": dst.text().to_string(),
-                "mountPoint": dst.text().to_string(),
-                "fs": src_value,
-            });
+            let remote_name = remote.text().to_string();
+            if op != OperationType::Copyurl {
+                sources = sources
+                    .into_iter()
+                    .map(|s| crate::path_kind::resolve_job_path(&s, &remote_name))
+                    .collect();
+            }
+            let mut flags = serde_json::Map::new();
             if dry.is_active() {
-                rclone["dryRun"] = serde_json::json!(true);
+                flags.insert("dryRun".into(), serde_json::json!(true));
             }
             if op == OperationType::Bisync && resync.is_active() {
-                rclone["Resync"] = serde_json::json!(true);
+                flags.insert("Resync".into(), serde_json::json!(true));
             }
             if op == OperationType::Serve {
-                rclone["type"] = serde_json::json!(crate::operations::selected_or(
-                    &serve_types,
-                    serve.selected(),
-                    "http"
-                ));
+                flags.insert(
+                    "type".into(),
+                    serde_json::json!(crate::operations::selected_or(
+                        &serve_types,
+                        serve.selected(),
+                        "http"
+                    )),
+                );
             }
             if op == OperationType::Mount {
-                rclone["mountType"] = serde_json::json!(crate::operations::selected_or(
-                    &mount_types,
-                    mount_type.selected(),
-                    "mount"
-                ));
+                flags.insert(
+                    "mountType".into(),
+                    serde_json::json!(crate::operations::selected_or(
+                        &mount_types,
+                        mount_type.selected(),
+                        "mount"
+                    )),
+                );
             }
-            if let Some(obj) = rclone.as_object_mut() {
-                let inline = runtime_json.text().to_string();
-                if !inline.trim().is_empty() {
-                    if let Ok(value) = serde_json::from_str::<serde_json::Value>(inline.trim()) {
-                        obj.insert("runtimeRemote".into(), value);
-                    }
-                }
-                for (field, row, type_name) in flag_rows.borrow().iter() {
-                    let text = row.text().to_string();
-                    if text.is_empty() {
-                        continue;
-                    }
-                    obj.insert(
-                        field.clone(),
-                        crate::flags::parse_flag_value(type_name, &text),
-                    );
-                }
-                let selected_serve =
-                    crate::operations::selected_or(&serve_types, serve.selected(), "http");
-                for (serve_type, field, row, type_name) in serve_flag_rows.borrow().iter() {
-                    if serve_type != selected_serve {
-                        continue;
-                    }
-                    let text = row.text().to_string();
-                    if text.is_empty() {
-                        continue;
-                    }
-                    obj.insert(
-                        field.clone(),
-                        crate::flags::parse_flag_value(type_name, &text),
-                    );
+            let inline = runtime_json.text().to_string();
+            if !inline.trim().is_empty() {
+                if let Ok(value) = serde_json::from_str::<serde_json::Value>(inline.trim()) {
+                    flags.insert("runtimeRemote".into(), value);
                 }
             }
-            qr.config.rclone = rclone;
+            for (field, row, type_name) in flag_rows.borrow().iter() {
+                let text = row.text().to_string();
+                if text.is_empty() {
+                    continue;
+                }
+                flags.insert(
+                    field.clone(),
+                    crate::flags::parse_flag_value(type_name, &text),
+                );
+            }
+            let selected_serve =
+                crate::operations::selected_or(&serve_types, serve.selected(), "http");
+            for (serve_type, field, row, type_name) in serve_flag_rows.borrow().iter() {
+                if serve_type != selected_serve {
+                    continue;
+                }
+                let text = row.text().to_string();
+                if text.is_empty() {
+                    continue;
+                }
+                flags.insert(
+                    field.clone(),
+                    crate::flags::parse_flag_value(type_name, &text),
+                );
+            }
+            if op == OperationType::Copyurl {
+                let mut names = vec![url_filename.text().to_string()];
+                for row in extra_filenames.borrow().iter() {
+                    names.push(row.text().to_string());
+                }
+                if names.iter().any(|s| !s.is_empty()) {
+                    flags.insert("filenames".into(), serde_json::json!(names));
+                }
+            }
+            let dest = if matches!(op, OperationType::Serve | OperationType::Delete) {
+                dst.text().to_string()
+            } else {
+                crate::path_kind::resolve_job_path(&dst.text(), &remote_name)
+            };
+            qr.config.rclone = assemble_rclone(op, &sources, &dest, flags);
             {
                 let mut store = ctx.store.borrow_mut();
                 if let Some(idx) = store.quick_runs.iter().position(|q| q.id == qr.id) {
@@ -4121,8 +4606,10 @@ pub fn quick_run_editor(
     box_.set_margin_top(12);
     box_.set_margin_bottom(12);
     box_.append(&group);
+    box_.append(&guidance);
     box_.append(&cron_hint);
-    box_.append(&flags_group);
+    box_.append(&flag_switcher);
+    box_.append(&flag_stack);
     box_.append(&save);
     dialog.set_child(Some(&box_));
     dialog.present(Some(parent));
@@ -4134,6 +4621,13 @@ pub fn export_backup(
     toast: adw::ToastOverlay,
     remote: Option<&str>,
 ) {
+    if try_spawn_standalone(
+        &ctx,
+        "export",
+        serde_json::json!({ "remote": remote.unwrap_or_default() }),
+    ) {
+        return;
+    }
     let dialog = adw::Dialog::new();
     dialog.set_title(&ctx.t_or("modals.export.title", "Export backup"));
     dialog.set_content_width(480);
@@ -4352,6 +4846,13 @@ pub fn restore_preview(
     path: std::path::PathBuf,
     on_done: Rc<dyn Fn()>,
 ) {
+    if try_spawn_standalone(
+        &ctx,
+        "restore-preview",
+        serde_json::json!({ "path": path.to_string_lossy() }),
+    ) {
+        return;
+    }
     let analysis = backup::analyze_backup(&path).ok();
     let dialog = adw::Dialog::new();
     dialog.set_title(&ctx.t_or("backup.restore.title", "Restore Backup"));
@@ -4547,6 +5048,13 @@ pub fn properties(
     path: &str,
     name: &str,
 ) {
+    if try_spawn_standalone(
+        &ctx,
+        "properties",
+        serde_json::json!({ "remote": remote, "path": path, "name": name }),
+    ) {
+        return;
+    }
     let dialog = adw::Dialog::new();
     dialog.set_title(&ctx.t_or("fileBrowser.properties.title", "Properties"));
     dialog.set_content_width(520);
@@ -5459,7 +5967,7 @@ fn append_open_job_paths(
         let path = path.clone();
         btn.connect_clicked(move |_| {
             if let Some((remote, folder)) = browse_target(&path) {
-                ctx.request_browse(&remote, &folder);
+                super::window::present_files_at(&dialog, &ctx, &remote, &folder);
                 dialog.close();
             }
         });
@@ -5928,7 +6436,11 @@ fn attach_text_preview(
             view.set_editable(false);
             btn.set_sensitive(false);
             if ok {
-                btn.set_label("OK");
+                let label = remote_save
+                    .as_ref()
+                    .map(|(ctx, _, _)| ctx.t_or("common.ok", "OK"))
+                    .unwrap_or_else(|| "OK".into());
+                btn.set_label(&label);
             }
         });
         let bar = gtk::Box::new(gtk::Orientation::Horizontal, 8);
@@ -6179,6 +6691,18 @@ pub fn file_viewer(
     is_dir: bool,
     siblings: &[(String, bool)],
 ) {
+    if try_spawn_standalone(
+        &ctx,
+        "file-viewer",
+        serde_json::json!({
+            "remote": remote,
+            "path": path,
+            "name": name,
+            "isDir": is_dir,
+        }),
+    ) {
+        return;
+    }
     let dialog = adw::Dialog::new();
     dialog.set_title(name);
     dialog.set_content_width(720);
@@ -6478,30 +7002,54 @@ pub fn file_viewer(
                 format!("{remote}:{dest}")
             };
             extract.connect_clicked(move |_| {
-                let Some(client) = ctx.client() else {
-                    return;
-                };
-                match client.archive_extract(&src, &dest) {
-                    Ok(_) => {
-                        let toast = adw::AlertDialog::new(
-                            Some(&ctx.t_or("fileBrowser.fileViewer.extract", "Extract")),
-                            Some(&ctx.t_or("common.ok", "Extract started")),
-                        );
-                        toast.add_response("ok", &ctx.t("common.ok"));
-                        toast.present(Some(&parent));
-                    }
-                    Err(e) => {
-                        let toast = adw::AlertDialog::new(
-                            Some(&ctx.t_or(
-                                "fileBrowser.fileViewer.errorExtract",
-                                "Failed to extract archive",
-                            )),
-                            Some(&e.to_string()),
-                        );
-                        toast.add_response("ok", &ctx.t("common.ok"));
-                        toast.present(Some(&parent));
-                    }
-                }
+                let ctx = ctx.clone();
+                let parent = parent.clone();
+                let src = src.clone();
+                let fallback = dest.clone();
+                let initial = fallback.clone();
+                pick_destination(
+                    &parent,
+                    &ctx,
+                    &ctx.t_or("fileBrowser.fileViewer.extract", "Extract archive"),
+                    &initial,
+                    {
+                        let ctx = ctx.clone();
+                        let parent = parent.clone();
+                        move |chosen| {
+                            let Some(client) = ctx.client() else {
+                                return;
+                            };
+                            let dest = if chosen.is_empty() {
+                                fallback.clone()
+                            } else {
+                                chosen
+                            };
+                            match client.archive_extract(&src, &dest) {
+                                Ok(_) => {
+                                    let toast = adw::AlertDialog::new(
+                                        Some(
+                                            &ctx.t_or("fileBrowser.fileViewer.extract", "Extract"),
+                                        ),
+                                        Some(&ctx.t_or("common.ok", "Extract started")),
+                                    );
+                                    toast.add_response("ok", &ctx.t("common.ok"));
+                                    toast.present(Some(&parent));
+                                }
+                                Err(e) => {
+                                    let toast = adw::AlertDialog::new(
+                                        Some(&ctx.t_or(
+                                            "fileBrowser.fileViewer.errorExtract",
+                                            "Failed to extract archive",
+                                        )),
+                                        Some(&e.to_string()),
+                                    );
+                                    toast.add_response("ok", &ctx.t("common.ok"));
+                                    toast.present(Some(&parent));
+                                }
+                            }
+                        }
+                    },
+                );
             });
         }
         actions.append(&extract);
@@ -6709,6 +7257,13 @@ fn metadata_item_row(ctx: &AppCtx, key: &str, meta: &serde_json::Value) -> adw::
 }
 
 pub fn remote_about(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, remote: &str) {
+    if try_spawn_standalone(
+        &ctx,
+        "remote-about",
+        serde_json::json!({ "remote": remote }),
+    ) {
+        return;
+    }
     let dialog = adw::Dialog::new();
     dialog.set_title(&format!(
         "{} {remote}",
@@ -6926,14 +7481,42 @@ pub(crate) fn download_file(
             } else {
                 path
             };
-            if let Err(e) = client.copy_file(&fs, &src_remote, "/", &dest.to_string_lossy()) {
-                log::warn!("download failed: {e}");
+            let dest_path = dest.to_string_lossy().into_owned();
+            match client.start_job(
+                "operations/copyfile",
+                serde_json::json!({
+                    "srcFs": fs,
+                    "srcRemote": src_remote,
+                    "dstFs": "/",
+                    "dstRemote": dest_path,
+                }),
+            ) {
+                Ok(id) => {
+                    crate::jobs::remember_grouped(
+                        &mut ctx.store.borrow_mut().job_meta,
+                        &[id],
+                        crate::store::JobMeta {
+                            origin: "filemanager".into(),
+                            profile: "default".into(),
+                            remote: remote.clone(),
+                            backend: ctx.backend_key(),
+                            target: dest_path,
+                            ..Default::default()
+                        },
+                    );
+                    ctx.persist();
+                    ctx.refresh_runtime();
+                }
+                Err(e) => log::warn!("download failed: {e}"),
             }
         },
     );
 }
 
 pub fn templates(parent: &impl IsA<gtk::Widget>, ctx: AppCtx) {
+    if try_spawn_standalone(&ctx, "template-manager", serde_json::json!({})) {
+        return;
+    }
     let dialog = adw::Dialog::new();
     dialog.set_title(&ctx.t_or("titlebar.menu.templates", "Templates"));
     dialog.set_content_width(560);
@@ -7053,6 +7636,13 @@ pub fn archive_create(
     path: &str,
     names: &[String],
 ) {
+    if try_spawn_standalone(
+        &ctx,
+        "archive-create",
+        serde_json::json!({ "remote": remote, "path": path, "name": names.join(",") }),
+    ) {
+        return;
+    }
     let dialog = adw::Dialog::new();
     dialog.set_title(&ctx.t_or("nautilus.modals.archiveCreate.title", "Create archive"));
     let default_name = if names.len() == 1 {
@@ -7154,7 +7744,7 @@ pub fn archive_create(
                         Some(&ctx.t_or("nautilus.errors.archiveCreateFailed", "Archive failed")),
                         Some(&e.to_string()),
                     );
-                    err.add_response("ok", "OK");
+                    err.add_response("ok", &ctx.t_or("common.ok", "OK"));
                     err.present(Some(&dialog));
                 }
             }
@@ -7250,7 +7840,7 @@ pub fn copy_url_into(
                         Some(&ctx.t_or("nautilus.errors.copyUrlFailed", "Copy URL failed")),
                         Some(&e.to_string()),
                     );
-                    err.add_response("ok", "OK");
+                    err.add_response("ok", &ctx.t_or("common.ok", "OK"));
                     err.present(Some(&dialog));
                 }
             }
@@ -8034,6 +8624,78 @@ pub(crate) fn present_window_or_dialog(
     }
 }
 
+fn qr_helper_names(ctx: &AppCtx, remote: &str, kind: &str) -> Vec<String> {
+    let mut names = vec!["—".into()];
+    if let Some(meta) = ctx.store.borrow().remotes.get(remote) {
+        names.extend(meta.helper_names(kind));
+    }
+    names
+}
+
+fn refresh_helper_combo(row: &adw::ComboRow, names: &[String], selected: &str) {
+    let refs: Vec<&str> = names.iter().map(|s| s.as_str()).collect();
+    row.set_model(Some(&gtk::StringList::new(&refs)));
+    if let Some(idx) = names.iter().position(|n| n == selected && !n.is_empty()) {
+        row.set_selected(idx as u32);
+    } else {
+        row.set_selected(0);
+    }
+}
+
+fn populate_helper_flag_rows(
+    ctx: &AppCtx,
+    group: &adw::PreferencesGroup,
+    rows: &Rc<RefCell<Vec<(String, adw::EntryRow, String)>>>,
+    kind: &str,
+    blocks: &[crate::flags::FlagBlock],
+    remote: &str,
+    selected: &str,
+) {
+    clear_flag_rows(group, rows);
+    if selected.is_empty() {
+        return;
+    }
+    let current = ctx
+        .store
+        .borrow()
+        .remotes
+        .get(remote)
+        .and_then(|meta| meta.helper_profile(kind, selected))
+        .unwrap_or_else(|| serde_json::json!({}));
+    for (_, option) in crate::flags::options_for_category(blocks, kind) {
+        let row = flag_value_row(option, &current);
+        group.add(&row);
+        rows.borrow_mut()
+            .push((option.field_name.clone(), row, option.type_name.clone()));
+    }
+}
+
+fn save_helper_from_rows(
+    ctx: &AppCtx,
+    remote: &str,
+    kind: &str,
+    name: &str,
+    rows: &[(String, adw::EntryRow, String)],
+) {
+    if remote.is_empty() || name.is_empty() {
+        return;
+    }
+    let mut map = serde_json::Map::new();
+    for (field, row, type_name) in rows {
+        let text = row.text().to_string();
+        if text.is_empty() {
+            continue;
+        }
+        map.insert(
+            field.clone(),
+            crate::flags::parse_flag_value(type_name, &text),
+        );
+    }
+    if let Some(meta) = ctx.store.borrow_mut().remotes.get_mut(remote) {
+        meta.upsert_helper(kind, name, serde_json::Value::Object(map));
+    }
+}
+
 pub(crate) fn helper_combo(title: &str, names: &[String], selected: &str) -> adw::ComboRow {
     let row = adw::ComboRow::new();
     row.set_title(title);
@@ -8051,6 +8713,40 @@ pub(crate) fn helper_selected(row: &adw::ComboRow, names: &[String]) -> String {
         .cloned()
         .filter(|s| s != "—")
         .unwrap_or_default()
+}
+
+fn quick_run_filename_row(ctx: &AppCtx, value: &str) -> adw::EntryRow {
+    let row = adw::EntryRow::new();
+    row.set_title(&ctx.t_or(
+        "wizards.appOperation.copyUrlFilename",
+        "Filename (optional)",
+    ));
+    row.set_text(value);
+    row
+}
+
+fn apply_quick_run_path_titles(
+    ctx: &AppCtx,
+    op: OperationType,
+    src: &adw::EntryRow,
+    dst: &adw::EntryRow,
+) {
+    src.set_title(&if op == OperationType::Copyurl {
+        ctx.t_or("remoteConfig.url", "URL")
+    } else {
+        ctx.t_or("fileBrowser.operations.details.source", "Source")
+    });
+    dst.set_title(&match op {
+        OperationType::Mount => ctx.t_or("remoteConfig.mountPoint", "Mount point"),
+        OperationType::Serve => ctx.t_or("remoteConfig.listenAddress", "Listen address"),
+        OperationType::Copyurl => ctx.t_or("remoteConfig.destinationFs", "Destination fs"),
+        OperationType::Delete => ctx.t_or("remoteConfig.unusedDestination", "Unused destination"),
+        _ => ctx.t_or(
+            "fileBrowser.operations.details.destination",
+            "Destination / mount point",
+        ),
+    });
+    dst.set_visible(op != OperationType::Delete);
 }
 
 pub(crate) fn attach_path_kind(
@@ -9086,7 +9782,7 @@ fn alert_action_editor(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, existing_id:
                 Some("Test sent"),
                 Some("The action was invoked with a sample event."),
             );
-            toast.add_response("ok", "OK");
+            toast.add_response("ok", &ctx.t_or("common.ok", "OK"));
             toast.present(Some(&parent));
         });
     }
@@ -9484,6 +10180,9 @@ pub fn password_prompt(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, toast: adw::
 }
 
 pub fn repair(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, toast: adw::ToastOverlay) {
+    if try_spawn_standalone(&ctx, "repair", serde_json::json!({})) {
+        return;
+    }
     let dialog = adw::Dialog::new();
     dialog.set_title(&ctx.t_or("repair.title", "Repair rclone"));
     dialog.set_content_width(560);
@@ -9558,6 +10257,11 @@ pub fn repair(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, toast: adw::ToastOver
                     password_prompt(&parent, ctx.clone(), toast.clone());
                 }
                 crate::repair::RepairKind::AuthFailed => {
+                    ctx.restart_engine();
+                    toast.add_toast(adw::Toast::new(&ctx.t_or(
+                        "repairSheet.progress.restartingEngine",
+                        "Clearing auth error and retrying…",
+                    )));
                     backends(&parent, ctx.clone());
                 }
                 crate::repair::RepairKind::ConfigUnreadable => {
@@ -9904,7 +10608,7 @@ pub fn multi_rename(
                 };
                 if let Err(e) = client.move_file(&fs, &src, &fs, &dst) {
                     let err = adw::AlertDialog::new(Some("Rename failed"), Some(&e.to_string()));
-                    err.add_response("ok", "OK");
+                    err.add_response("ok", &ctx.t_or("common.ok", "OK"));
                     err.present(Some(&dialog));
                     return;
                 }

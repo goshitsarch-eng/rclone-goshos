@@ -4,6 +4,24 @@ use crate::operations::MainView;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::PathBuf;
+use std::sync::RwLock;
+
+static DATA_DIR_OVERRIDE: RwLock<Option<PathBuf>> = RwLock::new(None);
+static CACHE_DIR_OVERRIDE: RwLock<Option<PathBuf>> = RwLock::new(None);
+static LOGS_DIR_OVERRIDE: RwLock<Option<PathBuf>> = RwLock::new(None);
+
+/// Apply `--data-dir` / `--cache-dir` / `--logs-dir` (or matching env vars).
+pub fn set_path_overrides(data: Option<PathBuf>, cache: Option<PathBuf>, logs: Option<PathBuf>) {
+    if let Ok(mut slot) = DATA_DIR_OVERRIDE.write() {
+        *slot = data;
+    }
+    if let Ok(mut slot) = CACHE_DIR_OVERRIDE.write() {
+        *slot = cache;
+    }
+    if let Ok(mut slot) = LOGS_DIR_OVERRIDE.write() {
+        *slot = logs;
+    }
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GeneralSettings {
@@ -207,6 +225,10 @@ pub struct NautilusSettings {
     pub grid_icon_size: i32,
     #[serde(default)]
     pub split_divider_pos: i32,
+    #[serde(default)]
+    pub split_secondary_remote: String,
+    #[serde(default)]
+    pub split_secondary_path: String,
 }
 
 impl NautilusSettings {
@@ -255,6 +277,9 @@ pub struct AppSettings {
 
 impl AppSettings {
     pub fn config_dir() -> PathBuf {
+        if let Some(path) = DATA_DIR_OVERRIDE.read().ok().and_then(|slot| slot.clone()) {
+            return path;
+        }
         dirs::config_dir()
             .unwrap_or_else(|| PathBuf::from("."))
             .join("rclone-manager")
@@ -264,11 +289,21 @@ impl AppSettings {
         Self::config_dir().join("settings.json")
     }
 
+    pub fn logs_dir() -> PathBuf {
+        if let Some(path) = LOGS_DIR_OVERRIDE.read().ok().and_then(|slot| slot.clone()) {
+            return path;
+        }
+        Self::config_dir()
+    }
+
     pub fn log_path() -> PathBuf {
-        Self::config_dir().join("rclone.log")
+        Self::logs_dir().join("rclone.log")
     }
 
     pub fn cache_dir() -> PathBuf {
+        if let Some(path) = CACHE_DIR_OVERRIDE.read().ok().and_then(|slot| slot.clone()) {
+            return path;
+        }
         dirs::cache_dir()
             .unwrap_or_else(|| Self::config_dir().join("cache"))
             .join("rclone-manager")
@@ -498,6 +533,8 @@ mod tests {
         assert_eq!(states.get("flow.quickRuns"), Some(&false));
         assert_eq!(loaded.nautilus.grid_icon_size, 0);
         assert_eq!(loaded.nautilus.split_divider_pos, 0);
+        assert!(loaded.nautilus.split_secondary_remote.is_empty());
+        assert!(loaded.nautilus.split_secondary_path.is_empty());
     }
 
     #[test]

@@ -2,6 +2,7 @@
 //! helper configs (VFS / filter / backend / runtime), and remote metadata.
 
 use super::dialogs;
+use super::interactive::InteractivePanel;
 use super::AppCtx;
 use crate::flags::{
     flag_category_for_op, options_for_category, parse_flag_value, parse_options_info,
@@ -338,7 +339,7 @@ fn preset_bar(
                 Some(&ctx.t_or("templates.applySuccess", "Presets applied")),
                 Some("Default provider / OS presets were merged into this remote."),
             );
-            toast.add_response("ok", "OK");
+            toast.add_response("ok", &ctx.t_or("common.ok", "OK"));
             toast.present(Some(&parent));
         });
     }
@@ -390,7 +391,7 @@ fn preset_bar(
             rebuild();
             let msg = ctx.tf("templates.applySuccess", &[("name", &template.name)]);
             let toast = adw::AlertDialog::new(Some(&msg), None::<&str>);
-            toast.add_response("ok", "OK");
+            toast.add_response("ok", &ctx.t_or("common.ok", "OK"));
             toast.present(Some(&parent));
         });
     }
@@ -523,14 +524,22 @@ fn remote_page(
         edit_primary.connect_clicked(move |_| {
             let catalog = crate::action_order::catalog_ids();
             let current = primary_ids.borrow().clone();
-            dialogs::action_order(&parent, &ctx, "Primary actions", &catalog, &current, {
-                let primary_ids = primary_ids.clone();
-                let primary_row = primary_row.clone();
-                move |ids| {
-                    primary_row.set_subtitle(&action_summary(&ids));
-                    *primary_ids.borrow_mut() = ids;
-                }
-            });
+            dialogs::action_order(
+                &parent,
+                &ctx,
+                &ctx.t_or("remoteConfig.primaryActions", "Primary actions"),
+                &catalog,
+                &current,
+                Some(3),
+                {
+                    let primary_ids = primary_ids.clone();
+                    let primary_row = primary_row.clone();
+                    move |ids| {
+                        primary_row.set_subtitle(&action_summary(&ids));
+                        *primary_ids.borrow_mut() = ids;
+                    }
+                },
+            );
         });
     }
     primary_row.add_suffix(&edit_primary);
@@ -551,14 +560,22 @@ fn remote_page(
                 .map(|op| op.as_str())
                 .collect();
             let current = sync_ids.borrow().clone();
-            dialogs::action_order(&parent, &ctx, "Sync actions", &catalog, &current, {
-                let sync_ids = sync_ids.clone();
-                let sync_row = sync_row.clone();
-                move |ids| {
-                    sync_row.set_subtitle(&action_summary(&ids));
-                    *sync_ids.borrow_mut() = ids;
-                }
-            });
+            dialogs::action_order(
+                &parent,
+                &ctx,
+                &ctx.t_or("remoteConfig.syncActions", "Sync actions"),
+                &catalog,
+                &current,
+                Some(3),
+                {
+                    let sync_ids = sync_ids.clone();
+                    let sync_row = sync_row.clone();
+                    move |ids| {
+                        sync_row.set_subtitle(&action_summary(&ids));
+                        *sync_ids.borrow_mut() = ids;
+                    }
+                },
+            );
         });
     }
     sync_row.add_suffix(&edit_sync);
@@ -574,6 +591,15 @@ fn remote_page(
             super::wizard::present(&parent, ctx.clone(), Some(remote.clone()), on_done.clone());
         });
     }
+    let reauth = gtk::Button::with_label(&ctx.t_or(
+        "wizards.remoteConfig.authenticationMethod",
+        "Re-authenticate…",
+    ));
+    reauth.set_valign(gtk::Align::Center);
+    reauth.set_tooltip_text(Some(&ctx.t_or(
+        "modals.oauth.manualOpenPrompt",
+        "Start the rclone interactive / OAuth flow without leaving this dialog",
+    )));
     let helpers =
         gtk::Button::with_label(&ctx.t_or("remoteConfig.helperJsonEditor", "Helper JSON editor…"));
     {
@@ -599,14 +625,63 @@ fn remote_page(
     let helper_row = adw::ActionRow::new();
     helper_row.set_title(&ctx.t_or("remoteConfig.namedHelpers", "Named helper profiles"));
     helper_row.add_suffix(&helpers);
+    let auth_row = adw::ActionRow::new();
+    auth_row.set_title(&ctx.t_or(
+        "banners.engine.auth.title",
+        "Rclone Authentication Required",
+    ));
+    auth_row.set_subtitle(&ctx.t_or(
+        "banners.engine.auth.subtitle",
+        "Please check your credentials or configuration password",
+    ));
+    auth_row.add_suffix(&reauth);
     actions.add(&provider_row);
     actions.add(&helper_row);
+    actions.add(&auth_row);
+
+    let panel = InteractivePanel::new(&ctx);
+    {
+        let ctx = ctx.clone();
+        let remote = remote.to_string();
+        let parent = parent.clone();
+        let panel = panel.clone();
+        reauth.connect_clicked(move |_| {
+            start_remote_reauth(&parent, ctx.clone(), &remote, &panel);
+        });
+    }
+    {
+        let ctx = ctx.clone();
+        let remote = remote.to_string();
+        let parent = parent.clone();
+        let panel = panel.clone();
+        panel.continue_btn.clone().connect_clicked(move |_| {
+            continue_remote_reauth(&parent, ctx.clone(), &remote, &panel);
+        });
+    }
+    {
+        let ctx = ctx.clone();
+        let panel = panel.clone();
+        panel.cancel_btn.clone().connect_clicked(move |_| {
+            if let Some(client) = ctx.client() {
+                match client.oauth_stop() {
+                    Ok(_) => {
+                        panel.oauth.set_status(
+                            &ctx.t_or("modals.remoteConfig.oauthCancelled", "OAuth cancelled"),
+                        );
+                        panel.apply(&ctx, crate::interactive::InteractiveFlowState::default());
+                    }
+                    Err(e) => panel.oauth.set_status(&e.to_string()),
+                }
+            }
+        });
+    }
 
     let page = adw::PreferencesPage::new();
     page.add(&group);
     page.add(&actions);
     let box_ = gtk::Box::new(gtk::Orientation::Vertical, 0);
     box_.append(&page);
+    box_.append(&panel.root);
 
     let saver = {
         let ctx = ctx.clone();
@@ -671,16 +746,52 @@ fn operation_page(
         ctx.t_or("remoteConfig.source", "Source")
     };
     src.set_title(&src_title);
-    src.set_text(&default_source(remote, &rclone));
+    let copyurl_keys: &[&str] = &["url", "srcFs", "source"];
+    let listed = if op == OperationType::Copyurl {
+        path_list(&rclone, copyurl_keys)
+    } else {
+        path_list(&rclone, SOURCE_KEYS)
+    };
+    if let Some(first) = listed.first() {
+        src.set_text(first);
+    } else {
+        src.set_text(&default_source(remote, &rclone));
+    }
     if op != OperationType::Copyurl {
         dialogs::attach_path_picker(&ctx, &src, crate::picker::FilePickerConfig::folders());
     }
     let extra_sources: Rc<RefCell<Vec<adw::EntryRow>>> = Rc::new(RefCell::new(Vec::new()));
-    let more = path_list(&rclone, SOURCE_KEYS);
-    if more.len() > 1 {
-        for extra in more.iter().skip(1) {
-            let row = extra_source_row(&ctx, extra);
+    if listed.len() > 1 {
+        for extra in listed.iter().skip(1) {
+            let row = extra_source_row(&ctx, extra, op != OperationType::Copyurl);
             extra_sources.borrow_mut().push(row);
+        }
+    }
+    let saved_filenames: Vec<String> = rclone
+        .get("filenames")
+        .and_then(|v| v.as_array())
+        .map(|arr| {
+            arr.iter()
+                .map(|v| v.as_str().unwrap_or("").to_string())
+                .collect()
+        })
+        .unwrap_or_default();
+    let url_filename = adw::EntryRow::new();
+    url_filename.set_title(&ctx.t_or(
+        "wizards.appOperation.copyUrlFilename",
+        "Filename (optional)",
+    ));
+    if let Some(name) = saved_filenames.first() {
+        url_filename.set_text(name);
+    }
+    url_filename.set_visible(op == OperationType::Copyurl);
+    let extra_filenames: Rc<RefCell<Vec<adw::EntryRow>>> = Rc::new(RefCell::new(Vec::new()));
+    if op == OperationType::Copyurl {
+        for name in saved_filenames.iter().skip(1) {
+            extra_filenames.borrow_mut().push(filename_row(&ctx, name));
+        }
+        while extra_filenames.borrow().len() < extra_sources.borrow().len() {
+            extra_filenames.borrow_mut().push(filename_row(&ctx, ""));
         }
     }
     let dst = adw::EntryRow::new();
@@ -793,6 +904,15 @@ fn operation_page(
     ));
     watch_changed.set_active(initial.app.watch_changed_only);
     watch_changed.set_visible(op.is_automatable());
+    let (guidance, refresh_guidance) = dialogs::attach_operation_guidance(
+        &ctx,
+        false,
+        &watch_enabled,
+        &src,
+        &extra_sources,
+        &dst,
+        Rc::new(move || op),
+    );
 
     let helper_names = |kind: &str| -> Vec<String> {
         let mut names = vec!["—".into()];
@@ -841,18 +961,35 @@ fn operation_page(
         identity.add(kind);
     }
     identity.add(&src);
-    for row in extra_sources.borrow().iter() {
+    identity.add(&url_filename);
+    for (idx, row) in extra_sources.borrow().iter().enumerate() {
         identity.add(row);
+        if let Some(name) = extra_filenames.borrow().get(idx) {
+            identity.add(name);
+        }
     }
     if op.supports_multi_source() {
         let add_src = gtk::Button::with_label(&ctx.t_or("remoteConfig.addSource", "Add source"));
         let extra_sources = extra_sources.clone();
+        let extra_filenames = extra_filenames.clone();
         let identity_for_add = identity.clone();
         let ctx_add = ctx.clone();
+        let refresh_guidance = refresh_guidance.clone();
+        let is_copyurl = op == OperationType::Copyurl;
         add_src.connect_clicked(move |_| {
-            let row = extra_source_row(&ctx_add, "");
+            let row = extra_source_row(&ctx_add, "", !is_copyurl);
+            {
+                let refresh_guidance = refresh_guidance.clone();
+                row.connect_changed(move |_| refresh_guidance());
+            }
             identity_for_add.add(&row);
             extra_sources.borrow_mut().push(row);
+            if is_copyurl {
+                let name = filename_row(&ctx_add, "");
+                identity_for_add.add(&name);
+                extra_filenames.borrow_mut().push(name);
+            }
+            refresh_guidance();
         });
         let add_row = adw::ActionRow::new();
         add_row.set_title(&ctx.t_or("remoteConfig.multipleSources", "Multiple sources"));
@@ -1037,6 +1174,7 @@ fn operation_page(
     let page = adw::PreferencesPage::new();
     page.add(&switcher.group);
     page.add(&identity);
+    page.add(&guidance);
     page.add(&automation);
     page.add(&helpers);
     page.add(&flags_group);
@@ -1101,6 +1239,8 @@ fn operation_page(
         let dst = dst.clone();
         let serve = serve.clone();
         let extra_sources = extra_sources.clone();
+        let extra_filenames = extra_filenames.clone();
+        let url_filename = url_filename.clone();
         let auto_start = auto_start.clone();
         let cron_enabled = cron_enabled.clone();
         let cron = cron.clone();
@@ -1185,6 +1325,14 @@ fn operation_page(
                     .into_iter()
                     .map(|s| crate::path_kind::resolve_job_path(&s, &remote))
                     .collect();
+            } else {
+                let mut names = vec![url_filename.text().to_string()];
+                for row in extra_filenames.borrow().iter() {
+                    names.push(row.text().to_string());
+                }
+                if names.iter().any(|s| !s.is_empty()) {
+                    flags.insert("filenames".into(), json!(names));
+                }
             }
             let dest = if matches!(op, OperationType::Serve | OperationType::Delete) {
                 dst.text().to_string()
@@ -1396,7 +1544,7 @@ struct ProfileSwitcher {
 fn profile_switcher(ctx: &AppCtx, names: &[String], selected: &str) -> ProfileSwitcher {
     let names = Rc::new(RefCell::new(names.to_vec()));
     let combo = adw::ComboRow::new();
-    combo.set_title(&ctx.t_or("modals.remoteConfig.profile", "Profile"));
+    combo.set_title(&ctx.t_or("modals.remoteConfig.profile.label", "Profile"));
     refresh_combo(&combo, &names.borrow());
     if let Some(idx) = names.borrow().iter().position(|n| n == selected) {
         combo.set_selected(idx as u32);
@@ -1624,7 +1772,7 @@ fn wire_profile_actions(
                             Some("Profile is in use"),
                             Some(&usage.summary()),
                         );
-                        alert.add_response("ok", "OK");
+                        alert.add_response("ok", &ctx.t_or("common.ok", "OK"));
                         alert.present(Some(&parent));
                         return;
                     }
@@ -1671,11 +1819,23 @@ fn refresh_combo(combo: &adw::ComboRow, names: &[String]) {
     combo.set_model(Some(&gtk::StringList::new(&refs)));
 }
 
-fn extra_source_row(ctx: &AppCtx, value: &str) -> adw::EntryRow {
+fn extra_source_row(ctx: &AppCtx, value: &str, pick_folders: bool) -> adw::EntryRow {
     let row = adw::EntryRow::new();
     row.set_title(&ctx.t_or("remoteConfig.additionalSource", "Additional source"));
     row.set_text(value);
-    dialogs::attach_path_picker(ctx, &row, crate::picker::FilePickerConfig::folders());
+    if pick_folders {
+        dialogs::attach_path_picker(ctx, &row, crate::picker::FilePickerConfig::folders());
+    }
+    row
+}
+
+fn filename_row(ctx: &AppCtx, value: &str) -> adw::EntryRow {
+    let row = adw::EntryRow::new();
+    row.set_title(&ctx.t_or(
+        "wizards.appOperation.copyUrlFilename",
+        "Filename (optional)",
+    ));
+    row.set_text(value);
     row
 }
 
@@ -1754,6 +1914,135 @@ fn action_summary(ids: &[String]) -> String {
     } else {
         ids.join(" · ")
     }
+}
+
+fn start_remote_reauth(
+    parent: &impl IsA<gtk::Widget>,
+    ctx: AppCtx,
+    remote: &str,
+    panel: &InteractivePanel,
+) {
+    let Some(client) = ctx.client() else {
+        show_reauth_error(
+            parent,
+            &ctx,
+            &ctx.t_or(
+                "notification.title.engineConnectionFailed",
+                "Engine Connection Error",
+            ),
+        );
+        return;
+    };
+    let dump = match client.dump_config() {
+        Ok(value) => value,
+        Err(e) => {
+            show_reauth_error(parent, &ctx, &e.to_string());
+            return;
+        }
+    };
+    let Some((r#type, params)) = crate::providers::interactive_remote_params(&dump, remote) else {
+        show_reauth_error(
+            parent,
+            &ctx,
+            &ctx.t_or(
+                "modals.remoteConfig.errors.interactiveProcessingFailed",
+                "Could not start interactive configuration",
+            ),
+        );
+        return;
+    };
+    let opt = Some(crate::command_options::build_opt(
+        &crate::command_options::sync_non_interactive(
+            &crate::command_options::initial_command_options(),
+            true,
+        ),
+    ));
+    match client.create_remote_interactive(remote, &r#type, params, opt) {
+        Ok(value) => apply_reauth_response(&ctx, panel, &value),
+        Err(e) => show_reauth_error(parent, &ctx, &e.to_string()),
+    }
+}
+
+fn continue_remote_reauth(
+    parent: &impl IsA<gtk::Widget>,
+    ctx: AppCtx,
+    remote: &str,
+    panel: &InteractivePanel,
+) {
+    let flow = panel.flow.borrow().clone();
+    if crate::interactive::is_continue_disabled(&flow) {
+        return;
+    }
+    let Some(client) = ctx.client() else {
+        show_reauth_error(
+            parent,
+            &ctx,
+            &ctx.t_or(
+                "notification.title.engineConnectionFailed",
+                "Engine Connection Error",
+            ),
+        );
+        return;
+    };
+    let dump = client.dump_config().unwrap_or(serde_json::json!({}));
+    let params = crate::providers::interactive_remote_params(&dump, remote)
+        .map(|(_, params)| params)
+        .unwrap_or(serde_json::json!({}));
+    let option_type = flow
+        .question
+        .as_ref()
+        .and_then(|q| q.option.as_ref())
+        .map(|o| o.type_name.as_str())
+        .unwrap_or("string");
+    let answer = panel.current_answer();
+    let token = flow
+        .question
+        .as_ref()
+        .map(|q| q.state.clone())
+        .unwrap_or_default();
+    let opt = Some(crate::command_options::build_opt(
+        &crate::command_options::sync_non_interactive(
+            &crate::command_options::initial_command_options(),
+            true,
+        ),
+    ));
+    match client.continue_create_remote(
+        remote,
+        &token,
+        answer.as_rc_result(option_type),
+        params,
+        opt,
+    ) {
+        Ok(value) => apply_reauth_response(&ctx, panel, &value),
+        Err(e) => show_reauth_error(parent, &ctx, &e.to_string()),
+    }
+}
+
+fn apply_reauth_response(ctx: &AppCtx, panel: &InteractivePanel, value: &serde_json::Value) {
+    let next = panel.apply_response(ctx, value);
+    if let Some(url) = super::interactive::poll_oauth_url(ctx) {
+        let _ = open::that(&url);
+        panel.oauth.set_url(ctx, Some(&url));
+    }
+    if !next.is_active {
+        panel.root.set_visible(true);
+        panel.oauth.set_status(&ctx.t_or(
+            "wizards.remoteConfig.readyToContinue",
+            "Authorization complete",
+        ));
+    }
+}
+
+fn show_reauth_error(parent: &impl IsA<gtk::Widget>, ctx: &AppCtx, detail: &str) {
+    let err = adw::AlertDialog::new(
+        Some(&ctx.t_or(
+            "modals.remoteConfig.errors.interactiveProcessingFailed",
+            "Interactive configuration failed",
+        )),
+        Some(detail),
+    );
+    err.add_response("ok", &ctx.t_or("common.ok", "OK"));
+    err.present(Some(parent));
 }
 
 fn update_cron_hint(ctx: &AppCtx, row: &adw::EntryRow, hint: &gtk::Label) {

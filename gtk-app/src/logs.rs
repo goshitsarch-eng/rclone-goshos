@@ -527,6 +527,19 @@ pub fn read_log_file_tail(max_lines: usize) -> String {
     tail.join("\n")
 }
 
+pub fn truncate_log_path(path: &std::path::Path) -> std::io::Result<()> {
+    std::fs::OpenOptions::new()
+        .create(true)
+        .write(true)
+        .truncate(true)
+        .open(path)
+        .map(|_| ())
+}
+
+pub fn clear_log_file() {
+    let _ = truncate_log_path(&crate::settings::AppSettings::log_path());
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -669,5 +682,16 @@ mod tests {
         assert!(entry.search_haystack().contains("copy failed"));
         assert!(!entry.search_haystack().contains('\u{1b}'));
         assert!(filter_entries(&[entry], "copy", "ERROR", None).len() == 1);
+    }
+
+    #[test]
+    fn truncates_log_file_contents() {
+        let dir = std::env::temp_dir().join(format!("rclone-gtk-log-{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&dir);
+        let path = dir.join("rclone.log");
+        std::fs::write(&path, "keep me\nERROR old\n").unwrap();
+        truncate_log_path(&path).unwrap();
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "");
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

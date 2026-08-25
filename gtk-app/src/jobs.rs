@@ -248,8 +248,15 @@ pub fn assemble_rclone(
             }
         }
         OperationType::Copyurl => {
-            if let Some(source) = filtered.first() {
-                obj.insert("url".into(), json!(source));
+            match filtered.as_slice() {
+                [] => {}
+                [one] => {
+                    obj.insert("url".into(), json!(one));
+                }
+                many => {
+                    obj.insert("url".into(), json!(many));
+                    obj.insert("srcFs".into(), json!(many));
+                }
             }
             if !dest.is_empty() {
                 obj.insert("dstFs".into(), json!(dest));
@@ -663,6 +670,14 @@ pub fn preferred_mount_profile(meta: Option<&RemoteMeta>) -> Option<ProfileConfi
     meta.get_profile(OperationType::Mount, preferred)
 }
 
+/// Name used by tray Mount/Unmount when the remote has no `default` profile.
+pub fn preferred_mount_profile_name(meta: Option<&RemoteMeta>) -> String {
+    preferred_mount_profile(meta)
+        .map(|profile| profile.name)
+        .filter(|name| !name.is_empty())
+        .unwrap_or_else(|| "default".into())
+}
+
 pub fn origin_matches(origin: &str, filter: &str) -> bool {
     if filter.is_empty() || filter.eq_ignore_ascii_case("all") {
         return true;
@@ -705,7 +720,12 @@ pub fn start_profile(
         obj.insert("origin".into(), json!(origin));
     }
     let dest = default_dest(remote, &rclone, op);
-    let mut sources = path_list(&rclone, SOURCE_KEYS);
+    let source_keys: &[&str] = if op == OperationType::Copyurl {
+        &["url", "srcFs", "source"]
+    } else {
+        SOURCE_KEYS
+    };
+    let mut sources = path_list(&rclone, source_keys);
     if sources.is_empty() {
         let fallback = default_source(remote, &rclone);
         if !fallback.is_empty() {
@@ -718,9 +738,31 @@ pub fn start_profile(
     if sources.is_empty() {
         sources.push(String::new());
     }
+    let filenames: Vec<String> = rclone
+        .get("filenames")
+        .and_then(|v| v.as_array())
+        .map(|arr| {
+            arr.iter()
+                .map(|v| v.as_str().unwrap_or("").to_string())
+                .collect()
+        })
+        .unwrap_or_default();
     let mut ids = Vec::new();
-    for source in sources {
-        let request = build_job_params(op, remote, &source, &dest, &rclone)?;
+    for (index, source) in sources.into_iter().enumerate() {
+        let mut item = rclone.clone();
+        if op == OperationType::Copyurl {
+            if let Some(name) = filenames
+                .get(index)
+                .map(String::as_str)
+                .filter(|s| !s.is_empty())
+            {
+                if let Some(obj) = item.as_object_mut() {
+                    obj.insert("filename".into(), json!(name));
+                    obj.insert("autoFilename".into(), json!(false));
+                }
+            }
+        }
+        let request = build_job_params(op, remote, &source, &dest, &item)?;
         ids.push(start_request(client, &request).map_err(|e| e.to_string())?);
     }
     Ok(ids.join(", "))
@@ -741,9 +783,8 @@ pub fn parse_started_ids(result: &str) -> Vec<u64> {
 }
 
 pub fn remember_started(map: &mut HashMap<u64, JobMeta>, result: &str, meta: JobMeta) {
-    for id in parse_started_ids(result) {
-        map.insert(id, meta.clone());
-    }
+    let ids = parse_started_ids(result);
+    remember_grouped(map, &ids, meta);
 }
 
 pub fn rename_jobs_profile(jobs: &mut [JobInfo], remote: &str, from: &str, to: &str) -> usize {
@@ -889,6 +930,23 @@ pub fn stats_f64(stats: &Value, keys: &[&str]) -> f64 {
         }
     }
     0.0
+}
+
+pub fn format_seconds(secs: f64) -> String {
+    if !secs.is_finite() || secs <= 0.0 {
+        return "—".into();
+    }
+    let total = secs.round() as i64;
+    let hours = total / 3600;
+    let minutes = (total % 3600) / 60;
+    let seconds = total % 60;
+    if hours > 0 {
+        format!("{hours}h {minutes}m {seconds}s")
+    } else if minutes > 0 {
+        format!("{minutes}m {seconds}s")
+    } else {
+        format!("{seconds}s")
+    }
 }
 
 pub fn stats_bool(stats: &Value, keys: &[&str]) -> bool {
@@ -1325,6 +1383,39 @@ pub fn job_from_status(jobid: u64, status: &Value, stats: Option<&Value>) -> Job
         job.status = "preparing".into();
     }
     job
+}
+
+pub const MAX_JOB_STATUS_FETCH: usize = 48;
+
+/// rclone 1.60 `job/list` can return hundreds of thousands of leftover IDs.
+/// Prefer jobs we started; only scan unknowns when the list is small.
+pub fn select_job_ids(listed: &[u64], known: &[u64], max: usize) -> Vec<u64> {
+    if listed.len() <= max {
+        return listed.to_vec();
+    }
+    let known_set: std::collections::HashSet<u64> = known.iter().copied().collect();
+    let mut selected: Vec<u64> = listed
+        .iter()
+        .copied()
+        .filter(|id| known_set.contains(id))
+        .collect();
+    selected.truncate(max);
+    selected
+}
+
+/// rclone 1.60 `job/list` includes finished internal RC jobs (empty src/dst,
+/// operation `job/<id>`). Unfinished leftovers are also reported as running —
+/// keep only jobs the app started or can identify.
+pub fn is_identifiable_job(job: &JobInfo) -> bool {
+    !job.src.is_empty()
+        || !job.dst.is_empty()
+        || !job.remote.is_empty()
+        || crate::operations::OperationType::parse(&job.operation).is_some()
+        || (!job.origin.is_empty() && job.origin != "dashboard")
+}
+
+pub fn is_managed_job(job: &JobInfo) -> bool {
+    is_identifiable_job(job)
 }
 
 /// Local job shown immediately after `start_job` returns, before rclone reports transfers.
@@ -1926,7 +2017,43 @@ mod tests {
         assert_eq!(job.transferring[0]["name"], "a.bin");
         assert_eq!(job.completed[0]["name"], "done.bin");
         assert_eq!(stats_i64(&job.stats, &["bytes"]), 50);
-        assert_eq!(stats_f64(&job.stats, &["speed"]), 1024.0);
+        assert!(is_managed_job(&job));
+    }
+
+    #[test]
+    fn drops_internal_rc_job_list_noise() {
+        let noise = job_from_status(
+            99,
+            &json!({
+                "finished": true,
+                "success": true,
+                "group": "job/99",
+                "output": {}
+            }),
+            None,
+        );
+        assert_eq!(noise.operation, "job/99");
+        assert!(!is_managed_job(&noise));
+        let running_noise = job_from_status(
+            100,
+            &json!({
+                "finished": false,
+                "group": "job/100",
+                "output": {}
+            }),
+            None,
+        );
+        assert_eq!(running_noise.status, "running");
+        assert!(!is_managed_job(&running_noise));
+        let upload = preparing_job(3, "drive", "/tmp/a.txt", "drive:Inbox", 1, 12);
+        assert!(is_managed_job(&upload));
+        assert_eq!(
+            select_job_ids(&[1, 2, 3], &[2], 48),
+            vec![1, 2, 3],
+            "small lists are fetched in full"
+        );
+        let huge: Vec<u64> = (1..=200).collect();
+        assert_eq!(select_job_ids(&huge, &[7, 9, 400], 48), vec![7, 9]);
     }
 
     #[test]
@@ -2287,6 +2414,26 @@ mod tests {
         );
         assert_eq!(serve["addr"], "127.0.0.1:8080");
         assert_eq!(serve["type"], "webdav");
+        let copyurl = assemble_rclone(
+            OperationType::Copyurl,
+            &[
+                "https://example.com/a.txt".into(),
+                "https://example.com/b.txt".into(),
+            ],
+            "drive:Inbox",
+            Map::new(),
+        );
+        assert_eq!(
+            copyurl["url"],
+            json!(["https://example.com/a.txt", "https://example.com/b.txt"])
+        );
+        assert_eq!(
+            path_list(&copyurl, &["url", "srcFs", "source"]),
+            vec![
+                "https://example.com/a.txt".to_string(),
+                "https://example.com/b.txt".into()
+            ]
+        );
         let empty = assemble_rclone(OperationType::Delete, &[], "", Map::new());
         assert!(empty.as_object().unwrap().is_empty());
     }
@@ -2350,6 +2497,15 @@ mod tests {
         assert_eq!(dest["main"]["transfers"], 8);
         assert_eq!(dest["main"]["checkers"], 2);
         assert_eq!(dest["keep"], true);
+    }
+
+    #[test]
+    fn formats_elapsed_and_eta_seconds() {
+        assert_eq!(format_seconds(0.0), "—");
+        assert_eq!(format_seconds(-1.0), "—");
+        assert_eq!(format_seconds(9.4), "9s");
+        assert_eq!(format_seconds(75.0), "1m 15s");
+        assert_eq!(format_seconds(3723.0), "1h 2m 3s");
     }
 
     #[test]
@@ -2456,6 +2612,8 @@ mod tests {
         assert_eq!(profile.rclone["mountPoint"], "/mnt/drive");
         assert!(preferred_mount_profile(None).is_none());
         assert!(preferred_mount_profile(Some(&RemoteMeta::default())).is_none());
+        assert_eq!(preferred_mount_profile_name(Some(&meta)), "default");
+        assert_eq!(preferred_mount_profile_name(None), "default");
     }
 
     #[test]

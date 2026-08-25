@@ -296,6 +296,15 @@ impl NautilusView {
                 .unwrap_or_else(|| "/".into()),
             starred: false,
         };
+        let mut secondary = initial.clone();
+        {
+            let nautilus = ctx.settings.borrow().nautilus.clone();
+            if nautilus.split_enabled && !nautilus.split_secondary_remote.is_empty() {
+                secondary.remote = nautilus.split_secondary_remote;
+                secondary.path = nautilus.split_secondary_path;
+                secondary.title = secondary.remote.clone();
+            }
+        }
 
         let view = Self {
             root,
@@ -317,7 +326,7 @@ impl NautilusView {
             status,
             tabs: Rc::new(RefCell::new(vec![initial.clone()])),
             current: Rc::new(RefCell::new(initial.clone())),
-            secondary: Rc::new(RefCell::new(initial)),
+            secondary: Rc::new(RefCell::new(secondary)),
             history: Rc::new(RefCell::new(vec![])),
             future: Rc::new(RefCell::new(vec![])),
             clipboard: Rc::new(RefCell::new(Vec::new())),
@@ -1275,9 +1284,19 @@ impl NautilusView {
         self.secondary.borrow_mut().remote = remote;
         self.secondary.borrow_mut().path = path;
         self.secondary.borrow_mut().starred = false;
+        self.persist_split_location();
         if *self.split_enabled.borrow() {
             self.reload_pane(&self.secondary.borrow());
         }
+    }
+
+    fn persist_split_location(&self) {
+        let secondary = self.secondary.borrow();
+        let mut settings = self.ctx.settings.borrow_mut();
+        settings.nautilus.split_secondary_remote = secondary.remote.clone();
+        settings.nautilus.split_secondary_path = secondary.path.clone();
+        drop(settings);
+        self.ctx.persist();
     }
 
     fn drag_items_for(
@@ -1512,11 +1531,23 @@ impl NautilusView {
                     return glib::Propagation::Stop;
                 }
             }
-            if modifier.contains(gtk::gdk::ModifierType::ALT_MASK)
-                && (key == gtk::gdk::Key::Return || key == gtk::gdk::Key::KP_Enter)
-            {
-                view.properties_selected();
-                return glib::Propagation::Stop;
+            if key == gtk::gdk::Key::Return || key == gtk::gdk::Key::KP_Enter {
+                if modifier.contains(gtk::gdk::ModifierType::ALT_MASK) {
+                    view.properties_selected();
+                    return glib::Propagation::Stop;
+                }
+                if ctrl {
+                    view.open_selected_in_new_tab();
+                    return glib::Propagation::Stop;
+                }
+                if shift {
+                    view.open_selected_in_new_window();
+                    return glib::Propagation::Stop;
+                }
+                if let Some(name) = view.selected_name() {
+                    view.open_name(&name);
+                    return glib::Propagation::Stop;
+                }
             }
             if key == gtk::gdk::Key::Delete {
                 view.delete_selected();
@@ -2115,7 +2146,9 @@ impl NautilusView {
             self.add_crumb(&label, &target);
         }
         let edit = gtk::Button::from_icon_name("document-edit-symbolic");
-        edit.set_tooltip_text(Some("Edit path"));
+        edit.set_tooltip_text(Some(
+            &self.ctx.t_or("nautilus.titles.editPath", "Edit path"),
+        ));
         edit.set_has_frame(false);
         let view = self.clone();
         edit.connect_clicked(move |_| view.show_path_entry());
@@ -2876,7 +2909,27 @@ impl NautilusView {
         self.ctx.persist();
         self.right_scroll.set_visible(next);
         if next {
-            *self.secondary.borrow_mut() = self.current.borrow().clone();
+            let saved_remote = self
+                .ctx
+                .settings
+                .borrow()
+                .nautilus
+                .split_secondary_remote
+                .clone();
+            let saved_path = self
+                .ctx
+                .settings
+                .borrow()
+                .nautilus
+                .split_secondary_path
+                .clone();
+            if !saved_remote.is_empty() {
+                self.secondary.borrow_mut().remote = saved_remote;
+                self.secondary.borrow_mut().path = saved_path;
+            } else {
+                *self.secondary.borrow_mut() = self.current.borrow().clone();
+                self.persist_split_location();
+            }
             self.reload();
             self.status.set_text(
                 &self
@@ -2928,22 +2981,38 @@ impl NautilusView {
 
     fn undo_last(&self) {
         let Some(op) = self.undo.borrow_mut().pop() else {
-            self.toast.add_toast(adw::Toast::new("Nothing to undo"));
+            self.toast.add_toast(adw::Toast::new(
+                &self
+                    .ctx
+                    .t_or("nautilus.notifications.nothingToUndo", "Nothing to undo"),
+            ));
             return;
         };
         self.invert_file_op(&op);
         self.redo.borrow_mut().push(op);
-        self.toast.add_toast(adw::Toast::new("Undid last action"));
+        self.toast.add_toast(adw::Toast::new(
+            &self
+                .ctx
+                .t_or("nautilus.notifications.undoComplete", "Undid last action"),
+        ));
     }
 
     fn redo_last(&self) {
         let Some(op) = self.redo.borrow_mut().pop() else {
-            self.toast.add_toast(adw::Toast::new("Nothing to redo"));
+            self.toast.add_toast(adw::Toast::new(
+                &self
+                    .ctx
+                    .t_or("nautilus.notifications.nothingToRedo", "Nothing to redo"),
+            ));
             return;
         };
         self.replay_file_op(&op);
         self.undo.borrow_mut().push(op);
-        self.toast.add_toast(adw::Toast::new("Redid last action"));
+        self.toast.add_toast(adw::Toast::new(
+            &self
+                .ctx
+                .t_or("nautilus.notifications.redoComplete", "Redid last action"),
+        ));
     }
 
     fn invert_file_op(&self, op: &str) {
@@ -2959,9 +3028,10 @@ impl NautilusView {
                     self.toast.add_toast(adw::Toast::new(&e));
                 }
             }
-            None => self
-                .toast
-                .add_toast(adw::Toast::new("This action cannot be undone")),
+            None => self.toast.add_toast(adw::Toast::new(&self.ctx.t_or(
+                "nautilus.notifications.cannotUndo",
+                "This action cannot be undone",
+            ))),
         }
         self.reload();
     }
@@ -3159,19 +3229,29 @@ impl NautilusView {
                     } else {
                         dst
                     };
-                    match client.move_file(&fs, &src, &fs, &dst) {
-                        Ok(_) => {
-                            view.push_undo(
-                                crate::fileops::FileOp::Rename {
-                                    fs,
-                                    from: src,
-                                    to: dst,
-                                }
-                                .encode(),
-                            );
+                    let is_dir = view
+                        .last_listing
+                        .borrow()
+                        .iter()
+                        .any(|entry| entry.name == old && entry.is_dir);
+                    let item = crate::fileops::RenameItem {
+                        fs,
+                        from: src,
+                        to: dst,
+                        is_dir,
+                    };
+                    match crate::fileops::start_grouped_renames(
+                        &client,
+                        &[item.clone()],
+                        "filemanager",
+                    ) {
+                        Ok((_group, ids)) => {
+                            view.remember_file_jobs(&ids, "filemanager");
+                            view.push_undo(item.file_op().encode());
+                            view.ctx.refresh_runtime();
                             view.reload();
                         }
-                        Err(e) => view.toast.add_toast(adw::Toast::new(&e.to_string())),
+                        Err(e) => view.toast.add_toast(adw::Toast::new(&e)),
                     }
                 }
             },
@@ -3187,9 +3267,15 @@ impl NautilusView {
             return;
         };
         let current = self.current.borrow().clone();
+        let listing = self.last_listing.borrow().clone();
+        let mut items = Vec::new();
+        let mut undos = Vec::new();
         for name in names {
             let path = join_remote_path(&current.path, &name);
             let (fs, remote) = fs_remote(&current.remote, &path);
+            let is_dir = listing
+                .iter()
+                .any(|entry| entry.name == name && entry.is_dir);
             let trash = if current.remote == "local" {
                 let local = if path.starts_with('/') {
                     path.clone()
@@ -3200,19 +3286,25 @@ impl NautilusView {
             } else {
                 None
             };
-            if client.delete_file(&fs, &remote).is_err() {
-                let _ = client.purge(&fs, &remote);
-            }
-            self.push_undo(
-                crate::fileops::FileOp::Delete {
-                    fs,
-                    path: remote,
-                    trash,
-                }
-                .encode(),
-            );
+            let item = crate::fileops::DeleteItem {
+                fs,
+                path: remote,
+                is_dir,
+            };
+            undos.push(item.file_op(trash).encode());
+            items.push(item);
         }
-        self.reload();
+        match crate::fileops::start_grouped_deletes(&client, &items, "filemanager") {
+            Ok((_group, ids)) => {
+                self.remember_file_jobs(&ids, "filemanager");
+                for token in undos {
+                    self.push_undo(token);
+                }
+                self.ctx.refresh_runtime();
+                self.reload();
+            }
+            Err(e) => self.toast.add_toast(adw::Toast::new(&e)),
+        }
     }
 
     fn cut_or_copy(&self, cut: bool) {
@@ -3232,8 +3324,11 @@ impl NautilusView {
             })
             .collect();
         *self.clipboard.borrow_mut() = items;
-        self.toast
-            .add_toast(adw::Toast::new(if cut { "Cut" } else { "Copied" }));
+        self.toast.add_toast(adw::Toast::new(&if cut {
+            self.ctx.t_or("nautilus.contextMenu.cut", "Cut")
+        } else {
+            self.ctx.t_or("common.copy", "Copied")
+        }));
     }
 
     fn paste(&self) {
@@ -3562,6 +3657,7 @@ impl NautilusView {
                 FileTypeCategory::Archive
             )
         });
+        let folder_open = selected.len() == 1 && self.selected_is_dir();
         let rename_label = if selected.len() > 1 {
             self.ctx
                 .t_or("nautilus.contextMenu.renameMultiple", "Rename Multiple...")
@@ -3583,23 +3679,28 @@ impl NautilusView {
                 )
             }
         };
-        let mut items: Vec<(String, &str)> = vec![
-            (self.ctx.t_or("nautilus.contextMenu.open", "Open"), "open"),
-            (
-                self.ctx
-                    .t_or("nautilus.contextMenu.openNative", "Open native"),
-                "native",
-            ),
-            (
-                self.ctx
-                    .t_or("nautilus.contextMenu.openNewTab", "Open in New Tab"),
-                "tab",
-            ),
-            (
-                self.ctx
-                    .t_or("nautilus.contextMenu.openNewWindow", "Open in New Window"),
-                "window",
-            ),
+        let mut items: Vec<(String, &str)> = Vec::new();
+        if !folder_open {
+            items.extend([
+                (self.ctx.t_or("nautilus.contextMenu.open", "Open"), "open"),
+                (
+                    self.ctx
+                        .t_or("nautilus.contextMenu.openNative", "Open native"),
+                    "native",
+                ),
+                (
+                    self.ctx
+                        .t_or("nautilus.contextMenu.openNewTab", "Open in New Tab"),
+                    "tab",
+                ),
+                (
+                    self.ctx
+                        .t_or("nautilus.contextMenu.openNewWindow", "Open in New Window"),
+                    "window",
+                ),
+            ]);
+        }
+        items.extend([
             (
                 self.ctx.t_or("nautilus.contextMenu.refresh", "Refresh"),
                 "reload",
@@ -3614,7 +3715,7 @@ impl NautilusView {
                 self.ctx.t_or("nautilus.contextMenu.copyPath", "Copy Path"),
                 "copypath",
             ),
-        ];
+        ]);
         if public_ok {
             items.push((
                 self.ctx
@@ -3725,77 +3826,144 @@ impl NautilusView {
                 "detach",
             ),
         ]);
+        let stack = gtk::Stack::new();
+        if folder_open {
+            let open_btn = gtk::Button::with_label(&format!(
+                "{}  ▸",
+                self.ctx.t_or("nautilus.contextMenu.open", "Open")
+            ));
+            let stack_open = stack.clone();
+            open_btn.connect_clicked(move |_| {
+                stack_open.set_visible_child_name("open");
+            });
+            box_.append(&open_btn);
+        }
         for (label, action) in items {
             let btn = gtk::Button::with_label(&label);
             let view = self.clone();
-            btn.connect_clicked(move |_| match action {
-                "open" => {
-                    if let Some(name) = view.selected_name() {
-                        view.open_name(&name);
-                    }
-                }
-                "native" => view.open_native_selected(),
-                "tab" => view.open_selected_in_new_tab(),
-                "window" => view.open_selected_in_new_window(),
-                "reload" => view.reload(),
-                "copy" => view.cut_or_copy(false),
-                "cut" => view.cut_or_copy(true),
-                "paste" => view.paste(),
-                "copypath" => view.copy_selected_path(),
-                "public" => view.copy_public_link(),
-                "copyurl" => view.copy_url_prompt(),
-                "rename" => view.rename_selected(),
-                "delete" => view.delete_selected(),
-                "props" => view.properties_selected(),
-                "mkdir" => view.mkdir_prompt(),
-                "mkdirsel" => view.mkdir_with_selected(),
-                "download" => view.download_selected(),
-                "archivelist" => {
-                    if let Some(name) = view.selected_name() {
-                        view.open_name(&name);
-                    }
-                }
-                "uploaddir" => view.upload_folder_prompt(),
-                "togglestar" => view.toggle_star_selected(),
-                "star" => view.add_bookmark(),
-                "extract" => view.extract_selected(),
-                "rmdirs" => view.remove_empty_dirs(),
-                "cleanup" => view.cleanup_remote(),
-                "archive" => {
-                    if let Some(win) = view.root.root().and_downcast::<gtk::Window>() {
-                        let current = view.current.borrow().clone();
-                        let names = view.selected_names();
-                        if names.is_empty() {
-                            view.toast.add_toast(adw::Toast::new(
-                                &view.ctx.t_or(
-                                    "nautilus.errors.minSelection",
-                                    "Select items to archive",
-                                ),
-                            ));
-                        } else {
-                            dialogs::archive_create(
-                                &win,
-                                view.ctx.clone(),
-                                &current.remote,
-                                &current.path,
-                                &names,
-                            );
+            let popover = popover.clone();
+            btn.connect_clicked(move |_| {
+                popover.popdown();
+                match action {
+                    "open" => {
+                        if let Some(name) = view.selected_name() {
+                            view.open_name(&name);
                         }
                     }
+                    "native" => view.open_native_selected(),
+                    "tab" => view.open_selected_in_new_tab(),
+                    "window" => view.open_selected_in_new_window(),
+                    "reload" => view.reload(),
+                    "copy" => view.cut_or_copy(false),
+                    "cut" => view.cut_or_copy(true),
+                    "paste" => view.paste(),
+                    "copypath" => view.copy_selected_path(),
+                    "public" => view.copy_public_link(),
+                    "copyurl" => view.copy_url_prompt(),
+                    "rename" => view.rename_selected(),
+                    "delete" => view.delete_selected(),
+                    "props" => view.properties_selected(),
+                    "mkdir" => view.mkdir_prompt(),
+                    "mkdirsel" => view.mkdir_with_selected(),
+                    "download" => view.download_selected(),
+                    "archivelist" => {
+                        if let Some(name) = view.selected_name() {
+                            view.open_name(&name);
+                        }
+                    }
+                    "uploaddir" => view.upload_folder_prompt(),
+                    "togglestar" => view.toggle_star_selected(),
+                    "star" => view.add_bookmark(),
+                    "extract" => view.extract_selected(),
+                    "rmdirs" => view.remove_empty_dirs(),
+                    "cleanup" => view.cleanup_remote(),
+                    "archive" => {
+                        if let Some(win) = view.root.root().and_downcast::<gtk::Window>() {
+                            let current = view.current.borrow().clone();
+                            let names = view.selected_names();
+                            if names.is_empty() {
+                                view.toast.add_toast(adw::Toast::new(&view.ctx.t_or(
+                                    "nautilus.errors.minSelection",
+                                    "Select items to archive",
+                                )));
+                            } else {
+                                dialogs::archive_create(
+                                    &win,
+                                    view.ctx.clone(),
+                                    &current.remote,
+                                    &current.path,
+                                    &names,
+                                );
+                            }
+                        }
+                    }
+                    "share" => view.share_selected(),
+                    "sendto" => view.toggle_send_to(),
+                    "undo" => view.undo_last(),
+                    "redo" => view.redo_last(),
+                    "syspaste" => view.paste_system_clipboard(),
+                    "detach" => view.detach_current_tab(),
+                    _ => {}
                 }
-                "share" => view.share_selected(),
-                "sendto" => view.toggle_send_to(),
-                "undo" => view.undo_last(),
-                "redo" => view.redo_last(),
-                "syspaste" => view.paste_system_clipboard(),
-                "detach" => view.detach_current_tab(),
-                _ => {}
             });
             box_.append(&btn);
         }
-        popover.set_child(Some(&box_));
+        stack.add_named(&box_, Some("main"));
+        if folder_open {
+            let open_page = gtk::Box::new(gtk::Orientation::Vertical, 4);
+            let back = gtk::Button::with_label(&self.ctx.t("common.back"));
+            let stack_back = stack.clone();
+            back.connect_clicked(move |_| {
+                stack_back.set_visible_child_name("main");
+            });
+            open_page.append(&back);
+            for (label, action) in [
+                (self.ctx.t_or("nautilus.contextMenu.open", "Open"), "open"),
+                (
+                    self.ctx
+                        .t_or("nautilus.contextMenu.openNewTab", "Open in New Tab"),
+                    "tab",
+                ),
+                (
+                    self.ctx
+                        .t_or("nautilus.contextMenu.openNewWindow", "Open in New Window"),
+                    "window",
+                ),
+            ] {
+                let btn = gtk::Button::with_label(&label);
+                let view = self.clone();
+                let popover = popover.clone();
+                btn.connect_clicked(move |_| {
+                    popover.popdown();
+                    match action {
+                        "open" => {
+                            if let Some(name) = view.selected_name() {
+                                view.open_name(&name);
+                            }
+                        }
+                        "tab" => view.open_selected_in_new_tab(),
+                        "window" => view.open_selected_in_new_window(),
+                        _ => {}
+                    }
+                });
+                open_page.append(&btn);
+            }
+            stack.add_named(&open_page, Some("open"));
+        }
+        stack.set_visible_child_name("main");
+        popover.set_child(Some(&stack));
         popover.set_parent(&win);
         popover.popup();
+    }
+
+    fn selected_is_dir(&self) -> bool {
+        let Some(name) = self.selected_name() else {
+            return false;
+        };
+        self.last_listing
+            .borrow()
+            .iter()
+            .any(|entry| entry.name == name && entry.is_dir)
     }
 
     fn formatted_path(&self, name: Option<&str>) -> String {
@@ -3816,7 +3984,9 @@ impl NautilusView {
     fn copy_text(&self, text: &str) {
         if let Some(display) = gtk::gdk::Display::default() {
             display.clipboard().set_text(text);
-            self.toast.add_toast(adw::Toast::new("Copied to clipboard"));
+            self.toast.add_toast(adw::Toast::new(
+                &self.ctx.t_or("common.copied", "Copied to clipboard"),
+            ));
         }
     }
 
@@ -3907,7 +4077,7 @@ impl NautilusView {
 
     fn upload_tree_into(&self, local: &std::path::Path, dest_dir: &str) -> Result<usize, String> {
         let Some(client) = self.ctx.client() else {
-            return Err("Engine offline".into());
+            return Err(self.ctx.t_or("common.engineOffline", "Engine offline"));
         };
         let current = self.current.borrow().clone();
         let mut items = Vec::new();
@@ -4057,16 +4227,12 @@ impl NautilusView {
         let src = self.formatted_path(Some(&name));
         let default_dst = current.path.clone();
         let view = self.clone();
-        dialogs::prompt(
+        dialogs::pick_destination(
             &win,
             &self.ctx,
             &self
                 .ctx
                 .t_or("fileBrowser.fileViewer.extract", "Extract archive"),
-            &self.ctx.t_or(
-                "fileBrowser.operations.details.destination",
-                "Destination path",
-            ),
             &default_dst,
             move |dst| {
                 let Some(client) = view.ctx.client() else {
@@ -4279,7 +4445,7 @@ impl NautilusView {
                 }
             });
         }
-        if live && job.status == "running" {
+        if live && matches!(job.status.as_str(), "running" | "preparing" | "starting") {
             let stop = gtk::Button::from_icon_name("media-playback-stop-symbolic");
             stop.set_valign(gtk::Align::Center);
             stop.set_tooltip_text(Some(&self.ctx.t_or("flow.quickRun.actions.stop", "Stop")));

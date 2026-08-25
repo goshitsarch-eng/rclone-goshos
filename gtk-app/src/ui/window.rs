@@ -10,10 +10,19 @@ use crate::rclone::engine::RcloneEngine;
 use adw::prelude::*;
 use gtk::prelude::*;
 use gtk::{gio, glib};
-use std::cell::Cell;
+use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
+thread_local! {
+    static RUNNING: RefCell<Option<AppCtx>> = const { RefCell::new(None) };
+}
+
 pub fn activate(app: &adw::Application) {
+    if let Some(ctx) = RUNNING.with(|running| running.borrow().clone()) {
+        handle_reentry(app, &ctx);
+        return;
+    }
+
     let ctx = AppCtx::new();
     ctx.apply_theme();
 
@@ -27,7 +36,7 @@ pub fn activate(app: &adw::Application) {
     ctx.apply_persisted_options();
     ctx.refresh_runtime();
 
-    let args: Vec<String> = std::env::args().collect();
+    let args = crate::cli::launch_args();
     if let Some(req) = crate::platform::parse_dialog_args(&args) {
         dialogs::present_standalone(app, ctx, req);
         return;
@@ -38,13 +47,110 @@ pub fn activate(app: &adw::Application) {
         return;
     }
 
-    present_main(app, ctx);
+    apply_launch(app, &ctx, &args, true);
+    RUNNING.with(|running| *running.borrow_mut() = Some(ctx));
+}
+
+fn handle_reentry(app: &adw::Application, ctx: &AppCtx) {
+    let args = crate::cli::launch_args();
+    if let Some(req) = crate::platform::parse_dialog_args(&args) {
+        dialogs::present_standalone(app, ctx.clone(), req);
+        return;
+    }
+    apply_launch(app, ctx, &args, false);
+}
+
+fn apply_launch(app: &adw::Application, ctx: &AppCtx, args: &[String], first: bool) {
+    if let Some(send) = crate::platform::parse_send_to_args(args) {
+        upload_send_to(ctx, &send);
+    }
+    let standalone_dialogs = ctx.settings.borrow().general.standalone_dialogs;
+    let launch = crate::navigation::parse_launch_args(args, standalone_dialogs);
+    if let Some(launch) = &launch {
+        ctx.request_nav(launch.target.clone());
+    }
+    if !ctx.store.borrow().pending_share_paths.is_empty() && launch.is_none() {
+        ctx.request_nav(NavTarget::Files {
+            remote: "local".into(),
+            path: String::new(),
+        });
+    }
+    if first {
+        let hide_main = crate::cli::start_hidden() || launch.as_ref().is_some_and(|l| l.standalone);
+        present_main_with(app, ctx.clone(), hide_main);
+    } else {
+        ctx.request_show();
+        for window in app.windows() {
+            window.present();
+        }
+    }
+    if let Some(launch) = launch.filter(|l| l.standalone) {
+        present_standalone_workspace(app, ctx, &launch.target);
+    }
+}
+
+fn upload_send_to(ctx: &AppCtx, send: &crate::platform::SendToArgs) {
+    let Some(client) = ctx.client() else {
+        log::error!("rclone engine is not available for Send-to");
+        return;
+    };
+    let dest_fs = crate::rclone::remote_fs(&send.remote, &send.path);
+    let mut ids = Vec::new();
+    for file in &send.files {
+        let name = file
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("upload");
+        let dest = if send.path.is_empty() {
+            name.to_string()
+        } else {
+            format!("{}/{}", send.path.trim_end_matches('/'), name)
+        };
+        match crate::jobs::start_request(
+            &client,
+            &crate::jobs::JobRequest::Async {
+                endpoint: "operations/copyfile",
+                params: serde_json::json!({
+                    "srcFs": "/",
+                    "srcRemote": file.to_string_lossy(),
+                    "dstFs": dest_fs,
+                    "dstRemote": dest,
+                    "_group": format!("send-to-{}", send.remote),
+                }),
+            },
+        ) {
+            Ok(id) => {
+                if let Some(parsed) = crate::jobs::parse_started_ids(&id).first() {
+                    ids.push(*parsed);
+                }
+            }
+            Err(e) => log::error!("Send-to failed for {}: {e}", file.display()),
+        }
+    }
+    crate::jobs::remember_grouped(
+        &mut ctx.store.borrow_mut().job_meta,
+        &ids,
+        crate::store::JobMeta {
+            origin: "filemanager".into(),
+            profile: "default".into(),
+            remote: send.remote.clone(),
+            backend: ctx.backend_key(),
+            ..Default::default()
+        },
+    );
+    ctx.request_browse(&send.remote, &send.path);
+    ctx.request_show();
+    ctx.refresh_runtime();
 }
 
 pub fn present_main(app: &adw::Application, ctx: AppCtx) {
+    present_main_with(app, ctx, crate::cli::start_hidden());
+}
+
+fn present_main_with(app: &adw::Application, ctx: AppCtx, hidden: bool) {
     let window = adw::ApplicationWindow::builder()
         .application(app)
-        .title("Rclone Manager")
+        .title(&ctx.t_or("overviews.headers.general", "RClone Manager"))
         .default_width(1280)
         .default_height(820)
         .build();
@@ -201,7 +307,20 @@ pub fn present_main(app: &adw::Application, ctx: AppCtx) {
         let banner_kind = banner_kind.clone();
         let banner_ref = banner.clone();
         banner.connect_button_clicked(move |_| match *banner_kind.borrow() {
-            BannerKind::Repair => dialogs::repair(&window, ctx.clone(), toast.clone()),
+            BannerKind::Repair => {
+                let version = ctx.client().and_then(|c| c.version().ok());
+                let issues = crate::repair::diagnose(
+                    &ctx.settings.borrow(),
+                    ctx.engine_ready(),
+                    ctx.client().as_ref(),
+                    version.as_deref(),
+                );
+                if crate::repair::banner_opens_password(&issues) {
+                    dialogs::password_prompt(&window, ctx.clone(), toast.clone());
+                } else {
+                    dialogs::repair(&window, ctx.clone(), toast.clone());
+                }
+            }
             BannerKind::Flatpak => {
                 ctx.settings.borrow_mut().runtime.flatpak_warn = false;
                 ctx.persist();
@@ -215,7 +334,28 @@ pub fn present_main(app: &adw::Application, ctx: AppCtx) {
 
     toolbar.add_top_bar(&header);
     toolbar.add_top_bar(&banner);
-    toolbar.set_content(Some(&view_stack));
+    let overlay = gtk::Overlay::new();
+    overlay.set_child(Some(&view_stack));
+    let loading = adw::StatusPage::new();
+    loading.add_css_class("startup-loading");
+    loading.set_hexpand(true);
+    loading.set_vexpand(true);
+    loading.set_halign(gtk::Align::Fill);
+    loading.set_valign(gtk::Align::Fill);
+    loading.set_icon_name(Some("emblem-synchronizing-symbolic"));
+    loading.set_title(&ctx.t_or("onboarding.loadingTitle", "Initializing RClone Manager"));
+    loading.set_description(Some(&ctx.t_or(
+        "onboarding.loadingMessage",
+        "Checking system configuration...",
+    )));
+    let spinner = gtk::Spinner::new();
+    spinner.set_spinning(true);
+    spinner.set_halign(gtk::Align::Center);
+    loading.set_child(Some(&spinner));
+    apply_startup_css();
+    overlay.add_overlay(&loading);
+    loading.set_visible(!ctx.engine_ready());
+    toolbar.set_content(Some(&overlay));
     toast.set_child(Some(&toolbar));
     window.set_content(Some(&toast));
 
@@ -324,6 +464,8 @@ pub fn present_main(app: &adw::Application, ctx: AppCtx) {
     }
     let poll_tick = Rc::new(Cell::new(0u32));
     let poll_window = window.clone();
+    let loading_poll = loading.clone();
+    let first_refresh_done = Rc::new(Cell::new(false));
     glib::timeout_add_local(crate::refresh::BUSY_POLL, move || {
         let busy = ctx_poll.runtime_busy();
         let visible = poll_window.is_visible();
@@ -335,8 +477,12 @@ pub fn present_main(app: &adw::Application, ctx: AppCtx) {
         ) {
             ctx_poll.tick_automations();
             ctx_poll.refresh_runtime();
-            dash_poll.refresh();
+            dash_poll.poll_refresh();
             flow_poll.refresh();
+            if !first_refresh_done.get() {
+                first_refresh_done.set(true);
+                loading_poll.set_visible(false);
+            }
             if ctx_poll.connection_stale(std::time::Duration::from_secs(300)) {
                 ctx_poll.refresh_connection();
             }
@@ -374,6 +520,9 @@ pub fn present_main(app: &adw::Application, ctx: AppCtx) {
         });
     }
     window.present();
+    if hidden {
+        window.set_visible(false);
+    }
 }
 
 fn app_menu(ctx: &AppCtx) -> gio::Menu {
@@ -746,14 +895,18 @@ fn install_actions(
             "stop-jobs",
             Box::new(move || {
                 if let Some(c) = ctx.client() {
-                    if let Ok(list) = c.job_list() {
-                        if let Some(arr) = list.get("jobids").and_then(|x| x.as_array()) {
-                            for id in arr {
-                                if let Some(jobid) = id.as_u64() {
-                                    let _ = c.job_stop(jobid);
-                                }
-                            }
-                        }
+                    let ids: Vec<u64> = ctx
+                        .snapshot
+                        .borrow()
+                        .jobs
+                        .iter()
+                        .filter(|job| {
+                            crate::jobs::job_is_running(job) || crate::jobs::job_is_pending(job)
+                        })
+                        .map(|job| job.id)
+                        .collect();
+                    for jobid in ids {
+                        let _ = c.job_stop(jobid);
                     }
                     ctx.refresh_runtime();
                 }
@@ -965,7 +1118,7 @@ fn install_actions(
                     Some(&crate::connection::summarize(&results)),
                     Some(&body),
                 );
-                alert.add_response("ok", "OK");
+                alert.add_response("ok", &ctx.t_or("common.ok", "OK"));
                 alert.present(Some(&window));
             }),
         );
@@ -1033,6 +1186,115 @@ fn install_shortcuts(window: &adw::ApplicationWindow) {
     add("<Control><Shift>s", "win.refresh-serves");
     add("<Control><Shift>d", "win.detach-workspace");
     window.add_controller(controller);
+}
+
+fn present_standalone_workspace(app: &adw::Application, ctx: &AppCtx, target: &NavTarget) {
+    match target {
+        NavTarget::Files { remote, path } => present_files_window(app, ctx, remote, path),
+        NavTarget::Flow { quick_run } => {
+            let toast = adw::ToastOverlay::new();
+            let flow = FlowView::new(ctx.clone(), toast.clone());
+            toast.set_child(Some(&flow.root));
+            flow.refresh();
+            flow.select_quick_run(quick_run.as_deref());
+            present_plain_window(
+                app,
+                &ctx.t_or("titlebar.menu.flowWorkspace", "Flow"),
+                toast.upcast(),
+            );
+        }
+        NavTarget::Dashboard { tab, remote } => {
+            let toast = adw::ToastOverlay::new();
+            let dash = Dashboard::new(ctx.clone(), toast.clone());
+            toast.set_child(Some(&dash.root));
+            dash.refresh();
+            dash.navigate(*tab, remote.as_deref());
+            present_plain_window(
+                app,
+                &ctx.t_or(
+                    "settings.general.default_view.options.main_menu",
+                    "Main Menu",
+                ),
+                toast.upcast(),
+            );
+        }
+        _ => {}
+    }
+}
+
+pub fn present_files_at(parent: &impl IsA<gtk::Widget>, ctx: &AppCtx, remote: &str, path: &str) {
+    let Some(win) = parent.root().and_downcast::<gtk::Window>() else {
+        return;
+    };
+    let Some(app) = win.application() else {
+        return;
+    };
+    let toast = adw::ToastOverlay::new();
+    let files = NautilusView::new(ctx.clone(), toast.clone());
+    toast.set_child(Some(&files.root));
+    let target = files_target(remote, path);
+    files.navigate_to(&target);
+    let detached = adw::ApplicationWindow::new(&app);
+    detached.set_title(Some(&ctx.t_or("nautilus.titles.files", "Files")));
+    detached.set_default_width(960);
+    detached.set_default_height(640);
+    detached.set_content(Some(&toast));
+    detached.present();
+}
+
+fn files_target(remote: &str, path: &str) -> String {
+    if remote == "local" {
+        if path.is_empty() {
+            "/".into()
+        } else {
+            path.to_string()
+        }
+    } else if path.is_empty() {
+        format!("{remote}:")
+    } else {
+        format!("{remote}:{path}")
+    }
+}
+
+fn present_files_window(app: &adw::Application, ctx: &AppCtx, remote: &str, path: &str) {
+    let toast = adw::ToastOverlay::new();
+    let files = NautilusView::new(ctx.clone(), toast.clone());
+    toast.set_child(Some(&files.root));
+    files.navigate_to(&files_target(remote, path));
+    let window = present_plain_window(
+        app,
+        &ctx.t_or("nautilus.titles.files", "Files"),
+        toast.upcast(),
+    );
+    {
+        let ctx = ctx.clone();
+        window.connect_close_request(move |win| {
+            let keep = crate::cli::start_hidden() || ctx.settings.borrow().general.tray_enabled;
+            if !keep {
+                if let Some(app) = win.application() {
+                    app.quit();
+                }
+            }
+            glib::Propagation::Proceed
+        });
+    }
+}
+
+fn present_plain_window(
+    app: &adw::Application,
+    title: &str,
+    content: gtk::Widget,
+) -> adw::ApplicationWindow {
+    let toolbar = adw::ToolbarView::new();
+    toolbar.add_top_bar(&adw::HeaderBar::new());
+    toolbar.set_content(Some(&content));
+    let window = adw::ApplicationWindow::new(app);
+    window.set_title(Some(title));
+    window.set_default_width(1100);
+    window.set_default_height(760);
+    window.set_content(Some(&toolbar));
+    window.present();
+    window
 }
 
 fn open_workspace_window(app: &adw::Application, ctx: &AppCtx, view: MainView) {
@@ -1337,6 +1599,18 @@ fn sync_connection_button(ctx: &AppCtx, btn: &gtk::Button) {
             };
             btn.set_tooltip_text(Some(&tip));
         }
+    }
+}
+
+fn apply_startup_css() {
+    let provider = gtk::CssProvider::new();
+    provider.load_from_string(".startup-loading { background-color: @window_bg_color; }");
+    if let Some(display) = gtk::gdk::Display::default() {
+        gtk::style_context_add_provider_for_display(
+            &display,
+            &provider,
+            gtk::STYLE_PROVIDER_PRIORITY_APPLICATION,
+        );
     }
 }
 

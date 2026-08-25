@@ -166,6 +166,37 @@ pub fn apply_interactive_response(value: &Value) -> InteractiveFlowState {
     }
 }
 
+/// Angular `allowsCustomValue`: examples exist and are not exclusive.
+pub fn allows_custom_value(option: &crate::providers::ProviderOption) -> bool {
+    !option.examples.is_empty() && !option.exclusive
+}
+
+pub fn example_label(value: &str, help: &str) -> String {
+    if help.is_empty() || help == value {
+        value.to_string()
+    } else {
+        format!("{help} ({value})")
+    }
+}
+
+pub fn selected_example_index(
+    option: &crate::providers::ProviderOption,
+    answer: &str,
+) -> Option<usize> {
+    option
+        .examples
+        .iter()
+        .position(|(value, _)| value == answer)
+}
+
+pub fn default_value_text(option: &crate::providers::ProviderOption) -> Option<String> {
+    if option.default_str.is_empty() {
+        None
+    } else {
+        Some(option.default_str.clone())
+    }
+}
+
 pub fn is_continue_disabled(state: &InteractiveFlowState) -> bool {
     if state.is_processing {
         return true;
@@ -256,5 +287,38 @@ mod tests {
             get_default_answer_from_step(&step),
             InteractiveAnswer::Bool(true)
         );
+    }
+
+    #[test]
+    fn custom_value_and_example_helpers() {
+        let exclusive = parse_config_step(&json!({
+            "State": "s",
+            "Option": {
+                "Name": "scope",
+                "Type": "string",
+                "DefaultStr": "drive",
+                "Exclusive": true,
+                "Examples": [
+                    {"Value": "drive.readonly", "Help": "Read only"},
+                    {"Value": "drive", "Help": "Full"}
+                ]
+            }
+        }));
+        let option = exclusive.option.as_ref().unwrap();
+        assert!(!allows_custom_value(option));
+        assert_eq!(selected_example_index(option, "drive"), Some(1));
+        assert_eq!(default_value_text(option).as_deref(), Some("drive"));
+        assert_eq!(example_label("drive", "Full"), "Full (drive)");
+        assert_eq!(example_label("drive", ""), "drive");
+
+        let open = parse_config_step(&json!({
+            "State": "s",
+            "Option": {
+                "Name": "region",
+                "Type": "string",
+                "Examples": [{"Value": "us", "Help": "US"}]
+            }
+        }));
+        assert!(allows_custom_value(open.option.as_ref().unwrap()));
     }
 }

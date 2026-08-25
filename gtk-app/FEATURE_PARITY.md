@@ -371,10 +371,77 @@ This client is the GTK 4 + libadwaita rewrite of the Angular/Tauri desktop UI. I
 - Flow overview Edit layout hides/reorders `quick_run_layout` panels (same model as the dashboard)
 - Repair corrupt-config offers Restore Backup (import preview) or Choose rclone.conf
 - Quick Add lists only OAuth-capable providers (Angular `get_oauth_supported_remotes`)
+- Remote-config Re-authenticate runs the interactive / OAuth flow in-dialog (Angular `InteractiveConfigStep`)
+- OAuth helper shows a clickable authorization link with copy (Angular `modals.oauth.*`)
+- Startup loading overlay (`onboarding.loadingTitle` / `loadingMessage`) hides after the first runtime refresh
+- Extra RC backends call `config/setpath` + `config/unlock` on switch/save (Tauri `configure_remote_backend`)
+- Interactive config step: required badge, default value, exclusive vs custom examples, password peek, Yes/No, validation hint
+- Dashboard layout toolbar toggles compact/detailed cards (`generalOverview.layout.showDetailed` / `showCompact`)
+- Files launch from `--browse` / `--browse-path` and Angular nautilus URLs (`?browse=`, `#/nautilus/`, `/nautilus/`)
+- Files folder context menu uses an Open submenu (Open / New Tab / New Window), matching Angular `slide-menu`
+- 259 GTK `t_or` strings added to all `resources/i18n/*/main.json` locales
+- Desktop CLI `--tray` / `--hidden` starts in the tray (XDG autostart Exec includes `--tray`)
+- `--data-dir` / `--cache-dir` / `--logs-dir` and `RCLONE_MANAGER_{DATA,CACHE,LOG}_DIR` override app paths
+- Live GUI session: dashboard lists remotes, Files workspace browses local disks, app menu opens Preferences/About entries
+- Hide rclone 1.60 `job/list` internal noise (empty `job/<id>` leftovers)
+- Tray Mount/Unmount uses `preferred_mount_profile` (not hardcoded `default`)
+- Tray remotes nest per-operation profile submenus with `tray.jobsCount` / `tray.*Count`
+- Tray order matches Tauri: Show App, Files, Quick Runs, remotes, Stop-all, Quit last
+- Files split pane restores the secondary remote/path across restarts
+- CLI/URL deep links: `--dashboard`/`--tab`/`--remote`, `--flow`/`--quick-run`, `--job`, `--serve`, `--automation`, `--updates`, `--alerts`, plus `#/dashboard`, `#/flow`, `#/job`, `#/serve`, `#/automation`, `#/updates`, `#/alerts`
+- Standalone Files window from `--browse`, `#/nautilus/`, `/nautilus/`, and `--standalone` (also `--standalone=flow` / `=main`)
+- Operation guidance banners on remote-config and Quick Run (watch/local, copyurl, core command, mixed sources)
+- Quick Add uses a dedicated Operations step (mount/sync/copy/bisync/move/serve) with folder pickers before authorize
+- GApplication command-line forwards `--browse`, Send-to, share-intake, and deep links to the running instance (no duplicate main window)
+- Copyurl profiles persist multiple URLs plus optional per-URL filenames
+- Multi-source profile starts are grouped (`parent_job_id`) like file-manager uploads
+- Bisync static flags include recover/resilient/workdir/backup dirs; copyurl `autoFilename` and delete `rmdirs`
+- Standalone dialogs cover Quick Add, Quick Run, properties, About remote, export, templates, delete, shortcuts, archive create, and restore-preview
+- Quick Run editor persists copyurl URL + filename rows via `assemble_rclone`, and standalone edit forwards the existing Quick Run
+- Flow Duplicate opens the Quick Run editor with a clone instead of saving immediately
+- Files delete/rename start tracked rclone jobs (`deletefile`/`purge`/`movefile`/`sync/move`) with local undo stash
+- Action-order editor caps starred actions at 3 and shows i18n operation labels
+- Operations tab gear edits `sync_actions` (same star-mode catalog as Angular)
+- Job detail Open source/destination opens a new Files window
+- Files Enter / Ctrl+Enter / Shift+Enter open in place, new tab, or new window
+- Files operations panel can stop preparing/starting uploads
+- Downloads start as tracked `copyfile` jobs
+- Extract archive (Files + viewer) uses the embedded folder picker
+- Backends editor can Test connection before Save
+- General remote activity has Stop / Delete; General can create a Quick Run for that remote
+- Operations dry-run / resync toggles persist on the selected profile
+- Flow overview groups Quick Runs with remote filter chips (includes remotes that have no Quick Runs yet; those chips open remote detail)
+- Flow remote detail matches Angular general-detail: disk-usage bar + retry, transfer/check rows, jobs with stop/delete, automations with pause/resume and folder-open, QR Start/Stop/Edit, configuration shortcuts, and a settings panel from `config/dump`
+- Flow Quick Run detail matches Angular app-detail: Monitoring / Configuration tabs, dry-run and bisync resync, cron/watch banners, start/stop, last-job stats, transfer rows, VFS panel, tray, and flattened settings
+- Dashboard remote settings include VFS / filter / backend / runtime helper flags
+- Remaining GTK `t_or` keys (`createForRemote`, `openRemote`, `serving`, `guidance`, `copyUrlFilename`, backend `failed`) are in all `main.json` locales
+- Dashboard remote settings include rclone dump keys plus saved profile flags
+- Quick Run editor uses helper profile combos plus VFS/filter/backend/runtime flag tabs (`adw::ViewStack`)
+- Dashboard mount/ops/serve remote detail matches Angular `app-app-detail`: Monitoring / Configuration tabs, persisted tab selection, operation + shared settings panels
+- Dashboard remote overflow menu uses `home.options.*` (Show in Tray, View Logs, Clone, Export, Reset, Delete)
+- Flow Quick Run Monitoring/Configuration tab selection survives runtime refresh
+- Remaining dialog OK buttons use `common.ok`
+- Dashboard poll no longer rebuilds remote detail unless jobs, mounts, serves, tab, or remote change, so Monitoring/Configuration and the overflow menu stay clickable
+- rclone 1.60 `job/list` leftovers are ignored unless identifiable; status fetch is capped so idle CPU stays sane
+- Monitoring/Configuration use linked toggle buttons instead of ViewSwitcher
+- Dashboard remote detail has Angular-style Start/Stop for the selected profile
+- Config dump is cached for 5s to avoid creating more leftover RC jobs on rclone 1.60
+- `#/main` and `#/main/{tab}/{remote}` deep links open the dashboard (same as `--standalone=main`)
+- Dashboard/Flow Monitoring embed an inline VFS control panel: `vfs/list` instance picker, 5s poll, stats, cache paths, advanced `opt`, and queue Prioritize / Delay / custom expiry (`PRIORITY_EXPIRY` / `DELAY_EXPIRY`)
+- Monitoring shows Angular-style Job Information + transfer statistics (progress/ETA bars, files, checks, errors)
+- Selected-profile Start/Stop is an expander row matching `app-operation-control`
+- Operation-control expanders include paths, mount usage, per-profile dry-run/resync, and a full Start/Stop action; extra profiles appear when a picker is shown
+- Logs Clear truncates `rclone.log` for engine logs so the tailed file does not refill the dialog
+- Repair auth-failed uses Angular `clear_engine_auth_error` behavior (restart/retry) and still opens Backends
+- Standalone dialogs cover VFS, Repair, Start operation, and File viewer
+- `--dialog` / spawn accept `vfs`, `repair`, `start-operation`, and `file-viewer`
+- Overview job rows navigate to dashboard/Flow context (`NavTarget::for_job`); activity panels still open Job detail
+- Repair banner with a password diagnosis opens the unlock sheet instead of the full repair dialog
+- Shared serve cards (copy URL/ID, Open, option count, Stop) on dashboard overview, remote Serve monitoring, and Flow
+- Files undo/redo/copy toasts, tray tooltip, engine-offline, and memory-stats labels use i18n keys
 
 ## Still deepening toward pixel-level Angular parity
 
 - Workflow builder (stub in both apps)
-- Live GUI session against rclone rcd (no display in this environment)
 - Remaining dialogs/Files English labels (core chrome now localized)
 - Pixel-level Angular layouts and leftover English `t_or` fallbacks

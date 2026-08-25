@@ -402,6 +402,20 @@ mod tests {
             "serve.serving",
             "automation.status.running",
             "overviews.status.labels.inactive",
+            "modals.oauth.manualOpenPrompt",
+            "modals.oauth.copyLink",
+            "modals.remoteConfig.errors.interactiveProcessingFailed",
+            "generalOverview.editLayout",
+            "dashboard.statusOverview.title",
+            "nautilus.contextMenu.openNative",
+            "nautilus.contextMenu.openNewTab",
+            "developerTools.debugInfo",
+            "wizards.remoteConfig.togglePassword",
+            "common.engineOffline",
+            "titlebar.menu.memoryUnavailable",
+            "tray.tooltipSubtitle",
+            "nautilus.notifications.nothingToUndo",
+            "nautilus.titles.editPath",
         ] {
             assert!(i18n.has(key), "missing i18n key {key}");
         }

@@ -1,8 +1,8 @@
 use super::AppCtx;
 use crate::flags::parse_flag_value;
 use crate::interactive::{
-    apply_interactive_response, is_continue_disabled, update_interactive_answer, InteractiveAnswer,
-    InteractiveFlowState,
+    allows_custom_value, apply_interactive_response, example_label, is_continue_disabled,
+    selected_example_index, update_interactive_answer, InteractiveAnswer, InteractiveFlowState,
 };
 use crate::jobs::{
     first_path, flatten_rclone, parse_cli_flags, profile_src_dst, DEST_KEYS, SOURCE_KEYS,
@@ -131,8 +131,8 @@ fn present_ex(
     on_done: Rc<dyn Fn()>,
 ) {
     let dialog = adw::Dialog::new();
-    let title = if existing.is_some() {
-        ctx.t_or("modals.remoteConfig.title", "Remote Configuration")
+    let title = if let Some(name) = existing.as_deref() {
+        ctx.tf("modals.remoteConfig.title.edit", &[("target", name)])
     } else {
         ctx.t_or("wizards.remoteConfig.quickAdd", "Add Remote")
     };
@@ -363,17 +363,89 @@ fn present_ex(
     let op_flags: Rc<RefCell<Vec<(OperationType, adw::SwitchRow, adw::EntryRow, adw::EntryRow)>>> =
         Rc::new(RefCell::new(Vec::new()));
     let ops_group = adw::PreferencesGroup::new();
+    const QUICK_ADD_OPS: [OperationType; 6] = [
+        OperationType::Mount,
+        OperationType::Sync,
+        OperationType::Copy,
+        OperationType::Bisync,
+        OperationType::Move,
+        OperationType::Serve,
+    ];
+    let ops_for_page: &[OperationType] = if oauth_only {
+        &QUICK_ADD_OPS
+    } else {
+        &OperationType::ALL
+    };
     ops_group.set_title(&ctx.t_or(
-        "modals.remoteConfig.steps.profiles",
-        "Per-operation profiles",
+        if oauth_only {
+            "modals.quickAdd.operations.title"
+        } else {
+            "modals.remoteConfig.steps.profiles"
+        },
+        if oauth_only {
+            "Operation Options (Optional)"
+        } else {
+            "Per-operation profiles"
+        },
     ));
-    for op in OperationType::ALL {
+    if oauth_only {
+        ops_group.set_description(Some(&ctx.t_or(
+            "modals.quickAdd.operations.description",
+            "Configure operations to run automatically after the remote is created.",
+        )));
+    }
+    for op in ops_for_page {
+        let op = *op;
+        let (label_key, desc_key, fallback_label, fallback_desc) = match op {
+            OperationType::Mount => (
+                "modals.quickAdd.operations.mount.label",
+                "modals.quickAdd.operations.mount.description",
+                "Mount",
+                "Automatically mount this remote as a drive.",
+            ),
+            OperationType::Sync => (
+                "modals.quickAdd.operations.sync.label",
+                "modals.quickAdd.operations.sync.description",
+                "Sync",
+                "Sync this remote to a local folder.",
+            ),
+            OperationType::Copy => (
+                "modals.quickAdd.operations.copy.label",
+                "modals.quickAdd.operations.copy.description",
+                "Copy",
+                "Copy contents to a local folder.",
+            ),
+            OperationType::Bisync => (
+                "modals.quickAdd.operations.bisync.label",
+                "modals.quickAdd.operations.bisync.description",
+                "Bisync",
+                "Bidirectional sync with a local folder.",
+            ),
+            OperationType::Move => (
+                "modals.quickAdd.operations.move.label",
+                "modals.quickAdd.operations.move.description",
+                "Move",
+                "Move contents to a local folder.",
+            ),
+            OperationType::Serve => (
+                "modals.quickAdd.operations.serve.label",
+                "modals.quickAdd.operations.serve.description",
+                "Serve",
+                "Run a background server to share files.",
+            ),
+            _ => ("", "", op.api_label(), ""),
+        };
         let enable = adw::SwitchRow::new();
-        enable.set_title(&format!(
-            "{} {}",
-            ctx.t_or("common.configure", "Configure"),
-            op.api_label()
-        ));
+        if oauth_only && !label_key.is_empty() {
+            enable.set_title(&ctx.t_or(label_key, fallback_label));
+            enable.set_subtitle(&ctx.t_or(desc_key, fallback_desc));
+        } else {
+            enable.set_title(&format!(
+                "{} {}",
+                ctx.t_or("common.configure", "Configure"),
+                op.api_label()
+            ));
+        }
         enable.set_active(matches!(
             op,
             OperationType::Mount | OperationType::Sync | OperationType::Serve
@@ -384,12 +456,32 @@ fn present_ex(
             op.as_str(),
             ctx.t_or("remoteConfig.source", "source")
         ));
+        if op != OperationType::Copyurl {
+            super::dialogs::attach_path_picker(
+                &ctx,
+                &osrc,
+                crate::picker::FilePickerConfig::folders(),
+            );
+        }
         let odst = adw::EntryRow::new();
         odst.set_title(&format!(
             "{} {}",
             op.as_str(),
             ctx.t_or("remoteConfig.dest", "destination / mount / addr")
         ));
+        if op == OperationType::Mount {
+            super::dialogs::attach_path_picker(
+                &ctx,
+                &odst,
+                crate::picker::FilePickerConfig::local_folders(),
+            );
+        } else if op != OperationType::Serve && op != OperationType::Delete {
+            super::dialogs::attach_path_picker(
+                &ctx,
+                &odst,
+                crate::picker::FilePickerConfig::folders(),
+            );
+        }
         ops_group.add(&enable);
         ops_group.add(&osrc);
         ops_group.add(&odst);
@@ -435,9 +527,7 @@ fn present_ex(
     answer_switch.set_title(&ctx.t_or("wizards.remoteConfig.yes", "Yes / enabled"));
     let example_row = adw::ComboRow::new();
     example_row.set_title(&ctx.t_or("wizards.remoteConfig.chooseOption", "Choose an option"));
-    let oauth_status = gtk::Label::new(Some(""));
-    oauth_status.add_css_class("dim-label");
-    oauth_status.set_xalign(0.0);
+    let oauth = super::interactive::OAuthHelper::new(&ctx);
 
     let nav = adw::ViewStack::new();
     let setup = adw::PreferencesPage::new();
@@ -723,7 +813,7 @@ fn present_ex(
                     )),
                     Some(&e),
                 );
-                err.add_response("ok", "OK");
+                err.add_response("ok", &ctx.t_or("common.ok", "OK"));
                 err.present(Some(row));
                 return;
             } else {
@@ -753,6 +843,15 @@ fn present_ex(
         Some("setup"),
         &ctx.t_or("wizards.remoteConfig.remoteType", "Provider"),
     );
+    if oauth_only {
+        let operations = adw::PreferencesPage::new();
+        operations.add(&ops_group);
+        nav.add_titled(
+            &operations,
+            Some("operations"),
+            &ctx.t_or("modals.quickAdd.operations.title", "Operations"),
+        );
+    }
 
     let interactive_box = gtk::Box::new(gtk::Orientation::Vertical, 10);
     interactive_box.set_margin_top(16);
@@ -764,12 +863,12 @@ fn present_ex(
     interactive_box.append(&example_row);
     interactive_box.append(&answer_row);
     interactive_box.append(&answer_switch);
-    interactive_box.append(&oauth_status);
+    interactive_box.append(&oauth.root);
     let cancel_oauth =
         gtk::Button::with_label(&ctx.t_or("modals.remoteConfig.cancelOauth", "Cancel OAuth"));
     {
         let ctx = ctx.clone();
-        let oauth_status = oauth_status.clone();
+        let oauth = oauth.clone();
         let name = name.clone();
         let editing = existing.clone();
         cancel_oauth.connect_clicked(move |_| {
@@ -782,11 +881,11 @@ fn present_ex(
                                 let _ = client.delete_remote(&created);
                             }
                         }
-                        oauth_status.set_text(
+                        oauth.set_status(
                             &ctx.t_or("modals.remoteConfig.oauthCancelled", "OAuth cancelled"),
                         );
                     }
-                    Err(e) => oauth_status.set_text(&e.to_string()),
+                    Err(e) => oauth.set_status(&e.to_string()),
                 }
             }
         });
@@ -816,7 +915,9 @@ fn present_ex(
     pgroup.add(&cli);
     pgroup.add(&obscure_in);
     profiles.add(&pgroup);
-    profiles.add(&ops_group);
+    if !oauth_only {
+        profiles.add(&ops_group);
+    }
     nav.add_titled(
         &profiles,
         Some("profiles"),
@@ -930,13 +1031,18 @@ fn present_ex(
         let answer_row = answer_row.clone();
         let answer_switch = answer_switch.clone();
         let example_row = example_row.clone();
-        let oauth_status = oauth_status.clone();
+        let oauth = oauth.clone();
         let nav = nav.clone();
         let command_options = command_options.clone();
         let custom_options = custom_options.clone();
         let json_mode = json_mode.clone();
         let json_view = json_view.clone();
+        let oauth_only = oauth_only;
         continue_btn.connect_clicked(move |_| {
+            if oauth_only && nav.visible_child_name().as_deref() == Some("setup") {
+                nav.set_visible_child_name("operations");
+                return;
+            }
             let remote_name = name.text().to_string();
             if remote_name.is_empty() {
                 return;
@@ -952,7 +1058,7 @@ fn present_ex(
                         )),
                         Some(&e),
                     );
-                    err.add_response("ok", "OK");
+                    err.add_response("ok", &ctx.t_or("common.ok", "OK"));
                     err.present(Some(&dialog));
                     return;
                 }
@@ -999,7 +1105,7 @@ fn present_ex(
                     let next = apply_interactive_response(&value);
                     if let Ok((_, Some(url))) = client.oauth_status() {
                         let _ = open::that(&url);
-                        oauth_status.set_text(&format!("Opened authorization URL: {url}"));
+                        oauth.set_url(&ctx, Some(&url));
                     }
                     if !next.is_active {
                         question_title.set_text(&ctx.t_or(
@@ -1034,7 +1140,7 @@ fn present_ex(
                         )),
                         Some(&e.to_string()),
                     );
-                    err.add_response("ok", "OK");
+                    err.add_response("ok", &ctx.t_or("common.ok", "OK"));
                     err.present(Some(&dialog));
                 }
             }
@@ -1079,7 +1185,7 @@ fn present_ex(
                     )),
                     Some(&e),
                 );
-                err.add_response("ok", "OK");
+                err.add_response("ok", &ctx.t_or("common.ok", "OK"));
                 err.present(Some(&dialog));
                 return;
             }
@@ -1094,7 +1200,7 @@ fn present_ex(
                         )),
                         Some(&e),
                     );
-                    err.add_response("ok", "OK");
+                    err.add_response("ok", &ctx.t_or("common.ok", "OK"));
                     err.present(Some(&dialog));
                     return;
                 }
@@ -1130,7 +1236,7 @@ fn present_ex(
                             )),
                             Some(&e),
                         );
-                        err.add_response("ok", "OK");
+                        err.add_response("ok", &ctx.t_or("common.ok", "OK"));
                         err.present(Some(&dialog));
                         return;
                     }
@@ -1149,7 +1255,7 @@ fn present_ex(
                     )),
                     Some(&e),
                 );
-                err.add_response("ok", "OK");
+                err.add_response("ok", &ctx.t_or("common.ok", "OK"));
                 err.present(Some(&dialog));
                 return;
             }
@@ -1220,7 +1326,7 @@ fn present_ex(
                             Some(&ctx.t_or("common.error", "Could not save remote")),
                             Some(&e.to_string()),
                         );
-                        err.add_response("ok", "OK");
+                        err.add_response("ok", &ctx.t_or("common.ok", "OK"));
                         err.present(Some(&dialog));
                     }
                 }
@@ -1752,19 +1858,14 @@ fn apply_question_widgets(
         title.set_text(&option.name);
         help.set_text(&option.help);
         error.set_text(step.error.as_deref().unwrap_or(""));
-        answer_switch.set_visible(option.type_name == "bool");
-        answer_row.set_visible(option.type_name != "bool");
-        if option.type_name == "bool" {
+        let is_bool = option.type_name == "bool";
+        answer_switch.set_visible(is_bool);
+        let show_custom = !is_bool && (option.examples.is_empty() || allows_custom_value(option));
+        answer_row.set_visible(show_custom);
+        if is_bool {
             answer_switch.set_active(matches!(flow.answer, InteractiveAnswer::Bool(true)));
-        } else {
+        } else if show_custom {
             answer_row.set_text(&flow.answer.as_string());
-            if option.is_password {
-                if let Some(child) = answer_row.first_child() {
-                    if let Ok(editable) = child.downcast::<gtk::Text>() {
-                        editable.set_visibility(false);
-                    }
-                }
-            }
         }
         if option.examples.is_empty() {
             example_row.set_visible(false);
@@ -1773,16 +1874,13 @@ fn apply_question_widgets(
             let labels: Vec<String> = option
                 .examples
                 .iter()
-                .map(|(v, h)| {
-                    if h.is_empty() {
-                        v.clone()
-                    } else {
-                        format!("{v} — {h}")
-                    }
-                })
+                .map(|(v, h)| example_label(v, h))
                 .collect();
             let refs: Vec<&str> = labels.iter().map(|s| s.as_str()).collect();
             example_row.set_model(Some(&gtk::StringList::new(&refs)));
+            if let Some(idx) = selected_example_index(option, &flow.answer.as_string()) {
+                example_row.set_selected(idx as u32);
+            }
         }
     } else {
         title.set_text("Continue authorization");
