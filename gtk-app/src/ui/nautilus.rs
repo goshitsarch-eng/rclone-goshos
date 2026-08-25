@@ -41,6 +41,7 @@ pub struct NautilusView {
     future: Rc<RefCell<Vec<(String, String)>>>,
     clipboard: Rc<RefCell<Vec<(String, String, bool)>>>,
     undo: Rc<RefCell<Vec<String>>>,
+    redo: Rc<RefCell<Vec<String>>>,
     tab_bar: gtk::Box,
     next_tab_id: Rc<RefCell<u32>>,
     split_enabled: Rc<RefCell<bool>>,
@@ -188,6 +189,7 @@ impl NautilusView {
             future: Rc::new(RefCell::new(vec![])),
             clipboard: Rc::new(RefCell::new(Vec::new())),
             undo: Rc::new(RefCell::new(vec![])),
+            redo: Rc::new(RefCell::new(vec![])),
             tab_bar,
             next_tab_id: Rc::new(RefCell::new(2)),
             split_enabled: Rc::new(RefCell::new(false)),
@@ -454,8 +456,16 @@ impl NautilusView {
                 view.toggle_split();
                 return glib::Propagation::Stop;
             }
+            if ctrl && shift && key == gtk::gdk::Key::z {
+                view.redo_last();
+                return glib::Propagation::Stop;
+            }
             if ctrl && key == gtk::gdk::Key::z {
                 view.undo_last();
+                return glib::Propagation::Stop;
+            }
+            if ctrl && key == gtk::gdk::Key::y {
+                view.paste_system_clipboard();
                 return glib::Propagation::Stop;
             }
             if ctrl && key == gtk::gdk::Key::a {
@@ -772,7 +782,7 @@ impl NautilusView {
                     };
                     match client.mkdir(&fs, &remote) {
                         Ok(_) => {
-                            view.undo.borrow_mut().push(format!("mkdir:{remote}"));
+                            view.push_undo(format!("mkdir:{remote}"));
                             view.reload();
                         }
                         Err(e) => view.toast.add_toast(adw::Toast::new(&e.to_string())),
@@ -830,7 +840,7 @@ impl NautilusView {
         };
         match client.copy_file("/", &path.to_string_lossy(), &dst_fs, &dst_remote) {
             Ok(_) => {
-                self.undo.borrow_mut().push(format!("upload:{dst_remote}"));
+                self.push_undo(format!("upload:{dst_remote}"));
                 self.reload();
                 self.toast
                     .add_toast(adw::Toast::new(&format!("Uploaded {name}")));
@@ -877,34 +887,88 @@ impl NautilusView {
         }
     }
 
+    fn push_undo(&self, op: String) {
+        self.undo.borrow_mut().push(op);
+        self.redo.borrow_mut().clear();
+    }
+
     fn undo_last(&self) {
         let Some(op) = self.undo.borrow_mut().pop() else {
             self.toast.add_toast(adw::Toast::new("Nothing to undo"));
             return;
         };
+        self.invert_file_op(&op);
+        self.redo.borrow_mut().push(op);
+        self.toast.add_toast(adw::Toast::new("Undid last action"));
+    }
+
+    fn redo_last(&self) {
+        let Some(op) = self.redo.borrow_mut().pop() else {
+            self.toast.add_toast(adw::Toast::new("Nothing to redo"));
+            return;
+        };
+        self.replay_file_op(&op);
+        self.undo.borrow_mut().push(op);
+        self.toast.add_toast(adw::Toast::new("Redid last action"));
+    }
+
+    fn invert_file_op(&self, op: &str) {
         let Some(client) = self.ctx.client() else {
             return;
         };
+        let current = self.current.borrow().clone();
+        let (fs, _) = fs_remote(&current.remote, &current.path);
         if let Some(path) = op.strip_prefix("mkdir:") {
-            let current = self.current.borrow().clone();
-            let fs = if current.remote == "local" {
-                "/".into()
-            } else {
-                remote_fs(&current.remote, "")
-            };
             let _ = client.purge(&fs, path);
             self.reload();
         } else if let Some(path) = op.strip_prefix("upload:") {
-            let current = self.current.borrow().clone();
-            let fs = if current.remote == "local" {
-                "/".into()
-            } else {
-                remote_fs(&current.remote, "")
-            };
             let _ = client.delete_file(&fs, path);
             self.reload();
         }
-        self.toast.add_toast(adw::Toast::new("Undid last action"));
+    }
+
+    fn replay_file_op(&self, op: &str) {
+        if let Some(path) = op.strip_prefix("mkdir:") {
+            if let Some(client) = self.ctx.client() {
+                let current = self.current.borrow().clone();
+                let (fs, _) = fs_remote(&current.remote, &current.path);
+                let _ = client.mkdir(&fs, path);
+                self.reload();
+            }
+        }
+    }
+
+    fn paste_system_clipboard(&self) {
+        let Some(display) = gtk::gdk::Display::default() else {
+            return;
+        };
+        let clipboard = display.clipboard();
+        let view = self.clone();
+        clipboard.read_text_async(None::<gio::Cancellable>.as_ref(), move |result| {
+            let Ok(Some(text)) = result else {
+                return;
+            };
+            for line in text.lines() {
+                let raw = line.trim();
+                if raw.is_empty() {
+                    continue;
+                }
+                let path = if let Some(rest) = raw.strip_prefix("file://") {
+                    std::path::PathBuf::from(
+                        urlencoding::decode(rest)
+                            .unwrap_or(std::borrow::Cow::Borrowed(rest))
+                            .as_ref(),
+                    )
+                } else {
+                    std::path::PathBuf::from(raw)
+                };
+                if path.is_dir() {
+                    view.upload_local_tree(&path);
+                } else if path.is_file() {
+                    view.upload_local_path(&path);
+                }
+            }
+        });
     }
 
     fn properties_selected(&self) {
@@ -1016,6 +1080,7 @@ impl NautilusView {
     fn paste(&self) {
         let items = self.clipboard.borrow().clone();
         if items.is_empty() {
+            self.paste_system_clipboard();
             return;
         }
         let Some(client) = self.ctx.client() else {
@@ -1168,6 +1233,8 @@ impl NautilusView {
             ("Empty trash / cleanup", "cleanup"),
             ("Send to…", "sendto"),
             ("Undo", "undo"),
+            ("Redo", "redo"),
+            ("Paste from system clipboard", "syspaste"),
         ] {
             let btn = gtk::Button::with_label(label);
             let view = self.clone();
@@ -1227,6 +1294,8 @@ impl NautilusView {
                     }
                 }
                 "undo" => view.undo_last(),
+                "redo" => view.redo_last(),
+                "syspaste" => view.paste_system_clipboard(),
                 _ => {}
             });
             box_.append(&btn);

@@ -2,6 +2,7 @@
 
 pub mod automation;
 pub mod backup;
+pub mod connection;
 pub mod flags;
 pub mod i18n;
 pub mod interactive;
@@ -12,6 +13,7 @@ pub mod platform;
 pub mod providers;
 pub mod rclone;
 pub mod rename;
+pub mod security;
 pub mod settings;
 pub mod smtp;
 pub mod store;

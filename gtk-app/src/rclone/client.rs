@@ -500,6 +500,46 @@ impl RcClient {
         self.call("vfs/queue", json!({ "fs": fs }))
     }
 
+    pub fn vfs_poll_interval(&self, fs: &str, interval: Option<&str>) -> Result<Value, RcError> {
+        let mut body = json!({ "fs": fs });
+        if let Some(interval) = interval.filter(|s| !s.is_empty()) {
+            body["interval"] = json!(interval);
+        }
+        self.call("vfs/poll-interval", body)
+    }
+
+    pub fn vfs_queue_set_expiry(&self, fs: &str, id: &str, expiry: &str) -> Result<Value, RcError> {
+        self.call(
+            "vfs/queue-set-expiry",
+            json!({ "fs": fs, "id": id, "expiry": expiry }),
+        )
+    }
+
+    pub fn fscache_clear(&self) -> Result<Value, RcError> {
+        self.call("fscache/clear", json!({}))
+    }
+
+    pub fn fscache_entries(&self) -> Result<Value, RcError> {
+        self.call("fscache/entries", json!({}))
+    }
+
+    pub fn copy_remotes_from(&self, source: &RcClient) -> Result<usize, RcError> {
+        let dump = source.dump_config()?;
+        let mut count = 0;
+        if let Some(obj) = dump.as_object() {
+            for (name, cfg) in obj {
+                let r#type = cfg.get("type").and_then(|x| x.as_str()).unwrap_or("alias");
+                let mut params = cfg.clone();
+                if let Some(map) = params.as_object_mut() {
+                    map.remove("type");
+                }
+                self.create_remote(name, r#type, params)?;
+                count += 1;
+            }
+        }
+        Ok(count)
+    }
+
     pub fn options_get(&self) -> Result<Value, RcError> {
         self.call("options/get", json!({}))
     }
@@ -714,6 +754,12 @@ mod tests {
     fn basic_auth_encodes() {
         let header = basic_auth_header("user", "pass");
         assert!(header.starts_with("Basic "));
+    }
+
+    #[test]
+    fn vfs_poll_payload_includes_interval() {
+        let body = json!({ "fs": "drive:", "interval": "1m" });
+        assert_eq!(body["interval"], "1m");
     }
 
     #[test]

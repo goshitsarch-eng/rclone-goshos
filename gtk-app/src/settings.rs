@@ -46,6 +46,8 @@ pub struct CoreSettings {
     pub extra_backends: Vec<BackendEntry>,
     #[serde(default)]
     pub active_backend: String,
+    #[serde(default)]
+    pub config_password: String,
 }
 
 impl Default for CoreSettings {
@@ -64,6 +66,7 @@ impl Default for CoreSettings {
             completed_onboarding: false,
             extra_backends: vec![],
             active_backend: String::new(),
+            config_password: String::new(),
         }
     }
 }
@@ -171,6 +174,16 @@ impl AppSettings {
 
     pub fn settings_path() -> PathBuf {
         Self::config_dir().join("settings.json")
+    }
+
+    pub fn log_path() -> PathBuf {
+        Self::config_dir().join("rclone.log")
+    }
+
+    pub fn cache_dir() -> PathBuf {
+        dirs::cache_dir()
+            .unwrap_or_else(|| Self::config_dir().join("cache"))
+            .join("rclone-manager")
     }
 
     pub fn load() -> Self {

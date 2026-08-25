@@ -595,7 +595,15 @@ impl Dashboard {
         let chips = gtk::FlowBox::new();
         chips.set_selection_mode(gtk::SelectionMode::None);
         chips.set_max_children_per_line(6);
-        for op in OperationType::ALL {
+        let ops = self
+            .ctx
+            .store
+            .borrow()
+            .remotes
+            .get(&name)
+            .map(|m| m.visible_operations())
+            .unwrap_or_else(|| OperationType::ALL.to_vec());
+        for op in ops {
             let btn = gtk::Button::new();
             btn.set_label(op.api_label());
             btn.set_tooltip_text(Some(op.as_str()));
@@ -743,6 +751,58 @@ impl Dashboard {
             vfs.append(&btn);
         }
         self.detail.append(&vfs);
+        let vfs_tune = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+        let poll = adw::EntryRow::new();
+        poll.set_title("VFS poll interval");
+        poll.set_text("1m");
+        let apply_poll = gtk::Button::with_label("Set interval");
+        {
+            let ctx = self.ctx.clone();
+            let name = name.clone();
+            let toast = self.toast.clone();
+            let poll = poll.clone();
+            apply_poll.connect_clicked(move |_| {
+                if let Some(client) = ctx.client() {
+                    match client.vfs_poll_interval(&remote_fs(&name, ""), Some(&poll.text())) {
+                        Ok(v) => toast.add_toast(adw::Toast::new(&v.to_string())),
+                        Err(e) => toast.add_toast(adw::Toast::new(&e.to_string())),
+                    }
+                }
+            });
+        }
+        let expiry = adw::EntryRow::new();
+        expiry.set_title("Queue item id / expiry");
+        expiry.set_text("id=1 expiry=1m");
+        let apply_exp = gtk::Button::with_label("Set expiry");
+        {
+            let ctx = self.ctx.clone();
+            let name = name.clone();
+            let toast = self.toast.clone();
+            let expiry = expiry.clone();
+            apply_exp.connect_clicked(move |_| {
+                let text = expiry.text().to_string();
+                let mut id = String::new();
+                let mut exp = String::new();
+                for part in text.split_whitespace() {
+                    if let Some(v) = part.strip_prefix("id=") {
+                        id = v.to_string();
+                    } else if let Some(v) = part.strip_prefix("expiry=") {
+                        exp = v.to_string();
+                    }
+                }
+                if let Some(client) = ctx.client() {
+                    match client.vfs_queue_set_expiry(&remote_fs(&name, ""), &id, &exp) {
+                        Ok(v) => toast.add_toast(adw::Toast::new(&v.to_string())),
+                        Err(e) => toast.add_toast(adw::Toast::new(&e.to_string())),
+                    }
+                }
+            });
+        }
+        vfs_tune.append(&poll);
+        vfs_tune.append(&apply_poll);
+        vfs_tune.append(&expiry);
+        vfs_tune.append(&apply_exp);
+        self.detail.append(&vfs_tune);
 
         self.detail.append(&section_label("Profiles"));
         let plist = gtk::ListBox::new();

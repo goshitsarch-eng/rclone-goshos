@@ -60,6 +60,14 @@ This client is the GTK 4 + libadwaita rewrite of the Angular/Tauri desktop UI. I
 - Dashboard browse opens the Files workspace at that remote; per-serve stop + open URL
 - Properties: disk usage, MD5/SHA1/SHA256, public link, copy path
 - Logs filter + clear; wizard Cancel OAuth
+- rclone.conf password store / validate / encrypt / unencrypt; engine starts with `RCLONE_CONFIG_PASS`
+- Password-protected zip backups and secret-stripping on export
+- Preferences: standalone dialogs, card variant, extra flags/env, connectivity URLs, security, GC/FS-cache, folder openers
+- Developer menu: config/cache/log folders, GC, FS cache, connectivity check
+- VFS poll interval + queue expiry on remote detail; dashboard chips honor per-remote action order
+- Copy remotes from the active backend onto an extra RC backend
+- Nautilus redo and paste from the system clipboard
+- Live rclone.log tail in the Logs dialog
 
 ## Still deepening toward pixel-level Angular parity
 

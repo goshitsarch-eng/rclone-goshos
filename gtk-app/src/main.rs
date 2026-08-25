@@ -1,5 +1,6 @@
 mod automation;
 mod backup;
+mod connection;
 mod flags;
 mod i18n;
 mod interactive;
@@ -10,6 +11,7 @@ mod platform;
 mod providers;
 mod rclone;
 mod rename;
+mod security;
 mod settings;
 mod smtp;
 mod store;

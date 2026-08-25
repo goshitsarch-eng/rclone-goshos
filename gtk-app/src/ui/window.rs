@@ -187,7 +187,17 @@ fn app_menu() -> gio::Menu {
     prefs.append(Some("Templates"), Some("win.templates"));
     prefs.append(Some("Install rclone"), Some("win.install-rclone"));
     prefs.append(Some("Remote order"), Some("win.item-order"));
+    prefs.append(Some("Maintenance / connectivity"), Some("win.preferences"));
     menu.append_section(None, &prefs);
+
+    let tools = gio::Menu::new();
+    tools.append(Some("Open config folder"), Some("win.open-config"));
+    tools.append(Some("Open cache folder"), Some("win.open-cache"));
+    tools.append(Some("Open rclone log"), Some("win.open-log"));
+    tools.append(Some("Run GC"), Some("win.gc"));
+    tools.append(Some("Clear FS cache"), Some("win.fscache"));
+    tools.append(Some("Check connectivity"), Some("win.ping"));
+    menu.append_submenu(Some("Developer"), &tools);
 
     let views = gio::Menu::new();
     views.append(Some("Main Menu"), Some("win.view::main_menu"));
@@ -481,6 +491,88 @@ fn install_actions(
             toast.add_toast(adw::Toast::new("Serves refreshed"));
         });
         window.add_action(&action);
+    }
+
+    {
+        add_action(
+            "open-config",
+            Box::new(|| {
+                let _ = open::that(crate::settings::AppSettings::config_dir());
+            }),
+        );
+        add_action(
+            "open-cache",
+            Box::new(|| {
+                let dir = crate::settings::AppSettings::cache_dir();
+                let _ = std::fs::create_dir_all(&dir);
+                let _ = open::that(dir);
+            }),
+        );
+        add_action(
+            "open-log",
+            Box::new(|| {
+                let _ = open::that(crate::settings::AppSettings::log_path());
+            }),
+        );
+    }
+    {
+        let ctx = ctx.clone();
+        let toast = toast.clone();
+        add_action(
+            "gc",
+            Box::new(move || {
+                if let Some(client) = ctx.client() {
+                    match client.gc() {
+                        Ok(_) => toast.add_toast(adw::Toast::new("Garbage collection started")),
+                        Err(e) => toast.add_toast(adw::Toast::new(&e.to_string())),
+                    }
+                }
+            }),
+        );
+    }
+    {
+        let ctx = ctx.clone();
+        let toast = toast.clone();
+        add_action(
+            "fscache",
+            Box::new(move || {
+                if let Some(client) = ctx.client() {
+                    match client.fscache_clear() {
+                        Ok(_) => toast.add_toast(adw::Toast::new("FS cache cleared")),
+                        Err(e) => toast.add_toast(adw::Toast::new(&e.to_string())),
+                    }
+                }
+            }),
+        );
+    }
+    {
+        let ctx = ctx.clone();
+        let window = window.clone();
+        add_action(
+            "ping",
+            Box::new(move || {
+                let urls = ctx.settings.borrow().core.connection_check_urls.clone();
+                let results = crate::connection::check_links(&urls, 4);
+                let body = results
+                    .iter()
+                    .map(|r| {
+                        format!(
+                            "{} — {} ({})",
+                            r.url,
+                            if r.ok { "ok" } else { "fail" },
+                            r.detail
+                        )
+                    })
+                    .collect::<Vec<_>>()
+                    .join("\n");
+                let alert = adw::AlertDialog::new(
+                    Some(&crate::connection::summarize(&results)),
+                    Some(&body),
+                );
+                alert.add_response("ok", "OK");
+                alert.present(Some(&window));
+            }),
+        );
     }
 
     let _ = (app, nautilus, banner);

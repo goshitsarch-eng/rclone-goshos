@@ -57,6 +57,13 @@ impl RcloneEngine {
                 cmd.env(k, v);
             }
         }
+        crate::security::apply_config_password_env(&mut cmd, &settings.core.config_password);
+        let log_path = crate::settings::AppSettings::config_dir().join("rclone.log");
+        if let Some(parent) = log_path.parent() {
+            let _ = std::fs::create_dir_all(parent);
+        }
+        cmd.arg(format!("--log-file={}", log_path.display()));
+        cmd.arg("--log-level=INFO");
 
         match cmd.spawn() {
             Ok(child) => {

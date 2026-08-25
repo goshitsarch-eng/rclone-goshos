@@ -142,6 +142,34 @@ pub fn preferences(parent: &impl IsA<gtk::Widget>, ctx: AppCtx) {
             move |v| ctx.settings.borrow_mut().general.prevent_sleep = v
         },
     ));
+    g1.add(&switch_row(
+        "Standalone dialog windows",
+        ctx.settings.borrow().general.standalone_dialogs,
+        {
+            let ctx = ctx.clone();
+            move |v| ctx.settings.borrow_mut().general.standalone_dialogs = v
+        },
+    ));
+    let cards = ["compact", "detailed"];
+    let card_row = adw::ComboRow::new();
+    card_row.set_title("Dashboard cards");
+    card_row.set_model(Some(&gtk::StringList::new(&cards)));
+    if let Some(idx) = cards
+        .iter()
+        .position(|c| *c == ctx.settings.borrow().runtime.dashboard_card_variant)
+    {
+        card_row.set_selected(idx as u32);
+    }
+    {
+        let ctx = ctx.clone();
+        card_row.connect_selected_notify(move |row| {
+            if let Some(v) = cards.get(row.selected() as usize) {
+                ctx.settings.borrow_mut().runtime.dashboard_card_variant = (*v).to_string();
+                ctx.persist();
+            }
+        });
+    }
+    g1.add(&card_row);
     general.add(&g1);
 
     let core = adw::PreferencesPage::new();
@@ -186,6 +214,55 @@ pub fn preferences(parent: &impl IsA<gtk::Widget>, ctx: AppCtx) {
         });
     }
     c1.add(&tray_items);
+    let flags = adw::EntryRow::new();
+    flags.set_title("Additional rclone flags (space-separated)");
+    flags.set_text(&ctx.settings.borrow().core.rclone_additional_flags.join(" "));
+    {
+        let ctx = ctx.clone();
+        flags.connect_changed(move |row| {
+            ctx.settings.borrow_mut().core.rclone_additional_flags = row
+                .text()
+                .split_whitespace()
+                .map(|s| s.to_string())
+                .collect();
+            ctx.persist();
+        });
+    }
+    c1.add(&flags);
+    let env = adw::EntryRow::new();
+    env.set_title("Rclone environment (KEY=value;KEY=value)");
+    env.set_text(&ctx.settings.borrow().core.rclone_env_vars.join(";"));
+    {
+        let ctx = ctx.clone();
+        env.connect_changed(move |row| {
+            ctx.settings.borrow_mut().core.rclone_env_vars = row
+                .text()
+                .split(';')
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .map(|s| s.to_string())
+                .collect();
+            ctx.persist();
+        });
+    }
+    c1.add(&env);
+    let urls = adw::EntryRow::new();
+    urls.set_title("Connectivity check URLs (comma-separated)");
+    urls.set_text(&ctx.settings.borrow().core.connection_check_urls.join(", "));
+    {
+        let ctx = ctx.clone();
+        urls.connect_changed(move |row| {
+            ctx.settings.borrow_mut().core.connection_check_urls = row
+                .text()
+                .split(',')
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .map(|s| s.to_string())
+                .collect();
+            ctx.persist();
+        });
+    }
+    c1.add(&urls);
     core.add(&c1);
 
     let dev = adw::PreferencesPage::new();
@@ -221,10 +298,195 @@ pub fn preferences(parent: &impl IsA<gtk::Widget>, ctx: AppCtx) {
             move |v| ctx.settings.borrow_mut().developer.destroy_window_on_close = v
         },
     ));
+    let open_cfg = gtk::Button::with_label("Open config folder");
+    {
+        open_cfg.connect_clicked(|_| {
+            let _ = open::that(crate::settings::AppSettings::config_dir());
+        });
+    }
+    let open_cache = gtk::Button::with_label("Open cache folder");
+    {
+        open_cache.connect_clicked(|_| {
+            let dir = crate::settings::AppSettings::cache_dir();
+            let _ = std::fs::create_dir_all(&dir);
+            let _ = open::that(dir);
+        });
+    }
+    let open_log = gtk::Button::with_label("Open rclone log");
+    {
+        open_log.connect_clicked(|_| {
+            let path = crate::settings::AppSettings::log_path();
+            let _ = open::that(path);
+        });
+    }
+    let cfg_row = adw::ActionRow::new();
+    cfg_row.set_title("Folders");
+    cfg_row.add_suffix(&open_cfg);
+    cfg_row.add_suffix(&open_cache);
+    cfg_row.add_suffix(&open_log);
+    d1.add(&cfg_row);
+    let gc = gtk::Button::with_label("Run GC");
+    {
+        let ctx = ctx.clone();
+        gc.connect_clicked(move |_| {
+            if let Some(client) = ctx.client() {
+                let _ = client.gc();
+            }
+        });
+    }
+    let fscache = gtk::Button::with_label("Clear FS cache");
+    {
+        let ctx = ctx.clone();
+        fscache.connect_clicked(move |_| {
+            if let Some(client) = ctx.client() {
+                let _ = client.fscache_clear();
+            }
+        });
+    }
+    let ping = gtk::Button::with_label("Check connectivity");
+    {
+        let ctx = ctx.clone();
+        let parent = parent.clone();
+        ping.connect_clicked(move |_| {
+            let urls = ctx.settings.borrow().core.connection_check_urls.clone();
+            let results = crate::connection::check_links(&urls, 4);
+            let body = results
+                .iter()
+                .map(|r| {
+                    format!(
+                        "{} — {} ({})",
+                        r.url,
+                        if r.ok { "ok" } else { "fail" },
+                        r.detail
+                    )
+                })
+                .collect::<Vec<_>>()
+                .join("\n");
+            let alert =
+                adw::AlertDialog::new(Some(&crate::connection::summarize(&results)), Some(&body));
+            alert.add_response("ok", "OK");
+            alert.present(Some(&parent));
+        });
+    }
+    let maint = adw::ActionRow::new();
+    maint.set_title("Maintenance");
+    maint.add_suffix(&gc);
+    maint.add_suffix(&fscache);
+    maint.add_suffix(&ping);
+    d1.add(&maint);
     dev.add(&d1);
+
+    let security = adw::PreferencesPage::new();
+    security.set_title("Security");
+    security.set_icon_name(Some("security-high-symbolic"));
+    let s1 = adw::PreferencesGroup::new();
+    s1.set_title("rclone.conf password");
+    let stored = adw::PasswordEntryRow::new();
+    stored.set_title("Stored password");
+    stored.set_text(&ctx.settings.borrow().core.config_password);
+    {
+        let ctx = ctx.clone();
+        stored.connect_changed(move |row| {
+            ctx.settings.borrow_mut().core.config_password = row.text().to_string();
+            ctx.persist();
+        });
+    }
+    s1.add(&stored);
+    let validate = gtk::Button::with_label("Validate");
+    {
+        let ctx = ctx.clone();
+        let parent = parent.clone();
+        let stored = stored.clone();
+        validate.connect_clicked(move |_| {
+            let binary = ctx.settings.borrow().core.rclone_binary.clone();
+            let msg = match crate::security::validate_password(&binary, &stored.text()) {
+                Ok(()) => "Password accepted".into(),
+                Err(e) => e,
+            };
+            let alert = adw::AlertDialog::new(Some("Config password"), Some(&msg));
+            alert.add_response("ok", "OK");
+            alert.present(Some(&parent));
+        });
+    }
+    let encrypt = gtk::Button::with_label("Encrypt config");
+    {
+        let ctx = ctx.clone();
+        let parent = parent.clone();
+        let stored = stored.clone();
+        encrypt.connect_clicked(move |_| {
+            let binary = ctx.settings.borrow().core.rclone_binary.clone();
+            let msg = match crate::security::encrypt_config(&binary, &stored.text()) {
+                Ok(()) => {
+                    ctx.restart_engine();
+                    "rclone.conf encrypted".into()
+                }
+                Err(e) => e,
+            };
+            let alert = adw::AlertDialog::new(Some("Encrypt"), Some(&msg));
+            alert.add_response("ok", "OK");
+            alert.present(Some(&parent));
+        });
+    }
+    let new_pass = adw::PasswordEntryRow::new();
+    new_pass.set_title("New password (change)");
+    s1.add(&new_pass);
+    let change = gtk::Button::with_label("Change password");
+    {
+        let ctx = ctx.clone();
+        let parent = parent.clone();
+        let stored = stored.clone();
+        let new_pass = new_pass.clone();
+        change.connect_clicked(move |_| {
+            let binary = ctx.settings.borrow().core.rclone_binary.clone();
+            let msg =
+                match crate::security::change_password(&binary, &stored.text(), &new_pass.text()) {
+                    Ok(()) => {
+                        ctx.settings.borrow_mut().core.config_password =
+                            new_pass.text().to_string();
+                        ctx.persist();
+                        ctx.restart_engine();
+                        "Password changed".into()
+                    }
+                    Err(e) => e,
+                };
+            let alert = adw::AlertDialog::new(Some("Change password"), Some(&msg));
+            alert.add_response("ok", "OK");
+            alert.present(Some(&parent));
+        });
+    }
+    let unencrypt = gtk::Button::with_label("Remove encryption");
+    {
+        let ctx = ctx.clone();
+        let parent = parent.clone();
+        let stored = stored.clone();
+        unencrypt.connect_clicked(move |_| {
+            let binary = ctx.settings.borrow().core.rclone_binary.clone();
+            let msg = match crate::security::unencrypt_config(&binary, &stored.text()) {
+                Ok(()) => {
+                    ctx.settings.borrow_mut().core.config_password.clear();
+                    ctx.persist();
+                    ctx.restart_engine();
+                    "rclone.conf encryption removed".into()
+                }
+                Err(e) => e,
+            };
+            let alert = adw::AlertDialog::new(Some("Unencrypt"), Some(&msg));
+            alert.add_response("ok", "OK");
+            alert.present(Some(&parent));
+        });
+    }
+    let sec_row = adw::ActionRow::new();
+    sec_row.set_title("Actions");
+    sec_row.add_suffix(&validate);
+    sec_row.add_suffix(&encrypt);
+    sec_row.add_suffix(&change);
+    sec_row.add_suffix(&unencrypt);
+    s1.add(&sec_row);
+    security.add(&s1);
 
     dialog.add(&general);
     dialog.add(&core);
+    dialog.add(&security);
     dialog.add(&dev);
     dialog.present(Some(parent));
 }
@@ -321,13 +583,26 @@ pub fn logs(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, remote: Option<String>)
     view.set_editable(false);
     view.set_monospace(true);
     let key = remote.clone().unwrap_or_else(|| "_engine".into());
-    let lines = ctx
+    let mut lines = ctx
         .store
         .borrow()
         .logs
         .get(&key)
         .cloned()
         .unwrap_or_default();
+    if let Ok(file) = std::fs::read_to_string(crate::settings::AppSettings::log_path()) {
+        let tail: Vec<String> = file
+            .lines()
+            .rev()
+            .take(400)
+            .map(|s| s.to_string())
+            .collect();
+        let mut chron = tail;
+        chron.reverse();
+        if !chron.is_empty() {
+            lines.extend(chron);
+        }
+    }
     let search = gtk::Entry::new();
     search.set_placeholder_text(Some("Filter logs"));
     let apply = {
@@ -598,8 +873,41 @@ pub fn backends(parent: &impl IsA<gtk::Widget>, ctx: AppCtx) {
                 backends(&parent, ctx.clone());
             });
         }
+        let copy = gtk::Button::with_label("Copy remotes");
+        copy.set_valign(gtk::Align::Center);
+        copy.set_tooltip_text(Some("Copy remotes from the active backend to this one"));
+        {
+            let backend = backend.clone();
+            let ctx = ctx.clone();
+            let parent = parent.clone();
+            copy.connect_clicked(move |_| {
+                let Some(source) = ctx.client() else {
+                    return;
+                };
+                let dest = crate::rclone::RcClient::new(&backend.host, backend.port).with_auth(
+                    if backend.user.is_empty() {
+                        None
+                    } else {
+                        Some(backend.user.clone())
+                    },
+                    if backend.pass.is_empty() {
+                        None
+                    } else {
+                        Some(backend.pass.clone())
+                    },
+                );
+                let msg = match dest.copy_remotes_from(&source) {
+                    Ok(n) => format!("Copied {n} remotes"),
+                    Err(e) => e.to_string(),
+                };
+                let alert = adw::AlertDialog::new(Some("Copy remotes"), Some(&msg));
+                alert.add_response("ok", "OK");
+                alert.present(Some(&parent));
+            });
+        }
         row.add_suffix(&test);
         row.add_suffix(&use_btn);
+        row.add_suffix(&copy);
         row.add_suffix(&remove);
         list.append(&row);
     }
@@ -1439,6 +1747,11 @@ pub fn export_backup(parent: &impl IsA<gtk::Window>, ctx: AppCtx, toast: adw::To
     specific.set_title("Export only one remote");
     let note = adw::EntryRow::new();
     note.set_title("Note");
+    let password = adw::PasswordEntryRow::new();
+    password.set_title("Zip password (optional, 4+ chars)");
+    let secrets = adw::SwitchRow::new();
+    secrets.set_title("Include secrets in rclone dump");
+    secrets.set_active(true);
     let save = gtk::Button::with_label("Choose file…");
     save.add_css_class("suggested-action");
     {
@@ -1451,6 +1764,8 @@ pub fn export_backup(parent: &impl IsA<gtk::Window>, ctx: AppCtx, toast: adw::To
         let specific = specific.clone();
         let remote_row = remote_row.clone();
         let note = note.clone();
+        let password = password.clone();
+        let secrets = secrets.clone();
         save.connect_clicked(move |_| {
             let mut export_type = categories
                 .get(type_row.selected() as usize)
@@ -1462,6 +1777,8 @@ pub fn export_backup(parent: &impl IsA<gtk::Window>, ctx: AppCtx, toast: adw::To
                 }
             }
             let note_text = note.text().to_string();
+            let zip_pass = password.text().to_string();
+            let include_secrets = secrets.is_active();
             let file_dialog = gtk::FileDialog::new();
             file_dialog.set_initial_name(Some("rclone-manager-backup.zip"));
             let ctx = ctx.clone();
@@ -1472,10 +1789,33 @@ pub fn export_backup(parent: &impl IsA<gtk::Window>, ctx: AppCtx, toast: adw::To
                 move |result| {
                     if let Ok(file) = result {
                         if let Some(path) = file.path() {
-                            let dump = ctx
+                            let mut dump = ctx
                                 .client()
                                 .and_then(|c| c.dump_config().ok())
                                 .unwrap_or(serde_json::json!({}));
+                            if !include_secrets {
+                                if let Some(obj) = dump.as_object_mut() {
+                                    for cfg in obj.values_mut() {
+                                        if let Some(map) = cfg.as_object_mut() {
+                                            for key in [
+                                                "token",
+                                                "secret",
+                                                "password",
+                                                "pass",
+                                                "client_secret",
+                                                "key",
+                                            ] {
+                                                map.remove(key);
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                            let pw = if zip_pass.trim().len() >= 4 {
+                                Some(zip_pass.as_str())
+                            } else {
+                                None
+                            };
                             match backup::create_backup(
                                 &path,
                                 &ctx.settings.borrow(),
@@ -1483,7 +1823,7 @@ pub fn export_backup(parent: &impl IsA<gtk::Window>, ctx: AppCtx, toast: adw::To
                                 &dump,
                                 &export_type,
                                 &note_text,
-                                None,
+                                pw,
                             ) {
                                 Ok(_) => toast.add_toast(adw::Toast::new("Backup exported")),
                                 Err(e) => toast.add_toast(adw::Toast::new(&e)),
@@ -1500,6 +1840,8 @@ pub fn export_backup(parent: &impl IsA<gtk::Window>, ctx: AppCtx, toast: adw::To
     group.add(&specific);
     group.add(&remote_row);
     group.add(&note);
+    group.add(&password);
+    group.add(&secrets);
     let box_ = gtk::Box::new(gtk::Orientation::Vertical, 8);
     box_.set_margin_top(12);
     box_.append(&group);
@@ -1536,25 +1878,29 @@ pub fn restore_preview(
     path: std::path::PathBuf,
     on_done: Rc<dyn Fn()>,
 ) {
-    let analysis = match backup::analyze_backup(&path) {
-        Ok(a) => a,
-        Err(e) => {
-            toast.add_toast(adw::Toast::new(&e));
-            return;
-        }
-    };
-    let dialog = adw::AlertDialog::new(
-        Some("Restore backup"),
-        Some(&format!(
-            "Version {} · {} · remotes: {}\nsettings={} store={} rclone={}",
-            analysis.manifest.version,
-            analysis.manifest.export_type,
-            analysis.manifest.remotes.join(", "),
-            analysis.has_settings,
-            analysis.has_store,
-            analysis.has_rclone_config
-        )),
-    );
+    let analysis = backup::analyze_backup(&path).ok();
+    let summary = analysis
+        .as_ref()
+        .map(|a| {
+            format!(
+                "Version {} · {} · remotes: {}\nsettings={} store={} rclone={} encrypted={}",
+                a.manifest.version,
+                a.manifest.export_type,
+                a.manifest.remotes.join(", "),
+                a.has_settings,
+                a.has_store,
+                a.has_rclone_config,
+                a.manifest.encrypted
+            )
+        })
+        .unwrap_or_else(|| {
+            "Could not read the zip without a password. Enter it below to restore.".into()
+        });
+    let dialog = adw::AlertDialog::new(Some("Restore backup"), Some(&summary));
+    let password = gtk::PasswordEntry::new();
+    password.set_show_peek_icon(true);
+    password.set_placeholder_text(Some("Zip password (if encrypted)"));
+    dialog.set_extra_child(Some(&password));
     dialog.add_response("cancel", "Cancel");
     dialog.add_response("restore", "Restore");
     dialog.set_response_appearance("restore", adw::ResponseAppearance::Destructive);
@@ -1562,7 +1908,13 @@ pub fn restore_preview(
         if response != "restore" {
             return;
         }
-        match backup::restore_backup(&path) {
+        let pw = password.text().to_string();
+        let pw = if pw.is_empty() {
+            None
+        } else {
+            Some(pw.as_str())
+        };
+        match backup::restore_backup_with_password(&path, pw) {
             Ok((settings, store, rclone)) => {
                 if let Some(settings) = settings {
                     *ctx.settings.borrow_mut() = settings;

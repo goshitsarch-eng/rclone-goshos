@@ -74,12 +74,17 @@ pub fn create_backup(
     note: &str,
     password: Option<&str>,
 ) -> Result<PathBuf, String> {
-    let _ = password;
     std::fs::create_dir_all(dest.parent().unwrap_or(Path::new("."))).map_err(|e| e.to_string())?;
     let file = File::create(dest).map_err(|e| e.to_string())?;
     let mut zip = ZipWriter::new(file);
-    let options = zip::write::SimpleFileOptions::default()
+    let encrypted = password.is_some_and(|p| p.trim().len() >= 4);
+    let mut options = zip::write::SimpleFileOptions::default()
         .compression_method(zip::CompressionMethod::Deflated);
+    if encrypted {
+        if let Some(pw) = password {
+            options = options.with_aes_encryption(zip::AesMode::Aes256, pw);
+        }
+    }
 
     let remotes = rclone_dump
         .as_object()
@@ -90,7 +95,7 @@ pub fn create_backup(
         created_at: chrono::Utc::now().to_rfc3339(),
         note: note.to_string(),
         export_type: export_type.to_string(),
-        encrypted: false,
+        encrypted,
         remotes,
     };
     zip.start_file("manifest.json", options)
@@ -130,20 +135,23 @@ pub fn create_backup(
 }
 
 pub fn analyze_backup(path: &Path) -> Result<BackupAnalysis, String> {
+    analyze_backup_with_password(path, None)
+}
+
+pub fn analyze_backup_with_password(
+    path: &Path,
+    password: Option<&str>,
+) -> Result<BackupAnalysis, String> {
     let file = File::open(path).map_err(|e| e.to_string())?;
     let mut archive = ZipArchive::new(file).map_err(|e| e.to_string())?;
     let mut names = Vec::new();
     for i in 0..archive.len() {
-        if let Ok(entry) = archive.by_index(i) {
+        if let Ok(entry) = zip_entry(&mut archive, i, password) {
             names.push(entry.name().to_string());
         }
     }
     let manifest = if names.iter().any(|n| n == "manifest.json") {
-        let mut entry = archive
-            .by_name("manifest.json")
-            .map_err(|e| e.to_string())?;
-        let mut text = String::new();
-        entry.read_to_string(&mut text).map_err(|e| e.to_string())?;
+        let text = read_zip_entry(&mut archive, "manifest.json", password)?;
         serde_json::from_str(&text).unwrap_or(BackupManifest {
             version: "unknown".into(),
             created_at: String::new(),
@@ -177,21 +185,56 @@ pub fn analyze_backup(path: &Path) -> Result<BackupAnalysis, String> {
 pub fn restore_backup(
     path: &Path,
 ) -> Result<(Option<AppSettings>, Option<AppStore>, Option<Value>), String> {
+    restore_backup_with_password(path, None)
+}
+
+pub fn restore_backup_with_password(
+    path: &Path,
+    password: Option<&str>,
+) -> Result<(Option<AppSettings>, Option<AppStore>, Option<Value>), String> {
     let file = File::open(path).map_err(|e| e.to_string())?;
     let mut archive = ZipArchive::new(file).map_err(|e| e.to_string())?;
-    let settings = read_zip_json::<AppSettings>(&mut archive, "settings.json");
-    let store = read_zip_json::<AppStore>(&mut archive, "store.json");
-    let rclone = read_zip_json::<Value>(&mut archive, "rclone.json");
+    let settings = read_zip_json::<AppSettings>(&mut archive, "settings.json", password);
+    let store = read_zip_json::<AppStore>(&mut archive, "store.json", password);
+    let rclone = read_zip_json::<Value>(&mut archive, "rclone.json", password);
     Ok((settings, store, rclone))
+}
+
+fn zip_entry<'a>(
+    archive: &'a mut ZipArchive<File>,
+    index: usize,
+    password: Option<&str>,
+) -> Result<zip::read::ZipFile<'a>, zip::result::ZipError> {
+    if let Some(pw) = password {
+        archive.by_index_decrypt(index, pw.as_bytes())
+    } else {
+        archive.by_index(index)
+    }
+}
+
+fn read_zip_entry(
+    archive: &mut ZipArchive<File>,
+    name: &str,
+    password: Option<&str>,
+) -> Result<String, String> {
+    let mut entry = if let Some(pw) = password {
+        archive
+            .by_name_decrypt(name, pw.as_bytes())
+            .map_err(|e| e.to_string())?
+    } else {
+        archive.by_name(name).map_err(|e| e.to_string())?
+    };
+    let mut text = String::new();
+    entry.read_to_string(&mut text).map_err(|e| e.to_string())?;
+    Ok(text)
 }
 
 fn read_zip_json<T: for<'de> Deserialize<'de>>(
     archive: &mut ZipArchive<File>,
     name: &str,
+    password: Option<&str>,
 ) -> Option<T> {
-    let mut entry = archive.by_name(name).ok()?;
-    let mut text = String::new();
-    entry.read_to_string(&mut text).ok()?;
+    let text = read_zip_entry(archive, name, password).ok()?;
     serde_json::from_str(&text).ok()
 }
 
@@ -249,5 +292,29 @@ mod tests {
         assert!(!analysis.has_store);
         assert!(!analysis.has_rclone_config);
         assert_eq!(analysis.manifest.export_type, "settings");
+    }
+
+    #[test]
+    fn password_protects_backup() {
+        let dir = tempfile::tempdir().unwrap();
+        let dest = dir.path().join("secret.zip");
+        create_backup(
+            &dest,
+            &AppSettings::default(),
+            &AppStore::default(),
+            &serde_json::json!({ "demo": { "type": "local" } }),
+            "FullBackup",
+            "secret note",
+            Some("correct-horse"),
+        )
+        .unwrap();
+        assert!(restore_backup(&dest).unwrap().0.is_none());
+        let (settings, _, dump) =
+            restore_backup_with_password(&dest, Some("correct-horse")).unwrap();
+        assert!(settings.is_some());
+        assert_eq!(dump.unwrap()["demo"]["type"], "local");
+        let analysis = analyze_backup_with_password(&dest, Some("correct-horse")).unwrap();
+        assert!(analysis.manifest.encrypted);
+        assert_eq!(analysis.manifest.note, "secret note");
     }
 }

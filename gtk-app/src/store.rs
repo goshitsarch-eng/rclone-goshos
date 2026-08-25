@@ -138,6 +138,21 @@ impl RemoteMeta {
         }
     }
 
+    pub fn visible_operations(&self) -> Vec<OperationType> {
+        let mut ops: Vec<OperationType> = self
+            .primary_actions
+            .iter()
+            .chain(self.sync_actions.iter())
+            .filter_map(|s| OperationType::parse(s))
+            .collect();
+        ops.dedup();
+        if ops.is_empty() {
+            OperationType::ALL.to_vec()
+        } else {
+            ops
+        }
+    }
+
     pub fn clone_profile(&mut self, op: OperationType, from: &str, to: &str) -> bool {
         if to.is_empty() {
             return false;
@@ -898,5 +913,10 @@ mod tests {
         assert!(meta.helper_names("vfs").is_empty());
         meta.upsert_helper("runtime", "", json!({}));
         assert!(meta.helper_names("runtime").is_empty());
+        meta.primary_actions = vec!["sync".into(), "copy".into()];
+        assert_eq!(
+            meta.visible_operations(),
+            vec![OperationType::Sync, OperationType::Copy]
+        );
     }
 }
