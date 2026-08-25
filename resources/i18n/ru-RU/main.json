@@ -2185,6 +2185,12 @@
       "resetAll": "Сбросить все настройки",
       "noSettingsFound": "Настройки не найдены по запросу",
       "trySearching": "Попробуйте найти:",
+      "searchSuggestions": {
+        "apiPort": "Порт API",
+        "startup": "автозапуск",
+        "debug": "отладка",
+        "bandwidth": "пропускная способность"
+      },
       "readyToRestartHeader": "Настройки, требующие перезапуска",
       "readyToRestartDesc": "Для применения следующих изменений требуется перезапуск движка:",
       "discardChanges": "Отменить изменения",

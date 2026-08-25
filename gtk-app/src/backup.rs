@@ -83,6 +83,40 @@ pub fn includes_file(export_type: &str, file: &str) -> bool {
     }
 }
 
+pub fn filter_store_remotes(store: &AppStore, names: &[String]) -> AppStore {
+    if names.is_empty() {
+        return store.clone();
+    }
+    let keep: std::collections::HashSet<&str> = names.iter().map(String::as_str).collect();
+    let mut scoped = store.clone();
+    scoped
+        .remotes
+        .retain(|name, _| keep.contains(name.as_str()));
+    scoped
+        .quick_runs
+        .retain(|run| keep.contains(run.remote_name.as_str()));
+    scoped
+        .alert_history
+        .retain(|event| event.remote.is_empty() || keep.contains(event.remote.as_str()));
+    scoped
+}
+
+pub fn filter_rclone_names(dump: &Value, names: &[String]) -> Value {
+    if names.is_empty() {
+        return dump.clone();
+    }
+    let Some(obj) = dump.as_object() else {
+        return dump.clone();
+    };
+    let mut out = serde_json::Map::new();
+    for name in names {
+        if let Some(cfg) = obj.get(name) {
+            out.insert(name.clone(), cfg.clone());
+        }
+    }
+    Value::Object(out)
+}
+
 pub fn filter_rclone_dump(dump: &Value, export_type: &str) -> Value {
     if let Some(name) = export_type.strip_prefix("remote:") {
         if let Some(obj) = dump.as_object() {
@@ -409,6 +443,43 @@ mod tests {
         let filtered = filter_rclone_dump(&dump, "remote:demo");
         assert!(filtered.get("demo").is_some());
         assert!(filtered.get("other").is_none());
+    }
+
+    #[test]
+    fn filters_full_backup_to_selected_remotes() {
+        let mut store = AppStore::default();
+        store
+            .remotes
+            .insert("drive".into(), crate::store::RemoteMeta::default());
+        store
+            .remotes
+            .insert("dropbox".into(), crate::store::RemoteMeta::default());
+        store.quick_runs.push(crate::store::QuickRun::new(
+            "Nightly".into(),
+            crate::operations::OperationType::Sync,
+            "drive".into(),
+        ));
+        store.quick_runs.push(crate::store::QuickRun::new(
+            "Photos".into(),
+            crate::operations::OperationType::Copy,
+            "dropbox".into(),
+        ));
+        let scoped = filter_store_remotes(&store, &["drive".into()]);
+        assert!(scoped.remotes.contains_key("drive"));
+        assert!(!scoped.remotes.contains_key("dropbox"));
+        assert_eq!(scoped.quick_runs.len(), 1);
+        assert_eq!(scoped.quick_runs[0].remote_name, "drive");
+        let dump = serde_json::json!({
+            "drive": { "type": "drive" },
+            "dropbox": { "type": "dropbox" }
+        });
+        let filtered = filter_rclone_names(&dump, &["drive".into()]);
+        assert!(filtered.get("drive").is_some());
+        assert!(filtered.get("dropbox").is_none());
+        assert_eq!(
+            filter_store_remotes(&store, &[]).remotes.len(),
+            store.remotes.len()
+        );
     }
 
     #[test]

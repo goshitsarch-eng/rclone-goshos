@@ -2185,6 +2185,12 @@
       "resetAll": "Tüm Ayarları Sıfırla",
       "noSettingsFound": "Eşleşen ayar bulunamadı",
       "trySearching": "Şunu aramayı deneyin:",
+      "searchSuggestions": {
+        "apiPort": "API bağlantı noktası",
+        "startup": "başlangıç",
+        "debug": "hata ayıklama",
+        "bandwidth": "bant genişliği"
+      },
       "readyToRestartHeader": "Yeniden Başlatma Gerektiren Ayarlar",
       "readyToRestartDesc": "Aşağıdaki değişikliklerin etkili olması için motorun yeniden başlatılması gerekir:",
       "discardChanges": "Değişiklikleri İptal Et",

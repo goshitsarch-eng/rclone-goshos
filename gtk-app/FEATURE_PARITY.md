@@ -491,6 +491,9 @@ This client is the GTK 4 + libadwaita rewrite of the Angular/Tauri desktop UI. I
 - Quick Run guidance banners remove tracked rows instead of Adwaita's internal PreferencesGroup box
 - Check-result rows show status icons, icon resolve actions, and resolve progress as preparing or bytes/size/ETA
 - Path picker Browse tooltip uses `common.browse`
+- Preferences search matches title and help text, shows suggestion chips (API port / startup / debug / bandwidth), and jumps to the setting page
+- Preference rows use `.description` as subtitle so Adw search finds help text
+- Full backup export can subset remotes with per-remote switches (store + rclone dump)
 
 ## Still deepening toward pixel-level Angular parity
 

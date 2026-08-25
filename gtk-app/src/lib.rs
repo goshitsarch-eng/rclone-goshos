@@ -35,6 +35,7 @@ pub mod path_inspection;
 pub mod path_kind;
 pub mod picker;
 pub mod platform;
+pub mod pref_search;
 pub mod presets;
 pub mod providers;
 pub mod rclone;

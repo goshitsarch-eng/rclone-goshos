@@ -2191,6 +2191,12 @@
       "resetAll": "Reset All Settings",
       "noSettingsFound": "No settings found matching",
       "trySearching": "Try searching for:",
+      "searchSuggestions": {
+        "apiPort": "API port",
+        "startup": "startup",
+        "debug": "debug",
+        "bandwidth": "bandwidth"
+      },
       "readyToRestartHeader": "Settings Requiring Restart",
       "readyToRestartDesc": "The following changes require an engine restart to take effect:",
       "discardChanges": "Discard Changes",

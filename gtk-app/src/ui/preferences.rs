@@ -9,6 +9,7 @@ use crate::settings::{
     apply_path_values, default_for_path, display_setting, requires_engine_restart, values_equal,
 };
 use adw::prelude::*;
+use gtk::prelude::IsA;
 use serde_json::{json, Value};
 use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
@@ -568,10 +569,132 @@ pub fn present_page(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, page: Option<&s
     dialog.add(&core);
     dialog.add(&security);
     dialog.add(&dev);
+    dialog.add(&search_page(&ctx, &dialog));
     if let Some(name) = page.filter(|name| !name.is_empty()) {
         dialog.set_visible_page_name(name);
     }
     dialog.present(Some(parent));
+}
+
+fn search_page(ctx: &AppCtx, dialog: &adw::PreferencesDialog) -> adw::PreferencesPage {
+    let page = adw::PreferencesPage::new();
+    page.set_name(Some("search"));
+    page.set_title(&ctx.t_or("modals.preferences.searchResults", "Search Results"));
+    page.set_icon_name(Some("edit-find-symbolic"));
+    let query = adw::EntryRow::new();
+    query.set_title(&ctx.t_or("modals.preferences.searchPlaceholder", "Search settings..."));
+    let query_group = adw::PreferencesGroup::new();
+    query_group.add(&query);
+    let chips_row = adw::ActionRow::new();
+    chips_row.set_title(&ctx.t_or("modals.preferences.trySearching", "Try searching for:"));
+    for (id, key, fallback) in crate::pref_search::SUGGESTIONS {
+        let label = ctx.t_or(key, fallback);
+        let btn = gtk::Button::with_label(&label);
+        btn.add_css_class("pill");
+        btn.set_valign(gtk::Align::Center);
+        btn.set_tooltip_text(Some(&ctx.tf(
+            "modals.preferences.aria.searchFor",
+            &[("suggestion", &label)],
+        )));
+        let query = query.clone();
+        let text = if *id == "apiPort" {
+            "port".to_string()
+        } else {
+            label.clone()
+        };
+        btn.connect_clicked(move |_| query.set_text(&text));
+        chips_row.add_suffix(&btn);
+    }
+    let results = adw::PreferencesGroup::new();
+    results.set_title(&ctx.t_or("modals.preferences.searchResults", "Search Results"));
+    let empty = adw::ActionRow::new();
+    empty.set_title(&ctx.t_or(
+        "modals.preferences.noSettingsFound",
+        "No settings found matching",
+    ));
+    empty.set_visible(false);
+    results.add(&empty);
+    let result_rows: Rc<RefCell<Vec<adw::ActionRow>>> = Rc::new(RefCell::new(Vec::new()));
+    let refresh = {
+        let ctx = ctx.clone();
+        let dialog = dialog.clone();
+        let results = results.clone();
+        let empty = empty.clone();
+        let chips_row = chips_row.clone();
+        let result_rows = result_rows.clone();
+        Rc::new(move |text: String| {
+            for row in result_rows.borrow().iter() {
+                results.remove(row);
+            }
+            result_rows.borrow_mut().clear();
+            let query = text.trim().to_string();
+            if query.is_empty() {
+                empty.set_visible(false);
+                chips_row.set_visible(true);
+                return;
+            }
+            let hits = crate::pref_search::matching_items(&query, &ctx.i18n.borrow());
+            chips_row.set_visible(hits.is_empty());
+            empty.set_visible(hits.is_empty());
+            empty.set_subtitle(&format!("\"{query}\""));
+            for item in hits {
+                let row = adw::ActionRow::new();
+                row.set_title(&ctx.t_or(item.title_key, item.title_fallback));
+                row.set_subtitle(&format!(
+                    "{} · {}",
+                    ctx.t_or(&format!("modals.preferences.tabs.{}", item.page), item.page),
+                    ctx.t_or(item.help_key, item.help_fallback)
+                ));
+                row.set_activatable(true);
+                let dialog = dialog.clone();
+                let page = item.page.to_string();
+                row.connect_activated(move |_| {
+                    dialog.set_visible_page_name(&page);
+                });
+                results.add(&row);
+                result_rows.borrow_mut().push(row);
+            }
+        })
+    };
+    {
+        let refresh = refresh.clone();
+        query.connect_changed(move |row| refresh(row.text().to_string()));
+    }
+    let chips_group = adw::PreferencesGroup::new();
+    chips_group.add(&chips_row);
+    page.add(&query_group);
+    page.add(&chips_group);
+    page.add(&results);
+    page
+}
+
+fn apply_help_subtitle(
+    session: &PrefsSession,
+    row: &impl adw::prelude::ActionRowExt,
+    label_key: &str,
+) {
+    if row.subtitle().is_some_and(|text| !text.is_empty()) {
+        return;
+    }
+    if let Some(help) = help_text(session, label_key) {
+        row.set_subtitle(&help);
+    }
+}
+
+fn apply_help_tooltip(session: &PrefsSession, widget: &impl IsA<gtk::Widget>, label_key: &str) {
+    if let Some(help) = help_text(session, label_key) {
+        widget.set_tooltip_text(Some(&help));
+    }
+}
+
+fn help_text(session: &PrefsSession, label_key: &str) -> Option<String> {
+    let key = crate::pref_search::help_key_from_label(label_key)?;
+    session
+        .ctx
+        .i18n
+        .borrow()
+        .has(&key)
+        .then(|| session.ctx.t(&key))
 }
 
 fn add_language_row(session: &PrefsSession, group: &adw::PreferencesGroup) {
@@ -658,6 +781,7 @@ fn add_switch(
         .unwrap_or(false);
     let row = adw::SwitchRow::new();
     row.set_title(&session.ctx.t_or(key, fallback));
+    apply_help_subtitle(session, &row, key);
     row.set_active(active);
     let extra = Rc::new(extra);
     {
@@ -718,6 +842,7 @@ fn add_combo(
         .unwrap_or_default();
     let row = adw::ComboRow::new();
     row.set_title(&session.ctx.t_or(key, fallback));
+    apply_help_subtitle(session, &row, key);
     if let Some((sub_key, sub_fallback)) = subtitle {
         row.set_subtitle(&session.ctx.t_or(sub_key, sub_fallback));
     }
@@ -786,6 +911,7 @@ fn add_int_combo(
         .unwrap_or(options.first().copied().unwrap_or(0));
     let row = adw::ComboRow::new();
     row.set_title(&session.ctx.t_or(key, fallback));
+    apply_help_subtitle(session, &row, key);
     row.set_model(Some(&gtk::StringList::new(&refs)));
     if let Some(idx) = options.iter().position(|item| *item == current) {
         row.set_selected(idx as u32);
@@ -846,6 +972,7 @@ fn add_entry(
         .unwrap_or_default();
     let row = adw::EntryRow::new();
     row.set_title(&session.ctx.t_or(key, fallback));
+    apply_help_tooltip(session, &row, key);
     row.set_text(&current);
     let encode = Rc::new(encode);
     let extra = Rc::new(extra);
@@ -910,6 +1037,7 @@ fn add_spin(
         .unwrap_or(0);
     let row = adw::SpinRow::with_range(min, max, step);
     row.set_title(&session.ctx.t_or(key, fallback));
+    apply_help_tooltip(session, &row, key);
     row.set_value(current as f64);
     {
         let session = session.clone();

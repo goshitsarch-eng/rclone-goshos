@@ -33,6 +33,7 @@ mod path_inspection;
 mod path_kind;
 mod picker;
 mod platform;
+mod pref_search;
 mod presets;
 mod providers;
 mod rclone;

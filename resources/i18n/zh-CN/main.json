@@ -2185,6 +2185,12 @@
       "resetAll": "重置所有设置",
       "noSettingsFound": "未找到匹配的设置",
       "trySearching": "尝试搜索：",
+      "searchSuggestions": {
+        "apiPort": "API 端口",
+        "startup": "启动",
+        "debug": "调试",
+        "bandwidth": "带宽"
+      },
       "readyToRestartHeader": "需要重启生效的设置",
       "readyToRestartDesc": "以下修改需要重启引擎才能生效：",
       "discardChanges": "放弃更改",

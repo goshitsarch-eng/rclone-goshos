@@ -2185,6 +2185,12 @@
       "resetAll": "Réinitialiser tous les paramètres",
       "noSettingsFound": "Aucun paramètre correspondant",
       "trySearching": "Essayez de rechercher :",
+      "searchSuggestions": {
+        "apiPort": "Port API",
+        "startup": "démarrage",
+        "debug": "débogage",
+        "bandwidth": "bande passante"
+      },
       "readyToRestartHeader": "Redémarrage des paramètres requis",
       "readyToRestartDesc": "Les modifications suivantes nécessitent un redémarrage du moteur pour prendre effet :",
       "discardChanges": "Annuler les modifications",

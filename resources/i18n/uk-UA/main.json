@@ -2185,6 +2185,12 @@
       "resetAll": "Скинути всі налаштування",
       "noSettingsFound": "Не знайдено налаштувань за запитом",
       "trySearching": "Спробуйте пошукати:",
+      "searchSuggestions": {
+        "apiPort": "Порт API",
+        "startup": "автозапуск",
+        "debug": "налагодження",
+        "bandwidth": "пропускна здатність"
+      },
       "readyToRestartHeader": "Налаштування, що потребують перезапуску",
       "readyToRestartDesc": "Наступні зміни потребують перезапуску рушія, щоб набути чинності:",
       "discardChanges": "Відхилити зміни",

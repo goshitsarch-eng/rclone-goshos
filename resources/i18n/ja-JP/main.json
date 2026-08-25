@@ -2185,6 +2185,12 @@
       "resetAll": "全ての設定をリセット",
       "noSettingsFound": "一致する設定が見つかりません",
       "trySearching": "検索キーワードの例:",
+      "searchSuggestions": {
+        "apiPort": "APIポート",
+        "startup": "スタートアップ",
+        "debug": "デバッグ",
+        "bandwidth": "帯域幅"
+      },
       "readyToRestartHeader": "再起動が必要な設定",
       "readyToRestartDesc": "以下の変更を有効にするにはエンジンの再起動が必要です:",
       "discardChanges": "変更を破棄",

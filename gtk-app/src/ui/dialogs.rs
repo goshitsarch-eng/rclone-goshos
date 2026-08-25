@@ -5044,6 +5044,49 @@ pub fn export_backup(
         "Dump remotes from this RC instance",
     ));
     backend_row.set_model(Some(&gtk::StringList::new(&backend_refs)));
+    let selected_profiles: Rc<RefCell<HashSet<String>>> =
+        Rc::new(RefCell::new(remotes.iter().cloned().collect()));
+    let profiles_group = adw::PreferencesGroup::new();
+    profiles_group.set_title(&ctx.t_or("modals.export.profiles", "Profiles"));
+    profiles_group.set_description(Some(&ctx.t_or(
+        "modals.export.profilesHint",
+        "Choose which remotes to include in a full backup.",
+    )));
+    for name in &remotes {
+        let row = adw::SwitchRow::new();
+        row.set_title(name);
+        row.set_active(true);
+        let selected_profiles = selected_profiles.clone();
+        let name = name.clone();
+        row.connect_active_notify(move |row| {
+            let mut selected = selected_profiles.borrow_mut();
+            if row.is_active() {
+                selected.insert(name.clone());
+            } else {
+                selected.remove(&name);
+            }
+        });
+        profiles_group.add(&row);
+    }
+    let refresh_profiles = {
+        let profiles_group = profiles_group.clone();
+        let type_row = type_row.clone();
+        let specific = specific.clone();
+        let remotes_len = remotes.len();
+        Rc::new(move || {
+            let full = type_row.selected() == 0;
+            profiles_group.set_visible(full && !specific.is_active() && remotes_len > 0);
+        })
+    };
+    {
+        let refresh = refresh_profiles.clone();
+        type_row.connect_selected_notify(move |_| refresh());
+    }
+    {
+        let refresh = refresh_profiles.clone();
+        specific.connect_active_notify(move |_| refresh());
+    }
+    refresh_profiles();
     let save = gtk::Button::with_label(&ctx.t_or("modals.export.exportNow", "Choose file…"));
     save.add_css_class("suggested-action");
     {
@@ -5060,6 +5103,7 @@ pub fn export_backup(
         let secrets = secrets.clone();
         let backend_row = backend_row.clone();
         let extra_backends = extra_backends.clone();
+        let selected_profiles = selected_profiles.clone();
         save.connect_clicked(move |_| {
             let mut export_type = categories
                 .get(type_row.selected() as usize)
@@ -5079,6 +5123,8 @@ pub fn export_backup(
             let toast = toast.clone();
             let backend_row = backend_row.clone();
             let extra_backends = extra_backends.clone();
+            let specific = specific.clone();
+            let selected_profiles = selected_profiles.clone();
             file_dialog.save(
                 Some(&parent),
                 None::<gio::Cancellable>.as_ref(),
@@ -5107,6 +5153,14 @@ pub fn export_backup(
                             let mut dump = dump_client
                                 .and_then(|c| c.dump_config().ok())
                                 .unwrap_or(serde_json::json!({}));
+                            let store = if !specific.is_active() && export_type == "FullBackup" {
+                                let names: Vec<String> =
+                                    selected_profiles.borrow().iter().cloned().collect();
+                                dump = crate::backup::filter_rclone_names(&dump, &names);
+                                crate::backup::filter_store_remotes(&ctx.store.borrow(), &names)
+                            } else {
+                                ctx.store.borrow().clone()
+                            };
                             if !include_secrets {
                                 if let Some(obj) = dump.as_object_mut() {
                                     for cfg in obj.values_mut() {
@@ -5133,7 +5187,7 @@ pub fn export_backup(
                             match backup::create_backup(
                                 &path,
                                 &ctx.settings.borrow(),
-                                &ctx.store.borrow(),
+                                &store,
                                 &dump,
                                 &export_type,
                                 &note_text,
@@ -5165,6 +5219,7 @@ pub fn export_backup(
     let box_ = gtk::Box::new(gtk::Orientation::Vertical, 8);
     box_.set_margin_top(12);
     box_.append(&group);
+    box_.append(&profiles_group);
     box_.append(&save);
     dialog.set_child(Some(&box_));
     present_window_or_dialog(parent.upcast_ref(), &ctx, &dialog);

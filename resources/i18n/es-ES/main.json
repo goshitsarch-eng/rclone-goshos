@@ -2185,6 +2185,12 @@
       "resetAll": "Restablecer toda la configuración",
       "noSettingsFound": "No se encontraron ajustes que coincidan",
       "trySearching": "Intente buscar:",
+      "searchSuggestions": {
+        "apiPort": "Puerto API",
+        "startup": "inicio",
+        "debug": "depuración",
+        "bandwidth": "ancho de banda"
+      },
       "readyToRestartHeader": "Ajustes que requieren reinicio",
       "readyToRestartDesc": "Los siguientes cambios requieren un reinicio del motor para que surtan efecto:",
       "discardChanges": "Descartar cambios",
