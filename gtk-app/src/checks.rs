@@ -215,6 +215,47 @@ pub fn relative_time_parts(
     }
 }
 
+pub fn check_status_icon(status: &str) -> &'static str {
+    match status {
+        "checked" | "match" => "emblem-ok-symbolic",
+        "failed" | "error" => "dialog-error-symbolic",
+        _ => "dialog-warning-symbolic",
+    }
+}
+
+pub fn resolve_icon(status: &str) -> &'static str {
+    if status == "missing_src" {
+        "go-previous-symbolic"
+    } else {
+        "go-next-symbolic"
+    }
+}
+
+pub fn resolve_is_preparing(progress: f64, bytes: i64) -> bool {
+    progress <= 0.0 && bytes <= 0
+}
+
+pub fn format_resolve_progress(bytes: i64, size: i64, speed: f64, eta_secs: i64) -> String {
+    let mut parts = vec![format!(
+        "{} / {}",
+        crate::rclone::format_bytes(bytes),
+        crate::rclone::format_bytes(size)
+    )];
+    if speed > 0.0 {
+        parts.push(format!(
+            "{}/s",
+            crate::rclone::format_bytes(speed.round() as i64)
+        ));
+    }
+    if eta_secs > 0 {
+        parts.push(format!(
+            "ETA {}",
+            crate::rclone::format_eta_seconds(eta_secs)
+        ));
+    }
+    parts.join(" · ")
+}
+
 pub fn check_status_key(status: &str) -> &'static str {
     match status {
         "missing_dst" => "shared.transferActivity.status.missingDst",
@@ -382,6 +423,16 @@ mod tests {
         assert_eq!(
             check_status_key("missing_dst"),
             "shared.transferActivity.status.missingDst"
+        );
+        assert_eq!(check_status_icon("checked"), "emblem-ok-symbolic");
+        assert_eq!(check_status_icon("missing_dst"), "dialog-warning-symbolic");
+        assert_eq!(resolve_icon("missing_src"), "go-previous-symbolic");
+        assert_eq!(resolve_icon("partial"), "go-next-symbolic");
+        assert!(resolve_is_preparing(0.0, 0));
+        assert!(!resolve_is_preparing(0.4, 0));
+        assert_eq!(
+            format_resolve_progress(512, 1024, 0.0, 12),
+            "512 B / 1.0 KiB · ETA 12s"
         );
     }
 }

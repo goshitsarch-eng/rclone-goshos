@@ -9538,6 +9538,18 @@ pub(super) fn check_result_row(
     };
     row.set_subtitle(&subtitle);
     row.add_css_class(&format!("check-{}", item.status.replace('_', "-")));
+    let status_icon = gtk::Image::from_icon_name(crate::checks::check_status_icon(&item.status));
+    status_icon.set_valign(gtk::Align::Center);
+    row.add_prefix(&status_icon);
+    let resolve_job = {
+        let snap = ctx.snapshot.borrow();
+        let meta = ctx.store.borrow();
+        crate::jobs::find_resolve_job(&snap.jobs, &meta.job_meta, &item.name)
+            .or_else(|| {
+                crate::jobs::find_resolve_job(&meta.job_history, &meta.job_meta, &item.name)
+            })
+            .cloned()
+    };
     if let Some(kind) = item.resolve_kind() {
         let resolve_label = if item.needs_overwrite_confirm() {
             ctx.t_or(
@@ -9555,8 +9567,16 @@ pub(super) fn check_result_row(
                 "Copy to Destination",
             )
         };
-        let resolve = gtk::Button::with_label(&resolve_label);
+        let resolve = gtk::Button::from_icon_name(crate::checks::resolve_icon(&item.status));
         resolve.set_valign(gtk::Align::Center);
+        resolve.add_css_class("flat");
+        resolve.set_tooltip_text(Some(&resolve_label));
+        if resolve_job
+            .as_ref()
+            .is_some_and(crate::jobs::job_is_running)
+        {
+            resolve.set_sensitive(false);
+        }
         let ctx = ctx.clone();
         let item = item.clone();
         let parent = parent.clone();
@@ -9632,26 +9652,26 @@ pub(super) fn check_result_row(
         Some(on_deleted),
     ));
     wrap.append(&row);
-    let resolve_job = {
-        let snap = ctx.snapshot.borrow();
-        let meta = ctx.store.borrow();
-        crate::jobs::find_resolve_job(&snap.jobs, &meta.job_meta, &item.name)
-            .or_else(|| {
-                crate::jobs::find_resolve_job(&meta.job_history, &meta.job_meta, &item.name)
-            })
-            .cloned()
-    };
     if let Some(job) = resolve_job {
         if crate::jobs::job_is_running(&job) {
-            let bar = gtk::ProgressBar::new();
-            bar.set_fraction(job.progress.clamp(0.0, 1.0));
-            bar.set_show_text(true);
+            let bytes = crate::jobs::stats_i64(&job.stats, &["bytes"]);
+            let size = crate::jobs::stats_i64(&job.stats, &["totalBytes", "total_bytes"]);
             let speed = crate::jobs::stats_f64(&job.stats, &["speed"]);
-            bar.set_text(Some(&format!(
-                "{:.0}% · {}/s",
-                job.progress * 100.0,
-                crate::rclone::format_bytes(speed as i64)
-            )));
+            let eta = crate::jobs::stats_i64(&job.stats, &["eta"]);
+            let preparing = crate::checks::resolve_is_preparing(job.progress, bytes);
+            let bar = gtk::ProgressBar::new();
+            bar.set_show_text(true);
+            if preparing {
+                bar.pulse();
+                bar.set_text(Some(
+                    &ctx.t_or("shared.transferActivity.status.preparing", "Preparing"),
+                ));
+            } else {
+                bar.set_fraction(job.progress.clamp(0.0, 1.0));
+                bar.set_text(Some(&crate::checks::format_resolve_progress(
+                    bytes, size, speed, eta,
+                )));
+            }
             wrap.append(&bar);
         } else if job.status == "failed" || job.error.is_some() {
             let err = gtk::Label::new(Some(&job.error.unwrap_or_else(|| job.status.clone())));
@@ -10065,11 +10085,15 @@ pub(crate) fn attach_cron_builder(cron: &adw::EntryRow, ctx: &AppCtx) -> gtk::Bo
     hour.set_tooltip_text(Some(&ctx.t_or("remoteConfig.cronParts.hour", "Hour")));
     let minute = gtk::SpinButton::with_range(0.0, 59.0, 1.0);
     minute.set_tooltip_text(Some(&ctx.t_or("remoteConfig.cronParts.minute", "Minute")));
-    let dow = gtk::Entry::new();
-    dow.set_placeholder_text(Some("1-5"));
-    dow.set_text("1");
-    dow.set_width_chars(5);
-    dow.set_tooltip_text(Some(&ctx.t_or("remoteConfig.cronParts.dow", "Day of week")));
+    let weekday_labels: Vec<String> = crate::cron::WEEKDAY_CHOICES
+        .iter()
+        .map(|(_, key, fallback)| ctx.t_or(key, fallback))
+        .collect();
+    let weekday_refs: Vec<&str> = weekday_labels.iter().map(|s| s.as_str()).collect();
+    let dow = gtk::DropDown::from_strings(&weekday_refs);
+    dow.set_tooltip_text(Some(
+        &ctx.t_or("wizards.appOperation.cronParts.dayOfWeek", "Day of Week"),
+    ));
     let dom = gtk::SpinButton::with_range(1.0, 31.0, 1.0);
     dom.set_tooltip_text(Some(
         &ctx.t_or("remoteConfig.cronParts.dom", "Day of month"),
@@ -10088,7 +10112,9 @@ pub(crate) fn attach_cron_builder(cron: &adw::EntryRow, ctx: &AppCtx) -> gtk::Bo
         });
         hour.set_value(parsed.hour as f64);
         minute.set_value(parsed.minute as f64);
-        dow.set_text(&parsed.day_of_week);
+        if let Some(idx) = crate::cron::weekday_index(&parsed.day_of_week) {
+            dow.set_selected(idx);
+        }
         dom.set_value(parsed.day_of_month as f64);
         interval.set_value(parsed.interval_hours as f64);
     }
@@ -10110,7 +10136,7 @@ pub(crate) fn attach_cron_builder(cron: &adw::EntryRow, ctx: &AppCtx) -> gtk::Bo
                 },
                 minute: minute.value() as u32,
                 hour: hour.value() as u32,
-                day_of_week: dow.text().to_string(),
+                day_of_week: crate::cron::weekday_value(dow.selected()).to_string(),
                 day_of_month: dom.value() as u32,
                 interval_hours: interval.value().max(1.0) as u32,
             };
@@ -10131,7 +10157,7 @@ pub(crate) fn attach_cron_builder(cron: &adw::EntryRow, ctx: &AppCtx) -> gtk::Bo
     }
     {
         let apply = apply_simple.clone();
-        dow.connect_changed(move |_| apply());
+        dow.connect_selected_notify(move |_| apply());
     }
     {
         let apply = apply_simple.clone();
@@ -10141,13 +10167,13 @@ pub(crate) fn attach_cron_builder(cron: &adw::EntryRow, ctx: &AppCtx) -> gtk::Bo
         let apply = apply_simple.clone();
         interval.connect_value_changed(move |_| apply());
     }
-    {
+    let sync_simple_visibility = {
         let dow = dow.clone();
         let dom = dom.clone();
         let interval = interval.clone();
         let hour = hour.clone();
         let minute = minute.clone();
-        freq.connect_selected_notify(move |freq| {
+        Rc::new(move |freq: &gtk::DropDown| {
             let weekly = freq.selected() == 1;
             let monthly = freq.selected() == 2;
             let every = freq.selected() == 3;
@@ -10156,11 +10182,13 @@ pub(crate) fn attach_cron_builder(cron: &adw::EntryRow, ctx: &AppCtx) -> gtk::Bo
             interval.set_visible(every);
             hour.set_visible(!every);
             minute.set_visible(!every);
-        });
+        })
+    };
+    {
+        let sync = sync_simple_visibility.clone();
+        freq.connect_selected_notify(move |freq| sync(freq));
     }
-    dow.set_visible(false);
-    dom.set_visible(false);
-    interval.set_visible(false);
+    sync_simple_visibility(&freq);
     simple.append(&freq);
     simple.append(&hour);
     simple.append(&minute);
@@ -10171,23 +10199,50 @@ pub(crate) fn attach_cron_builder(cron: &adw::EntryRow, ctx: &AppCtx) -> gtk::Bo
 
     let advanced = gtk::Box::new(gtk::Orientation::Horizontal, 4);
     let minute_f = gtk::Entry::new();
-    minute_f.set_placeholder_text(Some("min"));
+    minute_f.set_placeholder_text(Some(
+        &ctx.t_or("wizards.appOperation.cronParts.minute", "Minute (0-59)"),
+    ));
+    minute_f.set_tooltip_text(Some(
+        &ctx.t_or("wizards.appOperation.cronParts.minute", "Minute (0-59)"),
+    ));
     minute_f.set_text("0");
     minute_f.set_width_chars(4);
     let hour_f = gtk::Entry::new();
-    hour_f.set_placeholder_text(Some("hour"));
+    hour_f.set_placeholder_text(Some(
+        &ctx.t_or("wizards.appOperation.cronParts.hour", "Hour (0-23)"),
+    ));
+    hour_f.set_tooltip_text(Some(
+        &ctx.t_or("wizards.appOperation.cronParts.hour", "Hour (0-23)"),
+    ));
     hour_f.set_text("*");
     hour_f.set_width_chars(4);
     let dom_f = gtk::Entry::new();
-    dom_f.set_placeholder_text(Some("dom"));
+    dom_f.set_placeholder_text(Some(&ctx.t_or(
+        "wizards.appOperation.cronParts.dayOfMonth",
+        "Day of Month (1-31)",
+    )));
+    dom_f.set_tooltip_text(Some(&ctx.t_or(
+        "wizards.appOperation.cronParts.dayOfMonth",
+        "Day of Month (1-31)",
+    )));
     dom_f.set_text("*");
     dom_f.set_width_chars(4);
     let month_f = gtk::Entry::new();
-    month_f.set_placeholder_text(Some("mon"));
+    month_f.set_placeholder_text(Some(
+        &ctx.t_or("wizards.appOperation.cronParts.month", "Month (1-12)"),
+    ));
+    month_f.set_tooltip_text(Some(
+        &ctx.t_or("wizards.appOperation.cronParts.month", "Month (1-12)"),
+    ));
     month_f.set_text("*");
     month_f.set_width_chars(4);
     let dow_f = gtk::Entry::new();
-    dow_f.set_placeholder_text(Some("dow"));
+    dow_f.set_placeholder_text(Some(
+        &ctx.t_or("wizards.appOperation.cronParts.dayOfWeek", "Day of Week"),
+    ));
+    dow_f.set_tooltip_text(Some(
+        &ctx.t_or("wizards.appOperation.cronParts.dayOfWeek", "Day of Week"),
+    ));
     dow_f.set_text("*");
     dow_f.set_width_chars(4);
     if let Some([min, hr, d, mon, dw]) = crate::cron::split_cron(&cron.text()) {
@@ -10220,8 +10275,73 @@ pub(crate) fn attach_cron_builder(cron: &adw::EntryRow, ctx: &AppCtx) -> gtk::Bo
         advanced.append(field);
     }
     outer.append(&advanced);
+
+    let preview = gtk::Box::new(gtk::Orientation::Vertical, 2);
+    let preview_title = gtk::Label::new(Some(
+        &ctx.t_or("wizards.appOperation.yourSchedule", "Your Schedule"),
+    ));
+    preview_title.add_css_class("heading");
+    preview_title.set_xalign(0.0);
+    let preview_body = gtk::Label::new(None);
+    preview_body.add_css_class("dim-label");
+    preview_body.set_wrap(true);
+    preview_body.set_xalign(0.0);
+    preview_body.set_selectable(true);
+    preview_body.set_max_width_chars(48);
+    preview.append(&preview_title);
+    preview.append(&preview_body);
+    let refresh_preview = {
+        let cron = cron.clone();
+        let ctx = ctx.clone();
+        let preview = preview.clone();
+        let preview_body = preview_body.clone();
+        Rc::new(move || {
+            let text = cron.text().to_string();
+            if text.trim().is_empty() {
+                preview.set_visible(false);
+                preview_body.set_text("");
+                return;
+            }
+            preview.set_visible(true);
+            preview_body.set_text(&cron_schedule_preview(&ctx, &text));
+        })
+    };
+    {
+        let refresh = refresh_preview.clone();
+        cron.connect_changed(move |_| refresh());
+    }
+    refresh_preview();
+    outer.append(&preview);
     let _ = apply_simple;
     outer
+}
+
+fn cron_schedule_preview(ctx: &AppCtx, expression: &str) -> String {
+    if let Err(error) = validate_cron(expression) {
+        return error;
+    }
+    let i18n = ctx.i18n.borrow();
+    let mut lines = vec![
+        describe_cron_i18n(expression, &i18n),
+        expression.to_string(),
+    ];
+    if let Some(next) = crate::automation::next_cron_run(expression, chrono::Utc::now()) {
+        let label = i18n.t_or("wizards.appOperation.nextRun", "Next run:");
+        lines.push(format!(
+            "{label} {}",
+            crate::cron::format_next_run(&i18n, next, chrono::Utc::now())
+        ));
+    }
+    let timezone = crate::cron::user_timezone_label();
+    if i18n.has("wizards.appOperation.timezoneNote") {
+        lines.push(i18n.tf(
+            "wizards.appOperation.timezoneNote",
+            &[("timezone", &timezone)],
+        ));
+    } else {
+        lines.push(format!("Times are in your local timezone ({timezone})"));
+    }
+    lines.join("\n")
 }
 
 pub(crate) fn attach_path_picker(
@@ -10231,7 +10351,7 @@ pub(crate) fn attach_path_picker(
 ) {
     let btn = gtk::Button::from_icon_name("folder-open-symbolic");
     btn.set_valign(gtk::Align::Center);
-    btn.set_tooltip_text(Some("Browse"));
+    btn.set_tooltip_text(Some(&ctx.t_or("common.browse", "Browse")));
     let ctx = ctx.clone();
     let picked = row.clone();
     btn.connect_clicked(move |_| {

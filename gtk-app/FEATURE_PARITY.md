@@ -486,6 +486,9 @@ This client is the GTK 4 + libadwaita rewrite of the Angular/Tauri desktop UI. I
 - Job detail puts identity + transfers first and statistics after, matching Angular overview/profile then activity
 - Deep links open Preferences, Remote Config, Onboarding, About, Logs, and Shortcuts (`--preferences [page]`, `--remote-config`, `--onboarding`, `#/preferences`, `#/remote-config/...`, `#/onboarding`, `#/about`, `#/logs`, `#/shortcuts`)
 - A second instance forwards those flags through GIO so `--about` / `--job` / `--preferences` activate the running app
+- Cron builder weekday dropdown (Mon–Sun / weekdays / weekends), i18n advanced field placeholders, and Your Schedule + next-run + timezone preview
+- Check-result rows show status icons, icon resolve actions, and resolve progress as preparing or bytes/size/ETA
+- Path picker Browse tooltip uses `common.browse`
 
 ## Still deepening toward pixel-level Angular parity
 

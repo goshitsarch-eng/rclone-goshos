@@ -1839,6 +1839,24 @@ pub fn nanoseconds_to_duration(ns: i64) -> String {
     }
 }
 
+pub fn format_eta_seconds(seconds: i64) -> String {
+    if seconds <= 0 {
+        return "—".into();
+    }
+    let hours = seconds / 3600;
+    let minutes = (seconds % 3600) / 60;
+    let secs = seconds % 60;
+    let mut parts = Vec::new();
+    if hours > 0 {
+        parts.push(format!("{hours}h"));
+    }
+    if minutes > 0 || hours > 0 {
+        parts.push(format!("{minutes}m"));
+    }
+    parts.push(format!("{secs}s"));
+    parts.join(" ")
+}
+
 pub fn format_bytes(bytes: i64) -> String {
     if bytes < 0 {
         return "—".into();
@@ -1927,6 +1945,10 @@ mod tests {
         assert_eq!(format_bytes(512), "512 B");
         assert_eq!(format_bytes(1536), "1.5 KiB");
         assert_eq!(format_bytes(-1), "—");
+        assert_eq!(format_eta_seconds(0), "—");
+        assert_eq!(format_eta_seconds(12), "12s");
+        assert_eq!(format_eta_seconds(75), "1m 15s");
+        assert_eq!(format_eta_seconds(3661), "1h 1m 1s");
     }
 
     #[test]
