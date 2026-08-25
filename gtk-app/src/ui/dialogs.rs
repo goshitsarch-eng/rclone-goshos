@@ -5834,6 +5834,89 @@ fn attach_text_preview(
     }
 }
 
+fn append_markdown_targets(
+    host: &gtk::Box,
+    name: &str,
+    text: &str,
+    remote: &str,
+    file_path: &str,
+    ctx: &AppCtx,
+    dialog_parent: &impl IsA<gtk::Widget>,
+) {
+    if !crate::markdown::is_markdown(name) {
+        return;
+    }
+    let targets = crate::markdown::relative_targets(text);
+    if targets.is_empty() {
+        return;
+    }
+    let title = gtk::Label::new(Some(
+        &ctx.t_or("fileBrowser.fileViewer.shortcutTargets", "Shortcut Targets"),
+    ));
+    title.set_xalign(0.0);
+    title.add_css_class("heading");
+    host.append(&title);
+    let list = gtk::ListBox::new();
+    list.add_css_class("boxed-list");
+    for (label, rel) in targets {
+        let resolved = crate::markdown::resolve_relative_path(file_path, &rel);
+        let row = adw::ActionRow::new();
+        row.set_title(&label);
+        row.set_subtitle(&resolved);
+        if resolved.starts_with("http://") || resolved.starts_with("https://") {
+            let link = gtk::LinkButton::with_label(&resolved, "");
+            link.set_uri(&resolved);
+            row.add_suffix(&link);
+        } else {
+            let open = gtk::Button::from_icon_name("document-open-symbolic");
+            open.set_valign(gtk::Align::Center);
+            open.set_tooltip_text(Some(
+                &ctx.t_or("fileBrowser.fileViewer.openNative", "Open in External App"),
+            ));
+            let ctx = ctx.clone();
+            let parent = dialog_parent.clone();
+            let open_remote = if crate::markdown::is_passthrough_ref(&resolved)
+                && resolved.contains(':')
+                && !resolved.starts_with('/')
+            {
+                crate::rclone::split_remote_path(&resolved).0
+            } else {
+                remote.to_string()
+            };
+            let path = if open_remote == "local" && crate::markdown::is_passthrough_ref(&resolved) {
+                resolved.clone()
+            } else if crate::markdown::is_passthrough_ref(&resolved)
+                && resolved.contains(':')
+                && !resolved.starts_with('/')
+            {
+                crate::rclone::split_remote_path(&resolved).1
+            } else {
+                resolved.clone()
+            };
+            let file_name = path
+                .rsplit('/')
+                .next()
+                .filter(|s| !s.is_empty())
+                .unwrap_or(path.as_str())
+                .to_string();
+            open.connect_clicked(move |_| {
+                file_viewer(
+                    &parent,
+                    ctx.clone(),
+                    &open_remote,
+                    &path,
+                    &file_name,
+                    false,
+                    &[],
+                );
+            });
+            row.add_suffix(&open);
+        }
+        list.append(&row);
+    }
+    host.append(&list);
+}
+
 fn attach_remote_stream_preview(
     parent: &gtk::Box,
     url: &str,
@@ -6293,6 +6376,7 @@ pub fn file_viewer(
                         None,
                         Some((ctx.clone(), fs, path.to_string())),
                     );
+                    append_markdown_targets(&box_, name, &text, remote, path, &ctx, parent);
                 }
             } else if category.can_stream_preview()
                 && client.probe_rc_serve(&client.rc_serve_url(remote, path))
@@ -6353,6 +6437,7 @@ pub fn file_viewer(
                 Some(&local.to_string_lossy()),
                 None,
             );
+            append_markdown_targets(&box_, name, &text, remote, path, &ctx, parent);
         }
     } else if remote == "local" && matches!(category, crate::operations::FileTypeCategory::Audio) {
         attach_audio_cover(&box_, Some(std::path::Path::new(path)), None);

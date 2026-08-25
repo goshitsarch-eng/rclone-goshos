@@ -343,6 +343,7 @@ This client is the GTK 4 + libadwaita rewrite of the Angular/Tauri desktop UI. I
 - Compact dashboard cards show up to 3 primary-action Start/Stop icons (Angular `primaryActionsFor`)
 - Compact cards with multiple profiles open a Start/Stop picker popover (Angular profile blossom)
 - Active mount/sync jobs expose folder-open shortcuts for src/dst / mount point
+- Markdown preview lists relative link/image targets and opens them (Angular `resolveRelativePath`)
 
 ## Still deepening toward pixel-level Angular parity
 
