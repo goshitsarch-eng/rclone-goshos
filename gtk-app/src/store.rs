@@ -16,6 +16,41 @@ pub struct RemoteMeta {
     pub sync_actions: Vec<String>,
     pub hidden: bool,
     pub profiles: HashMap<String, HashMap<String, ProfileConfig>>,
+    #[serde(default)]
+    pub vfs_configs: HashMap<String, Value>,
+    #[serde(default)]
+    pub filter_configs: HashMap<String, Value>,
+    #[serde(default)]
+    pub backend_configs: HashMap<String, Value>,
+    #[serde(default)]
+    pub runtime_remote_configs: HashMap<String, Value>,
+}
+
+impl RemoteMeta {
+    pub fn helper_profile(&self, kind: &str, name: &str) -> Option<Value> {
+        if name.is_empty() {
+            return None;
+        }
+        match kind {
+            "vfs" => self.vfs_configs.get(name).cloned(),
+            "filter" => self.filter_configs.get(name).cloned(),
+            "backend" => self.backend_configs.get(name).cloned(),
+            "runtime" | "runtime_remote" => self.runtime_remote_configs.get(name).cloned(),
+            _ => None,
+        }
+    }
+
+    pub fn helper_names(&self, kind: &str) -> Vec<String> {
+        let map = match kind {
+            "vfs" => &self.vfs_configs,
+            "filter" => &self.filter_configs,
+            "backend" => &self.backend_configs,
+            _ => &self.runtime_remote_configs,
+        };
+        let mut names: Vec<String> = map.keys().cloned().collect();
+        names.sort();
+        names
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -39,6 +74,8 @@ pub struct AppConfig {
     pub filter_profile: String,
     #[serde(default)]
     pub backend_profile: String,
+    #[serde(default)]
+    pub runtime_remote_profile: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -383,6 +420,8 @@ pub struct AppStore {
     pub logs: HashMap<String, Vec<String>>,
     pub hidden_remotes: Vec<String>,
     pub remote_order: Vec<String>,
+    #[serde(default)]
+    pub automation_last_run: HashMap<String, DateTime<Utc>>,
 }
 
 impl AppStore {
@@ -540,13 +579,24 @@ pub fn dispatch_action(action: &AlertAction, event: &AlertEvent) {
                 }
             }
         }
-        "email" | "mqtt" => {
-            log::info!(
-                "alert action {} queued ({}): {}",
-                action.kind,
-                action.name,
-                body
-            );
+        "email" => {
+            let title = event.title.clone();
+            let body = body.clone();
+            let config = action.config.clone();
+            std::thread::spawn(move || {
+                if let Err(e) = crate::smtp::send_alert_email(&config, &title, &body) {
+                    log::warn!("email alert failed: {e}");
+                }
+            });
+        }
+        "mqtt" => {
+            let body = body.clone();
+            let config = action.config.clone();
+            std::thread::spawn(move || {
+                if let Err(e) = crate::mqtt::publish_alert(&config, &body) {
+                    log::warn!("mqtt alert failed: {e}");
+                }
+            });
         }
         other => log::warn!("unknown alert action kind {other}"),
     }

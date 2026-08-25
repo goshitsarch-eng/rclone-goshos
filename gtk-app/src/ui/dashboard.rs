@@ -472,6 +472,64 @@ impl Dashboard {
         ));
         sys.append(&jobs_row);
         self.overview.append(&sys);
+
+        self.overview.append(&section_label("Automations"));
+        let autos = gtk::ListBox::new();
+        autos.add_css_class("boxed-list");
+        let records = crate::automation::collect(&self.ctx.store.borrow());
+        if records.is_empty() {
+            let row = adw::ActionRow::new();
+            row.set_title("No cron or watch automations");
+            row.set_subtitle("Enable cron or watch on a profile or quick run");
+            autos.append(&row);
+        } else {
+            for record in records {
+                let row = adw::ActionRow::new();
+                row.set_title(&record.name);
+                let next = record
+                    .next_run
+                    .map(|t| t.format("%Y-%m-%d %H:%M").to_string())
+                    .unwrap_or_else(|| "—".into());
+                row.set_subtitle(&format!(
+                    "{} · cron={} · watch={} · next {next}",
+                    record.operation,
+                    if record.cron_enabled {
+                        record.cron.as_str()
+                    } else {
+                        "off"
+                    },
+                    if record.watch_enabled { "on" } else { "off" }
+                ));
+                let run = gtk::Button::from_icon_name("media-playback-start-symbolic");
+                run.set_valign(gtk::Align::Center);
+                run.set_tooltip_text(Some("Run now"));
+                {
+                    let ctx = self.ctx.clone();
+                    let toast = self.toast.clone();
+                    run.connect_clicked(move |_| {
+                        if let Some(client) = ctx.client() {
+                            let mut store = ctx.store.borrow_mut();
+                            match crate::automation::fire(
+                                &client,
+                                &mut store,
+                                &record,
+                                chrono::Utc::now(),
+                            ) {
+                                Ok(id) => {
+                                    toast.add_toast(adw::Toast::new(&format!("Started {id}")))
+                                }
+                                Err(e) => toast.add_toast(adw::Toast::new(&e)),
+                            }
+                        }
+                        ctx.persist();
+                        ctx.refresh_runtime();
+                    });
+                }
+                row.add_suffix(&run);
+                autos.append(&row);
+            }
+        }
+        self.overview.append(&autos);
     }
 
     fn fill_detail(&self) {
@@ -675,6 +733,36 @@ impl Dashboard {
                             .unwrap_or(crate::operations::OperationType::Sync),
                         profile,
                     ));
+                    let start = gtk::Button::from_icon_name("media-playback-start-symbolic");
+                    start.set_valign(gtk::Align::Center);
+                    start.set_tooltip_text(Some("Start profile"));
+                    {
+                        let ctx = self.ctx.clone();
+                        let toast = self.toast.clone();
+                        let remote = name.clone();
+                        let profile = profile.clone();
+                        let op = crate::operations::OperationType::parse(op)
+                            .unwrap_or(crate::operations::OperationType::Sync);
+                        start.connect_clicked(move |_| {
+                            if let Some(client) = ctx.client() {
+                                let meta = ctx.store.borrow().remotes.get(&remote).cloned();
+                                match crate::jobs::start_profile(
+                                    &client,
+                                    &remote,
+                                    op,
+                                    &profile,
+                                    meta.as_ref(),
+                                ) {
+                                    Ok(id) => {
+                                        toast.add_toast(adw::Toast::new(&format!("Started {id}")))
+                                    }
+                                    Err(e) => toast.add_toast(adw::Toast::new(&e)),
+                                }
+                                ctx.refresh_runtime();
+                            }
+                        });
+                    }
+                    row.add_suffix(&start);
                     plist.append(&row);
                 }
             }
@@ -685,6 +773,18 @@ impl Dashboard {
             plist.append(&row);
         }
         self.detail.append(&plist);
+        let helpers = gtk::Button::with_label("Edit helper profiles");
+        {
+            let ctx = self.ctx.clone();
+            let remote = name.clone();
+            let dash = self.clone();
+            helpers.connect_clicked(move |_| {
+                if let Some(win) = dash.root.root().and_downcast::<gtk::Window>() {
+                    dialogs::helper_profiles(&win, ctx.clone(), &remote);
+                }
+            });
+        }
+        self.detail.append(&helpers);
 
         self.detail
             .append(&section_label("Quick Runs for this remote"));
@@ -767,7 +867,8 @@ fn start_operation(ctx: &AppCtx, name: &str, op: OperationType, toast: &adw::Toa
         .and_then(|m| m.get("default"))
         .cloned()
         .unwrap_or_default();
-    match crate::jobs::start_profile(&client, name, op, &profile) {
+    let meta = ctx.store.borrow().remotes.get(name).cloned();
+    match crate::jobs::start_profile(&client, name, op, &profile, meta.as_ref()) {
         Ok(id) => toast.add_toast(adw::Toast::new(&format!("Started {op} {id}"))),
         Err(e) => toast.add_toast(adw::Toast::new(&e)),
     }

@@ -45,11 +45,17 @@ This client is the GTK 4 + libadwaita rewrite of the Angular/Tauri desktop UI. I
 - Nautilus drag-lasso multi-select
 - Dashboard bandwidth presets + system snapshot (version, memory, activity)
 - Guided repair sheet (install / custom binary / config path / restart)
+- Cron + filesystem-watch automations (profiles and quick runs) with dashboard overview
+- Per-profile VFS / filter / backend helper configs merged into job RC payloads (`vfsOpt`, `_filter`, `_config`)
+- Multi-source job starts for sync/copy/move/check/delete/copyurl/cryptcheck
+- Email (SMTP) and MQTT QoS 0 alert delivery
+- Helper profile JSON editor per remote
+- Nautilus list/grid icon-size toggle
 
 ## Still deepening toward pixel-level Angular parity
 
 - CodeMirror-class live re-highlight while typing (static highlight on open)
 - Windows/macOS send-to
-- Per-profile vfs/filter/backend sub-editors and multi-source job arrays
-- Email/MQTT delivery beyond logging
+- Full remote-config sidenav (per-op flag tabs matching Angular pixel-for-pixel)
+- True FlowBox icon grid with lasso hit-testing
 - Live GUI session against rclone rcd (no display in this environment)

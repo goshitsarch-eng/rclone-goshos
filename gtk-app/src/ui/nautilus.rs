@@ -69,7 +69,9 @@ impl NautilusView {
         let upload = gtk::Button::from_icon_name("document-send-symbolic");
         upload.set_tooltip_text(Some("Upload files"));
         let layout = gtk::Button::from_icon_name("view-list-symbolic");
-        layout.set_tooltip_text(Some("Toggle hidden files"));
+        layout.set_tooltip_text(Some("Toggle list / grid"));
+        let hidden_btn = gtk::Button::from_icon_name("view-conceal-symbolic");
+        hidden_btn.set_tooltip_text(Some("Toggle hidden files"));
         let new_tab = gtk::Button::from_icon_name("tab-new-symbolic");
         new_tab.set_tooltip_text(Some("New tab"));
         let split_btn = gtk::Button::from_icon_name("view-dual-symbolic");
@@ -88,6 +90,7 @@ impl NautilusView {
         toolbar.append(&split_btn);
         toolbar.append(&star);
         toolbar.append(&layout);
+        toolbar.append(&hidden_btn);
 
         let split = adw::OverlaySplitView::new();
         split.set_min_sidebar_width(220.0);
@@ -208,6 +211,19 @@ impl NautilusView {
         {
             let view = view.clone();
             layout.connect_clicked(move |_| {
+                let next = if view.ctx.settings.borrow().nautilus.layout == "grid" {
+                    "list"
+                } else {
+                    "grid"
+                };
+                view.ctx.settings.borrow_mut().nautilus.layout = next.into();
+                view.ctx.persist();
+                view.reload();
+            });
+        }
+        {
+            let view = view.clone();
+            hidden_btn.connect_clicked(move |_| {
                 let hidden = !view.ctx.settings.borrow().nautilus.show_hidden;
                 view.ctx.settings.borrow_mut().nautilus.show_hidden = hidden;
                 view.ctx.persist();
@@ -542,6 +558,9 @@ impl NautilusView {
             format!("{} · {}", format_bytes(entry.size), entry.mod_time)
         });
         let icon = gtk::Image::from_icon_name(category.icon_name());
+        if self.ctx.settings.borrow().nautilus.layout == "grid" {
+            icon.set_pixel_size(self.ctx.settings.borrow().nautilus.icon_size.max(32));
+        }
         row.add_prefix(&icon);
         row.set_activatable(true);
         row

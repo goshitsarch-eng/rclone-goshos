@@ -937,6 +937,17 @@ pub fn start_operation(
     });
     src.set_text(&default_source(remote, &rclone));
     attach_folder_picker(parent, &src);
+    let extra_sources: Rc<RefCell<Vec<adw::EntryRow>>> = Rc::new(RefCell::new(Vec::new()));
+    let more_src = crate::jobs::path_list(&rclone, crate::jobs::SOURCE_KEYS);
+    if more_src.len() > 1 {
+        for extra in more_src.iter().skip(1) {
+            let row = adw::EntryRow::new();
+            row.set_title("Additional source");
+            row.set_text(extra);
+            attach_folder_picker(parent, &row);
+            extra_sources.borrow_mut().push(row);
+        }
+    }
     let dst = adw::EntryRow::new();
     dst.set_title(match op {
         OperationType::Mount => "Mount point",
@@ -955,6 +966,23 @@ pub fn start_operation(
             serve.set_selected(idx as u32);
         }
     }
+    let helper_names = |kind: &str| -> Vec<String> {
+        let mut names = vec!["—".into()];
+        if let Some(meta) = ctx.store.borrow().remotes.get(remote) {
+            names.extend(meta.helper_names(kind));
+        }
+        names
+    };
+    let vfs_names = helper_names("vfs");
+    let filter_names = helper_names("filter");
+    let backend_names = helper_names("backend");
+    let vfs_row = helper_combo("VFS profile", &vfs_names, &initial.app.vfs_profile);
+    let filter_row = helper_combo("Filter profile", &filter_names, &initial.app.filter_profile);
+    let backend_row = helper_combo(
+        "Backend profile",
+        &backend_names,
+        &initial.app.backend_profile,
+    );
     let dry = adw::SwitchRow::new();
     dry.set_title("Dry run");
     dry.set_active(crate::jobs::is_dry_run(&rclone));
@@ -1010,6 +1038,13 @@ pub fn start_operation(
         let serve = serve.clone();
         let dry = dry.clone();
         let flag_rows = flag_rows.clone();
+        let extra_sources = extra_sources.clone();
+        let vfs_row = vfs_row.clone();
+        let filter_row = filter_row.clone();
+        let backend_row = backend_row.clone();
+        let vfs_names = vfs_names.clone();
+        let filter_names = filter_names.clone();
+        let backend_names = backend_names.clone();
         start.connect_clicked(move |_| {
             let Some(client) = ctx.client() else {
                 toast.add_toast(adw::Toast::new("Engine offline"));
@@ -1037,34 +1072,50 @@ pub fn start_operation(
                     );
                 }
             }
-            match build_job_params(
-                op,
-                &remote,
-                &src.text(),
-                &dst.text(),
-                &serde_json::Value::Object(rclone),
-            ) {
-                Ok(req) => match start_request(&client, &req) {
-                    Ok(id) => {
-                        ctx.store
-                            .borrow_mut()
-                            .push_log(&remote, format!("started {op} {id}"));
-                        ctx.refresh_runtime();
-                        toast.add_toast(adw::Toast::new(&format!("Started {op} {id}")));
-                        on_done();
-                        dialog.close();
-                    }
-                    Err(e) => {
-                        let err = adw::AlertDialog::new(Some("Start failed"), Some(&e.to_string()));
-                        err.add_response("ok", "OK");
-                        err.present(Some(&dialog));
-                    }
-                },
-                Err(e) => {
-                    let err = adw::AlertDialog::new(Some("Incomplete configuration"), Some(&e));
-                    err.add_response("ok", "OK");
-                    err.present(Some(&dialog));
+            let mut sources = vec![src.text().to_string()];
+            for row in extra_sources.borrow().iter() {
+                let text = row.text().to_string();
+                if !text.is_empty() {
+                    sources.push(text);
                 }
+            }
+            let mut rclone = serde_json::Value::Object(rclone);
+            if let Some(meta) = ctx.store.borrow().remotes.get(&remote) {
+                let mut profile = crate::store::ProfileConfig::default();
+                profile.app.vfs_profile = helper_selected(&vfs_row, &vfs_names);
+                profile.app.filter_profile = helper_selected(&filter_row, &filter_names);
+                profile.app.backend_profile = helper_selected(&backend_row, &backend_names);
+                crate::jobs::apply_helper_options(&mut rclone, &profile, Some(meta));
+            }
+            let mut ids = Vec::new();
+            let mut error = None;
+            for source in sources {
+                match build_job_params(op, &remote, &source, &dst.text(), &rclone) {
+                    Ok(req) => match start_request(&client, &req) {
+                        Ok(id) => ids.push(id),
+                        Err(e) => {
+                            error = Some(e.to_string());
+                            break;
+                        }
+                    },
+                    Err(e) => {
+                        error = Some(e);
+                        break;
+                    }
+                }
+            }
+            if let Some(e) = error {
+                let err = adw::AlertDialog::new(Some("Start failed"), Some(&e));
+                err.add_response("ok", "OK");
+                err.present(Some(&dialog));
+            } else {
+                ctx.store
+                    .borrow_mut()
+                    .push_log(&remote, format!("started {op} {}", ids.join(", ")));
+                ctx.refresh_runtime();
+                toast.add_toast(adw::Toast::new(&format!("Started {op} {}", ids.join(", "))));
+                on_done();
+                dialog.close();
             }
         });
     }
@@ -1073,8 +1124,33 @@ pub fn start_operation(
     let identity = adw::PreferencesGroup::new();
     identity.add(&profile_row);
     identity.add(&src);
+    for row in extra_sources.borrow().iter() {
+        identity.add(row);
+    }
+    if op.supports_multi_source() {
+        let add_src = gtk::Button::with_label("Add source");
+        {
+            let extra_sources = extra_sources.clone();
+            let identity = identity.clone();
+            let parent = parent.clone();
+            add_src.connect_clicked(move |_| {
+                let row = adw::EntryRow::new();
+                row.set_title("Additional source");
+                attach_folder_picker(&parent, &row);
+                identity.add(&row);
+                extra_sources.borrow_mut().push(row);
+            });
+        }
+        let add_row = adw::ActionRow::new();
+        add_row.set_title("Multiple sources");
+        add_row.add_suffix(&add_src);
+        identity.add(&add_row);
+    }
     identity.add(&dst);
     identity.add(&serve);
+    identity.add(&vfs_row);
+    identity.add(&filter_row);
+    identity.add(&backend_row);
     identity.add(&dry);
     page.add(&identity);
     page.add(&flags_group);
@@ -1166,6 +1242,12 @@ pub fn quick_run_editor(
     watch.set_title("Watch enabled");
     let tray = adw::SwitchRow::new();
     tray.set_title("Show on tray");
+    let vfs_profile = adw::EntryRow::new();
+    vfs_profile.set_title("VFS profile name");
+    let filter_profile = adw::EntryRow::new();
+    filter_profile.set_title("Filter profile name");
+    let backend_profile = adw::EntryRow::new();
+    backend_profile.set_title("Backend profile name");
     if let Some(qr) = &existing {
         name.set_text(&qr.name);
         remote.set_text(&qr.remote_name);
@@ -1176,6 +1258,9 @@ pub fn quick_run_editor(
         auto.set_active(qr.config.app.auto_start);
         watch.set_active(qr.config.app.watch_enabled);
         tray.set_active(qr.show_on_tray);
+        vfs_profile.set_text(&qr.config.app.vfs_profile);
+        filter_profile.set_text(&qr.config.app.filter_profile);
+        backend_profile.set_text(&qr.config.app.backend_profile);
         if let Some(idx) = OperationType::ALL
             .iter()
             .position(|o| *o == qr.operation_type)
@@ -1192,12 +1277,18 @@ pub fn quick_run_editor(
     group.add(&auto);
     group.add(&watch);
     group.add(&tray);
+    group.add(&vfs_profile);
+    group.add(&filter_profile);
+    group.add(&backend_profile);
     let save = gtk::Button::with_label("Save");
     save.add_css_class("suggested-action");
     {
         let ctx = ctx.clone();
         let dialog = dialog.clone();
         let existing_id = existing.as_ref().map(|q| q.id.clone());
+        let vfs_profile = vfs_profile.clone();
+        let filter_profile = filter_profile.clone();
+        let backend_profile = backend_profile.clone();
         save.connect_clicked(move |_| {
             let expr = cron.text().to_string();
             if !expr.is_empty() {
@@ -1232,6 +1323,9 @@ pub fn quick_run_editor(
             qr.config.app.watch_enabled = watch.is_active();
             qr.config.app.cron_enabled = !expr.is_empty();
             qr.config.app.cron_expression = expr;
+            qr.config.app.vfs_profile = vfs_profile.text().to_string();
+            qr.config.app.filter_profile = filter_profile.text().to_string();
+            qr.config.app.backend_profile = backend_profile.text().to_string();
             qr.show_on_tray = tray.is_active();
             qr.config.rclone = serde_json::json!({
                 "srcFs": src.text().to_string(),
@@ -1969,6 +2063,100 @@ pub fn install_rclone_update(
     }
 }
 
+pub fn helper_profiles(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, remote: &str) {
+    let dialog = adw::Dialog::new();
+    dialog.set_title(&format!("Helper profiles — {remote}"));
+    dialog.set_content_width(560);
+    dialog.set_content_height(520);
+    let kind = adw::ComboRow::new();
+    kind.set_title("Category");
+    kind.set_model(Some(&gtk::StringList::new(&["vfs", "filter", "backend"])));
+    let name = adw::EntryRow::new();
+    name.set_title("Profile name");
+    name.set_text("default");
+    let json_view = gtk::TextView::new();
+    json_view.set_monospace(true);
+    json_view.set_wrap_mode(gtk::WrapMode::Word);
+    let load = {
+        let ctx = ctx.clone();
+        let remote = remote.to_string();
+        let name = name.clone();
+        let json_view = json_view.clone();
+        let kind = kind.clone();
+        move || {
+            let kind_name = ["vfs", "filter", "backend"]
+                .get(kind.selected() as usize)
+                .copied()
+                .unwrap_or("vfs");
+            let text = ctx
+                .store
+                .borrow()
+                .remotes
+                .get(&remote)
+                .and_then(|m| m.helper_profile(kind_name, &name.text()))
+                .map(|v| serde_json::to_string_pretty(&v).unwrap_or_else(|_| "{}".into()))
+                .unwrap_or_else(|| "{}".into());
+            json_view.buffer().set_text(&text);
+        }
+    };
+    load();
+    {
+        let load = load.clone();
+        kind.connect_selected_notify(move |_| load());
+    }
+    let save = gtk::Button::with_label("Save profile");
+    save.add_css_class("suggested-action");
+    {
+        let ctx = ctx.clone();
+        let remote = remote.to_string();
+        let name = name.clone();
+        let json_view = json_view.clone();
+        let kind = kind.clone();
+        save.connect_clicked(move |_| {
+            let kind_name = ["vfs", "filter", "backend"]
+                .get(kind.selected() as usize)
+                .copied()
+                .unwrap_or("vfs");
+            let buffer = json_view.buffer();
+            let text = buffer.text(&buffer.start_iter(), &buffer.end_iter(), false);
+            let value = serde_json::from_str::<serde_json::Value>(text.as_str())
+                .unwrap_or(serde_json::json!({}));
+            let key = name.text().to_string();
+            if key.is_empty() {
+                return;
+            }
+            if let Some(meta) = ctx.store.borrow_mut().remotes.get_mut(&remote) {
+                match kind_name {
+                    "filter" => {
+                        meta.filter_configs.insert(key, value);
+                    }
+                    "backend" => {
+                        meta.backend_configs.insert(key, value);
+                    }
+                    _ => {
+                        meta.vfs_configs.insert(key, value);
+                    }
+                }
+            }
+            ctx.persist();
+        });
+    }
+    let group = adw::PreferencesGroup::new();
+    group.add(&kind);
+    group.add(&name);
+    let scroll = gtk::ScrolledWindow::new();
+    scroll.set_vexpand(true);
+    scroll.set_min_content_height(240);
+    scroll.set_child(Some(&json_view));
+    let box_ = gtk::Box::new(gtk::Orientation::Vertical, 8);
+    box_.set_margin_top(12);
+    box_.append(&group);
+    box_.append(&scroll);
+    box_.append(&save);
+    dialog.set_child(Some(&box_));
+    present_window_or_dialog(parent, &ctx, &dialog);
+}
+
 pub fn item_order(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, on_done: Rc<dyn Fn()>) {
     let dialog = adw::Dialog::new();
     dialog.set_title("Remote order and visibility");
@@ -2055,6 +2243,25 @@ fn present_window_or_dialog(parent: &impl IsA<gtk::Widget>, ctx: &AppCtx, dialog
     } else {
         dialog.present(Some(parent));
     }
+}
+
+fn helper_combo(title: &str, names: &[String], selected: &str) -> adw::ComboRow {
+    let row = adw::ComboRow::new();
+    row.set_title(title);
+    let refs: Vec<&str> = names.iter().map(|s| s.as_str()).collect();
+    row.set_model(Some(&gtk::StringList::new(&refs)));
+    if let Some(idx) = names.iter().position(|n| n == selected) {
+        row.set_selected(idx as u32);
+    }
+    row
+}
+
+fn helper_selected(row: &adw::ComboRow, names: &[String]) -> String {
+    names
+        .get(row.selected() as usize)
+        .cloned()
+        .filter(|s| s != "—")
+        .unwrap_or_default()
 }
 
 fn attach_folder_picker(parent: &impl IsA<gtk::Widget>, row: &adw::EntryRow) {

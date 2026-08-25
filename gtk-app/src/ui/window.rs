@@ -124,6 +124,7 @@ pub fn present_main(app: &adw::Application, ctx: AppCtx) {
     let flow_poll = flow.clone();
     let banner_poll = banner.clone();
     glib::timeout_add_local(std::time::Duration::from_secs(3), move || {
+        ctx_poll.tick_automations();
         ctx_poll.refresh_runtime();
         dash_poll.refresh();
         flow_poll.refresh();

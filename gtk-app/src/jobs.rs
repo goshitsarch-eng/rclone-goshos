@@ -3,7 +3,7 @@
 
 use crate::operations::OperationType;
 use crate::rclone::{remote_fs, RcClient, RcError};
-use crate::store::{quick_run_paths, JobInfo, ProfileConfig};
+use crate::store::{quick_run_paths, JobInfo, ProfileConfig, RemoteMeta};
 use chrono::{DateTime, Utc};
 use serde_json::{json, Map, Value};
 
@@ -325,17 +325,88 @@ pub fn start_request(client: &RcClient, request: &JobRequest) -> Result<String, 
     }
 }
 
+pub fn apply_helper_options(
+    rclone: &mut Value,
+    profile: &ProfileConfig,
+    meta: Option<&RemoteMeta>,
+) {
+    let Some(meta) = meta else {
+        return;
+    };
+    let Some(obj) = rclone.as_object_mut() else {
+        return;
+    };
+    if let Some(vfs) = meta.helper_profile("vfs", &profile.app.vfs_profile) {
+        merge_options_block(obj, "vfsOpt", &vfs);
+    }
+    if let Some(filter) = meta.helper_profile("filter", &profile.app.filter_profile) {
+        merge_options_block(obj, "_filter", &filter);
+    }
+    if let Some(backend) = meta.helper_profile("backend", &profile.app.backend_profile) {
+        merge_options_block(obj, "_config", &backend);
+    }
+    if let Some(runtime) = meta.helper_profile("runtime", &profile.app.runtime_remote_profile) {
+        if let Some(map) = runtime.as_object() {
+            for (k, v) in map {
+                obj.entry(k.clone()).or_insert(v.clone());
+            }
+        }
+    }
+}
+
+pub fn merge_options_block(obj: &mut Map<String, Value>, block: &str, opts: &Value) {
+    let mut nested = obj
+        .get(block)
+        .and_then(|v| v.as_object())
+        .cloned()
+        .unwrap_or_default();
+    match opts {
+        Value::Object(map) => {
+            for (k, v) in map {
+                if v.is_null() || matches!(v, Value::String(s) if s.is_empty()) {
+                    continue;
+                }
+                nested.insert(k.clone(), v.clone());
+            }
+        }
+        other => {
+            nested.insert("value".into(), other.clone());
+        }
+    }
+    if !nested.is_empty() {
+        obj.insert(block.into(), Value::Object(nested));
+    }
+}
+
 pub fn start_profile(
     client: &RcClient,
     remote: &str,
     op: OperationType,
     profile: &ProfileConfig,
+    meta: Option<&RemoteMeta>,
 ) -> Result<String, String> {
-    let rclone = flatten_rclone(&profile.rclone);
-    let source = default_source(remote, &rclone);
+    let mut rclone = flatten_rclone(&profile.rclone);
+    apply_helper_options(&mut rclone, profile, meta);
     let dest = default_dest(remote, &rclone, op);
-    let request = build_job_params(op, remote, &source, &dest, &rclone)?;
-    start_request(client, &request).map_err(|e| e.to_string())
+    let mut sources = path_list(&rclone, SOURCE_KEYS);
+    if sources.is_empty() {
+        let fallback = default_source(remote, &rclone);
+        if !fallback.is_empty() {
+            sources.push(fallback);
+        }
+    }
+    if sources.is_empty() && !matches!(op, OperationType::Mount | OperationType::Serve) {
+        return Err(format!("{op} requires a source path"));
+    }
+    if sources.is_empty() {
+        sources.push(String::new());
+    }
+    let mut ids = Vec::new();
+    for source in sources {
+        let request = build_job_params(op, remote, &source, &dest, &rclone)?;
+        ids.push(start_request(client, &request).map_err(|e| e.to_string())?);
+    }
+    Ok(ids.join(", "))
 }
 
 pub fn parse_cli_flags(cli: &str) -> Map<String, Value> {
@@ -666,6 +737,36 @@ mod tests {
         assert_eq!(normalize_bandwidth(""), "off");
         assert_eq!(normalize_bandwidth("OFF"), "off");
         assert_eq!(normalize_bandwidth("10M"), "10M");
+    }
+
+    #[test]
+    fn merges_named_helper_profiles() {
+        let mut meta = crate::store::RemoteMeta::default();
+        meta.vfs_configs
+            .insert("fast".into(), json!({ "CacheMode": "full" }));
+        meta.filter_configs
+            .insert("docs".into(), json!({ "IncludeRule": ["*.md"] }));
+        let profile = ProfileConfig {
+            name: "default".into(),
+            app: crate::store::AppConfig {
+                vfs_profile: "fast".into(),
+                filter_profile: "docs".into(),
+                ..Default::default()
+            },
+            rclone: json!({ "srcFs": "drive:a", "dstFs": "/tmp" }),
+        };
+        let mut rclone = flatten_rclone(&profile.rclone);
+        apply_helper_options(&mut rclone, &profile, Some(&meta));
+        assert_eq!(rclone["vfsOpt"]["CacheMode"], "full");
+        assert_eq!(rclone["_filter"]["IncludeRule"][0], "*.md");
+    }
+
+    #[test]
+    fn reads_multi_source_arrays() {
+        let rclone = json!({ "srcFs": ["drive:a", "drive:b"], "dstFs": "/tmp" });
+        assert_eq!(path_list(&rclone, SOURCE_KEYS), vec!["drive:a", "drive:b"]);
+        assert!(OperationType::Sync.supports_multi_source());
+        assert!(!OperationType::Mount.supports_multi_source());
     }
 
     #[test]

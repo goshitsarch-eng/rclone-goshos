@@ -1,14 +1,17 @@
+mod automation;
 mod backup;
 mod flags;
 mod i18n;
 mod interactive;
 mod jobs;
+mod mqtt;
 mod operations;
 mod platform;
 mod providers;
 mod rclone;
 mod rename;
 mod settings;
+mod smtp;
 mod store;
 mod syntax;
 mod ui;

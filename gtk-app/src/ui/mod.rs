@@ -13,6 +13,7 @@ use crate::rclone::RcloneEngine;
 use crate::settings::AppSettings;
 use crate::store::{AppStore, RuntimeSnapshot};
 use std::cell::RefCell;
+use std::collections::HashMap;
 use std::rc::Rc;
 
 pub use window::activate;
@@ -27,6 +28,7 @@ pub struct AppCtx {
     pub selected_remote: Rc<RefCell<Option<String>>>,
     pub selected_quick_run: Rc<RefCell<Option<String>>>,
     pub inhibitor: Rc<RefCell<PowerInhibitor>>,
+    pub watch_mtimes: Rc<RefCell<HashMap<String, u64>>>,
 }
 
 impl AppCtx {
@@ -43,6 +45,7 @@ impl AppCtx {
             selected_remote: Rc::new(RefCell::new(None)),
             selected_quick_run: Rc::new(RefCell::new(None)),
             inhibitor: Rc::new(RefCell::new(PowerInhibitor::new())),
+            watch_mtimes: Rc::new(RefCell::new(HashMap::new())),
         }
     }
 
@@ -163,13 +166,15 @@ impl AppCtx {
         };
         let remotes = self.store.borrow().remotes.clone();
         for (name, meta) in remotes {
-            for (op_key, profiles) in meta.profiles {
-                let Some(op) = crate::operations::OperationType::parse(&op_key) else {
+            for (op_key, profiles) in &meta.profiles {
+                let Some(op) = crate::operations::OperationType::parse(op_key) else {
                     continue;
                 };
                 for profile in profiles.values() {
                     if profile.app.auto_start {
-                        if let Err(e) = crate::jobs::start_profile(&client, &name, op, profile) {
+                        if let Err(e) =
+                            crate::jobs::start_profile(&client, &name, op, profile, Some(&meta))
+                        {
                             log::warn!("autostart {op} on {name} failed: {e}");
                         }
                     }
@@ -179,17 +184,63 @@ impl AppCtx {
         let quick_runs = self.store.borrow().quick_runs.clone();
         for qr in quick_runs {
             if qr.config.app.auto_start {
+                let meta = self.store.borrow().remotes.get(&qr.remote_name).cloned();
                 if let Err(e) = crate::jobs::start_profile(
                     &client,
                     &qr.remote_name,
                     qr.operation_type,
                     &qr.config,
+                    meta.as_ref(),
                 ) {
                     log::warn!("autostart quick run {} failed: {e}", qr.name);
                 }
             }
         }
         self.refresh_runtime();
+    }
+
+    pub fn tick_automations(&self) {
+        let Some(client) = self.client() else {
+            return;
+        };
+        let records = crate::automation::collect(&self.store.borrow());
+        let now = chrono::Utc::now();
+        let mut fired = false;
+        let mut mtimes = self.watch_mtimes.borrow_mut();
+        for record in records {
+            let due_cron = record.cron_enabled
+                && crate::automation::cron_is_due(&record.cron, record.last_run, now);
+            let mut due_watch = record.watch_enabled
+                && crate::automation::watch_triggered(
+                    &record.sources,
+                    &mut mtimes,
+                    record.watch_changed_only,
+                );
+            if due_watch {
+                if let Some(last) = record.last_run {
+                    if record.watch_delay > 0
+                        && (now - last).num_seconds() < record.watch_delay as i64
+                    {
+                        due_watch = false;
+                    }
+                }
+            }
+            if due_cron || due_watch {
+                let mut store = self.store.borrow_mut();
+                match crate::automation::fire(&client, &mut store, &record, now) {
+                    Ok(id) => {
+                        log::info!("automation {} started {id}", record.name);
+                        fired = true;
+                    }
+                    Err(e) => log::warn!("automation {} failed: {e}", record.name),
+                }
+            }
+        }
+        drop(mtimes);
+        if fired {
+            self.persist();
+            self.refresh_runtime();
+        }
     }
 
     pub fn toast(&self, overlay: &adw::ToastOverlay, message: impl AsRef<str>) {

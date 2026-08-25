@@ -305,31 +305,39 @@ impl FlowView {
                 }
             }
             other => {
-                if let Some(endpoint) = other.rc_job_endpoint() {
-                    let (src, dst) = qr.paths();
-                    let params = serde_json::json!({
-                        "srcFs": src.unwrap_or_else(|| crate::rclone::remote_fs(&qr.remote_name, "")),
-                        "dstFs": dst.unwrap_or_else(|| crate::rclone::remote_fs(&qr.remote_name, "")),
-                    });
-                    match client.start_job(endpoint, params) {
-                        Ok(id) => {
-                            if let Some(run) = self
-                                .ctx
-                                .store
-                                .borrow_mut()
-                                .quick_runs
-                                .iter_mut()
-                                .find(|q| q.id == qr.id)
-                            {
-                                run.last_job_id = Some(id);
-                                run.status = "running".into();
-                                run.run_count += 1;
+                let meta = self
+                    .ctx
+                    .store
+                    .borrow()
+                    .remotes
+                    .get(&qr.remote_name)
+                    .cloned();
+                match crate::jobs::start_profile(
+                    &client,
+                    &qr.remote_name,
+                    other,
+                    &qr.config,
+                    meta.as_ref(),
+                ) {
+                    Ok(id) => {
+                        if let Some(run) = self
+                            .ctx
+                            .store
+                            .borrow_mut()
+                            .quick_runs
+                            .iter_mut()
+                            .find(|q| q.id == qr.id)
+                        {
+                            run.status = "running".into();
+                            run.run_count += 1;
+                            if let Some(num) = id.trim_start_matches('#').split(',').next() {
+                                run.last_job_id = num.trim().parse().ok();
                             }
-                            self.ctx.persist();
-                            self.refresh();
                         }
-                        Err(e) => self.toast.add_toast(adw::Toast::new(&e.to_string())),
+                        self.ctx.persist();
+                        self.refresh();
                     }
+                    Err(e) => self.toast.add_toast(adw::Toast::new(&e)),
                 }
             }
         }

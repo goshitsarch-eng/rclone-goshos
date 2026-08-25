@@ -157,6 +157,19 @@ impl OperationType {
         matches!(self, Self::Mount | Self::Serve)
     }
 
+    pub fn supports_multi_source(self) -> bool {
+        matches!(
+            self,
+            Self::Sync
+                | Self::Copy
+                | Self::Move
+                | Self::Delete
+                | Self::Copyurl
+                | Self::Check
+                | Self::Cryptcheck
+        )
+    }
+
     pub fn supports_profiles(self) -> bool {
         true
     }
@@ -344,6 +357,8 @@ mod tests {
         assert!(OperationType::Cryptcheck.is_browsable());
         assert_eq!(OperationType::Mount.config_key(), "mountConfigs");
         assert_eq!(OperationType::SERVE_TYPES.len(), 8);
+        assert!(OperationType::Sync.supports_multi_source());
+        assert!(!OperationType::Mount.supports_multi_source());
     }
 
     #[test]
