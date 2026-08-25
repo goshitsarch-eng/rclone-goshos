@@ -32,6 +32,7 @@ pub struct AppCtx {
     pub inhibitor: Rc<RefCell<PowerInhibitor>>,
     pub watch_mtimes: Rc<RefCell<HashMap<String, u64>>>,
     pub watch_hub: Rc<RefCell<crate::watch::WatchHub>>,
+    pub fsinfo_cache: Rc<RefCell<HashMap<String, crate::rclone::FsInfo>>>,
 }
 
 impl AppCtx {
@@ -51,9 +52,31 @@ impl AppCtx {
             inhibitor: Rc::new(RefCell::new(PowerInhibitor::new())),
             watch_mtimes: Rc::new(RefCell::new(HashMap::new())),
             watch_hub: Rc::new(RefCell::new(crate::watch::WatchHub::new())),
+            fsinfo_cache: Rc::new(RefCell::new(HashMap::new())),
         };
         ctx.apply_remote_layout();
+        {
+            let notifications = ctx.settings.borrow().general.notifications;
+            ctx.store.borrow_mut().seed_alert_defaults(notifications);
+        }
         ctx
+    }
+
+    pub fn fs_info(&self, remote: &str) -> Option<crate::rclone::FsInfo> {
+        if let Some(cached) = self.fsinfo_cache.borrow().get(remote).cloned() {
+            return Some(cached);
+        }
+        let client = self.client()?;
+        let fs = if remote == "local" {
+            "/".into()
+        } else {
+            crate::rclone::remote_fs(remote, "")
+        };
+        let info = client.fs_info(&fs).ok()?;
+        self.fsinfo_cache
+            .borrow_mut()
+            .insert(remote.to_string(), info.clone());
+        Some(info)
     }
 
     pub fn t(&self, key: &str) -> String {
@@ -106,6 +129,7 @@ impl AppCtx {
     }
 
     pub fn switch_backend(&self, name: &str) {
+        self.fsinfo_cache.borrow_mut().clear();
         self.save_remote_layout();
         self.settings.borrow_mut().core.active_backend = if name == "local" {
             String::new()

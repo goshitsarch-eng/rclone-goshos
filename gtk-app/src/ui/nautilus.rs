@@ -810,6 +810,96 @@ impl NautilusView {
         }
     }
 
+    fn mkdir_with_selected(&self) {
+        let names = self.selected_names();
+        if names.is_empty() {
+            self.toast
+                .add_toast(adw::Toast::new("Select items to move into a new folder"));
+            return;
+        }
+        let Some(win) = self.root.root().and_downcast::<gtk::Window>() else {
+            return;
+        };
+        let view = self.clone();
+        dialogs::prompt(
+            &win,
+            "New folder with selected",
+            "Folder name",
+            "",
+            move |name| {
+                if name.is_empty() {
+                    return;
+                }
+                let Some(client) = view.ctx.client() else {
+                    return;
+                };
+                let current = view.current.borrow().clone();
+                let fs = if current.remote == "local" {
+                    "/".into()
+                } else {
+                    remote_fs(&current.remote, "")
+                };
+                let folder = join_remote_path(&current.path, &name);
+                let folder_remote = if current.remote == "local" {
+                    folder.trim_start_matches('/').to_string()
+                } else {
+                    folder
+                };
+                if let Err(e) = client.mkdir(&fs, &folder_remote) {
+                    view.toast.add_toast(adw::Toast::new(&e.to_string()));
+                    return;
+                }
+                view.push_undo(
+                    crate::fileops::FileOp::Mkdir {
+                        fs: fs.clone(),
+                        path: folder_remote.clone(),
+                    }
+                    .encode(),
+                );
+                for item in &names {
+                    let src = join_remote_path(&current.path, item);
+                    let src_remote = if current.remote == "local" {
+                        src.trim_start_matches('/').to_string()
+                    } else {
+                        src
+                    };
+                    let dst_remote = join_remote_path(&folder_remote, item);
+                    match client.move_file(&fs, &src_remote, &fs, &dst_remote) {
+                        Ok(_) => view.push_undo(
+                            crate::fileops::FileOp::Move {
+                                src_fs: fs.clone(),
+                                src: src_remote,
+                                dst_fs: fs.clone(),
+                                dst: dst_remote,
+                            }
+                            .encode(),
+                        ),
+                        Err(e) => view.toast.add_toast(adw::Toast::new(&e.to_string())),
+                    }
+                }
+                view.reload();
+                view.toast.add_toast(adw::Toast::new(&format!(
+                    "Moved {} items into {name}",
+                    names.len()
+                )));
+            },
+        );
+    }
+
+    fn download_selected(&self) {
+        let Some(name) = self.selected_name() else {
+            self.toast
+                .add_toast(adw::Toast::new("Select a file to download"));
+            return;
+        };
+        let Some(win) = self.root.root().and_downcast::<gtk::Window>() else {
+            return;
+        };
+        let current = self.current.borrow().clone();
+        let path = join_remote_path(&current.path, &name);
+        dialogs::download_file(&win, self.ctx.clone(), &current.remote, &path, &name);
+    }
+
     fn mkdir_prompt(&self) {
         if let Some(win) = self.root.root().and_downcast::<gtk::Window>() {
             let view = self.clone();
@@ -890,8 +980,16 @@ impl NautilusView {
         } else {
             dst
         };
-        match client.copy_file("/", &path.to_string_lossy(), &dst_fs, &dst_remote) {
-            Ok(_) => {
+        match client.start_job(
+            "operations/copyfile",
+            serde_json::json!({
+                "srcFs": "/",
+                "srcRemote": path.to_string_lossy(),
+                "dstFs": dst_fs,
+                "dstRemote": dst_remote
+            }),
+        ) {
+            Ok(id) => {
                 self.push_undo(
                     crate::fileops::FileOp::Upload {
                         fs: dst_fs,
@@ -899,9 +997,10 @@ impl NautilusView {
                     }
                     .encode(),
                 );
+                self.ctx.refresh_runtime();
                 self.reload();
                 self.toast
-                    .add_toast(adw::Toast::new(&format!("Uploaded {name}")));
+                    .add_toast(adw::Toast::new(&format!("Upload job #{id} · {name}")));
             }
             Err(e) => self.toast.add_toast(adw::Toast::new(&e.to_string())),
         }
@@ -1381,7 +1480,19 @@ impl NautilusView {
         };
         let popover = gtk::Popover::new();
         let box_ = gtk::Box::new(gtk::Orientation::Vertical, 4);
-        for (label, action) in [
+        let selected = self.selected_names();
+        let current = self.current.borrow().clone();
+        let info = self.ctx.fs_info(&current.remote);
+        let public_ok =
+            info.as_ref().is_none_or(|i| i.has_feature("PublicLink")) && !selected.is_empty();
+        let cleanup_ok = info.as_ref().is_none_or(|i| i.has_feature("CleanUp"));
+        let archive_selected = selected.iter().any(|name| {
+            matches!(
+                FileTypeCategory::from_name(name, false),
+                FileTypeCategory::Archive
+            )
+        });
+        let mut items: Vec<(&str, &str)> = vec![
             ("Open", "open"),
             ("Open native", "native"),
             ("Open in new tab", "tab"),
@@ -1390,24 +1501,42 @@ impl NautilusView {
             ("Cut", "cut"),
             ("Paste", "paste"),
             ("Copy path", "copypath"),
-            ("Copy public link", "public"),
+        ];
+        if public_ok {
+            items.push(("Copy public link", "public"));
+        }
+        items.extend([
             ("Copy URL into folder…", "copyurl"),
             ("Rename", "rename"),
             ("Delete", "delete"),
             ("Properties", "props"),
+            ("Download…", "download"),
             ("New folder", "mkdir"),
+        ]);
+        if !selected.is_empty() {
+            items.push(("New folder with selected", "mkdirsel"));
+        }
+        items.extend([
             ("Upload folder…", "uploaddir"),
             ("Bookmark", "star"),
             ("Create archive", "archive"),
-            ("Extract archive…", "extract"),
-            ("Remove empty folders", "rmdirs"),
-            ("Empty trash / cleanup", "cleanup"),
+        ]);
+        if archive_selected {
+            items.push(("Browse archive contents", "archivelist"));
+            items.push(("Extract archive…", "extract"));
+        }
+        items.push(("Remove empty folders", "rmdirs"));
+        if cleanup_ok {
+            items.push(("Empty trash / cleanup", "cleanup"));
+        }
+        items.extend([
             ("Send to…", "sendto"),
             ("Undo", "undo"),
             ("Redo", "redo"),
             ("Paste from system clipboard", "syspaste"),
             ("Detach tab", "detach"),
-        ] {
+        ]);
+        for (label, action) in items {
             let btn = gtk::Button::with_label(label);
             let view = self.clone();
             btn.connect_clicked(move |_| match action {
@@ -1429,6 +1558,13 @@ impl NautilusView {
                 "delete" => view.delete_selected(),
                 "props" => view.properties_selected(),
                 "mkdir" => view.mkdir_prompt(),
+                "mkdirsel" => view.mkdir_with_selected(),
+                "download" => view.download_selected(),
+                "archivelist" => {
+                    if let Some(name) = view.selected_name() {
+                        view.open_name(&name);
+                    }
+                }
                 "uploaddir" => view.upload_folder_prompt(),
                 "star" => view.add_bookmark(),
                 "extract" => view.extract_selected(),

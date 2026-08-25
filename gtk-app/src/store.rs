@@ -2,6 +2,9 @@
 
 use crate::operations::OperationType;
 use crate::rclone::{format_bytes, DirEntry, MountedRemote, ServeItem};
+
+pub const DEFAULT_ALERT_ACTION_ID: &str = "default-os-toast";
+pub const DEFAULT_ALERT_RULE_ID: &str = "default-rule";
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -550,12 +553,64 @@ impl AppStore {
     }
 
     pub fn load() -> Self {
-        if let Ok(text) = std::fs::read_to_string(Self::path()) {
-            if let Ok(store) = serde_json::from_str::<AppStore>(&text) {
-                return store;
-            }
+        let mut store = if let Ok(text) = std::fs::read_to_string(Self::path()) {
+            serde_json::from_str::<AppStore>(&text).unwrap_or_default()
+        } else {
+            Self::default()
+        };
+        store.seed_alert_defaults(true);
+        store
+    }
+
+    pub fn seed_alert_defaults(&mut self, notifications_on: bool) -> bool {
+        let mut changed = false;
+        if !self
+            .alert_actions
+            .iter()
+            .any(|action| action.id == DEFAULT_ALERT_ACTION_ID)
+        {
+            self.alert_actions.insert(
+                0,
+                AlertAction {
+                    id: DEFAULT_ALERT_ACTION_ID.to_string(),
+                    name: "OS Toast".into(),
+                    enabled: notifications_on,
+                    kind: "os_toast".into(),
+                    config: json!({
+                        "title": "Rclone Manager",
+                        "body_template": "{{title}}: {{body}}"
+                    }),
+                },
+            );
+            changed = true;
         }
-        Self::default()
+        if !self
+            .alert_rules
+            .iter()
+            .any(|rule| rule.id == DEFAULT_ALERT_RULE_ID)
+        {
+            self.alert_rules.insert(
+                0,
+                AlertRule {
+                    id: DEFAULT_ALERT_RULE_ID.to_string(),
+                    name: "Notify on events".into(),
+                    enabled: notifications_on,
+                    event_filter: vec![],
+                    severity_min: AlertSeverity::Info,
+                    remote_filter: vec![],
+                    backend_filter: vec![],
+                    profile_filter: vec![],
+                    origin_filter: vec![],
+                    action_ids: vec![DEFAULT_ALERT_ACTION_ID.to_string()],
+                    cooldown_secs: 0,
+                    auto_acknowledge: true,
+                    last_fired: None,
+                    fire_count: 0,
+                },
+            );
+            changed = true;
+        }
+        changed
     }
 
     pub fn save(&self) -> std::io::Result<()> {
@@ -1046,5 +1101,26 @@ mod tests {
         assert_eq!(store.job_history[0].status, "failed");
         store.dismiss_job(82);
         assert!(store.job_history.iter().all(|j| j.id != 82));
+    }
+
+    #[test]
+    fn seeds_default_alert_action_and_rule() {
+        let mut store = AppStore::default();
+        assert!(store.seed_alert_defaults(true));
+        assert_eq!(store.alert_actions[0].id, DEFAULT_ALERT_ACTION_ID);
+        assert_eq!(store.alert_actions[0].kind, "os_toast");
+        assert!(store.alert_actions[0].enabled);
+        assert_eq!(store.alert_rules[0].id, DEFAULT_ALERT_RULE_ID);
+        assert_eq!(
+            store.alert_rules[0].action_ids,
+            vec![DEFAULT_ALERT_ACTION_ID]
+        );
+        assert!(store.alert_rules[0].auto_acknowledge);
+        assert!(!store.seed_alert_defaults(false));
+        store.alert_actions.clear();
+        store.alert_rules.clear();
+        assert!(store.seed_alert_defaults(false));
+        assert!(!store.alert_actions[0].enabled);
+        assert!(!store.alert_rules[0].enabled);
     }
 }

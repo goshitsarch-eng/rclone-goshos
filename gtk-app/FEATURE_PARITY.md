@@ -100,6 +100,17 @@ This client is the GTK 4 + libadwaita rewrite of the Angular/Tauri desktop UI. I
 - Preferences: theme, tray icon theme, update channels, engine restart
 - Alert rule enable/disable switches
 - Remote detail activity (jobs + serves)
+- `operations/fsinfo` cache gates public links / cleanup and drives hash types
+- Archive contents browser via `operations/archive` list in the file viewer
+- New folder with selected items (mkdir + move)
+- Rich remote About: usage, size, features, hashes, metadata
+- Properties: on-demand hashes from fsinfo, public-link expiry / unlink
+- Cryptcheck job output parsed into structured results
+- Default OS-toast alert action + notify-on-events rule
+- Job detail can open source/destination in Files
+- Download save-as from the viewer and Nautilus
+- Uploads start as tracked `copyfile` jobs
+- `job/stopgroup` when closing Remote About
 
 ## Still deepening toward pixel-level Angular parity
 
@@ -107,3 +118,6 @@ This client is the GTK 4 + libadwaita rewrite of the Angular/Tauri desktop UI. I
 - In-app PDF renderer
 - Workflow builder (stub in both apps)
 - Live GUI session against rclone rcd (no display in this environment)
+- Native share portal / Android share intake
+- Windows/macOS mount-plugin installer (Linux uses FUSE)
+- Full UI string translation (most GTK labels still English)

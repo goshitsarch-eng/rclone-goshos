@@ -556,7 +556,7 @@ pub fn job_from_status(jobid: u64, status: &Value, stats: Option<&Value>) -> Job
         .and_then(|x| x.as_f64())
         .unwrap_or(0.0);
     let progress = progress_from_stats(&stats_value);
-    JobInfo {
+    let mut job = JobInfo {
         id: jobid,
         operation,
         remote,
@@ -590,6 +590,173 @@ pub fn job_from_status(jobid: u64, status: &Value, stats: Option<&Value>) -> Job
         progress,
         output,
         completed,
+    };
+    if finished {
+        apply_cryptcheck_outcome(&mut job);
+    }
+    job
+}
+
+/// Parses raw text output from `operations/cryptcheck` into structured JSON.
+pub fn parse_cryptcheck_output(raw_result: &str) -> Value {
+    let mut differ = Vec::new();
+    let mut missing_on_dst = Vec::new();
+    let mut missing_on_src = Vec::new();
+    let mut error_list = Vec::new();
+    let mut success = true;
+    let mut status = "OK".to_string();
+
+    for line in raw_result.lines() {
+        let line = line.trim();
+        if line.is_empty() {
+            continue;
+        }
+
+        let is_error = line.contains("ERROR :") || line.contains("ERROR:");
+        let is_notice = line.contains("NOTICE:") || line.contains("NOTICE :");
+
+        if is_error {
+            let pos = line
+                .find("ERROR :")
+                .map(|p| p + 7)
+                .or_else(|| line.find("ERROR:").map(|p| p + 6));
+            if let Some(start_idx) = pos {
+                let rest = &line[start_idx..];
+                if let Some(colon_pos) = rest.find(':') {
+                    let path = rest[..colon_pos].trim().to_string();
+                    let msg = rest[colon_pos + 1..].trim();
+
+                    if msg.contains("file not in Encrypted drive") {
+                        missing_on_dst.push(path);
+                    } else if msg.contains("file not in") {
+                        missing_on_src.push(path);
+                    } else if msg.to_lowercase().contains("differ") {
+                        differ.push(path);
+                    } else {
+                        error_list.push(format!("{path}: {msg}"));
+                    }
+                }
+            }
+        } else if is_notice {
+            let pos = line
+                .find("NOTICE :")
+                .map(|p| p + 8)
+                .or_else(|| line.find("NOTICE:").map(|p| p + 7));
+            if let Some(start_idx) = pos {
+                let rest = &line[start_idx..];
+                if rest.contains("Skipping undecryptable dir name") {
+                    if let Some(colon_pos) = rest.find(':') {
+                        let path = rest[..colon_pos].trim().to_string();
+                        let msg = rest[colon_pos + 1..].trim();
+                        error_list.push(format!("{path}: {msg}"));
+                    }
+                } else if (rest.contains("differences found")
+                    && !rest.contains("0 differences found"))
+                    || (status == "OK"
+                        && (rest.contains("errors while checking")
+                            || rest.contains("files missing")))
+                {
+                    status = rest.trim().to_string();
+                    success = false;
+                }
+            }
+        }
+    }
+
+    let has_issues = !differ.is_empty()
+        || !missing_on_dst.is_empty()
+        || !missing_on_src.is_empty()
+        || !error_list.is_empty();
+    if has_issues {
+        success = false;
+        if status == "OK" {
+            let mut parts = Vec::new();
+            if !differ.is_empty() {
+                parts.push(format!("{} differences", differ.len()));
+            }
+            if !missing_on_dst.is_empty() {
+                parts.push(format!("{} missing on destination", missing_on_dst.len()));
+            }
+            if !missing_on_src.is_empty() {
+                parts.push(format!("{} missing on source", missing_on_src.len()));
+            }
+            if !error_list.is_empty() {
+                parts.push(format!("{} errors", error_list.len()));
+            }
+            status = format!("{} found", parts.join(", "));
+        }
+    }
+
+    json!({
+        "results": [
+            {
+                "success": success,
+                "status": status,
+                "differ": differ,
+                "missingOnDst": missing_on_dst,
+                "missingOnSrc": missing_on_src,
+                "error": error_list,
+            }
+        ]
+    })
+}
+
+pub fn apply_cryptcheck_outcome(job: &mut JobInfo) {
+    let looks_like_cryptcheck = job.operation.to_ascii_lowercase().contains("cryptcheck")
+        || job
+            .output
+            .get("result")
+            .and_then(|v| v.as_str())
+            .is_some_and(|s| s.contains("Encrypted drive") || s.contains("cryptcheck"));
+    if !looks_like_cryptcheck {
+        return;
+    }
+    let Some(result) = job
+        .output
+        .get("result")
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string())
+    else {
+        return;
+    };
+    let parsed = parse_cryptcheck_output(&result);
+    let first = parsed
+        .get("results")
+        .and_then(|r| r.as_array())
+        .and_then(|a| a.first())
+        .cloned();
+    if let Some(first) = first {
+        let check_success = first
+            .get("success")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(true);
+        let has_issues = first
+            .get("differ")
+            .and_then(|a| a.as_array())
+            .is_some_and(|a| !a.is_empty())
+            || first
+                .get("missingOnDst")
+                .and_then(|a| a.as_array())
+                .is_some_and(|a| !a.is_empty())
+            || first
+                .get("missingOnSrc")
+                .and_then(|a| a.as_array())
+                .is_some_and(|a| !a.is_empty())
+            || first
+                .get("error")
+                .and_then(|a| a.as_array())
+                .is_some_and(|a| !a.is_empty());
+        if has_issues && !check_success {
+            job.status = "failed".into();
+            job.error = first
+                .get("status")
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string())
+                .or(job.error.clone());
+        }
+    }
+    if let Some(obj) = job.output.as_object_mut() {
+        obj.insert("cryptcheck".into(), parsed);
     }
 }
 
@@ -874,6 +1041,55 @@ mod tests {
         assert_eq!(serve["type"], "webdav");
         let empty = assemble_rclone(OperationType::Delete, &[], "", Map::new());
         assert!(empty.as_object().unwrap().is_empty());
+    }
+
+    #[test]
+    fn parse_cryptcheck_output_success() {
+        let raw = "2026/08/20 10:00:00 NOTICE: Encrypted drive 'enc:': 0 differences found\n";
+        let parsed = parse_cryptcheck_output(raw);
+        let res = &parsed["results"][0];
+        assert_eq!(res["success"], true);
+        assert_eq!(res["status"], "OK");
+        assert!(res["differ"].as_array().unwrap().is_empty());
+    }
+
+    #[test]
+    fn parse_cryptcheck_output_with_differences() {
+        let raw = r#"
+2026/08/20 10:00:00 ERROR : file1.txt: MD5 differ
+2026/08/20 10:00:00 ERROR : file2.txt: file not in Encrypted drive
+2026/08/20 10:00:00 NOTICE: Encrypted drive 'enc:': 1 differences found
+"#;
+        let parsed = parse_cryptcheck_output(raw);
+        let res = &parsed["results"][0];
+        assert_eq!(res["success"], false);
+        assert_eq!(
+            res["differ"].as_array().unwrap(),
+            &vec![serde_json::json!("file1.txt")]
+        );
+        assert_eq!(
+            res["missingOnDst"].as_array().unwrap(),
+            &vec![serde_json::json!("file2.txt")]
+        );
+    }
+
+    #[test]
+    fn job_from_status_applies_cryptcheck_failure() {
+        let job = job_from_status(
+            3,
+            &json!({
+                "finished": true,
+                "success": true,
+                "output": {
+                    "operation": "cryptcheck",
+                    "result": "2026/08/20 10:00:00 ERROR : file1.txt: MD5 differ\n2026/08/20 10:00:00 NOTICE: Encrypted drive 'enc:': 1 differences found\n"
+                }
+            }),
+            None,
+        );
+        assert_eq!(job.status, "failed");
+        assert!(job.error.as_deref().is_some_and(|e| !e.is_empty()));
+        assert_eq!(job.output["cryptcheck"]["results"][0]["success"], false);
     }
 
     #[test]

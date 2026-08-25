@@ -5,7 +5,9 @@ use crate::jobs::{
     merge_template_into, start_request,
 };
 use crate::operations::OperationType;
-use crate::rclone::{describe_cron, remote_fs, validate_cron};
+use crate::rclone::{
+    browse_target, describe_cron, nanoseconds_to_duration, parse_hashsum, remote_fs, validate_cron,
+};
 use crate::rename::{preview as rename_preview, RenameMode, RenamePlan};
 use crate::store::{
     AlertAction, AlertEvent, AlertEventKind, AlertRule, AlertSeverity, ProfileConfig, QuickRun,
@@ -2523,7 +2525,8 @@ pub fn properties(
 ) {
     let dialog = adw::Dialog::new();
     dialog.set_title("Properties");
-    dialog.set_content_width(480);
+    dialog.set_content_width(520);
+    dialog.set_content_height(640);
     let list = gtk::ListBox::new();
     list.add_css_class("boxed-list");
     for (title, value) in [
@@ -2543,12 +2546,13 @@ pub fn properties(
         row.set_subtitle(&value);
         list.append(&row);
     }
+    let fs = if remote == "local" {
+        "/".into()
+    } else {
+        remote_fs(remote, "")
+    };
+    let info = ctx.fs_info(remote);
     if let Some(client) = ctx.client() {
-        let fs = if remote == "local" {
-            "/".into()
-        } else {
-            remote_fs(remote, "")
-        };
         if let Ok(about) = client.about(&fs) {
             let used = about.get("used").and_then(|x| x.as_i64()).unwrap_or(-1);
             let total = about.get("total").and_then(|x| x.as_i64()).unwrap_or(-1);
@@ -2566,26 +2570,119 @@ pub fn properties(
         if let Ok(size) = client.size(&fs, path) {
             let row = adw::ActionRow::new();
             row.set_title("Size");
-            row.set_subtitle(&size.to_string());
+            let count = size.get("count").and_then(|x| x.as_i64());
+            let bytes = size.get("bytes").and_then(|x| x.as_i64()).unwrap_or(-1);
+            row.set_subtitle(&match count {
+                Some(n) => format!("{} · {n} objects", crate::rclone::format_bytes(bytes)),
+                None => crate::rclone::format_bytes(bytes),
+            });
             list.append(&row);
         }
-        for hash_type in ["MD5", "SHA1", "SHA256"] {
-            if let Ok(hash) = client.hashsum(&fs, path, hash_type) {
+        let hashes = info
+            .as_ref()
+            .map(|i| i.hashes.clone())
+            .filter(|h| !h.is_empty())
+            .unwrap_or_default();
+        if hashes.is_empty() {
+            let row = adw::ActionRow::new();
+            row.set_title("Hashes");
+            row.set_subtitle("This remote does not advertise hash support");
+            list.append(&row);
+        } else {
+            for (idx, hash_type) in hashes.iter().enumerate() {
                 let row = adw::ActionRow::new();
-                row.set_title(hash_type);
-                row.set_subtitle(&hash.to_string());
+                row.set_title(&hash_type.to_ascii_uppercase());
+                row.set_subtitle("Not calculated");
+                let calc = gtk::Button::with_label("Calculate");
+                calc.set_valign(gtk::Align::Center);
+                {
+                    let row = row.clone();
+                    let calc_btn = calc.clone();
+                    let ctx = ctx.clone();
+                    let fs = fs.clone();
+                    let path = path.to_string();
+                    let hash_type = hash_type.clone();
+                    calc.connect_clicked(move |_| {
+                        if let Some(client) = ctx.client() {
+                            match client.hashsum(&fs, &path, &hash_type) {
+                                Ok(value) => {
+                                    row.set_subtitle(
+                                        &parse_hashsum(&value).unwrap_or_else(|| value.to_string()),
+                                    );
+                                    calc_btn.set_sensitive(false);
+                                }
+                                Err(e) => row.set_subtitle(&e.to_string()),
+                            }
+                        }
+                    });
+                    if idx == 0 {
+                        calc.emit_clicked();
+                    }
+                }
+                row.add_suffix(&calc);
                 list.append(&row);
             }
         }
-        if remote != "local" {
-            if let Ok(url) = client.public_link(&fs, path) {
-                if !url.is_empty() {
-                    let row = adw::ActionRow::new();
-                    row.set_title("Public link");
-                    row.set_subtitle(&url);
-                    list.append(&row);
-                }
+        if remote != "local" && info.as_ref().is_none_or(|i| i.has_feature("PublicLink")) {
+            let link_row = adw::ActionRow::new();
+            link_row.set_title("Public link");
+            link_row.set_subtitle("Not created");
+            list.append(&link_row);
+            let expire = adw::EntryRow::new();
+            expire.set_title("Link expiry (e.g. 1d, 7d, 1M)");
+            list.append(&expire);
+            let get_link = gtk::Button::with_label("Get public link");
+            let unlink = gtk::Button::with_label("Remove public link");
+            {
+                let ctx = ctx.clone();
+                let fs = fs.clone();
+                let path = path.to_string();
+                let link_row = link_row.clone();
+                let expire = expire.clone();
+                get_link.connect_clicked(move |_| {
+                    if let Some(client) = ctx.client() {
+                        let exp = expire.text().to_string();
+                        match client.public_link_ex(
+                            &fs,
+                            &path,
+                            (!exp.is_empty()).then_some(exp.as_str()),
+                            false,
+                        ) {
+                            Ok(url) if !url.is_empty() => {
+                                link_row.set_subtitle(&url);
+                                if let Some(display) = gtk::gdk::Display::default() {
+                                    display.clipboard().set_text(&url);
+                                }
+                            }
+                            Ok(_) => link_row.set_subtitle("Remote did not return a public link"),
+                            Err(e) => link_row.set_subtitle(&e.to_string()),
+                        }
+                    }
+                });
             }
+            {
+                let ctx = ctx.clone();
+                let fs = fs.clone();
+                let path = path.to_string();
+                let link_row = link_row.clone();
+                unlink.connect_clicked(move |_| {
+                    if let Some(client) = ctx.client() {
+                        match client.public_link_ex(&fs, &path, None, true) {
+                            Ok(_) => link_row.set_subtitle("Link removed"),
+                            Err(e) => link_row.set_subtitle(&e.to_string()),
+                        }
+                    }
+                });
+            }
+            let link_actions = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+            link_actions.append(&get_link);
+            link_actions.append(&unlink);
+            list.append(&{
+                let row = adw::ActionRow::new();
+                row.set_title("Link actions");
+                row.add_suffix(&link_actions);
+                row
+            });
         }
     }
     let copy_path = gtk::Button::with_label("Copy path");
@@ -2602,9 +2699,13 @@ pub fn properties(
         });
     }
     let box_ = gtk::Box::new(gtk::Orientation::Vertical, 8);
+    box_.set_margin_top(12);
     box_.append(&list);
     box_.append(&copy_path);
-    dialog.set_child(Some(&box_));
+    let scroll = gtk::ScrolledWindow::new();
+    scroll.set_vexpand(true);
+    scroll.set_child(Some(&box_));
+    dialog.set_child(Some(&scroll));
     dialog.present(Some(parent));
 }
 
@@ -2669,10 +2770,64 @@ pub fn job_detail(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, job_id: u64) {
     done_label.set_xalign(0.0);
     box_.append(&done_label);
     box_.append(&scrolled_list(&completed));
+    let open_src = gtk::Button::with_label("Open source in Files");
+    let open_dst = gtk::Button::with_label("Open destination in Files");
+    {
+        let ctx = ctx.clone();
+        let dialog = dialog.clone();
+        open_src.connect_clicked(move |_| {
+            if let Some(job) = ctx.snapshot.borrow().jobs.iter().find(|j| j.id == job_id) {
+                if let Some((remote, path)) = browse_target(&job.src) {
+                    ctx.request_browse(&remote, &path);
+                    dialog.close();
+                    return;
+                }
+            }
+            if let Some(job) = ctx
+                .store
+                .borrow()
+                .job_history
+                .iter()
+                .find(|j| j.id == job_id)
+            {
+                if let Some((remote, path)) = browse_target(&job.src) {
+                    ctx.request_browse(&remote, &path);
+                    dialog.close();
+                }
+            }
+        });
+    }
+    {
+        let ctx = ctx.clone();
+        let dialog = dialog.clone();
+        open_dst.connect_clicked(move |_| {
+            if let Some(job) = ctx.snapshot.borrow().jobs.iter().find(|j| j.id == job_id) {
+                if let Some((remote, path)) = browse_target(&job.dst) {
+                    ctx.request_browse(&remote, &path);
+                    dialog.close();
+                    return;
+                }
+            }
+            if let Some(job) = ctx
+                .store
+                .borrow()
+                .job_history
+                .iter()
+                .find(|j| j.id == job_id)
+            {
+                if let Some((remote, path)) = browse_target(&job.dst) {
+                    ctx.request_browse(&remote, &path);
+                    dialog.close();
+                }
+            }
+        });
+    }
     let actions = gtk::Box::new(gtk::Orientation::Horizontal, 8);
     actions.append(&stop);
     actions.append(&reset);
     actions.append(&delete);
+    actions.append(&open_src);
+    actions.append(&open_dst);
     box_.append(&actions);
     dialog.set_child(Some(&box_));
 
@@ -2767,6 +2922,15 @@ pub fn job_detail(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, job_id: u64) {
                         .collect::<Vec<_>>()
                         .join(", ");
                     row.set_subtitle(&preview);
+                    completed.append(&row);
+                }
+            }
+            if let Some(cc) = job.output.get("cryptcheck").and_then(|v| v.get("results")) {
+                if let Some(first) = cc.as_array().and_then(|a| a.first()) {
+                    let row = adw::ActionRow::new();
+                    row.set_title("Cryptcheck");
+                    let status = first.get("status").and_then(|x| x.as_str()).unwrap_or("OK");
+                    row.set_subtitle(status);
                     completed.append(&row);
                 }
             }
@@ -2950,10 +3114,68 @@ pub fn file_viewer(
             let _ = open::that(&path);
         });
     }
+    let download = gtk::Button::with_label("Download…");
+    {
+        let parent = parent.clone();
+        let ctx = ctx.clone();
+        let remote = remote.to_string();
+        let path = path.to_string();
+        let name = name.to_string();
+        download.connect_clicked(move |_| {
+            download_file(&parent, ctx.clone(), &remote, &path, &name);
+        });
+    }
     let box_ = gtk::Box::new(gtk::Orientation::Vertical, 12);
     box_.append(&nav);
     box_.append(&info);
-    box_.append(&open);
+    let actions = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+    actions.append(&open);
+    actions.append(&download);
+    box_.append(&actions);
+    if matches!(category, crate::operations::FileTypeCategory::Archive) {
+        let heading = gtk::Label::new(Some("Archive contents"));
+        heading.add_css_class("heading");
+        heading.set_xalign(0.0);
+        box_.append(&heading);
+        let archive_list = gtk::ListBox::new();
+        archive_list.add_css_class("boxed-list");
+        let src = if remote == "local" {
+            path.to_string()
+        } else {
+            format!("{remote}:{path}")
+        };
+        match ctx.client().and_then(|c| c.archive_list(&src, true).ok()) {
+            Some(items) if !items.is_empty() => {
+                for item in items {
+                    let row = adw::ActionRow::new();
+                    row.set_title(&item.path);
+                    row.set_subtitle(&item.subtitle());
+                    row.add_prefix(&gtk::Image::from_icon_name(if item.is_dir {
+                        "folder-symbolic"
+                    } else {
+                        "package-x-generic-symbolic"
+                    }));
+                    archive_list.append(&row);
+                }
+            }
+            Some(_) => {
+                let row = adw::ActionRow::new();
+                row.set_title("Archive is empty");
+                archive_list.append(&row);
+            }
+            None => {
+                let row = adw::ActionRow::new();
+                row.set_title("Unable to list archive contents");
+                row.set_subtitle("rclone operations/archive list failed for this file.");
+                archive_list.append(&row);
+            }
+        }
+        let scroll = gtk::ScrolledWindow::new();
+        scroll.set_vexpand(true);
+        scroll.set_min_content_height(220);
+        scroll.set_child(Some(&archive_list));
+        box_.append(&scroll);
+    }
     if remote == "local" && matches!(category, crate::operations::FileTypeCategory::Image) {
         let picture = gtk::Picture::for_filename(path);
         picture.set_vexpand(true);
@@ -3055,28 +3277,186 @@ pub fn file_viewer(
 pub fn remote_about(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, remote: &str) {
     let dialog = adw::Dialog::new();
     dialog.set_title(&format!("About {remote}"));
-    let list = gtk::ListBox::new();
-    list.add_css_class("boxed-list");
+    dialog.set_content_width(560);
+    dialog.set_content_height(640);
+    let page = adw::PreferencesPage::new();
+    let usage = adw::PreferencesGroup::new();
+    usage.set_title("Usage");
+    let features = adw::PreferencesGroup::new();
+    features.set_title("Features");
+    let hashes = adw::PreferencesGroup::new();
+    hashes.set_title("Hashes");
+    let metadata = adw::PreferencesGroup::new();
+    metadata.set_title("Metadata");
+    let fs = remote_fs(remote, "");
+    let group = format!(
+        "gtk/remote-about/{remote}-{}",
+        chrono::Utc::now().timestamp_millis()
+    );
     if let Some(client) = ctx.client() {
-        match client.about(&remote_fs(remote, "")) {
+        match client.about(&fs) {
             Ok(about) => {
+                for key in ["used", "free", "total", "trashed"] {
+                    if let Some(value) = about.get(key).and_then(|x| x.as_i64()) {
+                        let row = adw::ActionRow::new();
+                        row.set_title(key);
+                        row.set_subtitle(&crate::rclone::format_bytes(value));
+                        usage.add(&row);
+                    }
+                }
                 for (key, value) in about.as_object().cloned().unwrap_or_default() {
+                    if matches!(key.as_str(), "used" | "free" | "total" | "trashed") {
+                        continue;
+                    }
                     let row = adw::ActionRow::new();
                     row.set_title(&key);
                     row.set_subtitle(&value.to_string());
-                    list.append(&row);
+                    usage.add(&row);
                 }
             }
             Err(e) => {
                 let row = adw::ActionRow::new();
-                row.set_title("Unable to query remote");
+                row.set_title("Unable to query disk usage");
                 row.set_subtitle(&e.to_string());
-                list.append(&row);
+                usage.add(&row);
+            }
+        }
+        match client.size(&fs, "") {
+            Ok(size) => {
+                let row = adw::ActionRow::new();
+                row.set_title("Objects");
+                let count = size.get("count").and_then(|x| x.as_i64()).unwrap_or(0);
+                let bytes = size.get("bytes").and_then(|x| x.as_i64()).unwrap_or(0);
+                row.set_subtitle(&format!("{count} · {}", crate::rclone::format_bytes(bytes)));
+                usage.add(&row);
+            }
+            Err(e) => {
+                let row = adw::ActionRow::new();
+                row.set_title("Size");
+                row.set_subtitle(&e.to_string());
+                usage.add(&row);
+            }
+        }
+        let info = ctx.fs_info(remote).or_else(|| client.fs_info(&fs).ok());
+        if let Some(info) = info {
+            let name = adw::ActionRow::new();
+            name.set_title("Name");
+            name.set_subtitle(&info.name);
+            usage.add(&name);
+            let root = adw::ActionRow::new();
+            root.set_title("Root");
+            let root_text = if info.root.is_empty() {
+                "/".to_string()
+            } else {
+                info.root.clone()
+            };
+            root.set_subtitle(&root_text);
+            usage.add(&root);
+            let precision = adw::ActionRow::new();
+            precision.set_title("Timestamp precision");
+            let precision_text = nanoseconds_to_duration(info.precision);
+            precision.set_subtitle(&precision_text);
+            usage.add(&precision);
+            if info.hashes.is_empty() {
+                let row = adw::ActionRow::new();
+                row.set_title("None");
+                hashes.add(&row);
+            } else {
+                for hash in &info.hashes {
+                    let row = adw::ActionRow::new();
+                    row.set_title(&hash.to_ascii_uppercase());
+                    hashes.add(&row);
+                }
+            }
+            for (key, value) in &info.features {
+                if key == "IsLocal" {
+                    continue;
+                }
+                let row = adw::ActionRow::new();
+                row.set_title(key);
+                row.set_subtitle(if *value { "yes" } else { "no" });
+                features.add(&row);
+            }
+            if let Some(obj) = info.metadata.as_object() {
+                for (group_name, data) in obj {
+                    if let Some(items) = data.as_object() {
+                        for (key, meta) in items {
+                            let row = adw::ActionRow::new();
+                            row.set_title(&format!("{group_name}.{key}"));
+                            let help = meta
+                                .get("Help")
+                                .or_else(|| meta.get("help"))
+                                .and_then(|x| x.as_str())
+                                .unwrap_or("");
+                            row.set_subtitle(help);
+                            metadata.add(&row);
+                        }
+                    }
+                }
             }
         }
     }
-    dialog.set_child(Some(&list));
-    dialog.present(Some(parent));
+    page.add(&usage);
+    page.add(&hashes);
+    page.add(&features);
+    page.add(&metadata);
+    let scroll = gtk::ScrolledWindow::new();
+    scroll.set_vexpand(true);
+    scroll.set_child(Some(&page));
+    dialog.set_child(Some(&scroll));
+    {
+        let ctx = ctx.clone();
+        dialog.connect_closed(move |_| {
+            if let Some(client) = ctx.client() {
+                let _ = client.job_stop_group(&group);
+            }
+        });
+    }
+    present_window_or_dialog(parent, &ctx, &dialog);
+}
+
+pub(crate) fn download_file(
+    parent: &impl IsA<gtk::Widget>,
+    ctx: AppCtx,
+    remote: &str,
+    path: &str,
+    name: &str,
+) {
+    let Some(win) = parent.root().and_downcast::<gtk::Window>() else {
+        return;
+    };
+    let dialog = gtk::FileDialog::new();
+    dialog.set_initial_name(Some(name));
+    let remote = remote.to_string();
+    let path = path.to_string();
+    dialog.save(
+        Some(&win),
+        None::<gio::Cancellable>.as_ref(),
+        move |result| {
+            let Ok(file) = result else {
+                return;
+            };
+            let Some(dest) = file.path() else {
+                return;
+            };
+            let Some(client) = ctx.client() else {
+                return;
+            };
+            let fs = if remote == "local" {
+                "/".into()
+            } else {
+                remote_fs(&remote, "")
+            };
+            let src_remote = if remote == "local" {
+                path.trim_start_matches('/').to_string()
+            } else {
+                path
+            };
+            if let Err(e) = client.copy_file(&fs, &src_remote, "/", &dest.to_string_lossy()) {
+                log::warn!("download failed: {e}");
+            }
+        },
+    );
 }
 
 pub fn templates(parent: &impl IsA<gtk::Widget>, ctx: AppCtx) {

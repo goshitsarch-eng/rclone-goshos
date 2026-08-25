@@ -1,6 +1,7 @@
 //! rclone Remote Control HTTP client.
 
 use serde_json::{json, Value};
+use std::collections::BTreeMap;
 use std::time::Duration;
 use thiserror::Error;
 
@@ -307,6 +308,12 @@ impl RcClient {
         self.call("operations/about", json!({ "fs": fs }))
     }
 
+    pub fn fs_info(&self, fs: &str) -> Result<FsInfo, RcError> {
+        Ok(FsInfo::from_value(
+            &self.call("operations/fsinfo", json!({ "fs": fs }))?,
+        ))
+    }
+
     pub fn size(&self, fs: &str, remote: &str) -> Result<Value, RcError> {
         self.call("operations/size", json!({ "fs": fs, "remote": remote }))
     }
@@ -330,10 +337,36 @@ impl RcClient {
         )
     }
 
+    pub fn archive_list(&self, src: &str, long: bool) -> Result<Vec<ArchiveListItem>, RcError> {
+        let v = self.call("operations/archive", archive_list_payload(src, long))?;
+        if v.get("error").and_then(|x| x.as_bool()).unwrap_or(false) {
+            let result = v.get("result").and_then(|x| x.as_str()).unwrap_or("");
+            return Err(RcError::message(format!("Archive list failed: {result}")));
+        }
+        if let Some(items) = v.get("items").and_then(|x| x.as_array()) {
+            return Ok(items
+                .iter()
+                .filter_map(ArchiveListItem::from_value)
+                .collect());
+        }
+        let result = v.get("result").and_then(|x| x.as_str()).unwrap_or("");
+        Ok(parse_archive_list(result, long))
+    }
+
     pub fn public_link(&self, fs: &str, remote: &str) -> Result<String, RcError> {
+        self.public_link_ex(fs, remote, None, false)
+    }
+
+    pub fn public_link_ex(
+        &self,
+        fs: &str,
+        remote: &str,
+        expire: Option<&str>,
+        unlink: bool,
+    ) -> Result<String, RcError> {
         let v = self.call(
             "operations/publiclink",
-            json!({ "fs": fs, "remote": remote }),
+            public_link_payload(fs, remote, expire, unlink),
         )?;
         Ok(v.get("url")
             .and_then(|x| x.as_str())
@@ -368,6 +401,10 @@ impl RcClient {
 
     pub fn job_stop(&self, jobid: u64) -> Result<Value, RcError> {
         self.call("job/stop", json!({ "jobid": jobid }))
+    }
+
+    pub fn job_stop_group(&self, group: &str) -> Result<Value, RcError> {
+        self.call("job/stopgroup", json!({ "group": group }))
     }
 
     pub fn stats(&self, group: Option<&str>) -> Result<Value, RcError> {
@@ -688,6 +725,234 @@ pub fn cleanup_payload(fs: &str, remote: Option<&str>) -> Value {
     }
 }
 
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct FsInfo {
+    pub name: String,
+    pub root: String,
+    pub precision: i64,
+    pub hashes: Vec<String>,
+    pub features: BTreeMap<String, bool>,
+    pub metadata: Value,
+}
+
+impl FsInfo {
+    pub fn from_value(v: &Value) -> Self {
+        let hashes = v
+            .get("Hashes")
+            .and_then(|x| x.as_array())
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|x| x.as_str().map(|s| s.to_string()))
+                    .collect()
+            })
+            .unwrap_or_default();
+        let mut features = BTreeMap::new();
+        if let Some(obj) = v.get("Features").and_then(|x| x.as_object()) {
+            for (key, val) in obj {
+                features.insert(key.clone(), val.as_bool().unwrap_or(false));
+            }
+        }
+        Self {
+            name: v
+                .get("Name")
+                .and_then(|x| x.as_str())
+                .unwrap_or_default()
+                .to_string(),
+            root: v
+                .get("Root")
+                .and_then(|x| x.as_str())
+                .unwrap_or_default()
+                .to_string(),
+            precision: v.get("Precision").and_then(|x| x.as_i64()).unwrap_or(0),
+            hashes,
+            features,
+            metadata: v.get("MetadataInfo").cloned().unwrap_or(json!({})),
+        }
+    }
+
+    pub fn has_feature(&self, name: &str) -> bool {
+        self.features.get(name).copied().unwrap_or(false)
+    }
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct ArchiveListItem {
+    pub path: String,
+    pub is_dir: bool,
+    pub size: i64,
+    pub date: String,
+    pub time: String,
+}
+
+impl ArchiveListItem {
+    pub fn from_value(v: &Value) -> Option<Self> {
+        let path = v
+            .get("path")
+            .or_else(|| v.get("Path"))
+            .and_then(|x| x.as_str())?
+            .to_string();
+        let is_dir = v
+            .get("isDir")
+            .or_else(|| v.get("IsDir"))
+            .and_then(|x| x.as_bool())
+            .unwrap_or(path.ends_with('/'));
+        Some(Self {
+            path: path.trim_end_matches('/').to_string(),
+            is_dir,
+            size: v
+                .get("size")
+                .or_else(|| v.get("Size"))
+                .and_then(|x| x.as_i64())
+                .unwrap_or(0),
+            date: v
+                .get("date")
+                .and_then(|x| x.as_str())
+                .unwrap_or_default()
+                .to_string(),
+            time: v
+                .get("time")
+                .and_then(|x| x.as_str())
+                .unwrap_or_default()
+                .to_string(),
+        })
+    }
+
+    pub fn subtitle(&self) -> String {
+        if self.is_dir {
+            format!("folder · {} {}", self.date, self.time)
+                .trim()
+                .to_string()
+        } else {
+            format!("{} · {} {}", format_bytes(self.size), self.date, self.time)
+                .trim()
+                .to_string()
+        }
+    }
+}
+
+pub fn archive_list_payload(src: &str, long: bool) -> Value {
+    json!({ "action": "list", "src": src, "long": long })
+}
+
+pub fn public_link_payload(fs: &str, remote: &str, expire: Option<&str>, unlink: bool) -> Value {
+    let mut body = json!({ "fs": fs, "remote": remote });
+    if let Some(obj) = body.as_object_mut() {
+        if let Some(exp) = expire.filter(|s| !s.is_empty()) {
+            obj.insert("expire".into(), json!(exp));
+        }
+        if unlink {
+            obj.insert("unlink".into(), json!(true));
+        }
+    }
+    body
+}
+
+pub fn parse_hashsum(value: &Value) -> Option<String> {
+    if let Some(s) = value.get("hash").and_then(|x| x.as_str()) {
+        let token = s.lines().next().unwrap_or(s);
+        let token = token.split_whitespace().next().unwrap_or(token).trim();
+        if !token.is_empty() {
+            return Some(token.to_string());
+        }
+    }
+    if let Some(arr) = value.get("hashsum").and_then(|x| x.as_array()) {
+        if let Some(first) = arr.iter().find_map(|x| x.as_str()) {
+            let token = first.split_whitespace().next().unwrap_or(first).trim();
+            if !token.is_empty() {
+                return Some(token.to_string());
+            }
+        }
+    }
+    None
+}
+
+pub fn parse_archive_list(result: &str, long: bool) -> Vec<ArchiveListItem> {
+    let mut items = Vec::new();
+    for line in result.lines() {
+        let trimmed = line.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        if long {
+            let parts = split_n_robust(trimmed, 4);
+            if parts.len() >= 4 {
+                let size = parts[0].parse::<i64>().unwrap_or(0);
+                let date = parts[1].to_string();
+                let time = parts[2].split('.').next().unwrap_or(parts[2]).to_string();
+                let path = parts[3];
+                let is_dir = path.ends_with('/');
+                items.push(ArchiveListItem {
+                    path: path.trim_end_matches('/').to_string(),
+                    is_dir,
+                    size,
+                    date,
+                    time,
+                });
+                continue;
+            }
+        } else {
+            let parts = split_n_robust(trimmed, 2);
+            if parts.len() >= 2 && parts[0].parse::<i64>().is_ok() {
+                let path = parts[1];
+                items.push(ArchiveListItem {
+                    path: path.trim_end_matches('/').to_string(),
+                    is_dir: path.ends_with('/'),
+                    size: parts[0].parse().unwrap_or(0),
+                    date: String::new(),
+                    time: String::new(),
+                });
+                continue;
+            }
+        }
+        items.push(ArchiveListItem {
+            path: trimmed.trim_end_matches('/').to_string(),
+            is_dir: trimmed.ends_with('/'),
+            ..ArchiveListItem::default()
+        });
+    }
+    items
+}
+
+fn split_n_robust(s: &str, n: usize) -> Vec<&str> {
+    let mut parts = Vec::with_capacity(n);
+    let mut current = s;
+    for _ in 0..n.saturating_sub(1) {
+        let trimmed = current.trim_start();
+        if let Some(pos) = trimmed.find(|c: char| c.is_whitespace()) {
+            parts.push(&trimmed[..pos]);
+            current = &trimmed[pos..];
+        } else {
+            break;
+        }
+    }
+    let final_part = current.trim_start();
+    if !final_part.is_empty() {
+        parts.push(final_part);
+    }
+    parts
+}
+
+pub fn browse_target(path: &str) -> Option<(String, String)> {
+    let trimmed = path.trim();
+    if trimmed.is_empty() || trimmed == "—" {
+        return None;
+    }
+    Some(split_remote_path(trimmed))
+}
+
+pub fn nanoseconds_to_duration(ns: i64) -> String {
+    if ns <= 0 {
+        return "—".into();
+    }
+    if ns % 1_000_000_000 == 0 {
+        format!("{}s", ns / 1_000_000_000)
+    } else if ns % 1_000_000 == 0 {
+        format!("{}ms", ns / 1_000_000)
+    } else {
+        format!("{ns}ns")
+    }
+}
+
 pub fn format_bytes(bytes: i64) -> String {
     if bytes < 0 {
         return "—".into();
@@ -817,5 +1082,76 @@ mod tests {
         }));
         assert_eq!(id.summary(), "v1.68.2 · linux/amd64");
         assert_eq!(backend_identity(&json!({})).version, "unknown");
+    }
+
+    #[test]
+    fn fsinfo_parses_features_and_hashes() {
+        let info = FsInfo::from_value(&json!({
+            "Name": "drive",
+            "Root": "Photos",
+            "Precision": 1_000_000_000,
+            "Hashes": ["md5", "sha1"],
+            "Features": { "PublicLink": true, "CleanUp": false, "IsLocal": false },
+            "MetadataInfo": { "System": { "mtime": { "Help": "mod time" } } }
+        }));
+        assert_eq!(info.name, "drive");
+        assert_eq!(info.root, "Photos");
+        assert!(info.has_feature("PublicLink"));
+        assert!(!info.has_feature("CleanUp"));
+        assert!(!info.has_feature("Missing"));
+        assert_eq!(info.hashes, vec!["md5", "sha1"]);
+        assert_eq!(nanoseconds_to_duration(info.precision), "1s");
+        assert!(info.metadata.get("System").is_some());
+    }
+
+    #[test]
+    fn archive_list_parses_long_and_plain() {
+        let long = parse_archive_list(
+            "6 2025-10-30 09:46:23.000000000 file.txt\n0 2025-10-30 09:46:23.000000000 nested/\n",
+            true,
+        );
+        assert_eq!(long.len(), 2);
+        assert_eq!(long[0].path, "file.txt");
+        assert_eq!(long[0].size, 6);
+        assert_eq!(long[0].date, "2025-10-30");
+        assert_eq!(long[0].time, "09:46:23");
+        assert!(long[1].is_dir);
+        assert_eq!(long[1].path, "nested");
+        let short = parse_archive_list("12 readme.md\ndocs/\n", false);
+        assert_eq!(short[0].size, 12);
+        assert!(short[1].is_dir);
+        assert_eq!(
+            archive_list_payload("drive:pack.zip", true),
+            json!({ "action": "list", "src": "drive:pack.zip", "long": true })
+        );
+    }
+
+    #[test]
+    fn hashsum_and_public_link_helpers() {
+        assert_eq!(
+            parse_hashsum(&json!({ "hash": "abc123  file.txt" })).as_deref(),
+            Some("abc123")
+        );
+        assert_eq!(
+            parse_hashsum(&json!({ "hashsum": ["deadbeef file.bin"] })).as_deref(),
+            Some("deadbeef")
+        );
+        assert_eq!(
+            public_link_payload("drive:", "Photos/a.jpg", Some("1d"), false),
+            json!({ "fs": "drive:", "remote": "Photos/a.jpg", "expire": "1d" })
+        );
+        assert_eq!(
+            public_link_payload("drive:", "Photos/a.jpg", None, true),
+            json!({ "fs": "drive:", "remote": "Photos/a.jpg", "unlink": true })
+        );
+        assert_eq!(
+            browse_target("drive:Photos/a.jpg"),
+            Some(("drive".into(), "Photos/a.jpg".into()))
+        );
+        assert_eq!(browse_target("  "), None);
+        assert_eq!(
+            browse_target("/tmp/out"),
+            Some(("local".into(), "/tmp/out".into()))
+        );
     }
 }
