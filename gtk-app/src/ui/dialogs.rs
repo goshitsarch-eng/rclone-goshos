@@ -5845,6 +5845,8 @@ pub fn job_detail(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, job_id: u64) {
     dialog.set_content_height(620);
     let meta = gtk::ListBox::new();
     meta.add_css_class("boxed-list");
+    let stats = gtk::ListBox::new();
+    stats.add_css_class("boxed-list");
     let progress = gtk::ProgressBar::new();
     progress.set_show_text(true);
     let transfers = gtk::ListBox::new();
@@ -5916,6 +5918,12 @@ pub fn job_detail(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, job_id: u64) {
     box_.set_margin_end(12);
     box_.set_margin_bottom(12);
     box_.append(&progress);
+    let overview_label = gtk::Label::new(Some(
+        &ctx.t_or("modals.jobDetail.sections.overview", "Job Information"),
+    ));
+    overview_label.add_css_class("heading");
+    overview_label.set_xalign(0.0);
+    box_.append(&overview_label);
     box_.append(&meta);
     box_.append(&filter);
     let xfer_label = gtk::Label::new(Some(
@@ -5932,6 +5940,13 @@ pub fn job_detail(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, job_id: u64) {
     done_label.set_xalign(0.0);
     box_.append(&done_label);
     box_.append(&completed);
+    let stats_label = gtk::Label::new(Some(
+        &ctx.t_or("modals.jobDetail.sections.statistics", "Statistics"),
+    ));
+    stats_label.add_css_class("heading");
+    stats_label.set_xalign(0.0);
+    box_.append(&stats_label);
+    box_.append(&stats);
     let open_box = gtk::Box::new(gtk::Orientation::Horizontal, 8);
     let populate_opens: Rc<dyn Fn(&str, &str)> = Rc::new({
         let open_box = open_box.clone();
@@ -5996,6 +6011,7 @@ pub fn job_detail(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, job_id: u64) {
     let fill = {
         let ctx = ctx.clone();
         let meta = meta.clone();
+        let stats = stats.clone();
         let transfers = transfers.clone();
         let completed = completed.clone();
         let progress = progress.clone();
@@ -6005,6 +6021,9 @@ pub fn job_detail(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, job_id: u64) {
         move || {
             while let Some(child) = meta.first_child() {
                 meta.remove(&child);
+            }
+            while let Some(child) = stats.first_child() {
+                stats.remove(&child);
             }
             while let Some(child) = transfers.first_child() {
                 transfers.remove(&child);
@@ -6152,6 +6171,14 @@ pub fn job_detail(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, job_id: u64) {
                     ctx.t_or("modals.jobDetail.fields.group", "Group"),
                     job.group.clone(),
                 ),
+            ] {
+                let row = adw::ActionRow::new();
+                row.set_title(&title);
+                row.set_subtitle(&value);
+                row.set_subtitle_lines(2);
+                meta.append(&row);
+            }
+            for (title, value) in [
                 (ctx.t_or("sidebar.remotes", "Remote"), job.remote.clone()),
                 (
                     ctx.t_or("fileBrowser.operations.details.source", "Source"),
@@ -6280,7 +6307,7 @@ pub fn job_detail(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, job_id: u64) {
                 row.set_title(&title);
                 row.set_subtitle(&value);
                 row.set_subtitle_lines(2);
-                meta.append(&row);
+                stats.append(&row);
             }
             let query = filter.text().to_lowercase();
             append_transfer_rows(

@@ -483,6 +483,7 @@ This client is the GTK 4 + libadwaita rewrite of the Angular/Tauri desktop UI. I
 - Reconstructed completed transfers fill `bytes` from snapshot `size` (no more `0 B / 3 B` after restart)
 - Job detail shows Origin / Profile / Backend / Group with Type / Status, and `—` for unknown speed
 - Job detail uses one page scroll so identity fields are not clipped by competing transfer lists
+- Job detail puts identity + transfers first and statistics after, matching Angular overview/profile then activity
 
 ## Still deepening toward pixel-level Angular parity
 
