@@ -42,6 +42,8 @@ pub struct CoreSettings {
     pub connection_check_urls: Vec<String>,
     pub bandwidth_limit: String,
     pub completed_onboarding: bool,
+    #[serde(default)]
+    pub extra_backends: Vec<BackendEntry>,
 }
 
 impl Default for CoreSettings {
@@ -58,8 +60,18 @@ impl Default for CoreSettings {
             ],
             bandwidth_limit: String::new(),
             completed_onboarding: false,
+            extra_backends: vec![],
         }
     }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq, Eq)]
+pub struct BackendEntry {
+    pub name: String,
+    pub host: String,
+    pub port: u16,
+    pub user: String,
+    pub pass: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

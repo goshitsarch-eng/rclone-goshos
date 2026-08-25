@@ -26,10 +26,12 @@ pub struct NautilusView {
     toast: adw::ToastOverlay,
     sidebar: gtk::ListBox,
     list: gtk::ListBox,
+    list_right: gtk::ListBox,
     path_entry: gtk::Entry,
     status: gtk::Label,
     tabs: Rc<RefCell<Vec<TabState>>>,
     current: Rc<RefCell<TabState>>,
+    secondary: Rc<RefCell<TabState>>,
     history: Rc<RefCell<Vec<(String, String)>>>,
     future: Rc<RefCell<Vec<(String, String)>>>,
     clipboard: Rc<RefCell<Option<(String, String, bool)>>>,
@@ -37,6 +39,8 @@ pub struct NautilusView {
     tab_bar: gtk::Box,
     next_tab_id: Rc<RefCell<u32>>,
     split_enabled: Rc<RefCell<bool>>,
+    paned: gtk::Paned,
+    right_scroll: gtk::ScrolledWindow,
     ops: gtk::ListBox,
 }
 
@@ -95,16 +99,30 @@ impl NautilusView {
 
         let list = gtk::ListBox::new();
         list.add_css_class("boxed-list");
+        list.set_selection_mode(gtk::SelectionMode::Multiple);
         let files_scroll = gtk::ScrolledWindow::new();
         files_scroll.set_vexpand(true);
         files_scroll.set_child(Some(&list));
+        let list_right = gtk::ListBox::new();
+        list_right.add_css_class("boxed-list");
+        list_right.set_selection_mode(gtk::SelectionMode::Multiple);
+        let right_scroll = gtk::ScrolledWindow::new();
+        right_scroll.set_vexpand(true);
+        right_scroll.set_child(Some(&list_right));
+        right_scroll.set_visible(false);
+        let paned = gtk::Paned::new(gtk::Orientation::Horizontal);
+        paned.set_start_child(Some(&files_scroll));
+        paned.set_end_child(Some(&right_scroll));
+        paned.set_resize_start_child(true);
+        paned.set_resize_end_child(true);
+        paned.set_wide_handle(true);
         let tab_bar = gtk::Box::new(gtk::Orientation::Horizontal, 4);
         tab_bar.add_css_class("linked");
         tab_bar.set_margin_start(8);
         tab_bar.set_margin_end(8);
         let files_col = gtk::Box::new(gtk::Orientation::Vertical, 4);
         files_col.append(&tab_bar);
-        files_col.append(&files_scroll);
+        files_col.append(&paned);
         split.set_content(Some(&files_col));
 
         let ops = gtk::ListBox::new();
@@ -139,10 +157,12 @@ impl NautilusView {
             toast,
             sidebar,
             list,
+            list_right,
             path_entry,
             status,
             tabs: Rc::new(RefCell::new(vec![initial.clone()])),
-            current: Rc::new(RefCell::new(initial)),
+            current: Rc::new(RefCell::new(initial.clone())),
+            secondary: Rc::new(RefCell::new(initial)),
             history: Rc::new(RefCell::new(vec![])),
             future: Rc::new(RefCell::new(vec![])),
             clipboard: Rc::new(RefCell::new(None)),
@@ -150,6 +170,8 @@ impl NautilusView {
             tab_bar,
             next_tab_id: Rc::new(RefCell::new(2)),
             split_enabled: Rc::new(RefCell::new(false)),
+            paned,
+            right_scroll,
             ops,
         };
 
@@ -206,15 +228,7 @@ impl NautilusView {
         }
         {
             let view = view.clone();
-            split_btn.connect_clicked(move |_| {
-                let next = !*view.split_enabled.borrow();
-                *view.split_enabled.borrow_mut() = next;
-                view.status.set_text(if next {
-                    "Split view enabled — open another location from the sidebar"
-                } else {
-                    "Split view off"
-                });
-            });
+            split_btn.connect_clicked(move |_| view.toggle_split());
         }
         {
             let view = view.clone();
@@ -227,6 +241,23 @@ impl NautilusView {
             gesture.set_button(3);
             gesture.connect_pressed(move |_, _, _, _| view.popup_context());
             list.add_controller(gesture);
+        }
+        {
+            let view = view.clone();
+            let drop = gtk::DropTarget::new(gio::File::static_type(), gtk::gdk::DragAction::COPY);
+            {
+                let view = view.clone();
+                drop.connect_drop(move |_, value, _, _| {
+                    if let Ok(file) = value.get::<gio::File>() {
+                        if let Some(path) = file.path() {
+                            view.upload_local_path(&path);
+                            return true;
+                        }
+                    }
+                    false
+                });
+            }
+            view.list.add_controller(drop);
         }
 
         view.reload_sidebar();
@@ -294,8 +325,15 @@ impl NautilusView {
                 return glib::Propagation::Stop;
             }
             if ctrl && key == gtk::gdk::Key::slash {
-                let next = !*view.split_enabled.borrow();
-                *view.split_enabled.borrow_mut() = next;
+                view.toggle_split();
+                return glib::Propagation::Stop;
+            }
+            if ctrl && key == gtk::gdk::Key::z {
+                view.undo_last();
+                return glib::Propagation::Stop;
+            }
+            if ctrl && key == gtk::gdk::Key::a {
+                view.list.select_all();
                 return glib::Propagation::Stop;
             }
             if ctrl && key == gtk::gdk::Key::h {
@@ -449,6 +487,9 @@ impl NautilusView {
                 for entry in entries {
                     self.list.append(&self.entry_row(entry));
                 }
+                if *self.split_enabled.borrow() {
+                    self.reload_pane(&self.list_right, &self.secondary.borrow());
+                }
             }
             Err(err) => {
                 self.status.set_text(&err.to_string());
@@ -551,12 +592,121 @@ impl NautilusView {
             None::<gio::Cancellable>.as_ref(),
             move |result| {
                 if let Ok(files) = result {
-                    let n = files.n_items();
-                    view.toast
-                        .add_toast(adw::Toast::new(&format!("Queued {n} file(s) for upload")));
+                    for i in 0..files.n_items() {
+                        if let Some(file) =
+                            files.item(i).and_then(|o| o.downcast::<gio::File>().ok())
+                        {
+                            if let Some(path) = file.path() {
+                                view.upload_local_path(&path);
+                            }
+                        }
+                    }
                 }
             },
         );
+    }
+
+    fn upload_local_path(&self, path: &std::path::Path) {
+        let Some(client) = self.ctx.client() else {
+            return;
+        };
+        let current = self.current.borrow().clone();
+        let name = path
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("upload")
+            .to_string();
+        let dst = join_remote_path(&current.path, &name);
+        let dst_fs = if current.remote == "local" {
+            "/".into()
+        } else {
+            remote_fs(&current.remote, "")
+        };
+        let dst_remote = if current.remote == "local" {
+            dst.trim_start_matches('/').to_string()
+        } else {
+            dst
+        };
+        match client.copy_file("/", &path.to_string_lossy(), &dst_fs, &dst_remote) {
+            Ok(_) => {
+                self.undo.borrow_mut().push(format!("upload:{dst_remote}"));
+                self.reload();
+                self.toast
+                    .add_toast(adw::Toast::new(&format!("Uploaded {name}")));
+            }
+            Err(e) => self.toast.add_toast(adw::Toast::new(&e.to_string())),
+        }
+    }
+
+    fn toggle_split(&self) {
+        let next = !*self.split_enabled.borrow();
+        *self.split_enabled.borrow_mut() = next;
+        self.right_scroll.set_visible(next);
+        if next {
+            *self.secondary.borrow_mut() = self.current.borrow().clone();
+            self.reload();
+            self.status.set_text("Split view — two listings");
+        } else {
+            self.status.set_text("Split view off");
+        }
+        let _ = &self.paned;
+    }
+
+    fn reload_pane(&self, list: &gtk::ListBox, tab: &TabState) {
+        while let Some(child) = list.first_child() {
+            list.remove(&child);
+        }
+        let Some(client) = self.ctx.client() else {
+            return;
+        };
+        let fs = if tab.remote == "local" {
+            "/".to_string()
+        } else {
+            remote_fs(&tab.remote, "")
+        };
+        let remote_path = if tab.remote == "local" {
+            tab.path.trim_start_matches('/').to_string()
+        } else {
+            tab.path.clone()
+        };
+        if let Ok(mut entries) = client.list_dir(&fs, &remote_path) {
+            if !self.ctx.settings.borrow().nautilus.show_hidden {
+                entries.retain(|e| !e.name.starts_with('.'));
+            }
+            for entry in entries {
+                list.append(&self.entry_row(entry));
+            }
+        }
+    }
+
+    fn undo_last(&self) {
+        let Some(op) = self.undo.borrow_mut().pop() else {
+            self.toast.add_toast(adw::Toast::new("Nothing to undo"));
+            return;
+        };
+        let Some(client) = self.ctx.client() else {
+            return;
+        };
+        if let Some(path) = op.strip_prefix("mkdir:") {
+            let current = self.current.borrow().clone();
+            let fs = if current.remote == "local" {
+                "/".into()
+            } else {
+                remote_fs(&current.remote, "")
+            };
+            let _ = client.purge(&fs, path);
+            self.reload();
+        } else if let Some(path) = op.strip_prefix("upload:") {
+            let current = self.current.borrow().clone();
+            let fs = if current.remote == "local" {
+                "/".into()
+            } else {
+                remote_fs(&current.remote, "")
+            };
+            let _ = client.delete_file(&fs, path);
+            self.reload();
+        }
+        self.toast.add_toast(adw::Toast::new("Undid last action"));
     }
 
     fn properties_selected(&self) {
@@ -801,6 +951,9 @@ impl NautilusView {
             ("Properties", "props"),
             ("New folder", "mkdir"),
             ("Bookmark", "star"),
+            ("Create archive", "archive"),
+            ("Send to…", "sendto"),
+            ("Undo", "undo"),
         ] {
             let btn = gtk::Button::with_label(label);
             let view = self.clone();
@@ -819,6 +972,38 @@ impl NautilusView {
                 "props" => view.properties_selected(),
                 "mkdir" => view.mkdir_prompt(),
                 "star" => view.add_bookmark(),
+                "archive" => {
+                    if let Some(win) = view.root.root().and_downcast::<gtk::Window>() {
+                        let current = view.current.borrow().clone();
+                        dialogs::archive_create(
+                            &win,
+                            view.ctx.clone(),
+                            &current.remote,
+                            &current.path,
+                        );
+                    }
+                }
+                "sendto" => {
+                    let current = view.current.borrow().clone();
+                    let registered = crate::platform::is_send_to_registered(
+                        &current.remote,
+                        Some(&current.path),
+                    );
+                    let result = if registered {
+                        crate::platform::unregister_send_to(&current.remote, Some(&current.path))
+                    } else {
+                        crate::platform::register_send_to(&current.remote, Some(&current.path))
+                    };
+                    match result {
+                        Ok(_) => view.toast.add_toast(adw::Toast::new(if registered {
+                            "Removed Send to shortcut"
+                        } else {
+                            "Added Send to shortcut"
+                        })),
+                        Err(e) => view.toast.add_toast(adw::Toast::new(&e)),
+                    }
+                }
+                "undo" => view.undo_last(),
                 _ => {}
             });
             box_.append(&btn);

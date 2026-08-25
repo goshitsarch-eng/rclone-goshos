@@ -139,8 +139,7 @@ impl RcClient {
         name: &str,
         r#type: &str,
         parameters: Value,
-        state: Option<&str>,
-        result: Option<Value>,
+        opt: Option<Value>,
     ) -> Result<Value, RcError> {
         let mut body = json!({
             "name": name,
@@ -148,13 +147,41 @@ impl RcClient {
             "parameters": parameters,
             "opt": { "nonInteractive": true }
         });
-        if let Some(state) = state {
-            body["state"] = json!(state);
-        }
-        if let Some(result) = result {
-            body["opt"]["result"] = result;
+        if let Some(Value::Object(user)) = opt {
+            if let Some(obj) = body["opt"].as_object_mut() {
+                obj.extend(user);
+            }
         }
         self.call("config/create", body)
+    }
+
+    pub fn continue_create_remote(
+        &self,
+        name: &str,
+        state: &str,
+        result: Value,
+        parameters: Value,
+        opt: Option<Value>,
+    ) -> Result<Value, RcError> {
+        let mut protocol = json!({
+            "continue": true,
+            "state": state,
+            "result": result,
+            "nonInteractive": true
+        });
+        if let Some(Value::Object(user)) = opt {
+            if let Some(obj) = protocol.as_object_mut() {
+                obj.extend(user);
+            }
+        }
+        self.call(
+            "config/update",
+            json!({
+                "name": name,
+                "parameters": parameters,
+                "opt": protocol
+            }),
+        )
     }
 
     pub fn oauth_status(&self) -> Result<(bool, Option<String>), RcError> {
@@ -248,6 +275,13 @@ impl RcClient {
                 "dstFs": dst_fs,
                 "dstRemote": dst_remote
             }),
+        )
+    }
+
+    pub fn copy_url(&self, url: &str, fs: &str, remote: &str) -> Result<Value, RcError> {
+        self.call(
+            "operations/copyurl",
+            json!({ "url": url, "fs": fs, "remote": remote }),
         )
     }
 

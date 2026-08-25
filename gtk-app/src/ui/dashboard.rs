@@ -448,6 +448,7 @@ impl Dashboard {
         let actions = gtk::Box::new(gtk::Orientation::Horizontal, 8);
         for (label, icon, kind) in [
             ("Browse", "folder-symbolic", "browse"),
+            ("About", "dialog-information-symbolic", "about"),
             ("Logs", "utilities-terminal-symbolic", "logs"),
             ("Export", "document-save-symbolic", "export"),
             ("Clone", "edit-copy-symbolic", "clone"),
@@ -463,6 +464,11 @@ impl Dashboard {
             btn.connect_clicked(move |_| match kind {
                 "browse" => {
                     *ctx.selected_remote.borrow_mut() = Some(name.clone());
+                }
+                "about" => {
+                    if let Some(win) = dash.root.root().and_downcast::<gtk::Window>() {
+                        dialogs::remote_about(&win, ctx.clone(), &name);
+                    }
                 }
                 "logs" => {
                     if let Some(win) = dash.root.root().and_downcast::<gtk::Window>() {

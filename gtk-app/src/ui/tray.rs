@@ -10,6 +10,7 @@ pub enum TrayCommand {
     StopServes,
     MountRemote(String),
     StartQuickRun(String),
+    ShowWindow,
 }
 
 #[derive(Clone)]
@@ -26,6 +27,100 @@ impl TrayBus {
         while let Ok(cmd) = rx.try_recv() {
             handle(ctx, cmd);
         }
+    }
+}
+
+struct StatusIcon {
+    tx: Sender<TrayCommand>,
+    remotes: Vec<String>,
+    quick_runs: Vec<(String, String)>,
+}
+
+impl ksni::Tray for StatusIcon {
+    fn icon_name(&self) -> String {
+        "folder-remote".into()
+    }
+
+    fn title(&self) -> String {
+        "Rclone Manager".into()
+    }
+
+    fn tool_tip(&self) -> ksni::ToolTip {
+        ksni::ToolTip {
+            title: "Rclone Manager".into(),
+            description: "Remotes, mounts, and transfers".into(),
+            ..Default::default()
+        }
+    }
+
+    fn menu(&self) -> Vec<ksni::MenuItem<Self>> {
+        use ksni::menu::*;
+        let mut items = vec![
+            StandardItem {
+                label: "Show Window".into(),
+                activate: Box::new(|this: &mut Self| {
+                    let _ = this.tx.send(TrayCommand::ShowWindow);
+                }),
+                ..Default::default()
+            }
+            .into(),
+            MenuItem::Separator,
+            StandardItem {
+                label: "Unmount All".into(),
+                activate: Box::new(|this: &mut Self| {
+                    let _ = this.tx.send(TrayCommand::UnmountAll);
+                }),
+                ..Default::default()
+            }
+            .into(),
+            StandardItem {
+                label: "Stop All Jobs".into(),
+                activate: Box::new(|this: &mut Self| {
+                    let _ = this.tx.send(TrayCommand::StopJobs);
+                }),
+                ..Default::default()
+            }
+            .into(),
+            StandardItem {
+                label: "Stop All Serves".into(),
+                activate: Box::new(|this: &mut Self| {
+                    let _ = this.tx.send(TrayCommand::StopServes);
+                }),
+                ..Default::default()
+            }
+            .into(),
+            MenuItem::Separator,
+        ];
+        for remote in &self.remotes {
+            let name = remote.clone();
+            items.push(
+                StandardItem {
+                    label: format!("Mount {name}"),
+                    activate: Box::new(move |this: &mut Self| {
+                        let _ = this.tx.send(TrayCommand::MountRemote(name.clone()));
+                    }),
+                    ..Default::default()
+                }
+                .into(),
+            );
+        }
+        if !self.quick_runs.is_empty() {
+            items.push(MenuItem::Separator);
+        }
+        for (id, label) in &self.quick_runs {
+            let id = id.clone();
+            items.push(
+                StandardItem {
+                    label: format!("Run {label}"),
+                    activate: Box::new(move |this: &mut Self| {
+                        let _ = this.tx.send(TrayCommand::StartQuickRun(id.clone()));
+                    }),
+                    ..Default::default()
+                }
+                .into(),
+            );
+        }
+        items
     }
 }
 
@@ -62,12 +157,23 @@ pub fn start(ctx: &AppCtx) -> Option<TrayBus> {
         tx: tx.clone(),
         rx: Arc::new(Mutex::new(rx)),
     };
+    let icon = StatusIcon {
+        tx: tx.clone(),
+        remotes: remotes.clone(),
+        quick_runs: quick_runs.clone(),
+    };
+    std::thread::Builder::new()
+        .name("rclone-manager-sni".into())
+        .spawn(move || {
+            let service = ksni::TrayService::new(icon);
+            let _ = service.run();
+        })
+        .ok();
     log::info!(
-        "tray actions ready ({} remotes, {} quick runs)",
+        "StatusNotifier tray started ({} remotes, {} quick runs)",
         remotes.len(),
         quick_runs.len()
     );
-    let _ = (tx, remotes, quick_runs);
     Some(bus)
 }
 
@@ -128,5 +234,6 @@ pub fn handle(ctx: &AppCtx, cmd: TrayCommand) {
                 }
             }
         }
+        TrayCommand::ShowWindow => {}
     }
 }

@@ -8,6 +8,7 @@ mod window;
 mod wizard;
 
 use crate::i18n::I18n;
+use crate::platform::PowerInhibitor;
 use crate::rclone::RcloneEngine;
 use crate::settings::AppSettings;
 use crate::store::{AppStore, RuntimeSnapshot};
@@ -25,6 +26,7 @@ pub struct AppCtx {
     pub snapshot: Rc<RefCell<RuntimeSnapshot>>,
     pub selected_remote: Rc<RefCell<Option<String>>>,
     pub selected_quick_run: Rc<RefCell<Option<String>>>,
+    pub inhibitor: Rc<RefCell<PowerInhibitor>>,
 }
 
 impl AppCtx {
@@ -40,6 +42,7 @@ impl AppCtx {
             snapshot: Rc::new(RefCell::new(RuntimeSnapshot::default())),
             selected_remote: Rc::new(RefCell::new(None)),
             selected_quick_run: Rc::new(RefCell::new(None)),
+            inhibitor: Rc::new(RefCell::new(PowerInhibitor::new())),
         }
     }
 
@@ -87,6 +90,27 @@ impl AppCtx {
         snap.stats = stats;
         snap.local_disks = disks;
         snap.jobs = jobs;
+        drop(snap);
+        self.update_power_inhibit();
+    }
+
+    pub fn update_power_inhibit(&self) {
+        if !self.settings.borrow().general.prevent_sleep {
+            self.inhibitor.borrow_mut().release();
+            return;
+        }
+        let snap = self.snapshot.borrow();
+        let running = snap.jobs.iter().any(|j| j.status == "running")
+            || !snap.mounts.is_empty()
+            || !snap.serves.is_empty();
+        let reason = format!(
+            "{} jobs, {} mounts, {} serves",
+            snap.jobs.len(),
+            snap.mounts.len(),
+            snap.serves.len()
+        );
+        drop(snap);
+        self.inhibitor.borrow_mut().update(running, &reason);
     }
 
     pub fn toast(&self, overlay: &adw::ToastOverlay, message: impl AsRef<str>) {

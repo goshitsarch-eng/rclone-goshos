@@ -1,8 +1,11 @@
 //! GTK 4 + libadwaita rewrite of Rclone Manager.
 
 pub mod backup;
+pub mod flags;
 pub mod i18n;
+pub mod interactive;
 pub mod operations;
+pub mod platform;
 pub mod providers;
 pub mod rclone;
 pub mod settings;

@@ -1,6 +1,7 @@
 //! App and rclone update checks (GitHub releases + rclone.org).
 
 use serde_json::Value;
+use std::io::Read;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct UpdateInfo {
@@ -76,6 +77,49 @@ pub fn fetch_app_update(current: &str) -> Result<UpdateInfo, String> {
     parse_github_release(&body, current).ok_or_else(|| "invalid GitHub response".into())
 }
 
+pub fn rclone_linux_zip_url() -> &'static str {
+    "https://downloads.rclone.org/rclone-current-linux-amd64.zip"
+}
+
+pub fn install_rclone_binary(dest_dir: &std::path::Path) -> Result<std::path::PathBuf, String> {
+    std::fs::create_dir_all(dest_dir).map_err(|e| e.to_string())?;
+    let resp = ureq::get(rclone_linux_zip_url())
+        .set("User-Agent", "rclone-manager-gtk")
+        .timeout(std::time::Duration::from_secs(120))
+        .call()
+        .map_err(|e| e.to_string())?;
+    let mut bytes = Vec::new();
+    resp.into_reader()
+        .read_to_end(&mut bytes)
+        .map_err(|e| e.to_string())?;
+    let cursor = std::io::Cursor::new(bytes);
+    let mut archive = zip::ZipArchive::new(cursor).map_err(|e| e.to_string())?;
+    for i in 0..archive.len() {
+        let mut file = archive.by_index(i).map_err(|e| e.to_string())?;
+        let name = file.name().to_string();
+        if name.ends_with("/rclone") || name == "rclone" || name.ends_with("rclone.exe") {
+            let dest = dest_dir.join(if name.ends_with(".exe") {
+                "rclone.exe"
+            } else {
+                "rclone"
+            });
+            let mut out = std::fs::File::create(&dest).map_err(|e| e.to_string())?;
+            std::io::copy(&mut file, &mut out).map_err(|e| e.to_string())?;
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                let mut perms = std::fs::metadata(&dest)
+                    .map_err(|e| e.to_string())?
+                    .permissions();
+                perms.set_mode(0o755);
+                std::fs::set_permissions(&dest, perms).map_err(|e| e.to_string())?;
+            }
+            return Ok(dest);
+        }
+    }
+    Err("rclone binary not found in download archive".into())
+}
+
 pub fn fetch_rclone_update(current: &str) -> Result<UpdateInfo, String> {
     let resp = ureq::get("https://downloads.rclone.org/version.txt")
         .set("User-Agent", "rclone-manager-gtk")
@@ -119,5 +163,10 @@ mod tests {
         assert!(info.available);
         assert_eq!(info.latest, "v0.9.0");
         assert_eq!(info.url, "https://example.com/r");
+    }
+
+    #[test]
+    fn linux_zip_url_is_official() {
+        assert!(rclone_linux_zip_url().contains("downloads.rclone.org"));
     }
 }

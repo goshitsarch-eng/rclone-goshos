@@ -17,6 +17,9 @@ pub fn activate(app: &adw::Application) {
 
     let settings = ctx.settings.borrow().clone();
     *ctx.engine.borrow_mut() = Some(RcloneEngine::start(&settings));
+    if settings.general.start_on_startup {
+        let _ = crate::platform::set_autostart(true);
+    }
     ctx.refresh_runtime();
 
     if !ctx.settings.borrow().core.completed_onboarding {
@@ -145,6 +148,8 @@ fn app_menu() -> gio::Menu {
     prefs.append(Some("Backends"), Some("win.backends"));
     prefs.append(Some("Alerts"), Some("win.alerts"));
     prefs.append(Some("Keyboard Shortcuts"), Some("win.shortcuts"));
+    prefs.append(Some("Templates"), Some("win.templates"));
+    prefs.append(Some("Install rclone"), Some("win.install-rclone"));
     menu.append_section(None, &prefs);
 
     let views = gio::Menu::new();
@@ -269,6 +274,23 @@ fn install_actions(
     {
         let window = window.clone();
         add_action("shortcuts", Box::new(move || dialogs::shortcuts(&window)));
+    }
+    {
+        let ctx = ctx.clone();
+        let window = window.clone();
+        add_action(
+            "templates",
+            Box::new(move || dialogs::templates(&window, ctx.clone())),
+        );
+    }
+    {
+        let ctx = ctx.clone();
+        let window = window.clone();
+        let toast = toast.clone();
+        add_action(
+            "install-rclone",
+            Box::new(move || dialogs::install_rclone_update(&window, ctx.clone(), toast.clone())),
+        );
     }
     {
         let ctx = ctx.clone();

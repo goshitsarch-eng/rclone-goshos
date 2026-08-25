@@ -9,7 +9,12 @@ pub struct ProviderOption {
     pub required: bool,
     pub advanced: bool,
     pub is_password: bool,
+    pub exclusive: bool,
     pub type_name: String,
+    pub default: serde_json::Value,
+    pub default_str: String,
+    pub value: serde_json::Value,
+    pub value_str: String,
     pub examples: Vec<(String, String)>,
 }
 
@@ -133,11 +138,38 @@ fn parse_option(value: &Value) -> Option<ProviderOption> {
             .or_else(|| value.get("isPassword"))
             .and_then(|x| x.as_bool())
             .unwrap_or(false),
+        exclusive: value
+            .get("Exclusive")
+            .or_else(|| value.get("exclusive"))
+            .and_then(|x| x.as_bool())
+            .unwrap_or(false),
         type_name: value
             .get("Type")
             .or_else(|| value.get("type"))
             .and_then(|x| x.as_str())
             .unwrap_or("string")
+            .to_string(),
+        default: value
+            .get("Default")
+            .or_else(|| value.get("default"))
+            .cloned()
+            .unwrap_or(Value::Null),
+        default_str: value
+            .get("DefaultStr")
+            .or_else(|| value.get("defaultStr"))
+            .and_then(|x| x.as_str())
+            .unwrap_or("")
+            .to_string(),
+        value: value
+            .get("Value")
+            .or_else(|| value.get("value"))
+            .cloned()
+            .unwrap_or(Value::Null),
+        value_str: value
+            .get("ValueStr")
+            .or_else(|| value.get("valueStr"))
+            .and_then(|x| x.as_str())
+            .unwrap_or("")
             .to_string(),
         examples,
         name,
@@ -169,7 +201,7 @@ pub fn parse_config_step(value: &Value) -> ConfigStep {
         .get("Option")
         .or_else(|| value.get("option"))
         .and_then(parse_option);
-    let done = state.is_empty() && option.is_none() && error.is_none();
+    let done = state.is_empty();
     ConfigStep {
         state,
         option,

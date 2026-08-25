@@ -1,6 +1,10 @@
 use super::AppCtx;
+use crate::interactive::{
+    apply_interactive_response, is_continue_disabled, update_interactive_answer, InteractiveAnswer,
+    InteractiveFlowState,
+};
 use crate::operations::OperationType;
-use crate::providers::{parse_config_step, parse_providers, Provider, ProviderOption};
+use crate::providers::{parse_providers, Provider, ProviderOption};
 use crate::rclone::remote_fs;
 use crate::store::{AppConfig, ProfileConfig, RemoteMeta};
 use adw::prelude::*;
@@ -9,6 +13,13 @@ use serde_json::{json, Value};
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::rc::Rc;
+
+struct WizardState {
+    providers: Vec<Provider>,
+    fields: HashMap<String, adw::EntryRow>,
+    flow: InteractiveFlowState,
+    parameters: Value,
+}
 
 pub fn present(
     parent: &impl IsA<gtk::Widget>,
@@ -22,8 +33,8 @@ pub fn present(
     } else {
         "Add Remote"
     });
-    dialog.set_content_width(640);
-    dialog.set_content_height(720);
+    dialog.set_content_width(680);
+    dialog.set_content_height(780);
 
     let providers = ctx
         .client()
@@ -58,16 +69,30 @@ pub fn present(
 
     let fields_group = adw::PreferencesGroup::new();
     fields_group.set_title("Provider options");
-    let fields: Rc<RefCell<HashMap<String, adw::EntryRow>>> = Rc::new(RefCell::new(HashMap::new()));
-    rebuild_fields(&fields_group, &fields, providers.first());
+    let advanced_group = adw::PreferencesGroup::new();
+    advanced_group.set_title("Advanced options");
+    let state = Rc::new(RefCell::new(WizardState {
+        providers: providers.clone(),
+        fields: HashMap::new(),
+        flow: InteractiveFlowState::default(),
+        parameters: json!({}),
+    }));
+    rebuild_fields(
+        &fields_group,
+        &advanced_group,
+        &state,
+        providers.first(),
+        true,
+    );
 
     {
         let fields_group = fields_group.clone();
-        let fields = fields.clone();
+        let advanced_group = advanced_group.clone();
+        let state = state.clone();
         let providers = providers.clone();
         type_row.connect_selected_notify(move |row| {
             let provider = providers.get(row.selected() as usize);
-            rebuild_fields(&fields_group, &fields, provider);
+            rebuild_fields(&fields_group, &advanced_group, &state, provider, true);
         });
     }
 
@@ -85,34 +110,175 @@ pub fn present(
     let tray = adw::SwitchRow::new();
     tray.set_title("Show in tray");
     tray.set_active(true);
-    let oauth = gtk::Button::with_label("Authorize (OAuth)");
-    oauth.add_css_class("pill");
+    let autostart = adw::SwitchRow::new();
+    autostart.set_title("Auto-start mount / jobs");
+
+    let question_title = gtk::Label::new(Some("Interactive configuration"));
+    question_title.add_css_class("title-4");
+    question_title.set_xalign(0.0);
+    let question_help = gtk::Label::new(Some(
+        "Authorize the provider or answer rclone's configuration questions.",
+    ));
+    question_help.set_wrap(true);
+    question_help.set_xalign(0.0);
+    question_help.add_css_class("dim-label");
+    let question_error = gtk::Label::new(None);
+    question_error.add_css_class("error");
+    question_error.set_wrap(true);
+    question_error.set_xalign(0.0);
+    let answer_row = adw::EntryRow::new();
+    answer_row.set_title("Answer");
+    let answer_switch = adw::SwitchRow::new();
+    answer_switch.set_title("Yes / enabled");
+    let example_row = adw::ComboRow::new();
+    example_row.set_title("Choose an option");
+    let oauth_status = gtk::Label::new(Some(""));
+    oauth_status.add_css_class("dim-label");
+    oauth_status.set_xalign(0.0);
+
+    let nav = adw::ViewStack::new();
+    let setup = adw::PreferencesPage::new();
+    let identity = adw::PreferencesGroup::new();
+    identity.set_title("Identity");
+    identity.add(&name);
+    identity.add(&type_row);
+    setup.add(&identity);
+    setup.add(&fields_group);
+    setup.add(&advanced_group);
+    nav.add_titled(&setup, Some("setup"), "Provider");
+
+    let interactive_box = gtk::Box::new(gtk::Orientation::Vertical, 10);
+    interactive_box.set_margin_top(16);
+    interactive_box.set_margin_start(16);
+    interactive_box.set_margin_end(16);
+    interactive_box.append(&question_title);
+    interactive_box.append(&question_help);
+    interactive_box.append(&question_error);
+    interactive_box.append(&example_row);
+    interactive_box.append(&answer_row);
+    interactive_box.append(&answer_switch);
+    interactive_box.append(&oauth_status);
+    nav.add_titled(&interactive_box, Some("interactive"), "Authorize");
+
+    let profiles = adw::PreferencesPage::new();
+    let pgroup = adw::PreferencesGroup::new();
+    pgroup.set_title("Default profiles");
+    pgroup.add(&mount);
+    pgroup.add(&src);
+    pgroup.add(&dst);
+    pgroup.add(&serve);
+    pgroup.add(&cron);
+    pgroup.add(&tray);
+    pgroup.add(&autostart);
+    profiles.add(&pgroup);
+    nav.add_titled(&profiles, Some("profiles"), "Profiles");
+
+    let switcher = adw::ViewSwitcher::new();
+    switcher.set_stack(Some(&nav));
+    switcher.set_policy(adw::ViewSwitcherPolicy::Wide);
+
+    let continue_btn = gtk::Button::with_label("Continue / Authorize");
+    continue_btn.add_css_class("suggested-action");
+    let save = gtk::Button::with_label("Save remote");
+    save.add_css_class("pill");
+
     {
         let ctx = ctx.clone();
         let dialog = dialog.clone();
         let name = name.clone();
         let type_row = type_row.clone();
-        let providers = providers.clone();
-        let fields = fields.clone();
-        oauth.connect_clicked(move |_| {
-            run_oauth(
-                &dialog,
-                &ctx,
-                &name.text(),
-                provider_type(&providers, type_row.selected()),
-                collect_params(&fields),
-            );
+        let state = state.clone();
+        let question_title = question_title.clone();
+        let question_help = question_help.clone();
+        let question_error = question_error.clone();
+        let answer_row = answer_row.clone();
+        let answer_switch = answer_switch.clone();
+        let example_row = example_row.clone();
+        let oauth_status = oauth_status.clone();
+        let nav = nav.clone();
+        continue_btn.connect_clicked(move |_| {
+            let remote_name = name.text().to_string();
+            if remote_name.is_empty() {
+                return;
+            }
+            let r#type = provider_type(&state.borrow().providers, type_row.selected());
+            let params = collect_params(&state);
+            state.borrow_mut().parameters = params.clone();
+            let Some(client) = ctx.client() else {
+                return;
+            };
+            let result = {
+                let flow = state.borrow().flow.clone();
+                if !flow.is_active {
+                    client.create_remote_interactive(&remote_name, &r#type, params, None)
+                } else {
+                    if is_continue_disabled(&flow) {
+                        return;
+                    }
+                    let option_type = flow
+                        .question
+                        .as_ref()
+                        .and_then(|q| q.option.as_ref())
+                        .map(|o| o.type_name.as_str())
+                        .unwrap_or("string");
+                    let answer = current_answer(&flow, &answer_row, &answer_switch, &example_row);
+                    let token = flow
+                        .question
+                        .as_ref()
+                        .map(|q| q.state.clone())
+                        .unwrap_or_default();
+                    client.continue_create_remote(
+                        &remote_name,
+                        &token,
+                        answer.as_rc_result(option_type),
+                        params,
+                        None,
+                    )
+                }
+            };
+            match result {
+                Ok(value) => {
+                    let next = apply_interactive_response(&value);
+                    if let Ok((_, Some(url))) = client.oauth_status() {
+                        let _ = open::that(&url);
+                        oauth_status.set_text(&format!("Opened authorization URL: {url}"));
+                    }
+                    if !next.is_active {
+                        question_title.set_text("Authorization complete");
+                        question_help.set_text(
+                            "rclone finished the interactive flow. Review profiles and save.",
+                        );
+                        question_error.set_text("");
+                        nav.set_visible_child_name("profiles");
+                    } else {
+                        apply_question_widgets(
+                            &next,
+                            &question_title,
+                            &question_help,
+                            &question_error,
+                            &answer_row,
+                            &answer_switch,
+                            &example_row,
+                        );
+                        nav.set_visible_child_name("interactive");
+                    }
+                    state.borrow_mut().flow = next;
+                }
+                Err(e) => {
+                    let err =
+                        adw::AlertDialog::new(Some("Configuration failed"), Some(&e.to_string()));
+                    err.add_response("ok", "OK");
+                    err.present(Some(&dialog));
+                }
+            }
         });
     }
 
-    let save = gtk::Button::with_label("Save remote");
-    save.add_css_class("suggested-action");
     {
         let ctx = ctx.clone();
         let dialog = dialog.clone();
         let existing = existing.clone();
-        let providers = providers.clone();
-        let fields = fields.clone();
+        let state = state.clone();
         let name = name.clone();
         let type_row = type_row.clone();
         let mount = mount.clone();
@@ -121,13 +287,14 @@ pub fn present(
         let serve = serve.clone();
         let cron = cron.clone();
         let tray = tray.clone();
+        let autostart = autostart.clone();
         save.connect_clicked(move |_| {
             let remote_name = name.text().to_string();
             if remote_name.is_empty() {
                 return;
             }
-            let r#type = provider_type(&providers, type_row.selected());
-            let mut params = collect_params(&fields);
+            let r#type = provider_type(&state.borrow().providers, type_row.selected());
+            let mut params = collect_params(&state);
             if let Some(client) = ctx.client() {
                 for (key, value) in params
                     .clone()
@@ -142,53 +309,24 @@ pub fn present(
                         }
                     }
                 }
-                let result = if existing.is_some() {
+                let result = if existing.is_some() || state.borrow().flow.is_active {
                     client.update_remote(&remote_name, params)
                 } else {
                     client.create_remote(&remote_name, &r#type, params)
                 };
                 match result {
                     Ok(_) => {
-                        let mut meta = RemoteMeta {
-                            show_on_tray: tray.is_active(),
-                            ..RemoteMeta::default()
-                        };
-                        let mut profile = ProfileConfig {
-                            name: "default".into(),
-                            app: AppConfig {
-                                cron_enabled: !cron.text().is_empty(),
-                                cron_expression: cron.text().to_string(),
-                                ..AppConfig::default()
-                            },
-                            rclone: json!({
-                                "srcFs": src.text().to_string(),
-                                "dstFs": dst.text().to_string(),
-                                "mountPoint": mount.text().to_string(),
-                                "fs": remote_fs(&remote_name, ""),
-                                "type": OperationType::SERVE_TYPES
-                                    .get(serve.selected() as usize)
-                                    .unwrap_or(&"webdav")
-                            }),
-                        };
-                        if profile
-                            .rclone
-                            .get("srcFs")
-                            .and_then(|x| x.as_str())
-                            .unwrap_or("")
-                            .is_empty()
-                        {
-                            profile.rclone["srcFs"] = json!(remote_fs(&remote_name, ""));
-                        }
-                        meta.profiles
-                            .entry("mount".into())
-                            .or_default()
-                            .insert("default".into(), profile.clone());
-                        meta.profiles
-                            .entry("sync".into())
-                            .or_default()
-                            .insert("default".into(), profile);
-                        ctx.store.borrow_mut().remotes.insert(remote_name, meta);
-                        ctx.persist();
+                        persist_meta(
+                            &ctx,
+                            &remote_name,
+                            &mount.text(),
+                            &src.text(),
+                            &dst.text(),
+                            serve.selected(),
+                            &cron.text(),
+                            tray.is_active(),
+                            autostart.is_active(),
+                        );
                         on_done();
                         dialog.close();
                     }
@@ -205,32 +343,20 @@ pub fn present(
         });
     }
 
-    let page = adw::PreferencesPage::new();
-    let identity = adw::PreferencesGroup::new();
-    identity.set_title("Identity");
-    identity.add(&name);
-    identity.add(&type_row);
-    page.add(&identity);
-    page.add(&fields_group);
-    let profiles = adw::PreferencesGroup::new();
-    profiles.set_title("Default profiles");
-    profiles.add(&mount);
-    profiles.add(&src);
-    profiles.add(&dst);
-    profiles.add(&serve);
-    profiles.add(&cron);
-    profiles.add(&tray);
-    page.add(&profiles);
-
     let box_ = gtk::Box::new(gtk::Orientation::Vertical, 12);
-    box_.set_margin_top(12);
+    box_.set_margin_top(8);
     box_.set_margin_bottom(12);
+    box_.append(&switcher);
     let scroll = gtk::ScrolledWindow::new();
     scroll.set_vexpand(true);
-    scroll.set_child(Some(&page));
+    scroll.set_child(Some(&nav));
     box_.append(&scroll);
-    box_.append(&oauth);
-    box_.append(&save);
+    let buttons = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+    buttons.set_halign(gtk::Align::End);
+    buttons.set_margin_end(12);
+    buttons.append(&continue_btn);
+    buttons.append(&save);
+    box_.append(&buttons);
     dialog.set_child(Some(&box_));
     dialog.present(Some(parent));
 }
@@ -243,24 +369,31 @@ fn provider_type(providers: &[Provider], index: u32) -> String {
 }
 
 fn rebuild_fields(
-    group: &adw::PreferencesGroup,
-    fields: &Rc<RefCell<HashMap<String, adw::EntryRow>>>,
+    basic: &adw::PreferencesGroup,
+    advanced: &adw::PreferencesGroup,
+    state: &Rc<RefCell<WizardState>>,
     provider: Option<&Provider>,
+    include_advanced: bool,
 ) {
-    for row in fields.borrow().values() {
-        group.remove(row);
+    for row in state.borrow().fields.values() {
+        basic.remove(row);
+        advanced.remove(row);
     }
-    fields.borrow_mut().clear();
+    state.borrow_mut().fields.clear();
     let Some(provider) = provider else {
         return;
     };
-    for option in provider
-        .basic_options()
-        .chain(provider.advanced_options().take(8))
-    {
+    for option in provider.basic_options() {
         let row = option_row(option);
-        group.add(&row);
-        fields.borrow_mut().insert(option.name.clone(), row);
+        basic.add(&row);
+        state.borrow_mut().fields.insert(option.name.clone(), row);
+    }
+    if include_advanced {
+        for option in provider.advanced_options() {
+            let row = option_row(option);
+            advanced.add(&row);
+            state.borrow_mut().fields.insert(option.name.clone(), row);
+        }
     }
 }
 
@@ -284,15 +417,17 @@ fn option_row(option: &ProviderOption) -> adw::EntryRow {
             }
         }
     }
-    if let Some((example, _)) = option.examples.first() {
+    if !option.default_str.is_empty() {
+        row.set_text(&option.default_str);
+    } else if let Some((example, _)) = option.examples.first() {
         row.set_text(example);
     }
     row
 }
 
-fn collect_params(fields: &Rc<RefCell<HashMap<String, adw::EntryRow>>>) -> Value {
+fn collect_params(state: &Rc<RefCell<WizardState>>) -> Value {
     let mut map = serde_json::Map::new();
-    for (key, row) in fields.borrow().iter() {
+    for (key, row) in state.borrow().fields.iter() {
         let text = row.text().to_string();
         if !text.is_empty() {
             map.insert(key.clone(), json!(text));
@@ -306,37 +441,139 @@ fn looks_secret(key: &str) -> bool {
     key.contains("pass") || key.contains("secret") || key.contains("token") || key.contains("key")
 }
 
-fn run_oauth(
-    parent: &impl IsA<gtk::Widget>,
-    ctx: &AppCtx,
-    name: &str,
-    r#type: String,
-    parameters: Value,
-) {
-    let Some(client) = ctx.client() else {
-        return;
-    };
-    match client.create_remote_interactive(name, &r#type, parameters, None, None) {
-        Ok(value) => {
-            let step = parse_config_step(&value);
-            if let Ok((_, Some(url))) = client.oauth_status() {
-                let _ = open::that(&url);
-            }
-            let message = step
-                .error
-                .or_else(|| step.option.map(|o| o.help))
-                .unwrap_or_else(|| {
-                    "Authorization started. Complete it in the browser, then save the remote."
-                        .into()
-                });
-            let info = adw::AlertDialog::new(Some("OAuth"), Some(&message));
-            info.add_response("ok", "OK");
-            info.present(Some(parent));
+fn current_answer(
+    flow: &InteractiveFlowState,
+    answer_row: &adw::EntryRow,
+    answer_switch: &adw::SwitchRow,
+    example_row: &adw::ComboRow,
+) -> InteractiveAnswer {
+    let option = flow.question.as_ref().and_then(|q| q.option.as_ref());
+    if let Some(option) = option {
+        if option.type_name == "bool" {
+            return InteractiveAnswer::Bool(answer_switch.is_active());
         }
-        Err(e) => {
-            let err = adw::AlertDialog::new(Some("OAuth failed"), Some(&e.to_string()));
-            err.add_response("ok", "OK");
-            err.present(Some(parent));
+        if !option.examples.is_empty() && option.exclusive {
+            if let Some((value, _)) = option.examples.get(example_row.selected() as usize) {
+                return InteractiveAnswer::Text(value.clone());
+            }
         }
     }
+    let text = answer_row.text().to_string();
+    if text.is_empty() {
+        update_interactive_answer(flow.clone(), InteractiveAnswer::Empty).answer
+    } else {
+        InteractiveAnswer::Text(text)
+    }
+}
+
+fn apply_question_widgets(
+    flow: &InteractiveFlowState,
+    title: &gtk::Label,
+    help: &gtk::Label,
+    error: &gtk::Label,
+    answer_row: &adw::EntryRow,
+    answer_switch: &adw::SwitchRow,
+    example_row: &adw::ComboRow,
+) {
+    let Some(step) = &flow.question else {
+        return;
+    };
+    if let Some(option) = &step.option {
+        title.set_text(&option.name);
+        help.set_text(&option.help);
+        error.set_text(step.error.as_deref().unwrap_or(""));
+        answer_switch.set_visible(option.type_name == "bool");
+        answer_row.set_visible(option.type_name != "bool");
+        if option.type_name == "bool" {
+            answer_switch.set_active(matches!(flow.answer, InteractiveAnswer::Bool(true)));
+        } else {
+            answer_row.set_text(&flow.answer.as_string());
+            if option.is_password {
+                if let Some(child) = answer_row.first_child() {
+                    if let Ok(editable) = child.downcast::<gtk::Text>() {
+                        editable.set_visibility(false);
+                    }
+                }
+            }
+        }
+        if option.examples.is_empty() {
+            example_row.set_visible(false);
+        } else {
+            example_row.set_visible(true);
+            let labels: Vec<String> = option
+                .examples
+                .iter()
+                .map(|(v, h)| {
+                    if h.is_empty() {
+                        v.clone()
+                    } else {
+                        format!("{v} — {h}")
+                    }
+                })
+                .collect();
+            let refs: Vec<&str> = labels.iter().map(|s| s.as_str()).collect();
+            example_row.set_model(Some(&gtk::StringList::new(&refs)));
+        }
+    } else {
+        title.set_text("Continue authorization");
+        help.set_text(step.error.as_deref().unwrap_or("Complete the next step."));
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn persist_meta(
+    ctx: &AppCtx,
+    remote_name: &str,
+    mount: &str,
+    src: &str,
+    dst: &str,
+    serve_idx: u32,
+    cron: &str,
+    tray: bool,
+    autostart: bool,
+) {
+    let mut meta = RemoteMeta {
+        show_on_tray: tray,
+        ..RemoteMeta::default()
+    };
+    let mut profile = ProfileConfig {
+        name: "default".into(),
+        app: AppConfig {
+            auto_start: autostart,
+            cron_enabled: !cron.is_empty(),
+            cron_expression: cron.to_string(),
+            ..AppConfig::default()
+        },
+        rclone: json!({
+            "srcFs": src,
+            "dstFs": dst,
+            "mountPoint": mount,
+            "fs": remote_fs(remote_name, ""),
+            "type": OperationType::SERVE_TYPES
+                .get(serve_idx as usize)
+                .unwrap_or(&"webdav")
+        }),
+    };
+    if profile
+        .rclone
+        .get("srcFs")
+        .and_then(|x| x.as_str())
+        .unwrap_or("")
+        .is_empty()
+    {
+        profile.rclone["srcFs"] = json!(remote_fs(remote_name, ""));
+    }
+    meta.profiles
+        .entry("mount".into())
+        .or_default()
+        .insert("default".into(), profile.clone());
+    meta.profiles
+        .entry("sync".into())
+        .or_default()
+        .insert("default".into(), profile);
+    ctx.store
+        .borrow_mut()
+        .remotes
+        .insert(remote_name.to_string(), meta);
+    ctx.persist();
 }
