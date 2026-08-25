@@ -3737,6 +3737,7 @@ pub fn start_operation(
         Some(op),
         remote.to_string(),
         false,
+        Some(dry.clone()),
     );
 
     {
@@ -4474,6 +4475,7 @@ pub fn quick_run_editor(
             .map(|qr| qr.remote_name.clone())
             .unwrap_or_default(),
         true,
+        Some(dry.clone()),
     );
     {
         let flags_group = flags_group.clone();
@@ -8594,6 +8596,7 @@ fn attach_cli_import(
     preferred: Option<OperationType>,
     remote: String,
     is_quick_run: bool,
+    dry: Option<adw::SwitchRow>,
 ) {
     let preview = gtk::Button::with_label(&ctx.t_or("wizards.cliImport.preview", "Preview"));
     {
@@ -8605,6 +8608,7 @@ fn attach_cli_import(
         let dst = dst.clone();
         let serve = serve.clone();
         let serve_types = serve_types.clone();
+        let dry = dry.clone();
         let remote_type = remote_type_of(ctx.clone(), &remote);
         preview.connect_clicked(move |_| {
             present_cli_import(
@@ -8626,6 +8630,7 @@ fn attach_cli_import(
                     let dst = dst.clone();
                     let serve = serve.clone();
                     let serve_types = serve_types.clone();
+                    let dry = dry.clone();
                     move |apply| {
                         apply_cli_to_form(
                             &apply,
@@ -8635,7 +8640,7 @@ fn attach_cli_import(
                             dst.as_ref(),
                             serve.as_ref(),
                             &serve_types,
-                            None,
+                            dry.as_ref(),
                         );
                     }
                 },
