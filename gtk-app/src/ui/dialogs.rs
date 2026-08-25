@@ -441,9 +441,9 @@ pub fn preferences(parent: &impl IsA<gtk::Widget>, ctx: AppCtx) {
     core.set_title(&ctx.t_or("modals.preferences.tabs.core", "Core"));
     core.set_icon_name(Some("application-x-executable-symbolic"));
     let c1 = adw::PreferencesGroup::new();
-    c1.set_title("Rclone");
+    c1.set_title(&ctx.t_or("titlebar.menu.installRclone", "Rclone"));
     let binary = adw::EntryRow::new();
-    binary.set_title("Rclone binary");
+    binary.set_title(&ctx.t_or("settings.core.rclone_binary.label", "Rclone binary"));
     binary.set_text(&ctx.settings.borrow().core.rclone_binary);
     {
         let ctx = ctx.clone();
@@ -452,10 +452,14 @@ pub fn preferences(parent: &impl IsA<gtk::Widget>, ctx: AppCtx) {
             ctx.persist();
         });
     }
-    let restart = gtk::Button::with_label("Restart rclone engine");
-    restart.set_tooltip_text(Some(
-        "Required after changing the binary, extra flags, or environment",
+    let restart = gtk::Button::with_label(&ctx.t_or(
+        "modals.preferences.aria.saveAndRestart",
+        "Restart rclone engine",
     ));
+    restart.set_tooltip_text(Some(&ctx.t_or(
+        "settings.core.rclone_flags.description",
+        "Required after changing the binary, extra flags, or environment",
+    )));
     {
         let ctx = ctx.clone();
         restart.connect_clicked(move |_| {
@@ -465,7 +469,7 @@ pub fn preferences(parent: &impl IsA<gtk::Widget>, ctx: AppCtx) {
     c1.add(&restart);
     c1.add(&binary);
     let bw = adw::EntryRow::new();
-    bw.set_title("Bandwidth limit");
+    bw.set_title(&ctx.t_or("settings.core.bandwidth_limit.label", "Bandwidth limit"));
     bw.set_text(&ctx.settings.borrow().core.bandwidth_limit);
     {
         let ctx = ctx.clone();
@@ -478,7 +482,10 @@ pub fn preferences(parent: &impl IsA<gtk::Widget>, ctx: AppCtx) {
     }
     c1.add(&bw);
     let metered_bw = adw::EntryRow::new();
-    metered_bw.set_title("Bandwidth limit on metered networks");
+    metered_bw.set_title(&ctx.t_or(
+        "settings.core.metered_bandwidth_limit.label",
+        "Bandwidth limit on metered networks",
+    ));
     metered_bw.set_text(&ctx.settings.borrow().core.metered_bandwidth_limit);
     {
         let ctx = ctx.clone();
@@ -490,7 +497,7 @@ pub fn preferences(parent: &impl IsA<gtk::Widget>, ctx: AppCtx) {
     }
     c1.add(&metered_bw);
     let tray_items = adw::SpinRow::with_range(1.0, 40.0, 1.0);
-    tray_items.set_title("Max tray items");
+    tray_items.set_title(&ctx.t_or("settings.core.max_tray_items.label", "Max tray items"));
     tray_items.set_value(ctx.settings.borrow().core.max_tray_items as f64);
     {
         let ctx = ctx.clone();
@@ -501,7 +508,10 @@ pub fn preferences(parent: &impl IsA<gtk::Widget>, ctx: AppCtx) {
     }
     c1.add(&tray_items);
     let flags = adw::EntryRow::new();
-    flags.set_title("Additional rclone flags (space-separated)");
+    flags.set_title(&ctx.t_or(
+        "settings.core.rclone_flags.label",
+        "Additional rclone flags (space-separated)",
+    ));
     flags.set_text(&ctx.settings.borrow().core.rclone_additional_flags.join(" "));
     {
         let ctx = ctx.clone();
@@ -516,7 +526,10 @@ pub fn preferences(parent: &impl IsA<gtk::Widget>, ctx: AppCtx) {
     }
     c1.add(&flags);
     let env = adw::EntryRow::new();
-    env.set_title("Rclone environment (KEY=value;KEY=value)");
+    env.set_title(&ctx.t_or(
+        "settings.core.rclone_env_vars.label",
+        "Rclone environment (KEY=value;KEY=value)",
+    ));
     env.set_text(&ctx.settings.borrow().core.rclone_env_vars.join(";"));
     {
         let ctx = ctx.clone();
@@ -533,7 +546,10 @@ pub fn preferences(parent: &impl IsA<gtk::Widget>, ctx: AppCtx) {
     }
     c1.add(&env);
     let urls = adw::EntryRow::new();
-    urls.set_title("Connectivity check URLs (comma-separated)");
+    urls.set_title(&ctx.t_or(
+        "settings.core.connection_check_urls.label",
+        "Connectivity check URLs (comma-separated)",
+    ));
     urls.set_text(&ctx.settings.borrow().core.connection_check_urls.join(", "));
     {
         let ctx = ctx.clone();
@@ -552,13 +568,13 @@ pub fn preferences(parent: &impl IsA<gtk::Widget>, ctx: AppCtx) {
     core.add(&c1);
 
     let dev = adw::PreferencesPage::new();
-    dev.set_title("Developer");
+    dev.set_title(&ctx.t_or("modals.preferences.tabs.developer", "Developer"));
     dev.set_icon_name(Some("applications-engineering-symbolic"));
     let d1 = adw::PreferencesGroup::new();
     let levels = ["error", "warn", "info", "debug", "trace"];
     let level_model = gtk::StringList::new(&levels);
     let level = adw::ComboRow::new();
-    level.set_title("Log level");
+    level.set_title(&ctx.t_or("settings.developer.log_level.label", "Log level"));
     level.set_model(Some(&level_model));
     if let Some(idx) = levels
         .iter()
@@ -577,20 +593,25 @@ pub fn preferences(parent: &impl IsA<gtk::Widget>, ctx: AppCtx) {
     }
     d1.add(&level);
     d1.add(&switch_row(
-        "Destroy window on close",
+        &ctx.t_or(
+            "settings.developer.destroy_window_on_close.label",
+            "Destroy window on close",
+        ),
         ctx.settings.borrow().developer.destroy_window_on_close,
         {
             let ctx = ctx.clone();
             move |v| ctx.settings.borrow_mut().developer.destroy_window_on_close = v
         },
     ));
-    let open_cfg = gtk::Button::with_label("Open config folder");
+    let open_cfg =
+        gtk::Button::with_label(&ctx.t_or("titlebar.menu.openConfig", "Open config folder"));
     {
         open_cfg.connect_clicked(|_| {
             let _ = open::that(crate::settings::AppSettings::config_dir());
         });
     }
-    let open_cache = gtk::Button::with_label("Open cache folder");
+    let open_cache =
+        gtk::Button::with_label(&ctx.t_or("titlebar.menu.openCache", "Open cache folder"));
     {
         open_cache.connect_clicked(|_| {
             let dir = crate::settings::AppSettings::cache_dir();
@@ -598,7 +619,7 @@ pub fn preferences(parent: &impl IsA<gtk::Widget>, ctx: AppCtx) {
             let _ = open::that(dir);
         });
     }
-    let open_log = gtk::Button::with_label("Open rclone log");
+    let open_log = gtk::Button::with_label(&ctx.t_or("titlebar.menu.openLog", "Open rclone log"));
     {
         open_log.connect_clicked(|_| {
             let path = crate::settings::AppSettings::log_path();
@@ -606,12 +627,12 @@ pub fn preferences(parent: &impl IsA<gtk::Widget>, ctx: AppCtx) {
         });
     }
     let cfg_row = adw::ActionRow::new();
-    cfg_row.set_title("Folders");
+    cfg_row.set_title(&ctx.t_or("developerTools.folders", "Folders"));
     cfg_row.add_suffix(&open_cfg);
     cfg_row.add_suffix(&open_cache);
     cfg_row.add_suffix(&open_log);
     d1.add(&cfg_row);
-    let gc = gtk::Button::with_label("Run GC");
+    let gc = gtk::Button::with_label(&ctx.t_or("titlebar.menu.runGc", "Run GC"));
     {
         let ctx = ctx.clone();
         gc.connect_clicked(move |_| {
@@ -620,7 +641,8 @@ pub fn preferences(parent: &impl IsA<gtk::Widget>, ctx: AppCtx) {
             }
         });
     }
-    let fscache = gtk::Button::with_label("Clear FS cache");
+    let fscache =
+        gtk::Button::with_label(&ctx.t_or("titlebar.menu.clearFsCache", "Clear FS cache"));
     {
         let ctx = ctx.clone();
         fscache.connect_clicked(move |_| {
@@ -629,7 +651,8 @@ pub fn preferences(parent: &impl IsA<gtk::Widget>, ctx: AppCtx) {
             }
         });
     }
-    let ping = gtk::Button::with_label("Check connectivity");
+    let ping =
+        gtk::Button::with_label(&ctx.t_or("titlebar.menu.checkConnectivity", "Check connectivity"));
     {
         let ctx = ctx.clone();
         let parent = parent.clone();
@@ -655,7 +678,7 @@ pub fn preferences(parent: &impl IsA<gtk::Widget>, ctx: AppCtx) {
         });
     }
     let maint = adw::ActionRow::new();
-    maint.set_title("Maintenance");
+    maint.set_title(&ctx.t_or("developerTools.maintenance", "Maintenance"));
     maint.add_suffix(&gc);
     maint.add_suffix(&fscache);
     maint.add_suffix(&ping);
@@ -663,12 +686,15 @@ pub fn preferences(parent: &impl IsA<gtk::Widget>, ctx: AppCtx) {
     dev.add(&d1);
 
     let security = adw::PreferencesPage::new();
-    security.set_title("Security");
+    security.set_title(&ctx.t_or("modals.backend.security.encrypted", "Security"));
     security.set_icon_name(Some("security-high-symbolic"));
     let s1 = adw::PreferencesGroup::new();
-    s1.set_title("rclone.conf password");
+    s1.set_title(&ctx.t_or(
+        "modals.backend.security.configPassword",
+        "rclone.conf password",
+    ));
     let stored = adw::PasswordEntryRow::new();
-    stored.set_title("Stored password");
+    stored.set_title(&ctx.t_or("modals.backend.security.password", "Stored password"));
     stored.set_text(&crate::keyring::resolve_config_password(
         &ctx.settings.borrow().core.config_password,
     ));
@@ -686,16 +712,25 @@ pub fn preferences(parent: &impl IsA<gtk::Widget>, ctx: AppCtx) {
     }
     s1.add(&stored);
     let keyring_row = adw::ActionRow::new();
-    keyring_row.set_title("OS keyring");
-    keyring_row.set_subtitle(if crate::keyring::load_password().is_some() {
-        "rclone.conf password is stored in the system keyring"
+    keyring_row.set_title(&ctx.t_or("modals.backend.security.systemKeychain", "OS keyring"));
+    keyring_row.set_subtitle(&if crate::keyring::load_password().is_some() {
+        ctx.t_or(
+            "modals.backend.security.passwordStoredInKeyring",
+            "rclone.conf password is stored in the system keyring",
+        )
     } else if ctx.settings.borrow().core.config_password.is_empty() {
-        "No password stored. Saving will prefer the system keyring when available."
+        ctx.t_or(
+            "modals.backend.security.protectCredentials",
+            "No password stored. Saving will prefer the system keyring when available.",
+        )
     } else {
-        "Password is stored in settings.json because the keyring is unavailable"
+        ctx.t_or(
+            "modals.backend.security.credentialsPlainText",
+            "Password is stored in settings.json because the keyring is unavailable",
+        )
     });
     s1.add(&keyring_row);
-    let validate = gtk::Button::with_label("Validate");
+    let validate = gtk::Button::with_label(&ctx.t_or("common.ok", "Validate"));
     {
         let ctx = ctx.clone();
         let parent = parent.clone();
@@ -711,7 +746,9 @@ pub fn preferences(parent: &impl IsA<gtk::Widget>, ctx: AppCtx) {
             alert.present(Some(&parent));
         });
     }
-    let encrypt = gtk::Button::with_label("Encrypt config");
+    let encrypt = gtk::Button::with_label(
+        &ctx.t_or("modals.backend.security.enableEncryption", "Encrypt config"),
+    );
     {
         let ctx = ctx.clone();
         let parent = parent.clone();
@@ -731,9 +768,14 @@ pub fn preferences(parent: &impl IsA<gtk::Widget>, ctx: AppCtx) {
         });
     }
     let new_pass = adw::PasswordEntryRow::new();
-    new_pass.set_title("New password (change)");
+    new_pass.set_title(&ctx.t_or(
+        "modals.backend.security.newPassword",
+        "New password (change)",
+    ));
     s1.add(&new_pass);
-    let change = gtk::Button::with_label("Change password");
+    let change = gtk::Button::with_label(
+        &ctx.t_or("modals.backend.security.changePassword", "Change password"),
+    );
     {
         let ctx = ctx.clone();
         let parent = parent.clone();
@@ -759,7 +801,10 @@ pub fn preferences(parent: &impl IsA<gtk::Widget>, ctx: AppCtx) {
             alert.present(Some(&parent));
         });
     }
-    let unencrypt = gtk::Button::with_label("Remove encryption");
+    let unencrypt = gtk::Button::with_label(&ctx.t_or(
+        "modals.backend.security.removeEncryption",
+        "Remove encryption",
+    ));
     {
         let ctx = ctx.clone();
         let parent = parent.clone();
@@ -782,7 +827,7 @@ pub fn preferences(parent: &impl IsA<gtk::Widget>, ctx: AppCtx) {
         });
     }
     let sec_row = adw::ActionRow::new();
-    sec_row.set_title("Actions");
+    sec_row.set_title(&ctx.t_or("common.moreActions", "Actions"));
     sec_row.add_suffix(&validate);
     sec_row.add_suffix(&encrypt);
     sec_row.add_suffix(&change);
@@ -1142,7 +1187,7 @@ pub fn logs(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, remote: Option<String>)
 
 pub fn rclone_flags(parent: &impl IsA<gtk::Widget>, ctx: AppCtx) {
     let dialog = adw::PreferencesDialog::new();
-    dialog.set_title("Rclone Flags");
+    dialog.set_title(&ctx.t_or("titlebar.menu.flags", "Rclone Flags"));
     dialog.set_search_enabled(true);
     let Some(client) = ctx.client() else {
         let page = adw::PreferencesPage::new();
@@ -1453,7 +1498,7 @@ pub fn action_order(
 
 pub fn backends(parent: &impl IsA<gtk::Widget>, ctx: AppCtx) {
     let dialog = adw::Dialog::new();
-    dialog.set_title("Backends");
+    dialog.set_title(&ctx.t_or("titlebar.menu.backends", "Backends"));
     dialog.set_content_width(560);
     dialog.set_content_height(520);
     let list = gtk::ListBox::new();
@@ -1462,7 +1507,7 @@ pub fn backends(parent: &impl IsA<gtk::Widget>, ctx: AppCtx) {
     let port = ctx.engine.borrow().as_ref().map(|e| e.port).unwrap_or(0);
     let active = ctx.settings.borrow().core.active_backend.clone();
     let local = adw::ActionRow::new();
-    local.set_title("Local rclone RC");
+    local.set_title(&ctx.t_or("modals.backend.local", "Local rclone RC"));
     let local_id = ctx
         .client()
         .filter(|_| active.is_empty() || active == "local")
@@ -1704,7 +1749,7 @@ fn backend_editor(
     existing: Option<crate::settings::BackendEntry>,
 ) {
     let dialog = adw::Dialog::new();
-    dialog.set_title("Remote RC backend");
+    dialog.set_title(&ctx.t_or("modals.backend.addTitle", "Remote RC backend"));
     dialog.set_content_width(480);
     let name = adw::EntryRow::new();
     name.set_title("Name");
@@ -2736,12 +2781,12 @@ pub fn quick_run_editor(
 
 pub fn export_backup(parent: &impl IsA<gtk::Window>, ctx: AppCtx, toast: adw::ToastOverlay) {
     let dialog = adw::Dialog::new();
-    dialog.set_title("Export backup");
+    dialog.set_title(&ctx.t_or("modals.export.title", "Export backup"));
     dialog.set_content_width(480);
     let categories = backup::export_categories();
     let labels: Vec<&str> = categories.iter().map(|(_, label)| *label).collect();
     let type_row = adw::ComboRow::new();
-    type_row.set_title("What to export");
+    type_row.set_title(&ctx.t_or("modals.export.selectType", "What to export"));
     type_row.set_model(Some(&gtk::StringList::new(&labels)));
     let remotes: Vec<String> = ctx
         .snapshot
@@ -2751,7 +2796,7 @@ pub fn export_backup(parent: &impl IsA<gtk::Window>, ctx: AppCtx, toast: adw::To
         .map(|r| r.name.clone())
         .collect();
     let remote_row = adw::ComboRow::new();
-    remote_row.set_title("Specific remote");
+    remote_row.set_title(&ctx.t_or("modals.export.selectRemote", "Specific remote"));
     let remote_refs: Vec<&str> = remotes.iter().map(|s| s.as_str()).collect();
     if remote_refs.is_empty() {
         remote_row.set_model(Some(&gtk::StringList::new(&["—"])));
@@ -2760,9 +2805,9 @@ pub fn export_backup(parent: &impl IsA<gtk::Window>, ctx: AppCtx, toast: adw::To
         remote_row.set_model(Some(&gtk::StringList::new(&remote_refs)));
     }
     let specific = adw::SwitchRow::new();
-    specific.set_title("Export only one remote");
+    specific.set_title(&ctx.t_or("modals.export.selectRemote", "Export only one remote"));
     let note = adw::EntryRow::new();
-    note.set_title("Note");
+    note.set_title(&ctx.t_or("modals.export.noteLabel", "Note"));
     let password = adw::PasswordEntryRow::new();
     password.set_title("Zip password (optional, 4+ chars)");
     let secrets = adw::SwitchRow::new();
@@ -3829,13 +3874,13 @@ pub fn remote_about(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, remote: &str) {
     dialog.set_content_height(640);
     let page = adw::PreferencesPage::new();
     let usage = adw::PreferencesGroup::new();
-    usage.set_title("Usage");
+    usage.set_title(&ctx.t_or("fileBrowser.remoteAbout.tabs.overview", "Usage"));
     let features = adw::PreferencesGroup::new();
-    features.set_title("Features");
+    features.set_title(&ctx.t_or("fileBrowser.remoteAbout.tabs.features", "Features"));
     let hashes = adw::PreferencesGroup::new();
-    hashes.set_title("Hashes");
+    hashes.set_title(&ctx.t_or("fileBrowser.remoteAbout.supportedHashes", "Hashes"));
     let metadata = adw::PreferencesGroup::new();
-    metadata.set_title("Metadata");
+    metadata.set_title(&ctx.t_or("fileBrowser.remoteAbout.tabs.metadata", "Metadata"));
     let fs = remote_fs(remote, "");
     let group = format!(
         "gtk/remote-about/{remote}-{}",
@@ -4009,7 +4054,7 @@ pub(crate) fn download_file(
 
 pub fn templates(parent: &impl IsA<gtk::Widget>, ctx: AppCtx) {
     let dialog = adw::Dialog::new();
-    dialog.set_title("Templates");
+    dialog.set_title(&ctx.t_or("titlebar.menu.templates", "Templates"));
     dialog.set_content_width(560);
     dialog.set_content_height(480);
     let list = gtk::ListBox::new();
@@ -4110,7 +4155,7 @@ pub fn templates(parent: &impl IsA<gtk::Widget>, ctx: AppCtx) {
 
 pub fn archive_create(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, remote: &str, path: &str) {
     let dialog = adw::Dialog::new();
-    dialog.set_title("Create archive");
+    dialog.set_title(&ctx.t_or("nautilus.contextMenu.compress", "Create archive"));
     let name = adw::EntryRow::new();
     name.set_title("Archive name");
     name.set_text("archive.zip");
@@ -4296,7 +4341,7 @@ pub fn helper_profiles(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, remote: &str
 
 pub fn item_order(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, on_done: Rc<dyn Fn()>) {
     let dialog = adw::Dialog::new();
-    dialog.set_title("Remote order and visibility");
+    dialog.set_title(&ctx.t_or("titlebar.menu.remoteOrder", "Remote order and visibility"));
     dialog.set_content_width(480);
     dialog.set_content_height(520);
     let list = gtk::ListBox::new();
@@ -4734,7 +4779,7 @@ const SEVERITIES: &[&str] = &["info", "warning", "average", "high", "critical"];
 
 fn alert_rule_editor(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, existing_id: Option<String>) {
     let dialog = adw::Dialog::new();
-    dialog.set_title("Alert rule");
+    dialog.set_title(&ctx.t_or("alerts.rule.editorTitle", "Alert rule"));
     dialog.set_content_width(520);
     dialog.set_content_height(640);
     let existing = existing_id.as_ref().and_then(|id| {
@@ -4972,7 +5017,7 @@ fn alert_rule_editor(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, existing_id: O
 
 fn alert_action_editor(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, existing_id: Option<String>) {
     let dialog = adw::Dialog::new();
-    dialog.set_title("Alert action");
+    dialog.set_title(&ctx.t_or("alerts.action.editorTitle", "Alert action"));
     dialog.set_content_width(520);
     dialog.set_content_height(620);
     let existing = existing_id.as_ref().and_then(|id| {
@@ -5276,7 +5321,7 @@ fn split_csv(text: &str) -> Vec<String> {
 
 pub fn repair(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, toast: adw::ToastOverlay) {
     let dialog = adw::Dialog::new();
-    dialog.set_title("Repair rclone");
+    dialog.set_title(&ctx.t_or("repair.title", "Repair rclone"));
     dialog.set_content_width(560);
     dialog.set_content_height(520);
     let version = ctx
@@ -5437,7 +5482,7 @@ pub fn multi_rename(
     on_done: Rc<dyn Fn()>,
 ) {
     let dialog = adw::Dialog::new();
-    dialog.set_title("Rename items");
+    dialog.set_title(&ctx.t_or("nautilus.contextMenu.renameMultiple", "Rename items"));
     dialog.set_content_width(560);
     dialog.set_content_height(620);
     let mode = adw::ComboRow::new();
