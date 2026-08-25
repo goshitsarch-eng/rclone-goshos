@@ -41,6 +41,56 @@
     "clearAll": "Очистити все",
     "acknowledge": "Підтвердити"
   },
+  "cron": {
+    "everyMinute": "Щохвилини",
+    "everyMinutes": "Кожні {{n}} хвилин",
+    "everyHours": "Кожні {{n}} годин",
+    "everyDays": "Кожні {{n}} днів",
+    "hourlyAt": "Щогодини о хвилині {{min}}",
+    "dailyAt": "Щодня о {{time}}",
+    "dailyBetween": "Щодня між {{start}} і {{end}}",
+    "weekdaysAt": "Будні о {{time}}",
+    "weekendsAt": "Вихідні о {{time}}",
+    "monthlyAt": "Щомісяця {{dom}}-го о {{time}}",
+    "weeklyAt": "Щотижня в день {{dow}} о {{time}}",
+    "weeklyDaysAt": "Щотижня в дні {{days}} о {{time}}",
+    "weeklyOnAt": "Щотижня в {{day}} о {{time}}",
+    "weeklyOnDaysAt": "Щотижня в {{days}} о {{time}}",
+    "everyMinutesBetween": "Кожні {{n}} хвилин між {{start}} і {{end}}",
+    "everyHoursAt": "Кожні {{n}} годин о хвилині {{min}}",
+    "monthlyDaysAt": "Щомісяця {{days}}-го о {{time}}",
+    "yearlyOn": "Щороку {{dom}} {{month}} о {{time}}",
+    "atReboot": "Під час перезавантаження",
+    "lastDayOfMonthAt": "Останній день місяця о {{time}}",
+    "lastWeekdayAt": "Останній {{day}} о {{time}}",
+    "nthWeekdayAt": "{{nth}} {{day}} о {{time}}",
+    "inMonthsAt": "У {{months}} о {{time}}",
+    "inMonthsOnDayAt": "{{dom}} {{months}} о {{time}}",
+    "days": {
+      "0": "неділю",
+      "1": "понеділок",
+      "2": "вівторок",
+      "3": "середу",
+      "4": "четвер",
+      "5": "п’ятницю",
+      "6": "суботу",
+      "7": "неділю"
+    },
+    "months": {
+      "1": "січня",
+      "2": "лютого",
+      "3": "березня",
+      "4": "квітня",
+      "5": "травня",
+      "6": "червня",
+      "7": "липня",
+      "8": "серпня",
+      "9": "вересня",
+      "10": "жовтня",
+      "11": "листопада",
+      "12": "грудня"
+    }
+  },
   "remoteConfig": {
     "pathStatus": {
       "clean": "Чисто та порожньо",
@@ -1596,7 +1646,12 @@
       "openingNative": "Відкриття {{name}} у зовнішньому додатку...",
       "errorOpenNative": "Не вдалося відкрити файл у зовнішньому додатку",
       "showRawText": "Показати вихідний текст",
-      "showPreview": "Показати попередній перегляд"
+      "showPreview": "Показати попередній перегляд",
+      "remoteStream": "Потоковий віддалений попередній перегляд",
+      "remotePreview": "Віддалений попередній перегляд через operations/cat",
+      "largeRemotePreview": "Цей віддалений файл має розмір {{size}}. Завантаження всього файлу для перегляду може зайняти час.",
+      "downloadPreview": "Завантажити попередній перегляд",
+      "downloadedPreview": "Попередній перегляд збережено в {{path}}"
     }
   },
   "dashboard": {
@@ -2371,6 +2426,14 @@
       "name": "Назва",
       "size": "Розмір",
       "modified": "Змінено"
+    },
+    "filters": {
+      "folders": "Папки",
+      "images": "Зображення",
+      "videos": "Відео",
+      "audio": "Аудіо",
+      "documents": "Документи",
+      "archives": "Архіви"
     },
     "empty": {
       "noStarred": "Немає позначених файлів",

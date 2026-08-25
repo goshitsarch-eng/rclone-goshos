@@ -41,6 +41,56 @@
     "clearAll": "Tümünü Temizle",
     "acknowledge": "Onayla"
   },
+  "cron": {
+    "everyMinute": "Her dakika",
+    "everyMinutes": "Her {{n}} dakikada",
+    "everyHours": "Her {{n}} saatte",
+    "everyDays": "Her {{n}} günde",
+    "hourlyAt": "Saatte bir, {{min}}. dakikada",
+    "dailyAt": "Her gün {{time}}",
+    "dailyBetween": "Her gün {{start}}–{{end}} arasında",
+    "weekdaysAt": "Hafta içi {{time}}",
+    "weekendsAt": "Hafta sonu {{time}}",
+    "monthlyAt": "Her ayın {{dom}}. günü {{time}}",
+    "weeklyAt": "Haftalık, gün {{dow}}, {{time}}",
+    "weeklyDaysAt": "Haftalık, günler {{days}}, {{time}}",
+    "weeklyOnAt": "Her {{day}} {{time}}",
+    "weeklyOnDaysAt": "Haftalık {{days}} {{time}}",
+    "everyMinutesBetween": "Her {{n}} dakikada bir, {{start}}–{{end}} arasında",
+    "everyHoursAt": "Her {{n}} saatte, {{min}}. dakikada",
+    "monthlyDaysAt": "Her ayın {{days}} günleri {{time}}",
+    "yearlyOn": "Her yıl {{month}} {{dom}} {{time}}",
+    "atReboot": "Açılışta",
+    "lastDayOfMonthAt": "Ayın son günü {{time}}",
+    "lastWeekdayAt": "Son {{day}} {{time}}",
+    "nthWeekdayAt": "{{nth}} {{day}} {{time}}",
+    "inMonthsAt": "{{months}} içinde {{time}}",
+    "inMonthsOnDayAt": "{{months}} ayının {{dom}}. günü {{time}}",
+    "days": {
+      "0": "Pazar",
+      "1": "Pazartesi",
+      "2": "Salı",
+      "3": "Çarşamba",
+      "4": "Perşembe",
+      "5": "Cuma",
+      "6": "Cumartesi",
+      "7": "Pazar"
+    },
+    "months": {
+      "1": "Ocak",
+      "2": "Şubat",
+      "3": "Mart",
+      "4": "Nisan",
+      "5": "Mayıs",
+      "6": "Haziran",
+      "7": "Temmuz",
+      "8": "Ağustos",
+      "9": "Eylül",
+      "10": "Ekim",
+      "11": "Kasım",
+      "12": "Aralık"
+    }
+  },
   "remoteConfig": {
     "pathStatus": {
       "clean": "Temiz ve Boş",
@@ -1596,7 +1646,12 @@
       "openingNative": "{{name}} harici uygulamada açılıyor...",
       "errorOpenNative": "Dosya harici uygulamada açılamadı",
       "showRawText": "Ham Metni Göster",
-      "showPreview": "Önizlemeyi Göster"
+      "showPreview": "Önizlemeyi Göster",
+      "remoteStream": "Uzak önizleme yayınlanıyor",
+      "remotePreview": "operations/cat ile uzak önizleme",
+      "largeRemotePreview": "Bu uzak dosya {{size}}. Önizleme için dosyanın tamamını indirmek zaman alabilir.",
+      "downloadPreview": "Önizlemeyi indir",
+      "downloadedPreview": "Önizleme {{path}} konumuna indirildi"
     }
   },
   "dashboard": {
@@ -2371,6 +2426,14 @@
       "name": "Ad",
       "size": "Boyut",
       "modified": "Değiştirilme"
+    },
+    "filters": {
+      "folders": "Klasörler",
+      "images": "Görseller",
+      "videos": "Videolar",
+      "audio": "Ses",
+      "documents": "Belgeler",
+      "archives": "Arşivler"
     },
     "empty": {
       "noStarred": "Yıldızlı Dosya Yok",

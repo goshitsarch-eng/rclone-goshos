@@ -41,6 +41,56 @@
     "clearAll": "Limpar tudo",
     "acknowledge": "Reconhecer"
   },
+  "cron": {
+    "everyMinute": "A cada minuto",
+    "everyMinutes": "A cada {{n}} minutos",
+    "everyHours": "A cada {{n}} horas",
+    "everyDays": "A cada {{n}} dias",
+    "hourlyAt": "A cada hora no minuto {{min}}",
+    "dailyAt": "Todos os dias às {{time}}",
+    "dailyBetween": "Todos os dias entre {{start}} e {{end}}",
+    "weekdaysAt": "Dias úteis às {{time}}",
+    "weekendsAt": "Fins de semana às {{time}}",
+    "monthlyAt": "Todo dia {{dom}} do mês às {{time}}",
+    "weeklyAt": "Semanalmente no dia {{dow}} às {{time}}",
+    "weeklyDaysAt": "Semanalmente nos dias {{days}} às {{time}}",
+    "weeklyOnAt": "Toda {{day}} às {{time}}",
+    "weeklyOnDaysAt": "Semanalmente em {{days}} às {{time}}",
+    "everyMinutesBetween": "A cada {{n}} minutos entre {{start}} e {{end}}",
+    "everyHoursAt": "A cada {{n}} horas no minuto {{min}}",
+    "monthlyDaysAt": "Todo mês nos dias {{days}} às {{time}}",
+    "yearlyOn": "Todo ano em {{dom}} de {{month}} às {{time}}",
+    "atReboot": "Na reinicialização",
+    "lastDayOfMonthAt": "Último dia do mês às {{time}}",
+    "lastWeekdayAt": "Último {{day}} às {{time}}",
+    "nthWeekdayAt": "{{nth}} {{day}} às {{time}}",
+    "inMonthsAt": "Em {{months}} às {{time}}",
+    "inMonthsOnDayAt": "Dia {{dom}} de {{months}} às {{time}}",
+    "days": {
+      "0": "domingo",
+      "1": "segunda-feira",
+      "2": "terça-feira",
+      "3": "quarta-feira",
+      "4": "quinta-feira",
+      "5": "sexta-feira",
+      "6": "sábado",
+      "7": "domingo"
+    },
+    "months": {
+      "1": "janeiro",
+      "2": "fevereiro",
+      "3": "março",
+      "4": "abril",
+      "5": "maio",
+      "6": "junho",
+      "7": "julho",
+      "8": "agosto",
+      "9": "setembro",
+      "10": "outubro",
+      "11": "novembro",
+      "12": "dezembro"
+    }
+  },
   "remoteConfig": {
     "pathStatus": {
       "clean": "Limpo & Vazio",
@@ -1596,7 +1646,12 @@
       "openingNative": "Abrindo {{name}} no visualizador externo...",
       "errorOpenNative": "Falha ao abrir o arquivo no aplicativo externo",
       "showRawText": "Mostrar texto bruto",
-      "showPreview": "Mostrar pré-visualização"
+      "showPreview": "Mostrar pré-visualização",
+      "remoteStream": "Transmitindo pré-visualização remota",
+      "remotePreview": "Pré-visualização remota via operations/cat",
+      "largeRemotePreview": "Este arquivo remoto tem {{size}}. Baixar o arquivo inteiro para pré-visualizar pode demorar.",
+      "downloadPreview": "Baixar pré-visualização",
+      "downloadedPreview": "Pré-visualização baixada em {{path}}"
     }
   },
   "dashboard": {
@@ -2371,6 +2426,14 @@
       "name": "Nome",
       "size": "Tamanho",
       "modified": "Modificado"
+    },
+    "filters": {
+      "folders": "Pastas",
+      "images": "Imagens",
+      "videos": "Vídeos",
+      "audio": "Áudio",
+      "documents": "Documentos",
+      "archives": "Arquivos compactados"
     },
     "empty": {
       "noStarred": "Arquivos Sem Estrela",

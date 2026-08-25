@@ -1,0 +1,53 @@
+[package]
+name = "rclone-manager-gtk"
+version = "0.3.2"
+description = "GTK 4 + libadwaita desktop client for Rclone Manager"
+authors = ["Hakan İSMAİL"]
+edition = "2021"
+license = "GPL-3.0-or-later"
+default-run = "rclone-manager-gtk"
+rust-version = "1.80"
+
+[[bin]]
+name = "rclone-manager-gtk"
+path = "src/main.rs"
+
+[lib]
+name = "rclone_manager_gtk"
+path = "src/lib.rs"
+
+[dependencies]
+gtk = { package = "gtk4", version = "0.9", features = ["v4_14"] }
+adw = { package = "libadwaita", version = "0.7", features = ["v1_5"] }
+glib = "0.20"
+gio = "0.20"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+ureq = { version = "2", features = ["json"] }
+dirs = "6"
+uuid = { version = "1", features = ["v4"] }
+chrono = { version = "0.4", features = ["serde"] }
+thiserror = "2"
+log = "0.4"
+env_logger = "0.11"
+which = "6"
+open = "5"
+zip = "2"
+notify-rust = "4"
+base64 = "0.22"
+sha2 = "0.10"
+urlencoding = "2"
+sys-locale = "0.3"
+croner = "2"
+ksni = "0.2"
+native-tls = "0.2"
+notify = "6"
+keyring = "3"
+dbus = "0.9"
+
+[dev-dependencies]
+tempfile = "3"
+
+[profile.release]
+lto = true
+codegen-units = 1

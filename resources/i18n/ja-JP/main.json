@@ -41,6 +41,56 @@
     "clearAll": "すべてクリア",
     "acknowledge": "確認"
   },
+  "cron": {
+    "everyMinute": "毎分",
+    "everyMinutes": "{{n}} 分ごと",
+    "everyHours": "{{n}} 時間ごと",
+    "everyDays": "{{n}} 日ごと",
+    "hourlyAt": "毎時 {{min}} 分",
+    "dailyAt": "毎日 {{time}}",
+    "dailyBetween": "毎日 {{start}}〜{{end}}",
+    "weekdaysAt": "平日 {{time}}",
+    "weekendsAt": "週末 {{time}}",
+    "monthlyAt": "毎月 {{dom}} 日 {{time}}",
+    "weeklyAt": "毎週 {{dow}} 曜日 {{time}}",
+    "weeklyDaysAt": "毎週 {{days}} {{time}}",
+    "weeklyOnAt": "毎週{{day}} {{time}}",
+    "weeklyOnDaysAt": "毎週 {{days}} {{time}}",
+    "everyMinutesBetween": "{{start}}〜{{end}}の間、{{n}} 分ごと",
+    "everyHoursAt": "{{n}} 時間ごと {{min}} 分",
+    "monthlyDaysAt": "毎月 {{days}} 日 {{time}}",
+    "yearlyOn": "毎年 {{month}} {{dom}} 日 {{time}}",
+    "atReboot": "再起動時",
+    "lastDayOfMonthAt": "毎月最終日 {{time}}",
+    "lastWeekdayAt": "最後の{{day}} {{time}}",
+    "nthWeekdayAt": "{{nth}} の{{day}} {{time}}",
+    "inMonthsAt": "{{months}} {{time}}",
+    "inMonthsOnDayAt": "{{months}} {{dom}} 日 {{time}}",
+    "days": {
+      "0": "日曜日",
+      "1": "月曜日",
+      "2": "火曜日",
+      "3": "水曜日",
+      "4": "木曜日",
+      "5": "金曜日",
+      "6": "土曜日",
+      "7": "日曜日"
+    },
+    "months": {
+      "1": "1月",
+      "2": "2月",
+      "3": "3月",
+      "4": "4月",
+      "5": "5月",
+      "6": "6月",
+      "7": "7月",
+      "8": "8月",
+      "9": "9月",
+      "10": "10月",
+      "11": "11月",
+      "12": "12月"
+    }
+  },
   "remoteConfig": {
     "pathStatus": {
       "clean": "空のディレクトリ",
@@ -1596,7 +1646,12 @@
       "openingNative": "外部アプリで {{name}} を開いています...",
       "errorOpenNative": "外部アプリでファイルを開けませんでした",
       "showRawText": "元のテキストを表示",
-      "showPreview": "プレビューを表示"
+      "showPreview": "プレビューを表示",
+      "remoteStream": "リモートプレビューをストリーミング中",
+      "remotePreview": "operations/cat によるリモートプレビュー",
+      "largeRemotePreview": "このリモートファイルは {{size}} です。プレビューのためにファイル全体をダウンロードすると時間がかかることがあります。",
+      "downloadPreview": "プレビューをダウンロード",
+      "downloadedPreview": "{{path}} にプレビューをダウンロードしました"
     }
   },
   "dashboard": {
@@ -2371,6 +2426,14 @@
       "name": "名前",
       "size": "サイズ",
       "modified": "更新日時"
+    },
+    "filters": {
+      "folders": "フォルダー",
+      "images": "画像",
+      "videos": "動画",
+      "audio": "音声",
+      "documents": "ドキュメント",
+      "archives": "アーカイブ"
     },
     "empty": {
       "noStarred": "スター付きファイルはありません",

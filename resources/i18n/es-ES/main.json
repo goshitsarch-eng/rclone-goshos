@@ -41,6 +41,56 @@
     "clearAll": "Borrar todo",
     "acknowledge": "Confirmar"
   },
+  "cron": {
+    "everyMinute": "Cada minuto",
+    "everyMinutes": "Cada {{n}} minutos",
+    "everyHours": "Cada {{n}} horas",
+    "everyDays": "Cada {{n}} días",
+    "hourlyAt": "Cada hora en el minuto {{min}}",
+    "dailyAt": "Cada día a las {{time}}",
+    "dailyBetween": "Cada día entre {{start}} y {{end}}",
+    "weekdaysAt": "Entre semana a las {{time}}",
+    "weekendsAt": "Los fines de semana a las {{time}}",
+    "monthlyAt": "El día {{dom}} de cada mes a las {{time}}",
+    "weeklyAt": "Semanalmente el día {{dow}} a las {{time}}",
+    "weeklyDaysAt": "Semanalmente los días {{days}} a las {{time}}",
+    "weeklyOnAt": "Cada {{day}} a las {{time}}",
+    "weeklyOnDaysAt": "Semanalmente los {{days}} a las {{time}}",
+    "everyMinutesBetween": "Cada {{n}} minutos entre {{start}} y {{end}}",
+    "everyHoursAt": "Cada {{n}} horas en el minuto {{min}}",
+    "monthlyDaysAt": "Los días {{days}} de cada mes a las {{time}}",
+    "yearlyOn": "Cada año el {{dom}} de {{month}} a las {{time}}",
+    "atReboot": "Al reiniciar",
+    "lastDayOfMonthAt": "El último día del mes a las {{time}}",
+    "lastWeekdayAt": "El último {{day}} a las {{time}}",
+    "nthWeekdayAt": "El {{nth}} {{day}} a las {{time}}",
+    "inMonthsAt": "En {{months}} a las {{time}}",
+    "inMonthsOnDayAt": "El día {{dom}} de {{months}} a las {{time}}",
+    "days": {
+      "0": "domingo",
+      "1": "lunes",
+      "2": "martes",
+      "3": "miércoles",
+      "4": "jueves",
+      "5": "viernes",
+      "6": "sábado",
+      "7": "domingo"
+    },
+    "months": {
+      "1": "enero",
+      "2": "febrero",
+      "3": "marzo",
+      "4": "abril",
+      "5": "mayo",
+      "6": "junio",
+      "7": "julio",
+      "8": "agosto",
+      "9": "septiembre",
+      "10": "octubre",
+      "11": "noviembre",
+      "12": "diciembre"
+    }
+  },
   "remoteConfig": {
     "pathStatus": {
       "clean": "Limpio y vacío",
@@ -1596,7 +1646,12 @@
       "openingNative": "Abriendo {{name}} en la aplicación externa...",
       "errorOpenNative": "Error al abrir el archivo en la aplicación externa",
       "showRawText": "Mostrar texto sin formato",
-      "showPreview": "Mostrar vista previa"
+      "showPreview": "Mostrar vista previa",
+      "remoteStream": "Reproduciendo vista previa remota",
+      "remotePreview": "Vista previa remota mediante operations/cat",
+      "largeRemotePreview": "Este archivo remoto ocupa {{size}}. Descargar el archivo completo para previsualizarlo puede tardar.",
+      "downloadPreview": "Descargar vista previa",
+      "downloadedPreview": "Vista previa descargada en {{path}}"
     }
   },
   "dashboard": {
@@ -2371,6 +2426,14 @@
       "name": "Nombre",
       "size": "Tamaño",
       "modified": "Modificado"
+    },
+    "filters": {
+      "folders": "Carpetas",
+      "images": "Imágenes",
+      "videos": "Vídeos",
+      "audio": "Audio",
+      "documents": "Documentos",
+      "archives": "Archivos"
     },
     "empty": {
       "noStarred": "No hay archivos favoritos",

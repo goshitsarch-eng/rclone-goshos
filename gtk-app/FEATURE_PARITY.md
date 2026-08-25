@@ -1,0 +1,380 @@
+# GTK rewrite feature parity
+
+This client is the GTK 4 + libadwaita rewrite of the Angular/Tauri desktop UI. It talks to a local `rclone rcd` instance (or a selected extra RC backend) and persists app state under `~/.config/rclone-manager/`.
+
+## Implemented
+
+- Workspaces: Main menu, Nautilus file browser, Flow
+- Dashboard tabs: general, mount, operations, serve
+- Remote sidebar search, status badges, overview + detail
+- All 11 primary operations (mount, sync, copy, move, bisync, serve, check, delete, copyurl, archivecreate, cryptcheck)
+- Serve types: http, webdav, ftp, sftp, nfs, dlna, restic, s3
+- Quick add / detailed remote create-update-delete
+- Mount / unmount, start/stop jobs, stop all serves
+- File browser: path bar, history, parent, hidden files, mkdir, rename, multi-rename, delete, copy/cut/paste, upload picker, bookmarks, starred, local disks, remotes
+- File viewer (image/text/video/audio locally, PDF via system app, remote download preview, syntax highlighting for common text languages)
+- Quick runs: create/edit/duplicate/delete, cron validation + human-readable hint, watcher, autostart, tray flag, start/stop, folder pickers
+- Workflow builder placeholder (same as current Angular stub)
+- Preferences: language, default view, tray, startup (XDG autostart), notifications, restrict, prevent sleep (systemd-inhibit), rclone binary, bandwidth, tray item cap, log level, standalone dialogs
+- Rclone flags editor: category pages (backend/filter/vfs/mount/copy/sync/check/network/other) writing `options/set`
+- Backends: local rcd plus extra RC backends with add/test/switch/remove
+- Alerts: history, rule editor, action editor (os_toast, webhook, telegram, whatsapp, script, email/mqtt logged)
+- Backup/restore zip with category picker, notes, and restore preview
+- Template manager: capture, apply (`options/set` or categorized helper/profile merge), delete
+- Remote-config preset bar: apply default OS/provider presets, apply/save/manage user templates
+- Archive create job dialog (`operations/archive` create, selection + format flags)
+- Onboarding: welcome, features, rclone detect, default view, complete
+- Keyboard shortcuts (global + nautilus)
+- Theme: system / light / dark
+- i18n: en-US, tr-TR, es-ES, zh-CN, fr-FR, uk-UA, ru-RU, pt-BR, ja-JP
+- Native StatusNotifier tray (ksni) with per-remote Mount/Unmount/Browse menus and Show Window restore
+- Live job polling from rclone `job/list` + `job/status` + group `core/stats`, with failure alerts
+- Provider list from `config/providers` when adding remotes
+- Live job detail (progress, speed, ETA, transferring list, stop, reset stats)
+- Remote about, file properties; local media viewer
+- Remote wizard: live provider fields (basic + advanced), secret obscure, default profiles, multi-step interactive `config/create` + `config/update` continue, OAuth URL open
+- Nautilus tabs (Ctrl+T/W), real dual-pane split, drag-drop upload, undo, right-click context menu (archive / Send to), operations panel
+- VFS stats/refresh/forget/queue on remote detail
+- App + rclone update checks in About; rclone binary install to `~/.local/bin`
+- Linux Send-to (Nautilus/Dolphin/Nemo) and `--send-to-remote` CLI upload path
+- Autostart + prevent-sleep inhibitor while jobs/mounts/serves are active
+- Profile-aware operation start dialog (src/dst/URL/mount/serve type, dry-run, static flags, folder pickers)
+- Per-operation profiles in the remote wizard, CLI flag import, obscure tool
+- Autostart of saved profiles and quick runs
+- Remote order / visibility editor
+- Editable local text files in the viewer
+- Nautilus drag-lasso multi-select
+- Dashboard bandwidth presets + system snapshot (version, memory, activity)
+- Guided repair sheet (install / custom binary / config path / restart)
+- Cron + filesystem-watch automations (profiles and quick runs) with dashboard overview
+- Per-profile VFS / filter / backend helper configs merged into job RC payloads (`vfsOpt`, `_filter`, `_config`)
+- Multi-source job starts for sync/copy/move/check/delete/copyurl/cryptcheck
+- Email (SMTP) and MQTT QoS 0 alert delivery
+- Helper profile JSON editor per remote
+- Nautilus list/grid icon-size toggle
+- Remote-config sidenav: per-operation profiles (add/clone/rename/delete), src/dst/multi-source, cron/watch/autostart, linked VFS/filter/backend/runtime helpers, static + `options/info` flags, CLI import
+- Helper-profile flag editors (VFS / filter / backend / runtime) with profile switcher
+- True Nautilus FlowBox icon grid with lasso hit-testing and dual-pane support
+- Live syntax re-highlight in the text viewer (tags only — buffer text is not rewritten)
+- Skip spawning a local `rclone rcd` when an extra RC backend is active
+- Nautilus multi-select copy/cut/delete/paste; copy path; public link; copy URL; upload folder; extract archive; rmdirs; remote cleanup; open native; open selection in new tab
+- Dashboard browse opens the Files workspace at that remote; per-serve stop + open URL
+- Properties: disk usage, MD5/SHA1/SHA256, public link, copy path
+- Logs filter + clear; wizard Cancel OAuth
+- rclone.conf password store / validate / encrypt / unencrypt; engine starts with `RCLONE_CONFIG_PASS`
+- Password-protected zip backups and secret-stripping on export
+- Preferences: standalone dialogs, card variant, extra flags/env, connectivity URLs, security, GC/FS-cache, folder openers
+- Developer menu: config/cache/log folders, GC, FS cache, connectivity check
+- VFS poll interval + queue expiry on remote detail; dashboard chips honor per-remote action order
+- Copy remotes from the active backend onto an extra RC backend
+- Nautilus redo and paste from the system clipboard
+- Live rclone.log tail in the Logs dialog
+- Dynamic serve flags from `options/info` per serve type (http/webdav/ftp/sftp/nfs/dlna/restic/s3)
+- JSON mode for remote-config flags and the rclone flags dialog
+- Dedicated action-order / visibility editor (primary + sync)
+- Dashboard compact vs detailed cards with per-profile start chips
+- File viewer prev/next gallery across the current listing
+- SMTP STARTTLS / implicit TLS and MQTT TLS (`mqtts://` / port 8883)
+- Directory-contents mtime for local watch automations
+- Static serve + archivecreate flags matching Angular `flag-definitions`
+- Repair diagnosis (missing binary, old version, FUSE, password, config, engine) with targeted actions
+- Nautilus operations panel: progress, stop, job detail, persistent history + dismiss
+- Filesystem watchers via `notify` (plus directory mtime fallback)
+- Backend OS/arch/version identity from `core/version`
+- Wizard path pickers + local disk-usage hints on path-like provider fields
+- Folder artwork next to local audio in the file viewer
+- Nautilus undo/redo for mkdir, upload, rename, copy, move, and local delete (with trash stash)
+- Dashboard layout editor (hide/show + reorder remotes) plus ordered overview cards
+- Detach a Files tab into its own window (Ctrl+Shift+D)
+- rclone.conf password prefers the OS keyring (libsecret) and falls back to settings.json
+- Prevent-sleep via logind D-Bus Inhibit, with systemd-inhibit CLI fallback
+- Clone extra RC backends and copy remotes from a chosen source when adding
+- System clipboard FileList paste in addition to text/`file://` paths
+- Restrict mode masks sensitive profile settings on remote detail
+- Backend `{key, params}` errors are translated through `main.json`
+- Dashboard automation pause/resume without editing the profile
+- Job detail: completed transfers, check-result summary, filter, delete from history
+- Flow overview shows jobs, serves, and automations alongside quick-run cards
+- Per-backend remote order/visibility (`runtime.remote_layouts`)
+- Dashboard and Flow panel order/visibility (`runtime.dashboard_layout`, `quick_run_layout`)
+- Nautilus sort cycles name/size/modified (plus preferences defaults)
+- Preferences: theme, tray icon theme, update channels, engine restart
+- Alert rule enable/disable switches
+- Remote detail activity (jobs + serves)
+- `operations/fsinfo` cache gates public links / cleanup and drives hash types
+- Archive contents browser via `operations/archive` list in the file viewer
+- New folder with selected items (mkdir + move)
+- Rich remote About: usage, size, features, hashes, metadata
+- Properties: on-demand hashes from fsinfo, public-link expiry / unlink
+- Cryptcheck job output parsed into structured results
+- Default OS-toast alert action + notify-on-events rule
+- Job detail can open source/destination in Files
+- Download save-as from the viewer and Nautilus
+- Uploads start as tracked `copyfile` jobs
+- `job/stopgroup` when closing Remote About
+- Delete remote stops mounts/serves/jobs and purges quick runs, automations, and history
+- True remote clone (unique name, rewritten paths, rclone.conf copy)
+- Provider / family / OS presets applied on wizard create
+- Mount and local dest path inspection with collision warnings
+- Alert rules honor backend and profile filters
+- Title-bar banner surfaces the highest-priority repair diagnosis
+- Embedded Nautilus file picker (mode/selection/remote/extension filters) used by operation, quick-run, wizard, and remote-config path fields
+- One-shot import of a Tauri/rcman `remotes/` + alerts/templates layout into the GTK store
+- Path kinds (local / current remote / other remote) with combo rows and job-path resolution
+- Native Share… from Files (stage remote files, then `xdg-email` / `xdg-open`)
+- NetworkManager metered-network detection, optional metered bandwidth limit, and Flatpak/metered title-bar banners
+- Kind-specific alert action fields (webhook, telegram, email, MQTT, script, WhatsApp, OS toast)
+- Files breadcrumbs plus in-listing search (Ctrl+F), path edit (Ctrl+L)
+- Translated menus, Files chrome, tray labels, and key preference titles
+- Tray icon themes (system/color/mono/symbolic) and auto-update preference switches
+- Title-bar connectivity indicator (offline / checking) with click-to-retry
+- Update-available banner (app / rclone / both) opening the Updates dialog
+- Provider-type icons on dashboard remotes and Files cloud sidebar
+- Files list-view Name / Size / Modified column headers
+- Files type-filter chips (folders / images / videos / audio / documents / archives)
+- Files sidebar configure (hide / reorder local disks and remotes)
+- Files context menu i18n, including Rename Multiple when several items are selected
+- Title-bar Home (when a remote is selected) and update/alert notice button
+- Files starred collection view, star/unstar, tab context menu (duplicate / close others / close to the right)
+- Files icon-size cycle and richer logs (level filter, refresh, scroll)
+- Preferences i18n for remaining setting titles plus Reset all settings
+- About can skip an available app update version
+- Files sidebar context menus (open / new tab / new window, unstar, remove bookmark, properties, remote About, Empty Trash)
+- Developer Debug Info dialog (version, paths, copy, open folders) and Relaunch
+- Title-bar add menu includes New Workflow (opens the Flow builder stub)
+- Flow tabs + overview/detail i18n; dashboard empty-state i18n
+- Properties star toggle and i18n; job detail and quick-run editor titles i18n
+- Preferences Core/Developer/Security titles, plus Flags/Backends/Export/Templates/About/Repair dialog titles
+- Job detail shows start time, duration, origin, backend, and dry-run in the progress line
+- Alert pipeline emits job complete/fail, mount start/stop, serve start/stop, automation start/fail, and newly available updates
+- Files paste and folder upload start as one grouped rclone job (`_group`)
+- Job detail transfer rows: open in Files, copy path, delete source / destination
+- Quick Run editor persists dry-run plus static operation flags
+- Onboarding can download rclone into `~/.local/bin` and store an optional config password
+- App self-update: GitHub Linux asset download with progress/cancel, binary replace, and relaunch
+- Rclone install reports download progress and can be cancelled
+- Cross-view navigation dispatcher (dashboard tab/remote, Files, Flow, job, serve, automation)
+- Alert history stats plus template-key helper in the action editor
+- Persisted rclone `options/set` store (`backend.json`) applied on backend switch / engine restart
+- Backup export can dump remotes from local or an extra RC backend
+- Quick Run and Start Operation merge live `options/info` flags plus CLI import (and serve-type flags)
+- Job detail: stop group, retryError, and check/cryptcheck resolve + delete actions
+- Template capture can include selected flag categories
+- Alert actions support retry_count and richer test context
+- RC 401 repair opens the backends editor; FUSE repair can run a package-manager install
+- Restrict mode redacts wizard secrets and remote-config JSON
+- Developer menu Memory stats dialog (alloc/heap/GC)
+- Structured logs: rclone text + JSON parse, job context, copy/export, live refresh
+- Adaptive runtime poll (400ms while jobs/mounts/serves are active, ~3s idle)
+- In-app What's New for app and rclone release notes
+- Windows SendTo + Explorer context-menu writers and macOS Finder Services workflow
+- RC `operations/stat` and `operations/hashsumfile`; properties use both
+- Close-to-tray when `destroy_window_on_close` is off
+- About Credits and Legal pages
+- Markdown preview toggle and dedicated PDF open panel in the file viewer
+- Structured VFS panel (stats, queue, forget file, recursive refresh, relative expiry)
+- Mount-plugin module (FUSE / WinFsp / FUSE-T) in repair and onboarding
+- Close-to-tray restore: tray Show Window presents the hidden main window
+- Wizard edit prefills provider type, dumped rclone fields, and saved mount/src/dst/tray profiles
+- Alert history search, severity filter, per-item acknowledge, and clear
+- Live `core/bwlimit` on the dashboard Bandwidth panel
+- Job transfer rows: Download and Copy public URL
+- Files split view persisted in settings; Ctrl+Tab / Alt+↑ shortcuts
+- Extra RC backends copy persisted `backend.json` options from the source backend
+- Remote-config dest path inspection (mount collisions / will-create)
+- Tray per-remote profile Start/Stop, quick-run stop, Open Files, and Quit
+- Dashboard profile chips and detail rows toggle start/stop
+- `core/transferred` merged into finished job stats; `job/batch` used for status poll
+- RC wrappers for `core/stats-delete`, `mount/types`, `serve/types`
+- Live `serve/types` and `mount/types` populate serve/mount combos (wizard, start, quick run, remote-config)
+- `operations/cat` for small remote text previews in the file viewer
+- `--share-intake` CLI queues files; Files shows an Upload here banner (Android share parity on Linux)
+- Alert history filters by remote / profile / backend
+- Backup restore can scope to one remote and rename it (`restore as`)
+- Cryptcheck jobs call `operations/cryptcheck` (not `operations/check`)
+- Remote text save via `operations/uploadfile` (multipart, with copyfile fallback)
+- Remote image/video/audio preview downloads to a temp file then embeds GTK Picture/Video
+- PDF first-page preview via `pdftoppm` when Poppler is installed
+- Cron preset buttons plus simple/advanced builder (Angular `cron-input` parity)
+- RC wrappers: `core/du`, `config/paths`, `config/isencrypted`, `config/unlock`
+- Engine calls `config/unlock` after rcd is ready when a config password is set
+- Onboarding: test existing binary, import backup, i18n for remaining pages
+- Provider-field and remote-name validators (Angular `ValidatorRegistryService`)
+- Preparing-upload jobs appear immediately after `start_job` (status `preparing`)
+- Standalone dialog CLI (`--dialog TYPE --dialog-data JSON --dialog-result PATH`) and spawn when the setting is on
+- Typed provider controls (bool/tristate/select/numeric) plus rclone value mapper (`humanToMachine` / `machineToHuman`)
+- Provider `Examples[].Provider` filtering and per-password obscure
+- Remote dest path inspection via `operations/stat` + auto-mkdir for WillCreate paths
+- Profile in-use guards (block delete while jobs/mounts/serves are active)
+- Rclone flags editor lists the full `options/info` set (no 40-flag cap)
+- Standalone dialog result file is polled so the parent refreshes after close
+- Default mount/bisync directory templates (`{home}/rclone-manager/{remote}`)
+- Preferences pending-restart batch for `rclone_binary` / extra flags / env vars, with Save & Restart and Discard
+- Per-setting reset-to-default controls on every Preferences row
+- Remote wizard i18n for identity, fields, interactive flow, profiles, and errors
+- Wizard rebuilds provider fields when the vendor/provider combo changes
+- Rclone flags editor typed controls (bool/tristate/select/numeric) plus Duration/SizeSuffix hints
+- Local job metadata registry (origin/profile/remote/backend) merged into RC-polled jobs
+- Remote-config deep-link (`initial` step + profile) and dashboard Add/Edit profile actions
+- Rclone option title/help translation (`rclone.json` snake_case keys)
+- Localized cron hints and Files shortcuts Alt+←/→ plus Ctrl+Shift+T
+- ANSI SGR coloring in the Logs dialog (Angular `ansiToHtml` → Pango spans)
+- MIME / extension Adwaita icons in Files (Angular `mime-icon-map` + folder aliases)
+- Shutdown confirm when jobs, mounts, or serves are active (tray Quit, Ctrl+Q, close-to-destroy)
+- Profile rename updates live job metadata, job history, and automation last-run/pause keys
+- Dashboard Add profile opens remote-config and immediately prompts for a new profile name
+- Remote-config deep-link selects the named profile; standalone dialogs honor `initial`/`profile`/`autoAdd`
+- Wizard command options (`obscure` / `noObscure` / `nonInteractive` / `all` / `noOutput`) passed as `config/create` `opt`
+- Embedded PDF page navigation via `pdfinfo` + `pdftoppm` (system viewer still available)
+- Remote-config operation/metadata labels use i18n fallbacks
+- Wizard JSON mode (form ↔ JSON, restrict redaction, persisted `show_json_mode`)
+- Wizard advanced options hidden by default with show/hide toggle
+- Wizard command-options panel hidden by default; custom key/type/value options merge into `config/create` `opt`
+- Shutdown “please wait” overlay after confirm (`app.shutdown.title` / `message`)
+- Start-operation, backends editor, VFS panel, flags JSON, and Files status strings use i18n fallbacks
+- Archive create uses `operations/archive` `{ action: create }` with format/prefix/fullPath/include (core/command fallback)
+- Files archive dialog uses the current selection; Copy URL supports optional filename + `autoFilename`
+- Config password validate/encrypt/decrypt prefer RC (`config/validatepassword|encrypt|decrypt`) with CLI fallback
+- Multi-rename find/replace honors a case-sensitive toggle
+- Internal Files drag-and-drop: listings, folder rows, split pane, breadcrumbs, tabs, and sidebar (same-remote move, cross-remote copy, drop-to-star)
+- Files hover-open during drag (1s): folders, breadcrumbs, sidebar, tabs, and Starred
+- Dual-pane drops and hover-open navigate the secondary listing; split divider position is persisted
+- Separate list/grid Files icon sizes
+- Dashboard tabs group remotes into active vs available and filter remote-detail operations/profiles
+- Remote detail: mount/ops/serve status chips, disk-usage bar + retry, live transfers, per-remote automations
+- Operations tab remembers the last sync/copy/move/bisync choice per remote
+- Reset remote settings (keep the rclone remote), show-in-tray toggle, and export prefilled for that remote
+- Detach Main Menu / Flow / Files into a standalone window (Ctrl+Shift+D, titlebar button)
+- WhatsApp alerts: CallMeBot vs custom gateway provider, matching Angular dispatch
+- Cron descriptions cover weekdays/weekends/monthly/hourly and use i18n in quick-run + remote-config
+- Cron preset chips and simple builder labels use `flow.cronPresets.*` / fallbacks
+- Restore preview shows created/type/security/contents/note plus scoped restore (all vs profile)
+- Export categories, password, secrets, and backend rows use i18n keys
+- Keyboard shortcuts dialog is categorized and searchable
+- File viewer: extract archive, Edit/Cancel/Save for text, i18n chrome
+- Shared prompts use translated OK/Cancel
+- File viewer folder size (`operations/size`) plus Space preview including directories
+- Cron descriptions: weekday names, daily hour ranges, every-N-days, and locale packs
+- Remaining dialog chrome (backends, templates, repair, multi-rename, action order, alerts) uses i18n fallbacks
+- Properties: ModTime, used/free/total rows, contained-file stats, hash copy-to-clipboard
+- Files listing shows relative Modified dates
+- File viewer: size in chrome, ArrowLeft/ArrowRight gallery, binary / preview-unavailable pages
+- Alert rule and action editors use `alerts.*` labels
+- Properties: directory bulk `operations/hashsum` listing + copy, file `hashsumfile`
+- Public-link expiry combo (Never / 1h / 1d / 7d / 30d) and unlink i18n
+- Remote About splits MetadataInfo into System vs Standard groups with Type/Help/Example/ReadOnly
+- Files grid tiles show size and relative Modified dates
+- Remaining dialog chrome (quick-add, CLI import, helper profiles, template capture, path kind) uses i18n fallbacks
+- Cron descriptions: `@hourly/@daily/@weekly/@monthly/@yearly/@reboot`, named weekdays, 6-field seconds, minute ranges, multi-day monthly, yearly month names
+- Files view-options menu: Angular sort radios, icon-size +/-, split, hidden (grid 48–256 / list 16–48)
+- Files status bar: listing count and Angular-style selection summary
+- Cron descriptions: last day of month, last/nth weekday, month lists, trailing timezone token
+- Job detail: execute ID, finished time, average speed, file counters, server-side copy/move, fatal errors
+- Alert actions: separate email from/to, webhook headers/TLS/timeout, Telegram bot-less CallMeBot, script args
+- Onboarding: select rclone.conf and a blocking password step when the config is encrypted
+- Local rcd honors `--config=` from extra flags (custom rclone.conf)
+- Files: multi-rename placeholder chips; Ctrl+I switches the split pane
+- Shortcuts catalog lists Files pane/tab/search/path/select-all accelerators
+- Flow Quick Run detail: dry-run, tray, last-job stats, logs, and job-detail navigation
+- Dashboard operations: inline dry-run/resync plus live job stats; start dialog resync for bisync
+- Alert rule editor uses Angular-style multi-select switches for remotes, backends, profiles, and origins
+- Extra RC backends store config path and config password; Backends dialog picks the local rclone.conf
+- Cron descriptions: Quartz `L-n` offset and last weekday of month (`LW`)
+- Logs extract nested rclone/bisync `status.output.output` and pretty-print JSON context
+- Alert email subject template plus MQTT QoS 0/1 and retain
+- Alert webhook Discord/Slack presets, email encryption (none/tls/starttls), script env_vars
+- Alert templates include `{{timestamp}}` and `{{rule_id}}`; webhooks send the rendered body
+- Alert history filters: event kind, acknowledged, rule id, and origins
+- Cron descriptions: hour lists (`0 9,17 * * *`) and minute lists (`0,30 * * * *`)
+- Alert email username, MQTT username/TLS/QoS 2, script timeout + browse, webhook PUT/PATCH/DELETE
+- Cron mixed step/list/range forms (`9-17/2`, `*/30 9,12`, `15,45 9-17`, `9-17,20`)
+- Files path-bar overflow menu (new folder, upload, copy URL, paste, reload, copy location, select all, Send-to, properties)
+- Live preparing-job stats (`update_job_stats`) during file/folder uploads
+- Backup restore restarts the engine and reloads automation watchers
+- Folder context Open in New Window; OS toast honors Preferences → Notifications
+- Dashboard transfer activity has per-source and per-destination Open / Copy / URL / Download / Delete
+- Job-detail transfer rows split the same source and destination action groups
+- Overview origin filter chips (all / dashboard / quick run / files / automation) for jobs, serves, and automations
+- Serve cards copy URL and ID, and show origin, profile, and extra option count
+- Mount / Unmount uses the saved default mount profile when one exists
+- Remote wizard last step edits a runtime-remote helper applied to jobs
+- Automations show human-readable cron and watcher summaries
+- Logs translate backend `{key, params}` messages; mount/serve transitions are ingested as structured log lines
+- Flatpak Background portal autostart (XDG desktop file remains the fallback)
+- Hidden-window poll throttle (15s idle when close-to-tray)
+- Structured `log_operation` entries for mount/profile/quick-run starts (redacted RC payload)
+- Operations tab persists the selected profile and scopes live job + transfer rows to it
+- Dashboard transfer activity includes completed transfers
+- General-tab quick runs have Start / Stop / Edit / Browse
+- Profile rename relabels live serve cards
+- Runtime-remote helper page uses provider-typed fields; helper dialog includes runtime
+- Flow Mount/Serve starts use the saved quick-run profile (serve type, mount type, helpers)
+- Named runtime-remote helpers merge with inline `runtimeRemote` on job start
+- Quick Run editor persists a runtime-remote profile and optional inline JSON
+- Remote wizard runtime step uses provider-typed fields plus the JSON editor
+- Operations/detail transfer activity shows check/cryptcheck result rows with resolve/delete
+- Transfer activity toolbar resets live stats or deletes a finished job from history
+- Check resolve starts a tracked `copyfile` job (falls back to a synchronous copy)
+- Remote-detail serve rows can stop the serve
+- Native xdg Share portal (`org.freedesktop.portal.Share`) with email/opener fallback
+- Files operations panel lists only file-manager jobs, with progress bars and byte stats
+- Child jobs from grouped transfers carry `parent_job_id` and stay out of overviews
+- Dashboard transfer activity has search plus Active/Recent tabs
+- Remote detail Configuration shortcuts open remote-config steps
+- Mount tab shows live `core/du` usage for the active mount point
+- Status overview card reports active vs total remotes
+- Alert history filters by rule id and origin
+- Remote-config sidebar includes the Obscure tool
+- System panel shows rclone PID and job-group count (`core/pid`, `core/group-list`)
+- Check resolve shows live progress/speed (or failure) on the result row
+- Check-result rows reuse source/destination Open / Copy / URL / Download / Delete
+- Dashboard and Flow overview panels persist expand/collapse (`runtime.panel_open_states`)
+- Remote-detail status chips follow `primary_actions` (fallback Mount / Sync / Serve)
+- Remote detail shows selected-profile cron and filesystem-watch banners
+- Remote detail operation-control lists source/destination with Open in Files
+- Quick Run editor persists description, watch delay, changed-only, and bisync resync
+- Tray submenu labels (Mount/Unmount/Browse/Start/Stop/Quick Runs) use i18n keys
+- File viewer extracts embedded audio covers (ID3 APIC, FLAC picture, MP4 covr) and falls back to folder artwork
+- Remote audio cover probe reads the first 10 MiB via `rclone cat --count`
+- Large remote media previews warn and require an explicit download
+- Flow overview includes Bandwidth and System panels (same catalog as Angular)
+- Local rcd starts with `--rc-serve` so remote image/video/audio stream over HTTP Range URLs
+- File viewer probes `--rc-serve` (`GET Range: bytes=0-1`) and plays via `gio::File` / `gtk::Video` / `gtk::Picture`
+- Compact dashboard cards show up to 3 primary-action Start/Stop icons (Angular `primaryActionsFor`)
+- Compact cards with multiple profiles open a Start/Stop picker popover (Angular profile blossom)
+- Active mount/sync jobs expose folder-open shortcuts for src/dst / mount point
+- Markdown preview lists relative link/image targets and opens them (Angular `resolveRelativePath`)
+- File viewer repairs mangled UTF-16 text and lists Windows `.lnk` shortcut targets
+- Detailed dashboard cards group profiles by operation, show an empty state, and add folder-open buttons for active src/dst/mount paths
+- Compact cards show overflow status icons for active ops beyond the three primary actions
+- General remote detail can edit `primary_actions` from a header gear (Angular configure-actions)
+- Cancel OAuth in the create wizard deletes the half-created remote
+- Repair PasswordRequired opens an inline unlock sheet (optional keyring remember) instead of full Preferences
+- File viewer and Files “Open in External App” download remote files to `$TMP` before opening
+- Dashboard / Flow start-stop chips disable while an action is in progress (`starting` / `preparing` / busy guard)
+- Ctrl+Alt+F toggles Flow and restores the previous workspace (Angular flow overlay)
+- Flow Quick Run cards include Start / Stop / Edit, cron/watch/autostart badges, and folder-open shortcuts
+- Job detail adds one Open button per source/destination when a job lists multiple paths
+- Title-bar banners use `banners.engine.*` / Flatpak / metered / development i18n
+- Quick Run editor can add multiple sources (saved as `srcFs` arrays) for sync/copy/move/check
+- Onboarding skips rclone/plugin/password cards when they are not needed (Angular card filter)
+- Onboarding page indicators, keyboard next/back, and Import on the welcome card
+- Illustrated default-view cards (badge + title + description) matching `onboarding.uiOptions.*`
+- Live rclone and mount-plugin install progress with cancel (same download-progress model as Updates)
+- Onboarding password Unlock validates via RC/CLI before continuing
+- Custom / existing rclone install locations on the install card
+- Compact / detail start chips disable when no profiles exist (Angular `hasNoProfiles`); mount keeps the default mount-point fallback
+- Busy chips show a spinner while an action is in progress
+- Repair FUSE / mount-plugin install uses the same live progress dialog as rclone updates
+- Repair issue titles and actions use `repairSheet.*` i18n; dashboard toasts use `mount.*` / `operations.*` / `notification.*`
+- Native Open shows `fileBrowser.fileViewer.openingNative` and translates engine-offline errors
+- Flow overview Edit layout hides/reorders `quick_run_layout` panels (same model as the dashboard)
+- Repair corrupt-config offers Restore Backup (import preview) or Choose rclone.conf
+- Quick Add lists only OAuth-capable providers (Angular `get_oauth_supported_remotes`)
+
+## Still deepening toward pixel-level Angular parity
+
+- Workflow builder (stub in both apps)
+- Live GUI session against rclone rcd (no display in this environment)
+- Remaining dialogs/Files English labels (core chrome now localized)
+- Pixel-level Angular layouts and leftover English `t_or` fallbacks

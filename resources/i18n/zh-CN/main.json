@@ -41,6 +41,56 @@
     "clearAll": "清除全部",
     "acknowledge": "确认"
   },
+  "cron": {
+    "everyMinute": "每分钟",
+    "everyMinutes": "每 {{n}} 分钟",
+    "everyHours": "每 {{n}} 小时",
+    "everyDays": "每 {{n}} 天",
+    "hourlyAt": "每小时的第 {{min}} 分钟",
+    "dailyAt": "每天 {{time}}",
+    "dailyBetween": "每天 {{start}} 至 {{end}}",
+    "weekdaysAt": "工作日 {{time}}",
+    "weekendsAt": "周末 {{time}}",
+    "monthlyAt": "每月 {{dom}} 日 {{time}}",
+    "weeklyAt": "每周第 {{dow}} 天 {{time}}",
+    "weeklyDaysAt": "每周 {{days}} {{time}}",
+    "weeklyOnAt": "每周{{day}} {{time}}",
+    "weeklyOnDaysAt": "每周 {{days}} {{time}}",
+    "everyMinutesBetween": "每 {{n}} 分钟，在 {{start}} 至 {{end}} 之间",
+    "everyHoursAt": "每 {{n}} 小时的第 {{min}} 分钟",
+    "monthlyDaysAt": "每月 {{days}} 日 {{time}}",
+    "yearlyOn": "每年 {{month}} {{dom}} 日 {{time}}",
+    "atReboot": "开机时",
+    "lastDayOfMonthAt": "每月最后一天 {{time}}",
+    "lastWeekdayAt": "最后一个{{day}} {{time}}",
+    "nthWeekdayAt": "第 {{nth}} 个{{day}} {{time}}",
+    "inMonthsAt": "在 {{months}} {{time}}",
+    "inMonthsOnDayAt": "在 {{months}} {{dom}} 日 {{time}}",
+    "days": {
+      "0": "星期日",
+      "1": "星期一",
+      "2": "星期二",
+      "3": "星期三",
+      "4": "星期四",
+      "5": "星期五",
+      "6": "星期六",
+      "7": "星期日"
+    },
+    "months": {
+      "1": "1月",
+      "2": "2月",
+      "3": "3月",
+      "4": "4月",
+      "5": "5月",
+      "6": "6月",
+      "7": "7月",
+      "8": "8月",
+      "9": "9月",
+      "10": "10月",
+      "11": "11月",
+      "12": "12月"
+    }
+  },
   "remoteConfig": {
     "pathStatus": {
       "clean": "干净且为空",
@@ -1596,7 +1646,12 @@
       "openingNative": "正在外部应用中打开 {{name}}...",
       "errorOpenNative": "在外部应用中打开文件失败",
       "showRawText": "显示原始内容",
-      "showPreview": "显示预览"
+      "showPreview": "显示预览",
+      "remoteStream": "正在流式播放远程预览",
+      "remotePreview": "通过 operations/cat 远程预览",
+      "largeRemotePreview": "此远程文件大小为 {{size}}。下载整个文件进行预览可能需要一些时间。",
+      "downloadPreview": "下载预览",
+      "downloadedPreview": "预览已下载到 {{path}}"
     }
   },
   "dashboard": {
@@ -2371,6 +2426,14 @@
       "name": "名称",
       "size": "大小",
       "modified": "修改时间"
+    },
+    "filters": {
+      "folders": "文件夹",
+      "images": "图片",
+      "videos": "视频",
+      "audio": "音频",
+      "documents": "文档",
+      "archives": "压缩包"
     },
     "empty": {
       "noStarred": "暂无收藏文件",
