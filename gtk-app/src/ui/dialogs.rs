@@ -2479,6 +2479,10 @@ pub fn job_detail(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, job_id: u64) {
     progress.set_show_text(true);
     let transfers = gtk::ListBox::new();
     transfers.add_css_class("boxed-list");
+    let completed = gtk::ListBox::new();
+    completed.add_css_class("boxed-list");
+    let filter = gtk::SearchEntry::new();
+    filter.set_placeholder_text(Some("Filter transfers"));
     let stop = gtk::Button::with_label("Stop job");
     stop.add_css_class("destructive-action");
     {
@@ -2499,18 +2503,36 @@ pub fn job_detail(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, job_id: u64) {
             }
         });
     }
+    let delete = gtk::Button::with_label("Delete from history");
+    {
+        let ctx = ctx.clone();
+        let dialog = dialog.clone();
+        delete.connect_clicked(move |_| {
+            ctx.store.borrow_mut().dismiss_job(job_id);
+            ctx.persist();
+            ctx.refresh_runtime();
+            dialog.close();
+        });
+    }
     let box_ = gtk::Box::new(gtk::Orientation::Vertical, 8);
     box_.set_margin_top(12);
     box_.append(&progress);
     box_.append(&scrolled_list(&meta));
-    let xfer_label = gtk::Label::new(Some("Transfers"));
+    box_.append(&filter);
+    let xfer_label = gtk::Label::new(Some("Active transfers"));
     xfer_label.add_css_class("heading");
     xfer_label.set_xalign(0.0);
     box_.append(&xfer_label);
     box_.append(&scrolled_list(&transfers));
+    let done_label = gtk::Label::new(Some("Completed transfers"));
+    done_label.add_css_class("heading");
+    done_label.set_xalign(0.0);
+    box_.append(&done_label);
+    box_.append(&scrolled_list(&completed));
     let actions = gtk::Box::new(gtk::Orientation::Horizontal, 8);
     actions.append(&stop);
     actions.append(&reset);
+    actions.append(&delete);
     box_.append(&actions);
     dialog.set_child(Some(&box_));
 
@@ -2518,13 +2540,18 @@ pub fn job_detail(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, job_id: u64) {
         let ctx = ctx.clone();
         let meta = meta.clone();
         let transfers = transfers.clone();
+        let completed = completed.clone();
         let progress = progress.clone();
+        let filter = filter.clone();
         move || {
             while let Some(child) = meta.first_child() {
                 meta.remove(&child);
             }
             while let Some(child) = transfers.first_child() {
                 transfers.remove(&child);
+            }
+            while let Some(child) = completed.first_child() {
+                completed.remove(&child);
             }
             let Some(client) = ctx.client() else {
                 return;
@@ -2568,39 +2595,48 @@ pub fn job_detail(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, job_id: u64) {
                 ("Transferred", crate::rclone::format_bytes(bytes)),
                 ("Speed", format!("{:.1} KiB/s", speed / 1024.0)),
                 ("ETA", eta.to_string()),
-                ("Error", job.error.clone().unwrap_or_else(|| "—".into())),
+                (
+                    "Error",
+                    job.error
+                        .as_deref()
+                        .map(|e| ctx.translate_error(e))
+                        .unwrap_or_else(|| "—".into()),
+                ),
             ] {
                 let row = adw::ActionRow::new();
                 row.set_title(title);
                 row.set_subtitle(&value);
                 meta.append(&row);
             }
-            if let Some(arr) = job.transferring.as_array() {
-                if arr.is_empty() {
+            let query = filter.text().to_lowercase();
+            append_transfer_rows(&transfers, job.transferring.as_array(), &query, true);
+            append_transfer_rows(&completed, job.completed.as_array(), &query, false);
+            let checks = job
+                .stats
+                .get("checks")
+                .or_else(|| job.output.get("results"))
+                .and_then(|v| v.as_array());
+            if let Some(arr) = checks {
+                if !arr.is_empty() {
                     let row = adw::ActionRow::new();
-                    row.set_title("No active transfers");
-                    transfers.append(&row);
-                }
-                for item in arr {
-                    let row = adw::ActionRow::new();
-                    row.set_title(
-                        item.get("name")
-                            .and_then(|x| x.as_str())
-                            .unwrap_or("transfer"),
-                    );
-                    let pct = item
-                        .get("percentage")
-                        .or_else(|| item.get("percentageComplete"))
-                        .cloned()
-                        .unwrap_or(serde_json::json!(0));
-                    let size = item.get("size").and_then(|x| x.as_i64()).unwrap_or(0);
-                    row.set_subtitle(&format!("{pct}% · {}", crate::rclone::format_bytes(size)));
-                    transfers.append(&row);
+                    row.set_title(&format!("{} check results", arr.len()));
+                    let preview = arr
+                        .iter()
+                        .filter_map(|item| item.get("name").and_then(|x| x.as_str()))
+                        .take(3)
+                        .collect::<Vec<_>>()
+                        .join(", ");
+                    row.set_subtitle(&preview);
+                    completed.append(&row);
                 }
             }
         }
     };
     fill();
+    {
+        let fill = fill.clone();
+        filter.connect_search_changed(move |_| fill());
+    }
     let alive = Rc::new(Cell::new(true));
     {
         let alive = alive.clone();
@@ -2617,6 +2653,51 @@ pub fn job_detail(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, job_id: u64) {
         alive.set(false);
     });
     present_window_or_dialog(parent, &ctx, &dialog);
+}
+
+fn append_transfer_rows(
+    list: &gtk::ListBox,
+    items: Option<&Vec<serde_json::Value>>,
+    query: &str,
+    active: bool,
+) {
+    let empty_title = if active {
+        "No active transfers"
+    } else {
+        "No completed transfers"
+    };
+    let Some(arr) = items else {
+        let row = adw::ActionRow::new();
+        row.set_title(empty_title);
+        list.append(&row);
+        return;
+    };
+    let mut shown = 0;
+    for item in arr {
+        let name = item
+            .get("name")
+            .and_then(|x| x.as_str())
+            .unwrap_or("transfer");
+        if !query.is_empty() && !name.to_lowercase().contains(query) {
+            continue;
+        }
+        let row = adw::ActionRow::new();
+        row.set_title(name);
+        let pct = item
+            .get("percentage")
+            .or_else(|| item.get("percentageComplete"))
+            .cloned()
+            .unwrap_or(serde_json::json!(0));
+        let size = item.get("size").and_then(|x| x.as_i64()).unwrap_or(0);
+        row.set_subtitle(&format!("{pct}% · {}", crate::rclone::format_bytes(size)));
+        list.append(&row);
+        shown += 1;
+    }
+    if shown == 0 {
+        let row = adw::ActionRow::new();
+        row.set_title(empty_title);
+        list.append(&row);
+    }
 }
 
 pub fn file_viewer(

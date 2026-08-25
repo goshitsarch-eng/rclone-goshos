@@ -546,6 +546,11 @@ pub fn job_from_status(jobid: u64, status: &Value, stats: Option<&Value>) -> Job
         .get("transferring")
         .cloned()
         .unwrap_or(json!([]));
+    let completed = stats_value
+        .get("completed")
+        .or_else(|| stats_value.get("transferringCompleted"))
+        .cloned()
+        .unwrap_or(json!([]));
     let duration = status
         .get("duration")
         .and_then(|x| x.as_f64())
@@ -584,6 +589,7 @@ pub fn job_from_status(jobid: u64, status: &Value, stats: Option<&Value>) -> Job
         duration,
         progress,
         output,
+        completed,
     }
 }
 
@@ -775,7 +781,8 @@ mod tests {
             "bytes": 50,
             "totalBytes": 100,
             "speed": 1024,
-            "transferring": [{ "name": "a.bin", "percentage": 50 }]
+            "transferring": [{ "name": "a.bin", "percentage": 50 }],
+            "completed": [{ "name": "done.bin", "percentage": 100 }]
         });
         let job = job_from_status(9, &status, Some(&stats));
         assert_eq!(job.id, 9);
@@ -787,6 +794,7 @@ mod tests {
         assert!(job.dry_run);
         assert!((job.progress - 0.5).abs() < f64::EPSILON);
         assert_eq!(job.transferring[0]["name"], "a.bin");
+        assert_eq!(job.completed[0]["name"], "done.bin");
     }
 
     #[test]

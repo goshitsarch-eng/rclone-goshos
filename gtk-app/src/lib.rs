@@ -18,6 +18,7 @@ pub mod providers;
 pub mod rclone;
 pub mod rename;
 pub mod repair;
+pub mod restrict;
 pub mod security;
 pub mod settings;
 pub mod smtp;

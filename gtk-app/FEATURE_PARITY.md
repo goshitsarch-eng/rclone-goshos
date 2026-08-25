@@ -89,6 +89,11 @@ This client is the GTK 4 + libadwaita rewrite of the Angular/Tauri desktop UI. I
 - Prevent-sleep via logind D-Bus Inhibit, with systemd-inhibit CLI fallback
 - Clone extra RC backends and copy remotes from a chosen source when adding
 - System clipboard FileList paste in addition to text/`file://` paths
+- Restrict mode masks sensitive profile settings on remote detail
+- Backend `{key, params}` errors are translated through `main.json`
+- Dashboard automation pause/resume without editing the profile
+- Job detail: completed transfers, check-result summary, filter, delete from history
+- Flow overview shows jobs, serves, and automations alongside quick-run cards
 
 ## Still deepening toward pixel-level Angular parity
 

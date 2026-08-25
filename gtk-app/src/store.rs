@@ -283,6 +283,8 @@ pub struct JobInfo {
     pub progress: f64,
     #[serde(default)]
     pub output: Value,
+    #[serde(default)]
+    pub completed: Value,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
@@ -538,6 +540,8 @@ pub struct AppStore {
     pub automation_last_run: HashMap<String, DateTime<Utc>>,
     #[serde(default)]
     pub job_history: Vec<JobInfo>,
+    #[serde(default)]
+    pub automation_paused: Vec<String>,
 }
 
 impl AppStore {
@@ -601,6 +605,20 @@ impl AppStore {
         let hidden = !self.hidden_remotes.iter().any(|n| n == name);
         self.set_remote_hidden(name, hidden);
         hidden
+    }
+
+    pub fn is_automation_paused(&self, id: &str) -> bool {
+        self.automation_paused.iter().any(|item| item == id)
+    }
+
+    pub fn toggle_automation_paused(&mut self, id: &str) -> bool {
+        if let Some(idx) = self.automation_paused.iter().position(|item| item == id) {
+            self.automation_paused.remove(idx);
+            false
+        } else {
+            self.automation_paused.push(id.to_string());
+            true
+        }
     }
 
     pub fn remember_job(&mut self, job: JobInfo) {
@@ -901,6 +919,10 @@ mod tests {
         assert_eq!(store.hidden_remotes, ["c"]);
         assert!(!store.toggle_remote_hidden("c"));
         assert!(store.hidden_remotes.is_empty());
+        assert!(!store.is_automation_paused("remote:drive:sync:default"));
+        assert!(store.toggle_automation_paused("remote:drive:sync:default"));
+        assert!(store.is_automation_paused("remote:drive:sync:default"));
+        assert!(!store.toggle_automation_paused("remote:drive:sync:default"));
     }
 
     #[test]
@@ -1012,6 +1034,7 @@ mod tests {
             duration: 0.0,
             progress: 0.0,
             output: json!({}),
+            completed: json!([]),
         };
         for id in 1..=82u64 {
             store.remember_job(mk(id, "completed"));

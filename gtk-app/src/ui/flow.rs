@@ -171,6 +171,68 @@ impl FlowView {
         }
         self.content.append(&list);
 
+        self.content.append(&heading("Jobs"));
+        let jobs = gtk::ListBox::new();
+        jobs.add_css_class("boxed-list");
+        let snap = self.ctx.snapshot.borrow();
+        if snap.jobs.is_empty() {
+            let row = adw::ActionRow::new();
+            row.set_title("No active jobs");
+            jobs.append(&row);
+        } else {
+            for job in &snap.jobs {
+                let row = adw::ActionRow::new();
+                row.set_title(&format!("{} · {}", job.operation, job.remote));
+                row.set_subtitle(&format!("{} · {:.0}%", job.status, job.progress * 100.0));
+                let view = self.clone();
+                let id = job.id;
+                row.connect_activated(move |_| {
+                    if let Some(win) = view.root.root().and_downcast::<gtk::Window>() {
+                        dialogs::job_detail(&win, view.ctx.clone(), id);
+                    }
+                });
+                jobs.append(&row);
+            }
+        }
+        self.content.append(&jobs);
+
+        self.content.append(&heading("Serves"));
+        let serves = gtk::ListBox::new();
+        serves.add_css_class("boxed-list");
+        if snap.serves.is_empty() {
+            let row = adw::ActionRow::new();
+            row.set_title("No running serves");
+            serves.append(&row);
+        } else {
+            for serve in &snap.serves {
+                let row = adw::ActionRow::new();
+                row.set_title(&format!("{} · {}", serve.serve_type, serve.fs));
+                row.set_subtitle(&serve.addr);
+                serves.append(&row);
+            }
+        }
+        self.content.append(&serves);
+        drop(snap);
+
+        self.content.append(&heading("Automations"));
+        let autos = gtk::ListBox::new();
+        autos.add_css_class("boxed-list");
+        let records = crate::automation::collect(&self.ctx.store.borrow());
+        if records.is_empty() {
+            let row = adw::ActionRow::new();
+            row.set_title("No automations");
+            autos.append(&row);
+        } else {
+            for record in records.into_iter().take(8) {
+                let paused = self.ctx.store.borrow().is_automation_paused(&record.id);
+                let row = adw::ActionRow::new();
+                row.set_title(&record.name);
+                row.set_subtitle(if paused { "paused" } else { "scheduled" });
+                autos.append(&row);
+            }
+        }
+        self.content.append(&autos);
+
         let builder = adw::StatusPage::new();
         builder.set_icon_name(Some("applications-engineering-symbolic"));
         builder.set_title("Workflow builder");
@@ -291,7 +353,9 @@ impl FlowView {
                     "mount",
                 ) {
                     Ok(_) => self.set_status(&qr.id, "running"),
-                    Err(e) => self.toast.add_toast(adw::Toast::new(&e.to_string())),
+                    Err(e) => self
+                        .toast
+                        .add_toast(adw::Toast::new(&self.ctx.translate_error(&e.to_string()))),
                 }
             }
             OperationType::Serve => {
@@ -301,7 +365,9 @@ impl FlowView {
                     "127.0.0.1:0",
                 ) {
                     Ok(_) => self.set_status(&qr.id, "running"),
-                    Err(e) => self.toast.add_toast(adw::Toast::new(&e.to_string())),
+                    Err(e) => self
+                        .toast
+                        .add_toast(adw::Toast::new(&self.ctx.translate_error(&e.to_string()))),
                 }
             }
             other => {
@@ -337,7 +403,9 @@ impl FlowView {
                         self.ctx.persist();
                         self.refresh();
                     }
-                    Err(e) => self.toast.add_toast(adw::Toast::new(&e)),
+                    Err(e) => self
+                        .toast
+                        .add_toast(adw::Toast::new(&self.ctx.translate_error(&e))),
                 }
             }
         }
@@ -364,6 +432,14 @@ impl FlowView {
         self.ctx.persist();
         self.refresh();
     }
+}
+
+fn heading(text: &str) -> gtk::Label {
+    let label = gtk::Label::new(Some(text));
+    label.add_css_class("title-4");
+    label.set_xalign(0.0);
+    label.set_margin_top(8);
+    label
 }
 
 fn scrolled(child: &impl IsA<gtk::Widget>) -> gtk::ScrolledWindow {

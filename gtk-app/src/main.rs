@@ -16,6 +16,7 @@ mod providers;
 mod rclone;
 mod rename;
 mod repair;
+mod restrict;
 mod security;
 mod settings;
 mod smtp;

@@ -91,6 +91,90 @@ impl I18n {
     pub fn has(&self, key: &str) -> bool {
         self.strings.contains_key(key)
     }
+
+    pub fn translate_backend(&self, message: &str) -> String {
+        translate_backend_message(self, message)
+    }
+}
+
+pub fn translate_backend_message(i18n: &I18n, message: &str) -> String {
+    let trimmed = message.trim();
+    if trimmed.is_empty() {
+        return String::new();
+    }
+    if let Some(parsed) = parse_localized(trimmed) {
+        return render_localized(i18n, &parsed);
+    }
+    if let Some((raw, parsed)) = extract_embedded(trimmed) {
+        return trimmed.replacen(&raw, &render_localized(i18n, &parsed), 1);
+    }
+    if looks_like_key(trimmed) && (i18n.has(trimmed) || trimmed.contains('.')) {
+        if i18n.has(trimmed) {
+            return i18n.t(trimmed);
+        }
+    }
+    message.to_string()
+}
+
+#[derive(Debug, Clone)]
+struct LocalizedMessage {
+    key: String,
+    params: Vec<(String, String)>,
+}
+
+fn parse_localized(message: &str) -> Option<LocalizedMessage> {
+    if !(message.starts_with('{') && message.ends_with('}')) {
+        return None;
+    }
+    localized_from_value(&serde_json::from_str(message).ok()?)
+}
+
+fn extract_embedded(message: &str) -> Option<(String, LocalizedMessage)> {
+    let start = message.find('{')?;
+    let end = message.rfind('}')?;
+    if end <= start {
+        return None;
+    }
+    let raw = message[start..=end].to_string();
+    let parsed = localized_from_value(&serde_json::from_str(&raw).ok()?)?;
+    Some((raw, parsed))
+}
+
+fn localized_from_value(value: &Value) -> Option<LocalizedMessage> {
+    let key = value.get("key")?.as_str()?.to_string();
+    let mut params = Vec::new();
+    if let Some(map) = value.get("params").and_then(|v| v.as_object()) {
+        for (k, v) in map {
+            let text = v
+                .as_str()
+                .map(|s| s.to_string())
+                .unwrap_or_else(|| v.to_string());
+            params.push((k.clone(), text));
+        }
+    }
+    Some(LocalizedMessage { key, params })
+}
+
+fn render_localized(i18n: &I18n, message: &LocalizedMessage) -> String {
+    let pairs: Vec<(&str, &str)> = message
+        .params
+        .iter()
+        .map(|(k, v)| (k.as_str(), v.as_str()))
+        .collect();
+    if i18n.has(&message.key) {
+        i18n.tf(&message.key, &pairs)
+    } else {
+        message.key.clone()
+    }
+}
+
+fn looks_like_key(message: &str) -> bool {
+    let trimmed = message.trim();
+    !trimmed.contains(' ')
+        && trimmed.contains('.')
+        && trimmed
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '.' || c == '_')
 }
 
 fn flatten_json(prefix: &str, value: &Value, out: &mut HashMap<String, String>) {
@@ -179,5 +263,34 @@ mod tests {
             SUPPORTED_LANGUAGES.contains(&I18n::detect_language().as_str())
                 || I18n::detect_language() == "en-US"
         );
+    }
+
+    #[test]
+    fn translates_backend_json_and_keys() {
+        let mut i18n = I18n {
+            lang: "en-US".into(),
+            strings: HashMap::new(),
+        };
+        i18n.strings.insert(
+            "backendErrors.mount.alreadyInUse".into(),
+            "Mount {name} is already in use".into(),
+        );
+        assert_eq!(
+            i18n.translate_backend(
+                r#"{"key":"backendErrors.mount.alreadyInUse","params":{"name":"drive"}}"#
+            ),
+            "Mount drive is already in use"
+        );
+        assert_eq!(
+            i18n.translate_backend(
+                r#"Start failed: {"key":"backendErrors.mount.alreadyInUse","params":{"name":"x"}}"#
+            ),
+            "Start failed: Mount x is already in use"
+        );
+        assert_eq!(
+            i18n.translate_backend("backendErrors.mount.alreadyInUse"),
+            "Mount {name} is already in use"
+        );
+        assert_eq!(i18n.translate_backend("legacy English"), "legacy English");
     }
 }

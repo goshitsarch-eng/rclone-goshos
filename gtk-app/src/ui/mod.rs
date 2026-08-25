@@ -58,6 +58,10 @@ impl AppCtx {
         self.i18n.borrow().t(key)
     }
 
+    pub fn translate_error(&self, message: &str) -> String {
+        self.i18n.borrow().translate_backend(message)
+    }
+
     pub fn request_browse(&self, remote: &str, path: &str) {
         *self.pending_browse.borrow_mut() = Some((remote.to_string(), path.to_string()));
     }
@@ -228,6 +232,9 @@ impl AppCtx {
         let mut fired = false;
         let mut mtimes = self.watch_mtimes.borrow_mut();
         for record in records {
+            if self.store.borrow().is_automation_paused(&record.id) {
+                continue;
+            }
             let due_cron = record.cron_enabled
                 && crate::automation::cron_is_due(&record.cron, record.last_run, now);
             let mut due_watch = record.watch_enabled

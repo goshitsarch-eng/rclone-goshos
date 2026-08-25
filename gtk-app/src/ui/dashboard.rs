@@ -684,6 +684,7 @@ impl Dashboard {
             autos.append(&row);
         } else {
             for record in records {
+                let paused = self.ctx.store.borrow().is_automation_paused(&record.id);
                 let row = adw::ActionRow::new();
                 row.set_title(&record.name);
                 let next = record
@@ -691,15 +692,35 @@ impl Dashboard {
                     .map(|t| t.format("%Y-%m-%d %H:%M").to_string())
                     .unwrap_or_else(|| "—".into());
                 row.set_subtitle(&format!(
-                    "{} · cron={} · watch={} · next {next}",
+                    "{} · cron={} · watch={} · next {next}{}",
                     record.operation,
                     if record.cron_enabled {
                         record.cron.as_str()
                     } else {
                         "off"
                     },
-                    if record.watch_enabled { "on" } else { "off" }
+                    if record.watch_enabled { "on" } else { "off" },
+                    if paused { " · paused" } else { "" }
                 ));
+                let enabled = gtk::Switch::new();
+                enabled.set_valign(gtk::Align::Center);
+                enabled.set_tooltip_text(Some("Pause or resume this automation"));
+                enabled.set_active(!paused);
+                {
+                    let ctx = self.ctx.clone();
+                    let id = record.id.clone();
+                    let dash = self.clone();
+                    enabled.connect_active_notify(move |row| {
+                        let mut store = ctx.store.borrow_mut();
+                        let paused = store.is_automation_paused(&id);
+                        if row.is_active() == paused {
+                            store.toggle_automation_paused(&id);
+                            drop(store);
+                            ctx.persist();
+                            dash.refresh();
+                        }
+                    });
+                }
                 let run = gtk::Button::from_icon_name("media-playback-start-symbolic");
                 run.set_valign(gtk::Align::Center);
                 run.set_tooltip_text(Some("Run now"));
@@ -718,13 +739,16 @@ impl Dashboard {
                                 Ok(id) => {
                                     toast.add_toast(adw::Toast::new(&format!("Started {id}")))
                                 }
-                                Err(e) => toast.add_toast(adw::Toast::new(&e)),
+                                Err(e) => {
+                                    toast.add_toast(adw::Toast::new(&ctx.translate_error(&e)))
+                                }
                             }
                         }
                         ctx.persist();
                         ctx.refresh_runtime();
                     });
                 }
+                row.add_suffix(&enabled);
                 row.add_suffix(&run);
                 autos.append(&row);
             }
@@ -1070,6 +1094,40 @@ impl Dashboard {
             qlist.append(&row);
         }
         self.detail.append(&qlist);
+
+        self.detail.append(&section_label("Settings"));
+        let slist = gtk::ListBox::new();
+        slist.add_css_class("boxed-list");
+        let restrict = self.ctx.settings.borrow().general.restrict;
+        let mut rows = Vec::new();
+        if let Some(meta) = self.ctx.store.borrow().remotes.get(&name) {
+            for (op, profiles) in &meta.profiles {
+                for (pname, profile) in profiles {
+                    let value = serde_json::to_value(profile).unwrap_or(serde_json::json!({}));
+                    for (key, display) in crate::restrict::flatten_settings(
+                        &format!("{op}.{pname}"),
+                        &value,
+                        restrict,
+                    ) {
+                        rows.push((key, display));
+                    }
+                }
+            }
+        }
+        rows.truncate(24);
+        if rows.is_empty() {
+            let row = adw::ActionRow::new();
+            row.set_title("No saved profile settings");
+            slist.append(&row);
+        } else {
+            for (key, display) in rows {
+                let row = adw::ActionRow::new();
+                row.set_title(&key);
+                row.set_subtitle(&display);
+                slist.append(&row);
+            }
+        }
+        self.detail.append(&slist);
     }
 }
 
