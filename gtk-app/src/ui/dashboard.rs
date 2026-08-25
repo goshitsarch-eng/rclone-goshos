@@ -5,7 +5,7 @@ use crate::operations::{AppTab, OperationType};
 use crate::rclone::{format_bytes, remote_fs};
 use adw::prelude::*;
 use gtk::prelude::*;
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
 #[derive(Clone)]
@@ -21,6 +21,8 @@ pub struct Dashboard {
     overview: gtk::Box,
     detail: gtk::Box,
     editing_layout: Rc<RefCell<bool>>,
+    dry_run: Rc<Cell<bool>>,
+    resync: Rc<Cell<bool>>,
 }
 
 impl Dashboard {
@@ -102,6 +104,8 @@ impl Dashboard {
             overview,
             detail,
             editing_layout: Rc::new(RefCell::new(false)),
+            dry_run: Rc::new(Cell::new(false)),
+            resync: Rc::new(Cell::new(false)),
         };
 
         let mut group_anchor: Option<gtk::ToggleButton> = None;
@@ -641,8 +645,18 @@ impl Dashboard {
                             let toast = self.toast.clone();
                             let dash = self.clone();
                             let pname = pname.clone();
+                            let dry = self.dry_run.clone();
+                            let resync = self.resync.clone();
                             chip.connect_clicked(move |_| {
-                                toggle_profile(&ctx, &name, op, &pname, &toast);
+                                toggle_profile(
+                                    &ctx,
+                                    &name,
+                                    op,
+                                    &pname,
+                                    &toast,
+                                    dry.get(),
+                                    resync.get(),
+                                );
                                 dash.refresh();
                             });
                             chips.append(&chip);
@@ -1066,7 +1080,14 @@ impl Dashboard {
                             Rc::new(move || dash.refresh())
                         });
                     } else {
-                        start_operation(&ctx, &name, op, &toast);
+                        start_operation(
+                            &ctx,
+                            &name,
+                            op,
+                            &toast,
+                            dash.dry_run.get(),
+                            dash.resync.get(),
+                        );
                         dash.refresh();
                     }
                 });
@@ -1074,6 +1095,77 @@ impl Dashboard {
             chips.append(&btn);
         }
         self.detail.append(&chips);
+
+        if tab == AppTab::Operations {
+            let dry = adw::SwitchRow::new();
+            dry.set_title(&self.ctx.t_or("dashboard.appDetail.dryRun", "Dry run"));
+            dry.set_subtitle(&self.ctx.t_or(
+                "dashboard.appDetail.dryRunActive",
+                "Start the next operation without writing changes",
+            ));
+            dry.set_active(self.dry_run.get());
+            {
+                let flag = self.dry_run.clone();
+                dry.connect_active_notify(move |row| flag.set(row.is_active()));
+            }
+            self.detail.append(&dry);
+            let resync = adw::SwitchRow::new();
+            resync.set_title(&self.ctx.t_or("dashboard.appDetail.resync", "Resync"));
+            resync.set_subtitle(&self.ctx.t_or(
+                "dashboard.appDetail.resyncActive",
+                "Force a bisync resync on the next start",
+            ));
+            resync.set_active(self.resync.get());
+            {
+                let flag = self.resync.clone();
+                resync.connect_active_notify(move |row| flag.set(row.is_active()));
+            }
+            self.detail.append(&resync);
+        }
+
+        if let Some(job) = remote_jobs_preview(&snap.jobs, &name) {
+            let stats = adw::PreferencesGroup::new();
+            stats.set_title(
+                &self
+                    .ctx
+                    .t_or("modals.jobDetail.sections.overview", "Live job"),
+            );
+            for (title, value) in [
+                (
+                    self.ctx.t_or("modals.jobDetail.fields.status", "Status"),
+                    format!("{} · {:.0}%", job.status, job.progress * 100.0),
+                ),
+                (
+                    self.ctx.t_or("modals.jobDetail.fields.speed", "Speed"),
+                    format!(
+                        "{:.1} KiB/s",
+                        crate::jobs::stats_f64(&job.stats, &["speed"]) / 1024.0
+                    ),
+                ),
+                (
+                    self.ctx
+                        .t_or("modals.jobDetail.fields.speedAvg", "Average speed"),
+                    format!(
+                        "{:.1} KiB/s",
+                        crate::jobs::stats_f64(&job.stats, &["speedAvg", "speedAverage"]) / 1024.0
+                    ),
+                ),
+                (
+                    self.ctx.t_or("modals.jobDetail.fields.files", "Files"),
+                    format!(
+                        "{} / {}",
+                        crate::jobs::stats_i64(&job.stats, &["transfers"]),
+                        crate::jobs::stats_i64(&job.stats, &["checks"])
+                    ),
+                ),
+            ] {
+                let row = adw::ActionRow::new();
+                row.set_title(&title);
+                row.set_subtitle(&value);
+                stats.add(&row);
+            }
+            self.detail.append(&stats);
+        }
 
         let actions = gtk::Box::new(gtk::Orientation::Horizontal, 8);
         let tray_on = self
@@ -1364,8 +1456,18 @@ impl Dashboard {
                         let toast = self.toast.clone();
                         let remote = name.clone();
                         let pname = pname.clone();
+                        let dry = self.dry_run.clone();
+                        let resync = self.resync.clone();
                         start.connect_clicked(move |_| {
-                            toggle_profile(&ctx, &remote, op_ty, &pname, &toast);
+                            toggle_profile(
+                                &ctx,
+                                &remote,
+                                op_ty,
+                                &pname,
+                                &toast,
+                                dry.get(),
+                                resync.get(),
+                            );
                         });
                     }
                     row.add_suffix(&start);
@@ -1791,6 +1893,8 @@ fn toggle_profile(
     op: OperationType,
     profile_name: &str,
     toast: &adw::ToastOverlay,
+    dry_run: bool,
+    resync: bool,
 ) {
     let Some(client) = ctx.client() else {
         toast.add_toast(adw::Toast::new("Rclone engine is offline"));
@@ -1821,10 +1925,11 @@ fn toggle_profile(
         return;
     }
     let meta = ctx.store.borrow().remotes.get(name).cloned();
-    let profile = meta
+    let mut profile = meta
         .as_ref()
         .and_then(|m| m.get_profile(op, profile_name))
         .unwrap_or_default();
+    crate::jobs::apply_session_flags(&mut profile.rclone, dry_run, resync);
     match crate::jobs::start_profile(&client, name, op, &profile, meta.as_ref(), "dashboard") {
         Ok(id) => {
             crate::jobs::remember_started(
@@ -1839,7 +1944,14 @@ fn toggle_profile(
     ctx.refresh_runtime();
 }
 
-fn start_operation(ctx: &AppCtx, name: &str, op: OperationType, toast: &adw::ToastOverlay) {
+fn start_operation(
+    ctx: &AppCtx,
+    name: &str,
+    op: OperationType,
+    toast: &adw::ToastOverlay,
+    dry_run: bool,
+    resync: bool,
+) {
     let profile = ctx
         .store
         .borrow()
@@ -1852,7 +1964,16 @@ fn start_operation(ctx: &AppCtx, name: &str, op: OperationType, toast: &adw::Toa
                 .or_else(|| Some("default".into()))
         })
         .unwrap_or_else(|| "default".into());
-    toggle_profile(ctx, name, op, &profile, toast);
+    toggle_profile(ctx, name, op, &profile, toast, dry_run, resync);
+}
+
+fn remote_jobs_preview<'a>(
+    jobs: &'a [crate::store::JobInfo],
+    name: &str,
+) -> Option<&'a crate::store::JobInfo> {
+    jobs.iter()
+        .filter(|j| j.remote == name)
+        .max_by_key(|j| j.id)
 }
 
 fn default_mount_point(name: &str) -> String {

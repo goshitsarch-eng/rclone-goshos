@@ -894,6 +894,30 @@ pub fn shortcuts(parent: &impl IsA<gtk::Widget>, ctx: &AppCtx) {
                 ),
                 ("Ctrl+H", "nautilus.view.hidden", "Toggle hidden files"),
                 ("Backspace", "nautilus.actions.parent", "Parent folder"),
+                ("Ctrl+Tab", "nautilus.contextMenu.nextTab", "Next file tab"),
+                (
+                    "Ctrl+Shift+Tab",
+                    "nautilus.contextMenu.previousTab",
+                    "Previous file tab",
+                ),
+                (
+                    "Ctrl+I",
+                    "nautilus.contextMenu.switchPane",
+                    "Switch split pane",
+                ),
+                ("Alt+Enter", "nautilus.contextMenu.properties", "Properties"),
+                ("Ctrl+A", "nautilus.contextMenu.selectAll", "Select all"),
+                ("Ctrl+L", "nautilus.titles.pathPlaceholder", "Edit path"),
+                (
+                    "Ctrl+F",
+                    "nautilus.titles.searchPlaceholder",
+                    "Search listing",
+                ),
+                (
+                    "Alt+← / Alt+→",
+                    "nautilus.actions.history",
+                    "Back / forward",
+                ),
             ][..],
         ),
     ];
@@ -3121,6 +3145,20 @@ pub fn start_operation(
     let dry = adw::SwitchRow::new();
     dry.set_title(&ctx.t_or("remoteConfig.dryRun", "Dry run"));
     dry.set_active(crate::jobs::is_dry_run(&rclone));
+    let resync = adw::SwitchRow::new();
+    resync.set_title(&ctx.t_or("dashboard.appDetail.resync", "Resync"));
+    resync.set_subtitle(&ctx.t_or(
+        "dashboard.appDetail.resyncActive",
+        "Force a bisync resync on this start",
+    ));
+    resync.set_visible(op == OperationType::Bisync);
+    resync.set_active(
+        rclone
+            .get("Resync")
+            .or_else(|| rclone.get("resync"))
+            .and_then(|x| x.as_bool())
+            .unwrap_or(false),
+    );
 
     let flags_group = adw::PreferencesGroup::new();
     flags_group.set_title(&ctx.t_or("remoteConfig.flags", "Operation flags"));
@@ -3214,6 +3252,7 @@ pub fn start_operation(
         let mount_types = mount_types.clone();
         let mount_type = mount_type.clone();
         let dry = dry.clone();
+        let resync = resync.clone();
         let flag_rows = flag_rows.clone();
         let serve_flag_rows = serve_flag_rows.clone();
         let extra_sources = extra_sources.clone();
@@ -3253,6 +3292,9 @@ pub fn start_operation(
             }
             if dry.is_active() {
                 rclone.insert("dryRun".into(), serde_json::json!(true));
+            }
+            if resync.is_active() {
+                rclone.insert("Resync".into(), serde_json::json!(true));
             }
             for (field, row, type_name) in flag_rows.borrow().iter() {
                 let text = row.text().to_string();
@@ -3384,6 +3426,7 @@ pub fn start_operation(
     identity.add(&filter_row);
     identity.add(&backend_row);
     identity.add(&dry);
+    identity.add(&resync);
     page.add(&identity);
     page.add(&flags_group);
     let box_ = gtk::Box::new(gtk::Orientation::Vertical, 8);
@@ -4856,17 +4899,39 @@ pub fn job_detail(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, job_id: u64) {
                 job.progress * 100.0,
                 job.duration
             )));
-            let speed = job
-                .stats
-                .get("speed")
-                .and_then(|x| x.as_f64())
-                .unwrap_or(0.0);
-            let bytes = job.stats.get("bytes").and_then(|x| x.as_i64()).unwrap_or(0);
+            let speed = crate::jobs::stats_f64(&job.stats, &["speed"]);
+            let speed_avg = crate::jobs::stats_f64(&job.stats, &["speedAvg", "speedAverage"]);
+            let bytes = crate::jobs::stats_i64(&job.stats, &["bytes"]);
+            let total_bytes = crate::jobs::stats_i64(&job.stats, &["totalBytes", "total_bytes"]);
             let eta = job
                 .stats
                 .get("eta")
                 .cloned()
                 .unwrap_or(serde_json::json!("—"));
+            let end_time = crate::jobs::parse_job_end_time(&status)
+                .map(|t| t.format("%Y-%m-%d %H:%M:%S UTC").to_string())
+                .unwrap_or_else(|| "—".into());
+            let execute_id = ctx
+                .store
+                .borrow()
+                .job_meta
+                .get(&job_id)
+                .map(|m| m.execute_id.clone())
+                .filter(|s| !s.is_empty())
+                .unwrap_or_else(|| "—".into());
+            let yes = ctx.t_or("common.yes", "Yes");
+            let no = ctx.t_or("common.no", "No");
+            let transfer_count = crate::jobs::stats_i64(&job.stats, &["transfers"]);
+            let check_count = crate::jobs::stats_i64(&job.stats, &["checks"]);
+            let delete_count = crate::jobs::stats_i64(&job.stats, &["deletes", "deleted"]);
+            let rename_count = crate::jobs::stats_i64(&job.stats, &["renames"]);
+            let listed_count = crate::jobs::stats_i64(&job.stats, &["listed"]);
+            let ss_copies = crate::jobs::stats_i64(&job.stats, &["serverSideCopies"]);
+            let ss_copy_bytes = crate::jobs::stats_i64(&job.stats, &["serverSideCopyBytes"]);
+            let ss_moves = crate::jobs::stats_i64(&job.stats, &["serverSideMoves"]);
+            let ss_move_bytes = crate::jobs::stats_i64(&job.stats, &["serverSideMoveBytes"]);
+            let error_count = crate::jobs::stats_i64(&job.stats, &["errors"]);
+            let fatal = crate::jobs::stats_bool(&job.stats, &["fatalError", "fatal_error"]);
             for (title, value) in [
                 (
                     ctx.t_or("modals.jobDetail.fields.type", "Operation"),
@@ -4881,8 +4946,16 @@ pub fn job_detail(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, job_id: u64) {
                     job.start_time.format("%Y-%m-%d %H:%M:%S UTC").to_string(),
                 ),
                 (
+                    ctx.t_or("modals.jobDetail.fields.finished", "Finished"),
+                    end_time,
+                ),
+                (
                     ctx.t_or("modals.jobDetail.fields.duration", "Duration"),
                     format!("{:.1}s", job.duration),
+                ),
+                (
+                    ctx.t_or("modals.jobDetail.fields.executeId", "Execute ID"),
+                    execute_id,
                 ),
                 (ctx.t_or("sidebar.remotes", "Remote"), job.remote.clone()),
                 (
@@ -4923,15 +4996,76 @@ pub fn job_detail(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, job_id: u64) {
                 ),
                 (
                     ctx.t_or("modals.jobDetail.fields.transferred", "Transferred"),
-                    crate::rclone::format_bytes(bytes),
+                    format!(
+                        "{} / {}",
+                        crate::rclone::format_bytes(bytes),
+                        crate::rclone::format_bytes(total_bytes)
+                    ),
                 ),
                 (
                     ctx.t_or("modals.jobDetail.fields.speed", "Speed"),
                     format!("{:.1} KiB/s", speed / 1024.0),
                 ),
                 (
+                    ctx.t_or("modals.jobDetail.fields.speedAvg", "Average speed"),
+                    format!("{:.1} KiB/s", speed_avg / 1024.0),
+                ),
+                (
                     ctx.t_or("modals.jobDetail.fields.eta", "ETA"),
                     eta.to_string(),
+                ),
+                (
+                    ctx.t_or("modals.jobDetail.fields.files", "Files"),
+                    format!(
+                        "{} · {} · {} · {} · {}",
+                        transfer_count, check_count, delete_count, rename_count, listed_count
+                    ),
+                ),
+                (
+                    ctx.t_or("modals.jobDetail.fields.checks", "Checks"),
+                    check_count.to_string(),
+                ),
+                (
+                    ctx.t_or("modals.jobDetail.fields.deleted", "Deleted"),
+                    delete_count.to_string(),
+                ),
+                (
+                    ctx.t_or("modals.jobDetail.fields.renamed", "Renamed"),
+                    rename_count.to_string(),
+                ),
+                (
+                    ctx.t_or("modals.jobDetail.fields.listed", "Listed"),
+                    listed_count.to_string(),
+                ),
+                (
+                    ctx.t_or(
+                        "modals.jobDetail.fields.serverSideCopies",
+                        "Server-side copies",
+                    ),
+                    format!(
+                        "{} ({})",
+                        ss_copies,
+                        crate::rclone::format_bytes(ss_copy_bytes)
+                    ),
+                ),
+                (
+                    ctx.t_or(
+                        "modals.jobDetail.fields.serverSideMoves",
+                        "Server-side moves",
+                    ),
+                    format!(
+                        "{} ({})",
+                        ss_moves,
+                        crate::rclone::format_bytes(ss_move_bytes)
+                    ),
+                ),
+                (
+                    ctx.t_or("modals.jobDetail.fields.errorsCount", "Errors"),
+                    error_count.to_string(),
+                ),
+                (
+                    ctx.t_or("modals.jobDetail.fields.fatalError", "Fatal error"),
+                    if fatal { yes.clone() } else { no.clone() },
                 ),
                 (
                     ctx.t_or("modals.jobDetail.sections.errors", "Error"),
@@ -7802,6 +7936,44 @@ fn alert_action_editor(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, existing_id:
     token.set_title(&ctx.t_or("alerts.action.botToken", "Token"));
     let extra = adw::EntryRow::new();
     extra.set_title(&ctx.t_or("common.moreActions", "Extra"));
+    let extra2 = adw::EntryRow::new();
+    extra2.set_title(&ctx.t_or("alerts.action.from", "From"));
+    let headers = adw::EntryRow::new();
+    headers.set_title(&ctx.t_or("alerts.action.headers", "Headers (Key: Value)"));
+    let telegram_mode = adw::ComboRow::new();
+    telegram_mode.set_title(&ctx.t_or("alerts.action.telegramMode", "Telegram mode"));
+    let telegram_bot = ctx.t_or("alerts.action.telegram_bot", "Bot API");
+    let telegram_botless = ctx.t_or("alerts.action.telegram_botless", "Bot-less (CallMeBot)");
+    telegram_mode.set_model(Some(&gtk::StringList::new(&[
+        telegram_bot.as_str(),
+        telegram_botless.as_str(),
+    ])));
+    if existing
+        .as_ref()
+        .and_then(|a| a.config.get("mode"))
+        .and_then(|x| x.as_str())
+        == Some("botless")
+    {
+        telegram_mode.set_selected(1);
+    }
+    let timeout = adw::SpinRow::with_range(1.0, 120.0, 1.0);
+    timeout.set_title(&ctx.t_or("alerts.action.timeout", "Timeout (seconds)"));
+    timeout.set_value(
+        existing
+            .as_ref()
+            .and_then(|a| a.config.get("timeout_secs"))
+            .and_then(|x| x.as_f64())
+            .unwrap_or(8.0),
+    );
+    let tls_verify = adw::SwitchRow::new();
+    tls_verify.set_title(&ctx.t_or("alerts.action.tlsVerify", "Verify TLS"));
+    tls_verify.set_active(
+        existing
+            .as_ref()
+            .and_then(|a| a.config.get("tls_verify"))
+            .and_then(|x| x.as_bool())
+            .unwrap_or(true),
+    );
     let wa_provider = adw::ComboRow::new();
     wa_provider.set_title(&ctx.t_or("alerts.action.whatsappProvider", "WhatsApp provider"));
     wa_provider.set_model(Some(&gtk::StringList::new(&[
@@ -7825,10 +7997,19 @@ fn alert_action_editor(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, existing_id:
             action,
             &["bot_token", "password", "apikey", "username"],
         ));
-        extra.set_text(&action_cfg(
-            action,
-            &["chat_id", "phone", "from", "command", "to"],
-        ));
+        extra.set_text(&action_cfg(action, &["chat_id", "phone", "to", "command"]));
+        extra2.set_text(&action_cfg(action, &["from"]));
+        if extra2.text().is_empty() {
+            if let Some(args) = action.config.get("args").and_then(|x| x.as_array()) {
+                let joined = args
+                    .iter()
+                    .filter_map(|v| v.as_str())
+                    .collect::<Vec<_>>()
+                    .join(" ");
+                extra2.set_text(&joined);
+            }
+        }
+        headers.set_text(&crate::store::headers_to_text(&action.config));
         body.set_text(
             action
                 .config
@@ -7890,8 +8071,13 @@ fn alert_action_editor(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, existing_id:
         let method = method.clone();
         let token = token.clone();
         let extra = extra.clone();
+        let extra2 = extra2.clone();
+        let headers = headers.clone();
         let body = body.clone();
         let retries = retries.clone();
+        let timeout = timeout.clone();
+        let tls_verify = tls_verify.clone();
+        let telegram_mode = telegram_mode.clone();
         let wa_provider = wa_provider.clone();
         let existing_id = existing_id.clone();
         let ctx = ctx.clone();
@@ -7921,8 +8107,17 @@ fn alert_action_editor(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, existing_id:
                     method: method.text().to_string(),
                     token: token.text().to_string(),
                     extra: extra.text().to_string(),
+                    extra2: extra2.text().to_string(),
+                    headers: headers.text().to_string(),
                     body: body.text().to_string(),
                     retry_count: retries.value() as u32,
+                    timeout_secs: timeout.value() as u32,
+                    tls_verify: tls_verify.is_active(),
+                    telegram_mode: if telegram_mode.selected() == 1 {
+                        "botless".into()
+                    } else {
+                        "bot".into()
+                    },
                     provider: if wa_provider.selected() == 1 {
                         "custom_gateway".into()
                     } else {
@@ -7999,43 +8194,65 @@ fn alert_action_editor(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, existing_id:
         let method = method.clone();
         let token = token.clone();
         let extra = extra.clone();
+        let extra2 = extra2.clone();
+        let headers = headers.clone();
+        let timeout = timeout.clone();
+        let tls_verify = tls_verify.clone();
+        let telegram_mode = telegram_mode.clone();
         let body = body.clone();
         let wa_provider = wa_provider.clone();
         let ctx = ctx.clone();
         move |selected: &str| match selected {
             "os_toast" => {
                 wa_provider.set_visible(false);
+                telegram_mode.set_visible(false);
                 url.set_visible(false);
                 method.set_visible(false);
                 token.set_visible(false);
                 extra.set_visible(false);
+                extra2.set_visible(false);
+                headers.set_visible(false);
+                timeout.set_visible(false);
+                tls_verify.set_visible(false);
                 body.set_visible(true);
                 body.set_title(&ctx.t_or("alerts.action.messageTemplate", "Toast body template"));
             }
             "webhook" => {
                 wa_provider.set_visible(false);
+                telegram_mode.set_visible(false);
                 url.set_visible(true);
                 url.set_title(&ctx.t_or("alerts.action.url", "Webhook URL"));
                 method.set_visible(true);
                 method.set_title(&ctx.t_or("alerts.action.method", "HTTP method"));
                 token.set_visible(false);
                 extra.set_visible(false);
+                extra2.set_visible(false);
+                headers.set_visible(true);
+                timeout.set_visible(true);
+                tls_verify.set_visible(true);
                 body.set_visible(true);
                 body.set_title(&ctx.t_or("alerts.action.bodyTemplate", "JSON / body template"));
             }
             "telegram" => {
                 wa_provider.set_visible(false);
+                telegram_mode.set_visible(true);
                 url.set_visible(false);
                 method.set_visible(false);
-                token.set_visible(true);
+                let botless = telegram_mode.selected() == 1;
+                token.set_visible(!botless);
                 token.set_title(&ctx.t_or("alerts.action.botToken", "Bot token"));
                 extra.set_visible(true);
                 extra.set_title(&ctx.t_or("alerts.action.chatId", "Chat ID"));
+                extra2.set_visible(false);
+                headers.set_visible(false);
+                timeout.set_visible(true);
+                tls_verify.set_visible(false);
                 body.set_visible(true);
                 body.set_title(&ctx.t_or("alerts.action.messageTemplate", "Message template"));
             }
             "whatsapp" => {
                 wa_provider.set_visible(true);
+                telegram_mode.set_visible(false);
                 let custom = wa_provider.selected() == 1;
                 url.set_visible(custom);
                 url.set_title(&ctx.t_or("alerts.action.gatewayUrl", "Gateway URL"));
@@ -8044,21 +8261,32 @@ fn alert_action_editor(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, existing_id:
                 token.set_title(&ctx.t_or("alerts.action.apiKey", "API key"));
                 extra.set_visible(true);
                 extra.set_title(&ctx.t_or("alerts.action.phone", "Phone number"));
+                extra2.set_visible(false);
+                headers.set_visible(false);
+                timeout.set_visible(true);
+                tls_verify.set_visible(false);
                 body.set_visible(true);
                 body.set_title(&ctx.t_or("alerts.action.messageTemplate", "Message template"));
             }
             "script" => {
                 wa_provider.set_visible(false);
+                telegram_mode.set_visible(false);
                 url.set_visible(false);
                 method.set_visible(false);
                 token.set_visible(false);
                 extra.set_visible(true);
                 extra.set_title(&ctx.t_or("alerts.action.command", "Command"));
+                extra2.set_visible(true);
+                extra2.set_title(&ctx.t_or("alerts.action.args", "Arguments"));
+                headers.set_visible(false);
+                timeout.set_visible(true);
+                tls_verify.set_visible(false);
                 body.set_visible(true);
                 body.set_title(&ctx.t_or("alerts.action.bodyTemplate", "Stdin template"));
             }
             "email" => {
                 wa_provider.set_visible(false);
+                telegram_mode.set_visible(false);
                 url.set_visible(true);
                 url.set_title(&ctx.t_or("alerts.action.smtpHost", "SMTP host"));
                 method.set_visible(true);
@@ -8066,12 +8294,18 @@ fn alert_action_editor(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, existing_id:
                 token.set_visible(true);
                 token.set_title(&ctx.t("common.password"));
                 extra.set_visible(true);
-                extra.set_title(&ctx.t_or("alerts.action.fromTo", "From / to address"));
+                extra.set_title(&ctx.t_or("alerts.action.to", "To"));
+                extra2.set_visible(true);
+                extra2.set_title(&ctx.t_or("alerts.action.from", "From"));
+                headers.set_visible(false);
+                timeout.set_visible(true);
+                tls_verify.set_visible(false);
                 body.set_visible(true);
                 body.set_title(&ctx.t_or("alerts.action.bodyTemplate", "Body template"));
             }
             "mqtt" => {
                 wa_provider.set_visible(false);
+                telegram_mode.set_visible(false);
                 url.set_visible(true);
                 url.set_title(&ctx.t_or("alerts.action.brokerUrl", "Broker URL"));
                 method.set_visible(true);
@@ -8079,6 +8313,10 @@ fn alert_action_editor(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, existing_id:
                 token.set_visible(true);
                 token.set_title(&ctx.t("common.password"));
                 extra.set_visible(false);
+                extra2.set_visible(false);
+                headers.set_visible(false);
+                timeout.set_visible(true);
+                tls_verify.set_visible(false);
                 body.set_visible(true);
                 body.set_title(&ctx.t_or("alerts.action.bodyTemplate", "Payload template"));
             }
@@ -8111,15 +8349,31 @@ fn alert_action_editor(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, existing_id:
             sync_fields(selected);
         });
     }
+    {
+        let sync_fields = sync_fields.clone();
+        let kind = kind.clone();
+        telegram_mode.connect_selected_notify(move |_| {
+            let selected = ACTION_KINDS
+                .get(kind.selected() as usize)
+                .copied()
+                .unwrap_or("os_toast");
+            sync_fields(selected);
+        });
+    }
     let group = adw::PreferencesGroup::new();
     group.add(&name);
     group.add(&enabled);
     group.add(&kind);
     group.add(&wa_provider);
+    group.add(&telegram_mode);
     group.add(&url);
     group.add(&method);
     group.add(&token);
     group.add(&extra);
+    group.add(&extra2);
+    group.add(&headers);
+    group.add(&timeout);
+    group.add(&tls_verify);
     group.add(&body);
     group.add(&retries);
     group.add(&keys);
@@ -8429,6 +8683,44 @@ pub fn multi_rename(
         case_sensitive.connect_active_notify(move |_| refresh_preview());
     }
     refresh_preview();
+    let tokens = gtk::Box::new(gtk::Orientation::Horizontal, 6);
+    tokens.set_homogeneous(false);
+    for (label, token) in [
+        (
+            ctx.t_or("nautilus.modals.multiRename.originalName", "Original name"),
+            "[Original file name]",
+        ),
+        (
+            ctx.t_or("nautilus.modals.multiRename.counter", "Counter"),
+            "[Counter]",
+        ),
+        (
+            ctx.t_or("nautilus.modals.multiRename.date", "Date"),
+            "[Date]",
+        ),
+        (
+            ctx.t_or("nautilus.modals.multiRename.extension", "Extension"),
+            "[Extension]",
+        ),
+    ] {
+        let chip = gtk::Button::with_label(&label);
+        chip.add_css_class("pill");
+        let template = template.clone();
+        let refresh_preview = refresh_preview.clone();
+        chip.connect_clicked(move |_| {
+            let current = template.text().to_string();
+            if current.contains(token) {
+                return;
+            }
+            if current.is_empty() {
+                template.set_text(token);
+            } else {
+                template.set_text(&format!("{current}{token}"));
+            }
+            refresh_preview();
+        });
+        tokens.append(&chip);
+    }
     let apply = gtk::Button::with_label(&ctx.t_or("nautilus.modals.multiRename.rename", "Rename"));
     apply.add_css_class("suggested-action");
     {
@@ -8497,6 +8789,13 @@ pub fn multi_rename(
     let group = adw::PreferencesGroup::new();
     group.add(&mode);
     group.add(&template);
+    let token_row = adw::ActionRow::new();
+    token_row.set_title(&ctx.t_or(
+        "nautilus.modals.multiRename.insertPlaceholder",
+        "Insert placeholder",
+    ));
+    token_row.add_suffix(&tokens);
+    group.add(&token_row);
     group.add(&find);
     group.add(&replace);
     group.add(&start);

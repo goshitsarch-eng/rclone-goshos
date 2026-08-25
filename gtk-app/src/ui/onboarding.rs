@@ -20,6 +20,8 @@ pub fn present(app: &adw::Application, ctx: AppCtx) {
     nav.add(&page_features(&ctx, &nav));
     nav.add(&page_install(&ctx, &nav));
     nav.add(&page_mount(&ctx, &nav));
+    nav.add(&page_config(&ctx, &nav));
+    nav.add(&page_password(&ctx, &nav));
     nav.add(&page_view(&ctx, &nav));
     nav.add(&page_ready(app, &ctx, &window));
     window.set_content(Some(&nav));
@@ -319,12 +321,172 @@ fn page_mount(ctx: &AppCtx, nav: &adw::NavigationView) -> adw::NavigationPage {
     next.add_css_class("suggested-action");
     let nav = nav.clone();
     next.connect_clicked(move |_| {
-        nav.push_by_tag("view");
+        nav.push_by_tag("config");
     });
     box_.append(&next);
     adw::NavigationPage::builder()
         .tag("mount")
         .title(label)
+        .child(&box_)
+        .build()
+}
+
+fn page_config(ctx: &AppCtx, nav: &adw::NavigationView) -> adw::NavigationPage {
+    let box_ = gtk::Box::new(gtk::Orientation::Vertical, 12);
+    box_.set_margin_top(24);
+    box_.set_margin_start(24);
+    box_.set_margin_end(24);
+    let title = gtk::Label::new(Some(
+        &ctx.t_or("onboarding.cards.selectConfig.title", "Choose rclone.conf"),
+    ));
+    title.add_css_class("title-1");
+    title.set_wrap(true);
+    title.set_xalign(0.0);
+    let desc = gtk::Label::new(Some(&ctx.t_or(
+        "onboarding.cards.selectConfig.content",
+        "Use the default rclone configuration or pick a custom rclone.conf for this client.",
+    )));
+    desc.add_css_class("dim-label");
+    desc.set_wrap(true);
+    desc.set_xalign(0.0);
+    let path = adw::EntryRow::new();
+    path.set_title(&ctx.t_or("modals.backend.selectConfigFile", "rclone.conf path"));
+    let current =
+        crate::repair::config_path_from_flags(&ctx.settings.borrow().core.rclone_additional_flags)
+            .unwrap_or_else(|| {
+                crate::repair::default_rclone_config_path()
+                    .display()
+                    .to_string()
+            });
+    path.set_text(&current);
+    let browse = gtk::Button::with_label(&ctx.t_or("common.browse", "Browse"));
+    browse.set_valign(gtk::Align::Center);
+    {
+        let path = path.clone();
+        browse.connect_clicked(move |_| {
+            let dialog = gtk::FileDialog::new();
+            let path = path.clone();
+            dialog.open(
+                None::<&gtk::Window>,
+                None::<gio::Cancellable>.as_ref(),
+                move |result| {
+                    if let Ok(file) = result {
+                        if let Some(picked) = file.path() {
+                            path.set_text(&picked.display().to_string());
+                        }
+                    }
+                },
+            );
+        });
+    }
+    path.add_suffix(&browse);
+    {
+        let ctx = ctx.clone();
+        path.connect_changed(move |row| {
+            crate::repair::set_config_path_flag(
+                &mut ctx.settings.borrow_mut().core.rclone_additional_flags,
+                &row.text(),
+            );
+            ctx.persist();
+        });
+    }
+    let group = adw::PreferencesGroup::new();
+    group.set_title(&ctx.t_or("onboarding.cards.selectConfig.title", "Configuration"));
+    group.add(&path);
+    let next = gtk::Button::with_label(&ctx.t_or("common.continue", "Continue"));
+    next.add_css_class("suggested-action");
+    let nav = nav.clone();
+    next.connect_clicked(move |_| {
+        nav.push_by_tag("password");
+    });
+    box_.append(&title);
+    box_.append(&desc);
+    box_.append(&group);
+    box_.append(&next);
+    adw::NavigationPage::builder()
+        .tag("config")
+        .title(&ctx.t_or("onboarding.cards.selectConfig.title", "Select config"))
+        .child(&box_)
+        .build()
+}
+
+fn page_password(ctx: &AppCtx, nav: &adw::NavigationView) -> adw::NavigationPage {
+    let box_ = gtk::Box::new(gtk::Orientation::Vertical, 12);
+    box_.set_margin_top(24);
+    box_.set_margin_start(24);
+    box_.set_margin_end(24);
+    let title = gtk::Label::new(Some(
+        &ctx.t_or("onboarding.cards.passwordRequired.title", "Config password"),
+    ));
+    title.add_css_class("title-1");
+    title.set_wrap(true);
+    title.set_xalign(0.0);
+    let config_path =
+        crate::repair::config_path_from_flags(&ctx.settings.borrow().core.rclone_additional_flags)
+            .map(std::path::PathBuf::from)
+            .unwrap_or_else(crate::repair::default_rclone_config_path);
+    let encrypted = crate::repair::config_file_encrypted(&config_path);
+    let desc = gtk::Label::new(Some(&if encrypted {
+        ctx.t_or(
+            "onboarding.cards.passwordRequired.content",
+            "This rclone.conf is encrypted. Enter the password to unlock it before continuing.",
+        )
+    } else {
+        ctx.t_or(
+            "onboarding.cards.passwordRequired.optional",
+            "Optional. Store a password if you encrypt rclone.conf later.",
+        )
+    }));
+    desc.add_css_class("dim-label");
+    desc.set_wrap(true);
+    desc.set_xalign(0.0);
+    let password = adw::PasswordEntryRow::new();
+    password.set_title(&ctx.t_or(
+        "onboarding.cards.passwordRequired.title",
+        "rclone.conf password",
+    ));
+    password.set_text(&crate::keyring::resolve_config_password(
+        &ctx.settings.borrow().core.config_password,
+    ));
+    {
+        let ctx = ctx.clone();
+        password.connect_changed(move |row| {
+            let mut settings = ctx.settings.borrow_mut();
+            crate::keyring::persist_password_setting(
+                &mut settings.core.config_password,
+                &row.text(),
+            );
+            drop(settings);
+            ctx.persist();
+        });
+    }
+    let group = adw::PreferencesGroup::new();
+    group.add(&password);
+    let next = gtk::Button::with_label(&ctx.t_or("common.continue", "Continue"));
+    next.add_css_class("suggested-action");
+    if encrypted && password.text().is_empty() {
+        next.set_sensitive(false);
+    }
+    {
+        let next = next.clone();
+        next.set_sensitive(!(encrypted && password.text().is_empty()));
+        password.connect_changed(move |row| {
+            if encrypted {
+                next.set_sensitive(!row.text().is_empty());
+            }
+        });
+    }
+    let nav = nav.clone();
+    next.connect_clicked(move |_| {
+        nav.push_by_tag("view");
+    });
+    box_.append(&title);
+    box_.append(&desc);
+    box_.append(&group);
+    box_.append(&next);
+    adw::NavigationPage::builder()
+        .tag("password")
+        .title(&ctx.t_or("onboarding.cards.passwordRequired.title", "Password"))
         .child(&box_)
         .build()
 }

@@ -3,7 +3,7 @@
 use crate::rclone::RcClient;
 use crate::settings::AppSettings;
 use crate::updater::version_is_newer;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 /// Oldest rclone the GTK client expects (matches typical RC `options/info` surface).
 pub const MIN_RCLONE_VERSION: &str = "1.65.0";
@@ -40,6 +40,27 @@ pub fn config_path_from_flags(flags: &[String]) -> Option<String> {
             .map(|s| s.trim().trim_start_matches('=').to_string())
             .filter(|s| !s.is_empty())
     })
+}
+
+pub fn set_config_path_flag(flags: &mut Vec<String>, path: &str) {
+    flags.retain(|flag| !flag.starts_with("--config=") && flag != "--config");
+    let path = path.trim();
+    if !path.is_empty() {
+        flags.push(format!("--config={path}"));
+    }
+}
+
+pub fn default_rclone_config_path() -> PathBuf {
+    dirs::config_dir()
+        .unwrap_or_else(|| PathBuf::from("."))
+        .join("rclone")
+        .join("rclone.conf")
+}
+
+pub fn config_file_encrypted(path: &Path) -> bool {
+    std::fs::read_to_string(path)
+        .map(|text| text.contains("RCLONE_ENCRYPT_V0"))
+        .unwrap_or(false)
 }
 
 pub fn looks_like_password_error(message: &str) -> bool {
@@ -214,6 +235,17 @@ mod tests {
             Some("/tmp/r.conf".into())
         );
         assert_eq!(config_path_from_flags(&["--verbose".into()]), None);
+        let mut flags = vec!["--verbose".into(), "--config=/old.conf".into()];
+        set_config_path_flag(&mut flags, "/tmp/new.conf");
+        assert_eq!(config_path_from_flags(&flags), Some("/tmp/new.conf".into()));
+        set_config_path_flag(&mut flags, "");
+        assert_eq!(config_path_from_flags(&flags), None);
+        let tmp = std::env::temp_dir().join("rclone-manager-encrypt-probe.conf");
+        std::fs::write(&tmp, "# rclone config\nRCLONE_ENCRYPT_V0:xxxx\n").unwrap();
+        assert!(config_file_encrypted(&tmp));
+        std::fs::write(&tmp, "[drive]\ntype = drive\n").unwrap();
+        assert!(!config_file_encrypted(&tmp));
+        let _ = std::fs::remove_file(&tmp);
     }
 
     #[test]

@@ -1453,6 +1453,10 @@ impl NautilusView {
                 view.toggle_split();
                 return glib::Propagation::Stop;
             }
+            if ctrl && key == gtk::gdk::Key::i {
+                view.switch_pane();
+                return glib::Propagation::Stop;
+            }
             if ctrl && shift && key == gtk::gdk::Key::z {
                 view.redo_last();
                 return glib::Propagation::Stop;
@@ -2708,6 +2712,22 @@ impl NautilusView {
             }
             Err(e) => self.toast.add_toast(adw::Toast::new(&e.to_string())),
         }
+    }
+
+    fn switch_pane(&self) {
+        if !*self.split_enabled.borrow() {
+            return;
+        }
+        let left = self.current.borrow().clone();
+        let right = self.secondary.borrow().clone();
+        *self.current.borrow_mut() = right;
+        *self.secondary.borrow_mut() = left;
+        self.reload();
+        self.status.set_text(
+            &self
+                .ctx
+                .t_or("nautilus.contextMenu.switchPane", "Switched split pane"),
+        );
     }
 
     fn toggle_split(&self) {

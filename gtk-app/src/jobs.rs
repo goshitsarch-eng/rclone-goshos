@@ -617,6 +617,91 @@ pub fn job_meta_for(
         remote: remote.to_string(),
         backend: backend.to_string(),
         quick_run_id: quick_run_id.to_string(),
+        execute_id: uuid::Uuid::new_v4().to_string(),
+    }
+}
+
+pub fn stats_i64(stats: &Value, keys: &[&str]) -> i64 {
+    for key in keys {
+        match stats.get(*key) {
+            Some(Value::Number(n)) => {
+                if let Some(v) = n.as_i64() {
+                    return v;
+                }
+                if let Some(v) = n.as_u64() {
+                    return v as i64;
+                }
+                if let Some(v) = n.as_f64() {
+                    return v as i64;
+                }
+            }
+            Some(Value::Bool(v)) => return i64::from(*v),
+            Some(Value::String(s)) => {
+                if let Ok(v) = s.parse::<i64>() {
+                    return v;
+                }
+            }
+            _ => {}
+        }
+    }
+    0
+}
+
+pub fn stats_f64(stats: &Value, keys: &[&str]) -> f64 {
+    for key in keys {
+        match stats.get(*key) {
+            Some(Value::Number(n)) => {
+                if let Some(v) = n.as_f64() {
+                    return v;
+                }
+            }
+            Some(Value::String(s)) => {
+                if let Ok(v) = s.parse::<f64>() {
+                    return v;
+                }
+            }
+            _ => {}
+        }
+    }
+    0.0
+}
+
+pub fn stats_bool(stats: &Value, keys: &[&str]) -> bool {
+    for key in keys {
+        match stats.get(*key) {
+            Some(Value::Bool(v)) => return *v,
+            Some(Value::Number(n)) => return n.as_i64().unwrap_or(0) != 0,
+            Some(Value::String(s)) => {
+                if s.eq_ignore_ascii_case("true") || s == "1" || s.eq_ignore_ascii_case("yes") {
+                    return true;
+                }
+            }
+            _ => {}
+        }
+    }
+    false
+}
+
+pub fn parse_job_end_time(status: &Value) -> Option<DateTime<Utc>> {
+    status
+        .get("endTime")
+        .or_else(|| status.get("end_time"))
+        .and_then(|x| x.as_str())
+        .and_then(|s| DateTime::parse_from_rfc3339(s).ok())
+        .map(|d| d.with_timezone(&Utc))
+}
+
+pub fn apply_session_flags(rclone: &mut Value, dry_run: bool, resync: bool) {
+    if !rclone.is_object() {
+        *rclone = json!({});
+    }
+    if let Some(obj) = rclone.as_object_mut() {
+        if dry_run {
+            obj.insert("DryRun".into(), json!(true));
+        }
+        if resync {
+            obj.insert("Resync".into(), json!(true));
+        }
     }
 }
 
@@ -1522,6 +1607,29 @@ mod tests {
         assert!((job.progress - 0.5).abs() < f64::EPSILON);
         assert_eq!(job.transferring[0]["name"], "a.bin");
         assert_eq!(job.completed[0]["name"], "done.bin");
+        assert_eq!(stats_i64(&job.stats, &["bytes"]), 50);
+        assert_eq!(stats_f64(&job.stats, &["speed"]), 1024.0);
+    }
+
+    #[test]
+    fn job_meta_assigns_execute_id_and_session_flags() {
+        let meta = job_meta_for("drive", &ProfileConfig::default(), "dashboard", "local", "");
+        assert!(!meta.execute_id.is_empty());
+        assert_eq!(meta.origin, "dashboard");
+        let mut rclone = json!({});
+        apply_session_flags(&mut rclone, true, true);
+        assert_eq!(rclone["DryRun"], true);
+        assert_eq!(rclone["Resync"], true);
+        assert_eq!(
+            parse_job_end_time(&json!({"endTime": "2026-08-25T01:02:03Z"}))
+                .unwrap()
+                .to_rfc3339(),
+            "2026-08-25T01:02:03+00:00"
+        );
+        assert!(stats_bool(
+            &json!({"fatalError": true, "retryError": false}),
+            &["fatalError"]
+        ));
     }
 
     #[test]
@@ -1538,6 +1646,7 @@ mod tests {
                 remote: "drive".into(),
                 backend: "extra".into(),
                 quick_run_id: "qr-1".into(),
+                execute_id: "exec-9".into(),
             },
         );
         let mut job = running_job(9, "", "sync", "default");

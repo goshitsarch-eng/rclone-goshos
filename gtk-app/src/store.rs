@@ -298,6 +298,7 @@ pub struct JobMeta {
     pub remote: String,
     pub backend: String,
     pub quick_run_id: String,
+    pub execute_id: String,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
@@ -480,15 +481,87 @@ impl AlertAction {
     }
 }
 
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone)]
 pub struct AlertActionDraft {
     pub url: String,
     pub method: String,
     pub token: String,
     pub extra: String,
+    pub extra2: String,
+    pub headers: String,
     pub body: String,
     pub retry_count: u32,
     pub provider: String,
+    pub timeout_secs: u32,
+    pub tls_verify: bool,
+    pub telegram_mode: String,
+}
+
+impl Default for AlertActionDraft {
+    fn default() -> Self {
+        Self {
+            url: String::new(),
+            method: String::new(),
+            token: String::new(),
+            extra: String::new(),
+            extra2: String::new(),
+            headers: String::new(),
+            body: String::new(),
+            retry_count: 0,
+            provider: String::new(),
+            timeout_secs: 8,
+            tls_verify: true,
+            telegram_mode: "bot".into(),
+        }
+    }
+}
+
+pub fn parse_header_lines(text: &str) -> serde_json::Map<String, Value> {
+    let mut map = serde_json::Map::new();
+    for line in text.lines() {
+        let Some((key, value)) = line.split_once(':') else {
+            continue;
+        };
+        let key = key.trim();
+        if key.is_empty() {
+            continue;
+        }
+        map.insert(key.to_string(), json!(value.trim()));
+    }
+    map
+}
+
+pub fn headers_to_text(config: &Value) -> String {
+    config
+        .get("headers")
+        .and_then(|h| h.as_object())
+        .map(|map| {
+            map.iter()
+                .map(|(k, v)| format!("{}: {}", k, v.as_str().unwrap_or("")))
+                .collect::<Vec<_>>()
+                .join("\n")
+        })
+        .unwrap_or_default()
+}
+
+pub fn script_args(text: &str) -> Vec<String> {
+    text.split_whitespace()
+        .filter(|s| !s.is_empty())
+        .map(|s| s.to_string())
+        .collect()
+}
+
+pub fn telegram_botless_url(chat_id: &str, body: &str) -> String {
+    let user = if chat_id.starts_with('@') {
+        chat_id.to_string()
+    } else {
+        format!("@{chat_id}")
+    };
+    format!(
+        "https://api.callmebot.com/text.php?user={}&text={}",
+        urlencoding::encode(&user),
+        urlencoding::encode(body)
+    )
 }
 
 pub fn alert_action_config(kind: &str, draft: &AlertActionDraft) -> Value {
@@ -498,6 +571,11 @@ pub fn alert_action_config(kind: &str, draft: &AlertActionDraft) -> Value {
         draft.body.clone()
     };
     let retry = draft.retry_count.min(5);
+    let timeout = if draft.timeout_secs == 0 {
+        8
+    } else {
+        draft.timeout_secs
+    };
     match kind {
         "os_toast" => json!({ "body_template": body, "retry_count": retry }),
         "webhook" => json!({
@@ -505,12 +583,17 @@ pub fn alert_action_config(kind: &str, draft: &AlertActionDraft) -> Value {
             "method": if draft.method.is_empty() { "POST".into() } else { draft.method.clone() },
             "body_template": body,
             "retry_count": retry,
+            "headers": parse_header_lines(&draft.headers),
+            "timeout_secs": timeout,
+            "tls_verify": draft.tls_verify,
         }),
         "telegram" => json!({
             "bot_token": draft.token,
             "chat_id": draft.extra,
+            "mode": if draft.telegram_mode == "botless" { "botless" } else { "bot" },
             "body_template": body,
             "retry_count": retry,
+            "timeout_secs": timeout,
         }),
         "whatsapp" => json!({
             "apikey": draft.token,
@@ -523,20 +606,24 @@ pub fn alert_action_config(kind: &str, draft: &AlertActionDraft) -> Value {
             },
             "body_template": body,
             "retry_count": retry,
+            "timeout_secs": timeout,
         }),
         "script" => json!({
             "command": draft.extra,
+            "args": script_args(&draft.extra2),
             "body_template": body,
             "retry_count": retry,
+            "timeout_secs": timeout,
         }),
         "email" => json!({
             "smtp_server": draft.url,
             "smtp_port": draft.method.parse::<u16>().unwrap_or(587),
             "password": draft.token,
-            "from": draft.extra,
+            "from": if draft.extra2.is_empty() { draft.extra.clone() } else { draft.extra2.clone() },
             "to": draft.extra,
             "body_template": body,
             "retry_count": retry,
+            "timeout_secs": timeout,
         }),
         "mqtt" => json!({
             "broker_url": draft.url,
@@ -544,6 +631,7 @@ pub fn alert_action_config(kind: &str, draft: &AlertActionDraft) -> Value {
             "password": draft.token,
             "body_template": body,
             "retry_count": retry,
+            "timeout_secs": timeout,
         }),
         _ => json!({ "body_template": body, "retry_count": retry }),
     }
@@ -1106,6 +1194,12 @@ fn dispatch_action_once(action: &AlertAction, event: &AlertEvent) -> bool {
                 .get("method")
                 .and_then(|x| x.as_str())
                 .unwrap_or("POST");
+            let timeout = action
+                .config
+                .get("timeout_secs")
+                .and_then(|x| x.as_u64())
+                .unwrap_or(8)
+                .max(1);
             let payload = json!({
                 "title": event.title,
                 "body": body,
@@ -1114,22 +1208,39 @@ fn dispatch_action_once(action: &AlertAction, event: &AlertEvent) -> bool {
                 "remote": event.remote,
                 "profile": event.profile,
             });
-            let req = if method.eq_ignore_ascii_case("GET") {
+            let mut req = if method.eq_ignore_ascii_case("GET") {
                 ureq::get(url)
             } else {
                 ureq::post(url)
             };
-            req.timeout(std::time::Duration::from_secs(8))
-                .send_json(payload)
-                .is_ok()
+            req = req.timeout(std::time::Duration::from_secs(timeout));
+            if let Some(headers) = action.config.get("headers").and_then(|x| x.as_object()) {
+                for (key, value) in headers {
+                    if let Some(value) = value.as_str() {
+                        req = req.set(key, value);
+                    }
+                }
+            }
+            req.send_json(payload).is_ok()
         }
         "telegram" => {
-            let (Some(token), Some(chat)) = (
-                action.config.get("bot_token").and_then(|x| x.as_str()),
-                action.config.get("chat_id").and_then(|x| x.as_str()),
-            ) else {
+            let chat = action
+                .config
+                .get("chat_id")
+                .and_then(|x| x.as_str())
+                .unwrap_or_default();
+            if chat.is_empty() {
                 return false;
-            };
+            }
+            let botless = action.config.get("mode").and_then(|x| x.as_str()) == Some("botless");
+            if botless {
+                return ureq::get(&telegram_botless_url(chat, &body)).call().is_ok();
+            }
+            let token = action
+                .config
+                .get("bot_token")
+                .and_then(|x| x.as_str())
+                .unwrap_or_default();
             if token.is_empty() {
                 return false;
             }
@@ -1154,7 +1265,15 @@ fn dispatch_action_once(action: &AlertAction, event: &AlertEvent) -> bool {
             if cmd.is_empty() {
                 return false;
             }
-            std::process::Command::new(cmd)
+            let mut process = std::process::Command::new(cmd);
+            if let Some(args) = action.config.get("args").and_then(|x| x.as_array()) {
+                for arg in args {
+                    if let Some(arg) = arg.as_str() {
+                        process.arg(arg);
+                    }
+                }
+            }
+            process
                 .env("ALERT_TITLE", &event.title)
                 .env("ALERT_BODY", &event.body)
                 .env("ALERT_SEVERITY", event.severity.as_str())
@@ -1808,29 +1927,57 @@ mod tests {
             method: "PUT".into(),
             token: "secret".into(),
             extra: "123".into(),
+            headers: "X-Token: abc".into(),
             body: "{{title}}".into(),
             retry_count: 2,
             provider: String::new(),
+            ..Default::default()
         };
         let webhook = alert_action_config("webhook", &draft);
         assert_eq!(webhook["url"], "https://hooks.example/x");
         assert_eq!(webhook["method"], "PUT");
         assert_eq!(webhook["retry_count"], 2);
+        assert_eq!(webhook["timeout_secs"], 8);
+        assert_eq!(webhook["tls_verify"], true);
+        assert_eq!(webhook["headers"]["X-Token"], "abc");
         assert!(webhook.get("bot_token").is_none());
         let telegram = alert_action_config("telegram", &draft);
         assert_eq!(telegram["bot_token"], "secret");
         assert_eq!(telegram["chat_id"], "123");
+        assert_eq!(telegram["mode"], "bot");
+        let botless = alert_action_config(
+            "telegram",
+            &AlertActionDraft {
+                telegram_mode: "botless".into(),
+                extra: "ops".into(),
+                ..Default::default()
+            },
+        );
+        assert_eq!(botless["mode"], "botless");
+        assert!(telegram_botless_url("ops", "hi").contains("user=%40ops"));
         let email = alert_action_config(
             "email",
             &AlertActionDraft {
                 url: "smtp.example".into(),
                 method: "465".into(),
                 extra: "ops@example.com".into(),
+                extra2: "alerts@example.com".into(),
                 ..draft.clone()
             },
         );
         assert_eq!(email["smtp_port"], 465);
         assert_eq!(email["to"], "ops@example.com");
+        assert_eq!(email["from"], "alerts@example.com");
+        let script = alert_action_config(
+            "script",
+            &AlertActionDraft {
+                extra: "/usr/local/bin/notify".into(),
+                extra2: "--once --quiet".into(),
+                ..Default::default()
+            },
+        );
+        assert_eq!(script["command"], "/usr/local/bin/notify");
+        assert_eq!(script["args"], json!(["--once", "--quiet"]));
         let wa = alert_action_config(
             "whatsapp",
             &AlertActionDraft {
@@ -1852,6 +1999,15 @@ mod tests {
         );
         assert!(
             whatsapp_request_url(&json!({"phone":"+1","provider":"custom_gateway"}), "x").is_none()
+        );
+        let headers = parse_header_lines("X-Token: abc\nContent-Type: application/json\nbadline");
+        assert_eq!(headers["X-Token"], "abc");
+        assert_eq!(headers["Content-Type"], "application/json");
+        assert_eq!(headers.len(), 2);
+        assert!(headers_to_text(&json!({"headers": {"A": "1"}})).contains("A: 1"));
+        assert_eq!(
+            script_args("  --once   --quiet "),
+            vec!["--once", "--quiet"]
         );
     }
 
@@ -1988,6 +2144,7 @@ mod tests {
                 remote: "drive".into(),
                 backend: "local".into(),
                 quick_run_id: String::new(),
+                execute_id: "exec-7".into(),
             },
         );
         store.job_history.push(JobInfo {

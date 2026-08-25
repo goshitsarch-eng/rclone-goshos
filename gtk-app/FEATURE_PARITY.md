@@ -269,6 +269,14 @@ This client is the GTK 4 + libadwaita rewrite of the Angular/Tauri desktop UI. I
 - Files view-options menu: Angular sort radios, icon-size +/-, split, hidden (grid 48–256 / list 16–48)
 - Files status bar: listing count and Angular-style selection summary
 - Cron descriptions: last day of month, last/nth weekday, month lists, trailing timezone token
+- Job detail: execute ID, finished time, average speed, file counters, server-side copy/move, fatal errors
+- Alert actions: separate email from/to, webhook headers/TLS/timeout, Telegram bot-less CallMeBot, script args
+- Onboarding: select rclone.conf and a blocking password step when the config is encrypted
+- Local rcd honors `--config=` from extra flags (custom rclone.conf)
+- Files: multi-rename placeholder chips; Ctrl+I switches the split pane
+- Shortcuts catalog lists Files pane/tab/search/path/select-all accelerators
+- Flow Quick Run detail: dry-run, tray, last-job stats, logs, and job-detail navigation
+- Dashboard operations: inline dry-run/resync plus live job stats; start dialog resync for bisync
 
 ## Still deepening toward pixel-level Angular parity
 

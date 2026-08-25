@@ -52,6 +52,12 @@ impl RcloneEngine {
             }
             cmd.arg(flag);
         }
+        if let Some(path) =
+            crate::repair::config_path_from_flags(&settings.core.rclone_additional_flags)
+        {
+            cmd.arg(format!("--config={path}"));
+            engine.config_path = Some(PathBuf::from(&path));
+        }
         for env in &settings.core.rclone_env_vars {
             if let Some((k, v)) = env.split_once('=') {
                 cmd.env(k, v);

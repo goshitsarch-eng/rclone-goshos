@@ -355,6 +355,147 @@ impl FlowView {
         ));
         self.content.append(&paths);
 
+        let dry = adw::SwitchRow::new();
+        dry.set_title(&self.ctx.t_or("dashboard.appDetail.dryRun", "Dry run"));
+        dry.set_active(crate::jobs::is_dry_run(&qr.config.rclone));
+        {
+            let ctx = self.ctx.clone();
+            let id = qr.id.clone();
+            dry.connect_active_notify(move |row| {
+                if let Some(run) = ctx
+                    .store
+                    .borrow_mut()
+                    .quick_runs
+                    .iter_mut()
+                    .find(|q| q.id == id)
+                {
+                    crate::jobs::apply_session_flags(
+                        &mut run.config.rclone,
+                        row.is_active(),
+                        false,
+                    );
+                    if !row.is_active() {
+                        if let Some(obj) = run.config.rclone.as_object_mut() {
+                            obj.remove("DryRun");
+                            obj.remove("dryRun");
+                        }
+                    }
+                }
+                ctx.persist();
+            });
+        }
+        self.content.append(&dry);
+
+        let tray = adw::SwitchRow::new();
+        tray.set_title(&self.ctx.t_or("flow.quickRun.showInTray", "Show in tray"));
+        tray.set_active(qr.show_on_tray);
+        {
+            let ctx = self.ctx.clone();
+            let id = qr.id.clone();
+            tray.connect_active_notify(move |row| {
+                if let Some(run) = ctx
+                    .store
+                    .borrow_mut()
+                    .quick_runs
+                    .iter_mut()
+                    .find(|q| q.id == id)
+                {
+                    run.show_on_tray = row.is_active();
+                }
+                ctx.persist();
+            });
+        }
+        self.content.append(&tray);
+
+        if let Some(job) = qr.last_job_id.and_then(|id| {
+            self.ctx
+                .snapshot
+                .borrow()
+                .jobs
+                .iter()
+                .find(|j| j.id == id)
+                .cloned()
+                .or_else(|| {
+                    self.ctx
+                        .store
+                        .borrow()
+                        .job_history
+                        .iter()
+                        .find(|j| j.id == id)
+                        .cloned()
+                })
+        }) {
+            let stats = adw::PreferencesGroup::new();
+            stats.set_title(
+                &self
+                    .ctx
+                    .t_or("modals.jobDetail.sections.overview", "Last job"),
+            );
+            for (title, value) in [
+                (
+                    self.ctx.t_or("modals.jobDetail.fields.status", "Status"),
+                    job.status.clone(),
+                ),
+                (
+                    self.ctx.t_or("modals.jobDetail.fields.speed", "Speed"),
+                    format!(
+                        "{:.1} KiB/s",
+                        crate::jobs::stats_f64(&job.stats, &["speed"]) / 1024.0
+                    ),
+                ),
+                (
+                    self.ctx
+                        .t_or("modals.jobDetail.fields.transferred", "Transferred"),
+                    crate::rclone::format_bytes(crate::jobs::stats_i64(&job.stats, &["bytes"])),
+                ),
+                (
+                    self.ctx.t_or("modals.jobDetail.fields.files", "Files"),
+                    crate::jobs::stats_i64(&job.stats, &["transfers"]).to_string(),
+                ),
+            ] {
+                let row = adw::ActionRow::new();
+                row.set_title(&title);
+                row.set_subtitle(&value);
+                stats.add(&row);
+            }
+            let open =
+                gtk::Button::with_label(&self.ctx.t_or("modals.jobDetail.title", "Job detail"));
+            let logs = gtk::Button::with_label(&self.ctx.t_or("logs.title", "View logs"));
+            {
+                let ctx = self.ctx.clone();
+                let id = job.id;
+                open.connect_clicked(move |_| {
+                    ctx.request_nav(NavTarget::Job { id });
+                });
+            }
+            {
+                let view = self.clone();
+                let remote = qr.remote_name.clone();
+                logs.connect_clicked(move |_| {
+                    if let Some(win) = view.root.root().and_downcast::<gtk::Window>() {
+                        dialogs::logs(&win, view.ctx.clone(), Some(remote.clone()));
+                    }
+                });
+            }
+            let buttons = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+            buttons.append(&open);
+            buttons.append(&logs);
+            self.content.append(&stats);
+            self.content.append(&buttons);
+        } else {
+            let logs = gtk::Button::with_label(&self.ctx.t_or("logs.title", "View logs"));
+            {
+                let view = self.clone();
+                let remote = qr.remote_name.clone();
+                logs.connect_clicked(move |_| {
+                    if let Some(win) = view.root.root().and_downcast::<gtk::Window>() {
+                        dialogs::logs(&win, view.ctx.clone(), Some(remote.clone()));
+                    }
+                });
+            }
+            self.content.append(&logs);
+        }
+
         let actions = gtk::Box::new(gtk::Orientation::Horizontal, 8);
         let start = gtk::Button::with_label(&self.ctx.t_or("flow.quickRun.actions.start", "Start"));
         let stop = gtk::Button::with_label(&self.ctx.t_or("flow.quickRun.actions.stop", "Stop"));
@@ -477,6 +618,17 @@ impl FlowView {
                     "flow",
                 ) {
                     Ok(id) => {
+                        crate::jobs::remember_started(
+                            &mut self.ctx.store.borrow_mut().job_meta,
+                            &id,
+                            crate::jobs::job_meta_for(
+                                &qr.remote_name,
+                                &qr.config,
+                                "flow",
+                                &self.ctx.backend_key(),
+                                &qr.id,
+                            ),
+                        );
                         if let Some(run) = self
                             .ctx
                             .store
