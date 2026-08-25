@@ -138,6 +138,11 @@ This client is the GTK 4 + libadwaita rewrite of the Angular/Tauri desktop UI. I
 - Files icon-size cycle and richer logs (level filter, refresh, scroll)
 - Preferences i18n for remaining setting titles plus Reset all settings
 - About can skip an available app update version
+- Files sidebar context menus (open / new tab / new window, unstar, remove bookmark, properties, remote About, Empty Trash)
+- Developer Debug Info dialog (version, paths, copy, open folders) and Relaunch
+- Title-bar add menu includes New Workflow (opens the Flow builder stub)
+- Flow tabs + overview/detail i18n; dashboard empty-state i18n
+- Properties star toggle and i18n; job detail and quick-run editor titles i18n
 
 ## Still deepening toward pixel-level Angular parity
 

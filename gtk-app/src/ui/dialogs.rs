@@ -397,10 +397,8 @@ pub fn preferences(parent: &impl IsA<gtk::Widget>, ctx: AppCtx) {
         row.add_suffix(&reset);
         row
     });
-    let skip_updates = gtk::Button::with_label(&ctx.t_or(
-        "modals.about.skipVersion",
-        "Skip pending updates",
-    ));
+    let skip_updates =
+        gtk::Button::with_label(&ctx.t_or("modals.about.skipVersion", "Skip pending updates"));
     {
         let ctx = ctx.clone();
         skip_updates.connect_clicked(move |_| {
@@ -408,7 +406,10 @@ pub fn preferences(parent: &impl IsA<gtk::Widget>, ctx: AppCtx) {
             let mut settings = ctx.settings.borrow_mut();
             if let Some(app) = &pending.app {
                 if !settings.runtime.app_skipped_updates.contains(&app.latest) {
-                    settings.runtime.app_skipped_updates.push(app.latest.clone());
+                    settings
+                        .runtime
+                        .app_skipped_updates
+                        .push(app.latest.clone());
                 }
             }
             if let Some(rclone) = &pending.rclone {
@@ -886,6 +887,90 @@ pub fn shortcuts(parent: &impl IsA<gtk::Widget>, ctx: &AppCtx) {
     let scroll = gtk::ScrolledWindow::new();
     scroll.set_child(Some(&list));
     dialog.set_child(Some(&scroll));
+    dialog.present(Some(parent));
+}
+
+pub fn debug_info(parent: &impl IsA<gtk::Widget>, ctx: AppCtx) {
+    let info = crate::platform::debug_info();
+    let dialog = adw::Dialog::new();
+    dialog.set_title(&ctx.t_or("developerTools.debugInfo", "Debug Info"));
+    dialog.set_content_width(520);
+    let list = gtk::ListBox::new();
+    list.add_css_class("boxed-list");
+    for (title, value) in [
+        (
+            ctx.t_or("modals.about.version", "Version"),
+            info.app_version.clone(),
+        ),
+        (
+            ctx.t_or("generalOverview.system.platform", "Platform"),
+            format!("{} / {}", info.platform, info.arch),
+        ),
+        (ctx.t_or("developerTools.mode", "Mode"), info.mode.clone()),
+        (
+            ctx.t_or("titlebar.menu.openConfig", "Config folder"),
+            info.config_dir.clone(),
+        ),
+        (
+            ctx.t_or("titlebar.menu.openCache", "Cache folder"),
+            info.cache_dir.clone(),
+        ),
+        (
+            ctx.t_or("titlebar.menu.openLog", "Logs folder"),
+            info.logs_dir.clone(),
+        ),
+    ] {
+        let row = adw::ActionRow::new();
+        row.set_title(&title);
+        row.set_subtitle(&value);
+        row.set_subtitle_lines(3);
+        list.append(&row);
+    }
+    let copy = gtk::Button::with_label(&ctx.t_or("common.copy", "Copy"));
+    let summary = format!(
+        "version={}\nplatform={}/{}\nmode={}\nconfig={}\ncache={}\nlogs={}",
+        info.app_version,
+        info.platform,
+        info.arch,
+        info.mode,
+        info.config_dir,
+        info.cache_dir,
+        info.logs_dir
+    );
+    copy.connect_clicked(move |_| {
+        if let Some(display) = gtk::gdk::Display::default() {
+            display.clipboard().set_text(&summary);
+        }
+    });
+    let open_cfg = gtk::Button::with_label(&ctx.t_or("titlebar.menu.openConfig", "Open config"));
+    let open_cache = gtk::Button::with_label(&ctx.t_or("titlebar.menu.openCache", "Open cache"));
+    let open_logs = gtk::Button::with_label(&ctx.t_or("titlebar.menu.openLog", "Open logs"));
+    let cfg = info.config_dir.clone();
+    let cache = info.cache_dir.clone();
+    let logs = info.logs_dir.clone();
+    open_cfg.connect_clicked(move |_| {
+        let _ = open::that(&cfg);
+    });
+    open_cache.connect_clicked(move |_| {
+        let _ = open::that(&cache);
+    });
+    open_logs.connect_clicked(move |_| {
+        let _ = open::that(&logs);
+    });
+    let actions = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+    actions.set_margin_top(8);
+    actions.append(&copy);
+    actions.append(&open_cfg);
+    actions.append(&open_cache);
+    actions.append(&open_logs);
+    let box_ = gtk::Box::new(gtk::Orientation::Vertical, 8);
+    box_.set_margin_top(12);
+    box_.set_margin_start(12);
+    box_.set_margin_end(12);
+    box_.set_margin_bottom(12);
+    box_.append(&list);
+    box_.append(&actions);
+    dialog.set_child(Some(&box_));
     dialog.present(Some(parent));
 }
 
@@ -2486,21 +2571,28 @@ pub fn quick_run_editor(
     on_done: Rc<dyn Fn()>,
 ) {
     let dialog = adw::Dialog::new();
-    dialog.set_title("Quick Run");
+    dialog.set_title(&if existing.is_some() {
+        ctx.t_or("flow.quickRun.editor.editTitle", "Edit Quick Run")
+    } else {
+        ctx.t_or("flow.quickRun.editor.createTitle", "Create Quick Run")
+    });
     dialog.set_content_width(520);
     let group = adw::PreferencesGroup::new();
     let name = adw::EntryRow::new();
-    name.set_title("Name");
+    name.set_title(&ctx.t_or("flow.quickRun.editor.name", "Name"));
     let remote = adw::EntryRow::new();
-    remote.set_title("Remote");
+    remote.set_title(&ctx.t_or("flow.quickRun.editor.remote", "Remote"));
     let src = adw::EntryRow::new();
-    src.set_title("Source");
+    src.set_title(&ctx.t_or("fileBrowser.operations.details.source", "Source"));
     attach_path_picker(&ctx, &src, crate::picker::FilePickerConfig::folders());
     let dst = adw::EntryRow::new();
-    dst.set_title("Destination / mount point");
+    dst.set_title(&ctx.t_or(
+        "fileBrowser.operations.details.destination",
+        "Destination / mount point",
+    ));
     attach_path_picker(&ctx, &dst, crate::picker::FilePickerConfig::folders());
     let cron = adw::EntryRow::new();
-    cron.set_title("Cron expression");
+    cron.set_title(&ctx.t_or("flow.quickRun.editor.cron", "Cron expression"));
     let cron_hint = gtk::Label::new(None);
     cron_hint.add_css_class("dim-label");
     cron_hint.set_xalign(0.0);
@@ -2519,21 +2611,21 @@ pub fn quick_run_editor(
         });
     }
     let op_row = adw::ComboRow::new();
-    op_row.set_title("Operation");
+    op_row.set_title(&ctx.t_or("wizards.cliImport.operation", "Operation"));
     let labels: Vec<&str> = OperationType::ALL.iter().map(|o| o.as_str()).collect();
     op_row.set_model(Some(&gtk::StringList::new(&labels)));
     let auto = adw::SwitchRow::new();
-    auto.set_title("Auto start");
+    auto.set_title(&ctx.t_or("flow.quickRun.badges.autostart", "Auto start"));
     let watch = adw::SwitchRow::new();
-    watch.set_title("Watch enabled");
+    watch.set_title(&ctx.t_or("flow.quickRun.badges.watcher", "Watch enabled"));
     let tray = adw::SwitchRow::new();
-    tray.set_title("Show on tray");
+    tray.set_title(&ctx.t_or("flow.quickRun.editor.showOnTray", "Show on tray"));
     let vfs_profile = adw::EntryRow::new();
-    vfs_profile.set_title("VFS profile name");
+    vfs_profile.set_title(&ctx.t_or("flow.quickRun.editor.tabVfs", "VFS profile name"));
     let filter_profile = adw::EntryRow::new();
-    filter_profile.set_title("Filter profile name");
+    filter_profile.set_title(&ctx.t_or("flow.quickRun.editor.tabFilter", "Filter profile name"));
     let backend_profile = adw::EntryRow::new();
-    backend_profile.set_title("Backend profile name");
+    backend_profile.set_title(&ctx.t_or("flow.quickRun.editor.tabBackend", "Backend profile name"));
     if let Some(qr) = &existing {
         name.set_text(&qr.name);
         remote.set_text(&qr.remote_name);
@@ -2566,7 +2658,7 @@ pub fn quick_run_editor(
     group.add(&vfs_profile);
     group.add(&filter_profile);
     group.add(&backend_profile);
-    let save = gtk::Button::with_label("Save");
+    let save = gtk::Button::with_label(&ctx.t_or("common.save", "Save"));
     save.add_css_class("suggested-action");
     {
         let ctx = ctx.clone();
@@ -2874,17 +2966,68 @@ pub fn properties(
     name: &str,
 ) {
     let dialog = adw::Dialog::new();
-    dialog.set_title("Properties");
+    dialog.set_title(&ctx.t_or("fileBrowser.properties.title", "Properties"));
     dialog.set_content_width(520);
     dialog.set_content_height(640);
+    let location = if remote == "local" {
+        path.to_string()
+    } else if path.is_empty() {
+        format!("{remote}:")
+    } else {
+        format!("{remote}:{path}")
+    };
+    let starred =
+        crate::settings::collection_contains(&ctx.settings.borrow().nautilus.starred, &location);
+    let header = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+    let heading = gtk::Label::new(Some(name));
+    heading.add_css_class("title-3");
+    heading.set_hexpand(true);
+    heading.set_xalign(0.0);
+    let star = gtk::Button::from_icon_name(if starred {
+        "starred-symbolic"
+    } else {
+        "non-starred-symbolic"
+    });
+    star.set_tooltip_text(Some(&if starred {
+        ctx.t_or("fileBrowser.properties.unstar", "Unstar")
+    } else {
+        ctx.t_or("fileBrowser.properties.star", "Star")
+    }));
+    {
+        let ctx = ctx.clone();
+        let location = location.clone();
+        let name = name.to_string();
+        star.connect_clicked(move |btn| {
+            let now = {
+                let mut settings = ctx.settings.borrow_mut();
+                crate::settings::toggle_collection(&mut settings.nautilus.starred, &location, &name)
+            };
+            ctx.persist();
+            btn.set_icon_name(if now {
+                "starred-symbolic"
+            } else {
+                "non-starred-symbolic"
+            });
+            btn.set_tooltip_text(Some(&if now {
+                ctx.t_or("fileBrowser.properties.unstar", "Unstar")
+            } else {
+                ctx.t_or("fileBrowser.properties.star", "Star")
+            }));
+        });
+    }
+    header.append(&heading);
+    header.append(&star);
     let list = gtk::ListBox::new();
     list.add_css_class("boxed-list");
     for (title, value) in [
-        ("Name", name.to_string()),
-        ("Remote", remote.to_string()),
-        ("Path", path.to_string()),
+        (ctx.t_or("common.name", "Name"), name.to_string()),
+        (ctx.t_or("sidebar.remotes", "Remote"), remote.to_string()),
         (
-            "Type",
+            ctx.t_or("fileBrowser.properties.location", "Location"),
+            path.to_string(),
+        ),
+        (
+            ctx.t_or("modals.jobDetail.fields.type", "Type"),
             format!(
                 "{:?}",
                 crate::operations::FileTypeCategory::from_name(name, false)
@@ -2892,7 +3035,7 @@ pub fn properties(
         ),
     ] {
         let row = adw::ActionRow::new();
-        row.set_title(title);
+        row.set_title(&title);
         row.set_subtitle(&value);
         list.append(&row);
     }
@@ -2908,7 +3051,7 @@ pub fn properties(
             let total = about.get("total").and_then(|x| x.as_i64()).unwrap_or(-1);
             let free = about.get("free").and_then(|x| x.as_i64()).unwrap_or(-1);
             let row = adw::ActionRow::new();
-            row.set_title("Disk usage");
+            row.set_title(&ctx.t_or("fileBrowser.properties.storage", "Disk usage"));
             row.set_subtitle(&format!(
                 "used {} · free {} · total {}",
                 crate::rclone::format_bytes(used),
@@ -2919,7 +3062,7 @@ pub fn properties(
         }
         if let Ok(size) = client.size(&fs, path) {
             let row = adw::ActionRow::new();
-            row.set_title("Size");
+            row.set_title(&ctx.t_or("fileBrowser.properties.size", "Size"));
             let count = size.get("count").and_then(|x| x.as_i64());
             let bytes = size.get("bytes").and_then(|x| x.as_i64()).unwrap_or(-1);
             row.set_subtitle(&match count {
@@ -2935,15 +3078,20 @@ pub fn properties(
             .unwrap_or_default();
         if hashes.is_empty() {
             let row = adw::ActionRow::new();
-            row.set_title("Hashes");
-            row.set_subtitle("This remote does not advertise hash support");
+            row.set_title(&ctx.t_or("fileBrowser.properties.checksums", "Hashes"));
+            row.set_subtitle(&ctx.t_or(
+                "fileBrowser.properties.noHashTypes",
+                "This remote does not advertise hash support",
+            ));
             list.append(&row);
         } else {
             for (idx, hash_type) in hashes.iter().enumerate() {
                 let row = adw::ActionRow::new();
                 row.set_title(&hash_type.to_ascii_uppercase());
-                row.set_subtitle("Not calculated");
-                let calc = gtk::Button::with_label("Calculate");
+                row.set_subtitle(&ctx.t_or("fileBrowser.properties.calculating", "Not calculated"));
+                let calc = gtk::Button::with_label(
+                    &ctx.t_or("fileBrowser.properties.calculateMore", "Calculate"),
+                );
                 calc.set_valign(gtk::Align::Center);
                 {
                     let row = row.clone();
@@ -2975,14 +3123,20 @@ pub fn properties(
         }
         if remote != "local" && info.as_ref().is_none_or(|i| i.has_feature("PublicLink")) {
             let link_row = adw::ActionRow::new();
-            link_row.set_title("Public link");
-            link_row.set_subtitle("Not created");
+            link_row.set_title(&ctx.t_or("fileBrowser.properties.publicLink", "Public link"));
+            link_row.set_subtitle(&ctx.t_or("fileBrowser.properties.creatingLink", "Not created"));
             list.append(&link_row);
             let expire = adw::EntryRow::new();
-            expire.set_title("Link expiry (e.g. 1d, 7d, 1M)");
+            expire.set_title(&ctx.t_or(
+                "fileBrowser.properties.expires",
+                "Link expiry (e.g. 1d, 7d, 1M)",
+            ));
             list.append(&expire);
-            let get_link = gtk::Button::with_label("Get public link");
-            let unlink = gtk::Button::with_label("Remove public link");
+            let get_link =
+                gtk::Button::with_label(&ctx.t_or("fileBrowser.properties.getLink", "Get Link"));
+            let unlink = gtk::Button::with_label(
+                &ctx.t_or("fileBrowser.properties.removeLink", "Remove Link"),
+            );
             {
                 let ctx = ctx.clone();
                 let fs = fs.clone();
@@ -3029,13 +3183,14 @@ pub fn properties(
             link_actions.append(&unlink);
             list.append(&{
                 let row = adw::ActionRow::new();
-                row.set_title("Link actions");
+                row.set_title(&ctx.t_or("fileBrowser.properties.publicLink", "Link actions"));
                 row.add_suffix(&link_actions);
                 row
             });
         }
     }
-    let copy_path = gtk::Button::with_label("Copy path");
+    let copy_path =
+        gtk::Button::with_label(&ctx.t_or("nautilus.contextMenu.copyPath", "Copy path"));
     {
         let text = if remote == "local" {
             path.to_string()
@@ -3050,6 +3205,7 @@ pub fn properties(
     }
     let box_ = gtk::Box::new(gtk::Orientation::Vertical, 8);
     box_.set_margin_top(12);
+    box_.append(&header);
     box_.append(&list);
     box_.append(&copy_path);
     let scroll = gtk::ScrolledWindow::new();
@@ -3061,7 +3217,7 @@ pub fn properties(
 
 pub fn job_detail(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, job_id: u64) {
     let dialog = adw::Dialog::new();
-    dialog.set_title(&format!("Job #{job_id}"));
+    dialog.set_title(&ctx.tf("modals.jobDetail.title", &[("id", &job_id.to_string())]));
     dialog.set_content_width(640);
     dialog.set_content_height(620);
     let meta = gtk::ListBox::new();
@@ -3073,8 +3229,10 @@ pub fn job_detail(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, job_id: u64) {
     let completed = gtk::ListBox::new();
     completed.add_css_class("boxed-list");
     let filter = gtk::SearchEntry::new();
-    filter.set_placeholder_text(Some("Filter transfers"));
-    let stop = gtk::Button::with_label("Stop job");
+    filter.set_placeholder_text(Some(
+        &ctx.t_or("modals.jobDetail.filterTransfers", "Filter transfers"),
+    ));
+    let stop = gtk::Button::with_label(&ctx.t_or("flow.quickRun.actions.stop", "Stop job"));
     stop.add_css_class("destructive-action");
     {
         let ctx = ctx.clone();
@@ -3085,7 +3243,7 @@ pub fn job_detail(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, job_id: u64) {
             }
         });
     }
-    let reset = gtk::Button::with_label("Reset stats");
+    let reset = gtk::Button::with_label(&ctx.t_or("modals.jobDetail.resetStats", "Reset stats"));
     {
         let ctx = ctx.clone();
         reset.connect_clicked(move |_| {
@@ -3094,7 +3252,9 @@ pub fn job_detail(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, job_id: u64) {
             }
         });
     }
-    let delete = gtk::Button::with_label("Delete from history");
+    let delete = gtk::Button::with_label(
+        &ctx.t_or("fileBrowser.operations.removeJob", "Delete from history"),
+    );
     {
         let ctx = ctx.clone();
         let dialog = dialog.clone();
@@ -3110,18 +3270,26 @@ pub fn job_detail(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, job_id: u64) {
     box_.append(&progress);
     box_.append(&scrolled_list(&meta));
     box_.append(&filter);
-    let xfer_label = gtk::Label::new(Some("Active transfers"));
+    let xfer_label = gtk::Label::new(Some(
+        &ctx.t_or("generalOverview.jobs.transfers", "Active transfers"),
+    ));
     xfer_label.add_css_class("heading");
     xfer_label.set_xalign(0.0);
     box_.append(&xfer_label);
     box_.append(&scrolled_list(&transfers));
-    let done_label = gtk::Label::new(Some("Completed transfers"));
+    let done_label = gtk::Label::new(Some(
+        &ctx.t_or("fileBrowser.operations.completed", "Completed transfers"),
+    ));
     done_label.add_css_class("heading");
     done_label.set_xalign(0.0);
     box_.append(&done_label);
     box_.append(&scrolled_list(&completed));
-    let open_src = gtk::Button::with_label("Open source in Files");
-    let open_dst = gtk::Button::with_label("Open destination in Files");
+    let open_src =
+        gtk::Button::with_label(&ctx.t_or("modals.jobDetail.openSource", "Open source in Files"));
+    let open_dst = gtk::Button::with_label(&ctx.t_or(
+        "modals.jobDetail.openDestination",
+        "Open destination in Files",
+    ));
     {
         let ctx = ctx.clone();
         let dialog = dialog.clone();
@@ -3230,18 +3398,45 @@ pub fn job_detail(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, job_id: u64) {
                 .cloned()
                 .unwrap_or(serde_json::json!("—"));
             for (title, value) in [
-                ("Operation", job.operation.clone()),
-                ("Status", job.status.clone()),
-                ("Remote", job.remote.clone()),
-                ("Profile", job.profile.clone()),
-                ("Source", job.src.clone()),
-                ("Destination", job.dst.clone()),
-                ("Group", job.group.clone()),
-                ("Transferred", crate::rclone::format_bytes(bytes)),
-                ("Speed", format!("{:.1} KiB/s", speed / 1024.0)),
-                ("ETA", eta.to_string()),
                 (
-                    "Error",
+                    ctx.t_or("modals.jobDetail.fields.type", "Operation"),
+                    job.operation.clone(),
+                ),
+                (
+                    ctx.t_or("modals.jobDetail.fields.status", "Status"),
+                    job.status.clone(),
+                ),
+                (ctx.t_or("sidebar.remotes", "Remote"), job.remote.clone()),
+                (
+                    ctx.t_or("modals.jobDetail.fields.profile", "Profile"),
+                    job.profile.clone(),
+                ),
+                (
+                    ctx.t_or("fileBrowser.operations.details.source", "Source"),
+                    job.src.clone(),
+                ),
+                (
+                    ctx.t_or("fileBrowser.operations.details.destination", "Destination"),
+                    job.dst.clone(),
+                ),
+                (
+                    ctx.t_or("modals.jobDetail.fields.group", "Group"),
+                    job.group.clone(),
+                ),
+                (
+                    ctx.t_or("modals.jobDetail.fields.transferred", "Transferred"),
+                    crate::rclone::format_bytes(bytes),
+                ),
+                (
+                    ctx.t_or("modals.jobDetail.fields.speed", "Speed"),
+                    format!("{:.1} KiB/s", speed / 1024.0),
+                ),
+                (
+                    ctx.t_or("modals.jobDetail.fields.eta", "ETA"),
+                    eta.to_string(),
+                ),
+                (
+                    ctx.t_or("modals.jobDetail.sections.errors", "Error"),
                     job.error
                         .as_deref()
                         .map(|e| ctx.translate_error(e))
@@ -3249,7 +3444,7 @@ pub fn job_detail(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, job_id: u64) {
                 ),
             ] {
                 let row = adw::ActionRow::new();
-                row.set_title(title);
+                row.set_title(&title);
                 row.set_subtitle(&value);
                 meta.append(&row);
             }
@@ -3626,7 +3821,10 @@ pub fn file_viewer(
 
 pub fn remote_about(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, remote: &str) {
     let dialog = adw::Dialog::new();
-    dialog.set_title(&format!("About {remote}"));
+    dialog.set_title(&format!(
+        "{} {remote}",
+        ctx.t_or("nautilus.contextMenu.about", "About")
+    ));
     dialog.set_content_width(560);
     dialog.set_content_height(640);
     let page = adw::PreferencesPage::new();

@@ -75,7 +75,6 @@ pub fn present_main(app: &adw::Application, ctx: AppCtx) {
 
     let add_btn = gtk::MenuButton::builder()
         .icon_name("list-add-symbolic")
-        .tooltip_text("Add remote or quick run")
         .build();
     let add_menu = gio::Menu::new();
     add_menu.append(
@@ -90,7 +89,14 @@ pub fn present_main(app: &adw::Application, ctx: AppCtx) {
         Some(&ctx.t_or("titlebar.menu.quickRun", "New Quick Run")),
         Some("win.quick-run-new"),
     );
+    add_menu.append(
+        Some(&ctx.t_or("flow.tabs.workflow", "New Workflow")),
+        Some("win.view::flow"),
+    );
     add_btn.set_menu_model(Some(&add_menu));
+    add_btn.set_tooltip_text(Some(
+        &ctx.t_or("titlebar.menu.add", "Add remote or quick run"),
+    ));
     header.pack_start(&add_btn);
 
     let conn_btn = gtk::Button::from_icon_name("network-offline-symbolic");
@@ -381,6 +387,14 @@ fn app_menu(ctx: &AppCtx) -> gio::Menu {
     tools.append(
         Some(&ctx.t_or("titlebar.menu.checkConnectivity", "Check connectivity")),
         Some("win.ping"),
+    );
+    tools.append(
+        Some(&ctx.t_or("developerTools.debugInfo", "Debug Info")),
+        Some("win.debug-info"),
+    );
+    tools.append(
+        Some(&ctx.t_or("developerTools.relaunch", "Relaunch")),
+        Some("win.relaunch"),
     );
     menu.append_submenu(
         Some(&ctx.t_or("titlebar.menu.developer", "Developer")),
@@ -793,8 +807,29 @@ fn install_actions(
             }),
         );
     }
+    {
+        let window = window.clone();
+        let ctx = ctx.clone();
+        add_action(
+            "debug-info",
+            Box::new(move || {
+                dialogs::debug_info(&window, ctx.clone());
+            }),
+        );
+    }
+    {
+        let app = app.clone();
+        let toast = toast.clone();
+        add_action(
+            "relaunch",
+            Box::new(move || match crate::platform::relaunch() {
+                Ok(()) => app.quit(),
+                Err(e) => toast.add_toast(adw::Toast::new(&e)),
+            }),
+        );
+    }
 
-    let _ = (app, nautilus, banner);
+    let _ = (nautilus, banner);
 }
 
 fn install_shortcuts(window: &adw::ApplicationWindow) {

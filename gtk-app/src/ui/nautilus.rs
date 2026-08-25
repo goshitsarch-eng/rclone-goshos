@@ -11,6 +11,14 @@ use gtk::{gio, glib};
 use std::cell::RefCell;
 use std::rc::Rc;
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum SideKind {
+    Star,
+    Bookmark,
+    Local,
+    Remote,
+}
+
 #[derive(Clone)]
 struct TabState {
     id: u32,
@@ -882,7 +890,12 @@ impl NautilusView {
         for star in &self.ctx.settings.borrow().nautilus.starred {
             if let Some(path) = star.get("path").and_then(|x| x.as_str()) {
                 if allowed(path) && !crate::settings::sidebar_id_hidden(&hidden, path) {
-                    self.add_side_row(path, path, "starred-symbolic");
+                    let title = star
+                        .get("name")
+                        .and_then(|x| x.as_str())
+                        .filter(|s| !s.is_empty())
+                        .unwrap_or(path);
+                    self.add_side_row(title, path, "starred-symbolic", SideKind::Star);
                 }
             }
         }
@@ -893,7 +906,7 @@ impl NautilusView {
                 mark.get("path").and_then(|x| x.as_str()),
             ) {
                 if allowed(path) && !crate::settings::sidebar_id_hidden(&hidden, path) {
-                    self.add_side_row(name, path, "user-bookmarks-symbolic");
+                    self.add_side_row(name, path, "user-bookmarks-symbolic", SideKind::Bookmark);
                 }
             }
         }
@@ -904,7 +917,7 @@ impl NautilusView {
         );
         for disk in disks {
             if allowed(&disk) && !crate::settings::sidebar_id_hidden(&hidden, &disk) {
-                self.add_side_row(&disk, &disk, "drive-harddisk-symbolic");
+                self.add_side_row(&disk, &disk, "drive-harddisk-symbolic", SideKind::Local);
             }
         }
         self.add_side_header(&self.ctx.t_or("nautilus.titles.cloud", "Cloud remotes"));
@@ -926,6 +939,7 @@ impl NautilusView {
                     &remote.name,
                     &loc,
                     crate::providers::provider_icon(&remote.r#type),
+                    SideKind::Remote,
                 );
             }
         }
@@ -938,15 +952,198 @@ impl NautilusView {
         self.sidebar.append(&row);
     }
 
-    fn add_side_row(&self, title: &str, target: &str, icon: &str) {
+    fn add_side_row(&self, title: &str, target: &str, icon: &str, kind: SideKind) {
         let row = adw::ActionRow::new();
         row.set_title(title);
         row.set_activatable(true);
         row.add_prefix(&gtk::Image::from_icon_name(icon));
         let view = self.clone();
-        let target = target.to_string();
-        row.connect_activated(move |_| view.navigate_to(&target));
+        let target_nav = target.to_string();
+        row.connect_activated(move |_| view.navigate_to(&target_nav));
+        let gesture = gtk::GestureClick::new();
+        gesture.set_button(3);
+        {
+            let view = self.clone();
+            let target = target.to_string();
+            let title = title.to_string();
+            let row_menu = row.clone();
+            gesture.connect_pressed(move |g, _, _, _| {
+                view.popup_side_menu(&row_menu, &title, &target, kind);
+                g.set_state(gtk::EventSequenceState::Claimed);
+            });
+        }
+        row.add_controller(gesture);
         self.sidebar.append(&row);
+    }
+
+    fn popup_side_menu(&self, row: &adw::ActionRow, title: &str, target: &str, kind: SideKind) {
+        let Some(win) = self.root.root().and_downcast::<gtk::Window>() else {
+            return;
+        };
+        let popover = gtk::Popover::new();
+        let box_ = gtk::Box::new(gtk::Orientation::Vertical, 4);
+        let mut items: Vec<(String, &'static str)> = vec![
+            (self.ctx.t_or("nautilus.contextMenu.open", "Open"), "open"),
+            (
+                self.ctx
+                    .t_or("nautilus.contextMenu.openNewTab", "Open in New Tab"),
+                "tab",
+            ),
+            (
+                self.ctx
+                    .t_or("nautilus.contextMenu.openNewWindow", "Open in New Window"),
+                "window",
+            ),
+        ];
+        match kind {
+            SideKind::Star => items.push((
+                self.ctx.t_or("fileBrowser.properties.unstar", "Unstar"),
+                "unstar",
+            )),
+            SideKind::Bookmark => {
+                items.push((
+                    self.ctx
+                        .t_or("nautilus.contextMenu.properties", "Properties"),
+                    "props",
+                ));
+                items.push((
+                    self.ctx
+                        .t_or("nautilus.contextMenu.removeBookmark", "Remove Bookmark"),
+                    "unbookmark",
+                ));
+            }
+            SideKind::Local => items.push((
+                self.ctx
+                    .t_or("nautilus.contextMenu.properties", "Properties"),
+                "props",
+            )),
+            SideKind::Remote => {
+                items.push((
+                    self.ctx.t_or("nautilus.contextMenu.about", "About"),
+                    "about",
+                ));
+                let (remote, _) = crate::rclone::split_remote_path(target);
+                let cleanup_ok = self
+                    .ctx
+                    .fs_info(&remote)
+                    .is_none_or(|i| i.has_feature("CleanUp"));
+                if cleanup_ok {
+                    items.push((
+                        self.ctx
+                            .t_or("nautilus.contextMenu.emptyTrash", "Empty Trash"),
+                        "cleanup",
+                    ));
+                }
+            }
+        }
+        for (label, action) in items {
+            let btn = gtk::Button::with_label(&label);
+            if matches!(action, "unstar" | "unbookmark" | "cleanup") {
+                btn.add_css_class("destructive-action");
+            }
+            let view = self.clone();
+            let popover = popover.clone();
+            let target = target.to_string();
+            let title = title.to_string();
+            btn.connect_clicked(move |_| {
+                match action {
+                    "open" => view.navigate_to(&target),
+                    "tab" => view.open_target_in_new_tab(&target),
+                    "window" => view.open_target_in_new_window(&target),
+                    "unstar" => view.toggle_star_path(&target, &title),
+                    "unbookmark" => view.remove_bookmark_path(&target),
+                    "props" => view.properties_for_target(&target),
+                    "about" => {
+                        let (remote, _) = crate::rclone::split_remote_path(&target);
+                        if let Some(win) = view.root.root().and_downcast::<gtk::Window>() {
+                            dialogs::remote_about(&win, view.ctx.clone(), &remote);
+                        }
+                    }
+                    "cleanup" => {
+                        let (remote, _) = crate::rclone::split_remote_path(&target);
+                        view.cleanup_named_remote(&remote);
+                    }
+                    _ => {}
+                }
+                popover.popdown();
+            });
+            box_.append(&btn);
+        }
+        popover.set_child(Some(&box_));
+        popover.set_parent(row);
+        popover.popup();
+        let _ = win;
+    }
+
+    fn open_target_in_new_tab(&self, target: &str) {
+        self.open_new_tab();
+        self.navigate_to(target);
+    }
+
+    fn open_target_in_new_window(&self, target: &str) {
+        let Some(win) = self.root.root().and_downcast::<gtk::Window>() else {
+            return;
+        };
+        let Some(app) = win.application() else {
+            return;
+        };
+        let toast = adw::ToastOverlay::new();
+        let view = NautilusView::new(self.ctx.clone(), toast.clone());
+        toast.set_child(Some(&view.root));
+        let detached = adw::ApplicationWindow::new(&app);
+        detached.set_title(Some(&self.ctx.t_or("titlebar.menu.fileBrowser", "Files")));
+        detached.set_default_width(960);
+        detached.set_default_height(640);
+        detached.set_content(Some(&toast));
+        view.navigate_to(target);
+        detached.present();
+    }
+
+    fn remove_bookmark_path(&self, path: &str) {
+        self.ctx
+            .settings
+            .borrow_mut()
+            .nautilus
+            .bookmarks
+            .retain(|item| crate::settings::collection_path(item).as_deref() != Some(path));
+        self.ctx.persist();
+        self.reload_sidebar();
+    }
+
+    fn properties_for_target(&self, target: &str) {
+        let Some(win) = self.root.root().and_downcast::<gtk::Window>() else {
+            return;
+        };
+        let (remote, path) = crate::rclone::split_remote_path(target);
+        let name = path
+            .rsplit(['/', ':'])
+            .next()
+            .filter(|s| !s.is_empty())
+            .unwrap_or(&remote)
+            .to_string();
+        dialogs::properties(&win, self.ctx.clone(), &remote, &path, &name);
+    }
+
+    fn cleanup_named_remote(&self, remote: &str) {
+        let Some(client) = self.ctx.client() else {
+            return;
+        };
+        let fs = if remote == "local" {
+            "/".into()
+        } else {
+            crate::rclone::remote_fs(remote, "")
+        };
+        match client.cleanup(&fs, None) {
+            Ok(_) => self.toast.add_toast(adw::Toast::new(
+                &self
+                    .ctx
+                    .t_or("nautilus.notifications.trashEmptied", "Cleanup started"),
+            )),
+            Err(e) => self.toast.add_toast(adw::Toast::new(&self.ctx.tf(
+                "nautilus.errors.emptyTrashFailed",
+                &[("remote", remote), ("error", &e.to_string())],
+            ))),
+        }
     }
 
     pub fn navigate_to(&self, input: &str) {

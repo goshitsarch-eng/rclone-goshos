@@ -354,6 +354,50 @@ pub fn share_file(path: &Path) -> Result<(), String> {
     open::that(path).map_err(|e| e.to_string())
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DebugInfo {
+    pub logs_dir: String,
+    pub config_dir: String,
+    pub cache_dir: String,
+    pub mode: String,
+    pub app_version: String,
+    pub platform: String,
+    pub arch: String,
+}
+
+pub fn debug_info() -> DebugInfo {
+    let config = crate::settings::AppSettings::config_dir();
+    DebugInfo {
+        logs_dir: crate::settings::AppSettings::log_path()
+            .parent()
+            .map(|p| p.to_string_lossy().into_owned())
+            .unwrap_or_else(|| config.to_string_lossy().into_owned()),
+        config_dir: config.to_string_lossy().into_owned(),
+        cache_dir: crate::settings::AppSettings::cache_dir()
+            .to_string_lossy()
+            .into_owned(),
+        mode: "gtk-desktop".into(),
+        app_version: env!("CARGO_PKG_VERSION").into(),
+        platform: std::env::consts::OS.into(),
+        arch: std::env::consts::ARCH.into(),
+    }
+}
+
+pub fn relaunch_command(current_exe: &Path, args: &[String]) -> std::process::Command {
+    let mut cmd = Command::new(current_exe);
+    cmd.args(args);
+    cmd
+}
+
+pub fn relaunch() -> Result<(), String> {
+    let exe = std::env::current_exe().map_err(|e| e.to_string())?;
+    let args: Vec<String> = std::env::args().skip(1).collect();
+    relaunch_command(&exe, &args)
+        .spawn()
+        .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -418,5 +462,23 @@ mod tests {
         inhibitor.release();
         inhibitor.update(false, "idle");
         assert!(!inhibitor.is_inhibited());
+    }
+
+    #[test]
+    fn debug_info_has_gtk_mode_and_version() {
+        let info = debug_info();
+        assert_eq!(info.mode, "gtk-desktop");
+        assert_eq!(info.app_version, env!("CARGO_PKG_VERSION"));
+        assert!(!info.config_dir.is_empty());
+        assert!(!info.platform.is_empty());
+        assert!(!info.arch.is_empty());
+    }
+
+    #[test]
+    fn relaunch_command_keeps_exe_and_args() {
+        let cmd = relaunch_command(Path::new("/opt/rclone-manager-gtk"), &["--foo".into()]);
+        assert_eq!(cmd.get_program(), "/opt/rclone-manager-gtk");
+        let args: Vec<_> = cmd.get_args().collect();
+        assert_eq!(args, vec!["--foo"]);
     }
 }

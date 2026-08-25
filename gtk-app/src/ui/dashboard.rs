@@ -246,8 +246,15 @@ impl Dashboard {
         }
         if snap.remotes.is_empty() {
             let empty = adw::ActionRow::new();
-            empty.set_title("No remotes configured");
-            empty.set_subtitle("Use Quick Add or Detailed Config");
+            empty.set_title(
+                &self
+                    .ctx
+                    .t_or("sidebar.noRemotesConfigured", "No remotes configured"),
+            );
+            empty.set_subtitle(&self.ctx.t_or(
+                "flow.quickRun.editor.noRemotes",
+                "Use Quick Add or Detailed Config",
+            ));
             self.sidebar_list.append(&empty);
         }
     }
@@ -595,7 +602,11 @@ impl Dashboard {
         jobs.add_css_class("boxed-list");
         if snap.jobs.is_empty() {
             let row = adw::ActionRow::new();
-            row.set_title("No active jobs");
+            row.set_title(
+                &self
+                    .ctx
+                    .t_or("generalOverview.jobs.noActive", "No active jobs"),
+            );
             jobs.append(&row);
         } else {
             for job in &snap.jobs {
@@ -637,7 +648,11 @@ impl Dashboard {
         serves.add_css_class("boxed-list");
         if snap.serves.is_empty() {
             let row = adw::ActionRow::new();
-            row.set_title("No running serves");
+            row.set_title(
+                &self
+                    .ctx
+                    .t_or("generalOverview.serves.noActive", "No active serves"),
+            );
             serves.append(&row);
         } else {
             for serve in &snap.serves {
@@ -782,8 +797,15 @@ impl Dashboard {
         let records = crate::automation::collect(&self.ctx.store.borrow());
         if records.is_empty() {
             let row = adw::ActionRow::new();
-            row.set_title("No cron or watch automations");
-            row.set_subtitle("Enable cron or watch on a profile or quick run");
+            row.set_title(
+                &self
+                    .ctx
+                    .t_or("generalOverview.automations.noScheduled", "No automations"),
+            );
+            row.set_subtitle(&self.ctx.t_or(
+                "generalOverview.automations.noConfigured",
+                "Enable cron or watch on a profile or quick run",
+            ));
             autos.append(&row);
         } else {
             for record in records {
@@ -1039,7 +1061,10 @@ impl Dashboard {
             .collect();
         if remote_jobs.is_empty() {
             let row = adw::ActionRow::new();
-            row.set_title("No active jobs for this remote");
+            row.set_title(&self.ctx.t_or(
+                "generalOverview.jobs.noRunning",
+                "No active jobs for this remote",
+            ));
             activity.append(&row);
         } else {
             for job in remote_jobs {

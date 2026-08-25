@@ -28,13 +28,13 @@ impl FlowView {
         side.set_margin_end(8);
         side.set_margin_bottom(8);
         let search = gtk::SearchEntry::new();
-        search.set_placeholder_text(Some("Search quick runs"));
+        search.set_placeholder_text(Some(&ctx.t_or("flow.search", "Search quick runs")));
         let sidebar = gtk::ListBox::new();
         sidebar.add_css_class("navigation-sidebar");
         let scroll = gtk::ScrolledWindow::new();
         scroll.set_vexpand(true);
         scroll.set_child(Some(&sidebar));
-        let add = gtk::Button::with_label("New Quick Run");
+        let add = gtk::Button::with_label(&ctx.t_or("flow.quickRun.new", "New Quick Run"));
         side.append(&search);
         side.append(&scroll);
         side.append(&add);
@@ -46,7 +46,39 @@ impl FlowView {
         content.set_margin_start(16);
         content.set_margin_end(16);
         split.set_content(Some(&scrolled(&content)));
-        root.append(&split);
+        let stack = adw::ViewStack::new();
+        stack.add_titled_with_icon(
+            &split,
+            Some("quick_run"),
+            &ctx.t_or("flow.tabs.quickRun", "Quick Run"),
+            "media-playlist-consecutive-symbolic",
+        );
+        let builder = adw::StatusPage::new();
+        builder.set_icon_name(Some("applications-engineering-symbolic"));
+        builder.set_title(&ctx.t_or(
+            "flow.builder.placeholderTitle",
+            "Workflow Builder in Progress",
+        ));
+        builder.set_description(Some(&ctx.t_or(
+            "flow.builder.placeholderMessage",
+            "A visual canvas for multi-step rclone pipelines and conditional job chaining is coming soon.",
+        )));
+        let roadmap = gtk::LinkButton::with_label(
+            "https://github.com/Zarestia-Dev/rclone-manager/issues/232",
+            &ctx.t_or("flow.builder.viewRoadmap", "View Roadmap on GitHub"),
+        );
+        builder.set_child(Some(&roadmap));
+        stack.add_titled_with_icon(
+            &builder,
+            Some("builder"),
+            &ctx.t_or("flow.tabs.workflow", "Workflow"),
+            "media-playlist-shuffle-symbolic",
+        );
+        let switcher = adw::ViewSwitcherBar::new();
+        switcher.set_stack(Some(&stack));
+        switcher.set_reveal(true);
+        root.append(&stack);
+        root.append(&switcher);
 
         let view = Self {
             root,
@@ -104,10 +136,11 @@ impl FlowView {
         if filtered.is_empty() {
             let empty = adw::StatusPage::new();
             empty.set_icon_name(Some("media-playlist-consecutive-symbolic"));
-            empty.set_title("No quick runs");
-            empty.set_description(Some(
+            empty.set_title(&self.ctx.t_or("flow.quickRun.title", "No quick runs"));
+            empty.set_description(Some(&self.ctx.t_or(
+                "flow.empty.description",
                 "Create a reusable rclone operation with cron, watcher, or autostart.",
-            ));
+            )));
             self.sidebar.append(&adw::ActionRow::new());
             self.content.append(&empty);
             return;
@@ -156,7 +189,7 @@ impl FlowView {
                 .any(|(panel, vis)| panel == id && vis)
         };
         let snap = self.ctx.snapshot.borrow().clone();
-        let title = gtk::Label::new(Some("Quick Runs"));
+        let title = gtk::Label::new(Some(&self.ctx.t_or("flow.quickRun.title", "Quick Runs")));
         title.add_css_class("title-1");
         title.set_xalign(0.0);
         self.content.append(&title);
@@ -184,12 +217,20 @@ impl FlowView {
         }
 
         if visible("jobs") {
-            self.content.append(&heading("Jobs"));
+            self.content.append(&heading(
+                &self
+                    .ctx
+                    .t_or("generalOverview.panels.jobs", "Job Information"),
+            ));
             let jobs = gtk::ListBox::new();
             jobs.add_css_class("boxed-list");
             if snap.jobs.is_empty() {
                 let row = adw::ActionRow::new();
-                row.set_title("No active jobs");
+                row.set_title(
+                    &self
+                        .ctx
+                        .t_or("generalOverview.jobs.noActive", "No active jobs"),
+                );
                 jobs.append(&row);
             } else {
                 for job in &snap.jobs {
@@ -210,12 +251,20 @@ impl FlowView {
         }
 
         if visible("serves") {
-            self.content.append(&heading("Serves"));
+            self.content.append(&heading(
+                &self
+                    .ctx
+                    .t_or("generalOverview.panels.serves", "Running Serves"),
+            ));
             let serves = gtk::ListBox::new();
             serves.add_css_class("boxed-list");
             if snap.serves.is_empty() {
                 let row = adw::ActionRow::new();
-                row.set_title("No running serves");
+                row.set_title(
+                    &self
+                        .ctx
+                        .t_or("generalOverview.serves.noActive", "No active serves"),
+                );
                 serves.append(&row);
             } else {
                 for serve in &snap.serves {
@@ -229,33 +278,37 @@ impl FlowView {
         }
 
         if visible("automations") {
-            self.content.append(&heading("Automations"));
+            self.content.append(&heading(
+                &self
+                    .ctx
+                    .t_or("generalOverview.panels.automations", "Automations"),
+            ));
             let autos = gtk::ListBox::new();
             autos.add_css_class("boxed-list");
             let records = crate::automation::collect(&self.ctx.store.borrow());
             if records.is_empty() {
                 let row = adw::ActionRow::new();
-                row.set_title("No automations");
+                row.set_title(
+                    &self
+                        .ctx
+                        .t_or("generalOverview.automations.noScheduled", "No automations"),
+                );
                 autos.append(&row);
             } else {
                 for record in records.into_iter().take(8) {
                     let paused = self.ctx.store.borrow().is_automation_paused(&record.id);
                     let row = adw::ActionRow::new();
                     row.set_title(&record.name);
-                    row.set_subtitle(if paused { "paused" } else { "scheduled" });
+                    row.set_subtitle(&if paused {
+                        self.ctx.t_or("flow.quickRun.status.paused", "paused")
+                    } else {
+                        self.ctx.t_or("flow.quickRun.badges.scheduled", "scheduled")
+                    });
                     autos.append(&row);
                 }
             }
             self.content.append(&autos);
         }
-
-        let builder = adw::StatusPage::new();
-        builder.set_icon_name(Some("applications-engineering-symbolic"));
-        builder.set_title("Workflow builder");
-        builder.set_description(Some(
-            "The visual workflow builder is a placeholder, matching the current app (GitHub #232).",
-        ));
-        self.content.append(&builder);
     }
 
     fn fill_detail(&self, qr: &QuickRun) {
@@ -275,7 +328,7 @@ impl FlowView {
 
         let (src, dst) = qr.paths();
         let paths = adw::ActionRow::new();
-        paths.set_title("Paths");
+        paths.set_title(&self.ctx.t_or("modals.jobDetail.sections.paths", "Paths"));
         paths.set_subtitle(&format!(
             "{} → {}",
             src.unwrap_or_else(|| "—".into()),
@@ -284,11 +337,11 @@ impl FlowView {
         self.content.append(&paths);
 
         let actions = gtk::Box::new(gtk::Orientation::Horizontal, 8);
-        let start = gtk::Button::with_label("Start");
-        let stop = gtk::Button::with_label("Stop");
-        let edit = gtk::Button::with_label("Edit");
-        let dup = gtk::Button::with_label("Duplicate");
-        let delete = gtk::Button::with_label("Delete");
+        let start = gtk::Button::with_label(&self.ctx.t_or("flow.quickRun.actions.start", "Start"));
+        let stop = gtk::Button::with_label(&self.ctx.t_or("flow.quickRun.actions.stop", "Stop"));
+        let edit = gtk::Button::with_label(&self.ctx.t_or("common.edit", "Edit"));
+        let dup = gtk::Button::with_label(&self.ctx.t_or("common.duplicate", "Duplicate"));
+        let delete = gtk::Button::with_label(&self.ctx.t_or("common.delete", "Delete"));
         delete.add_css_class("destructive-action");
         {
             let view = self.clone();
@@ -349,7 +402,9 @@ impl FlowView {
 
     fn start_run(&self, qr: &QuickRun) {
         let Some(client) = self.ctx.client() else {
-            self.toast.add_toast(adw::Toast::new("Engine offline"));
+            self.toast.add_toast(adw::Toast::new(
+                &self.ctx.t_or("home.errors.engineOffline", "Engine offline"),
+            ));
             return;
         };
         match qr.operation_type {
