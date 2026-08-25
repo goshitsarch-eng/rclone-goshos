@@ -28,6 +28,14 @@ pub struct AutomationRecord {
     pub last_run: Option<DateTime<Utc>>,
 }
 
+pub fn local_watch_sources(store: &AppStore) -> Vec<String> {
+    collect(store)
+        .into_iter()
+        .flat_map(|r| r.sources)
+        .filter(|p| is_local_watch_path(p))
+        .collect()
+}
+
 pub fn collect(store: &AppStore) -> Vec<AutomationRecord> {
     let mut out = Vec::new();
     for (remote, meta) in &store.remotes {
@@ -271,6 +279,7 @@ mod tests {
         assert_eq!(items.len(), 2);
         assert!(items.iter().any(|a| a.cron_enabled));
         assert!(items.iter().any(|a| a.watch_enabled));
+        assert!(local_watch_sources(&store).iter().any(|p| p == "/tmp"));
     }
 
     #[test]

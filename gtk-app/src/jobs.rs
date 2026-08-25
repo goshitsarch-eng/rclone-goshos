@@ -1107,6 +1107,24 @@ pub fn preparing_job(
     }
 }
 
+pub fn preparing_progress_stats(
+    bytes: u64,
+    total_bytes: u64,
+    transfers: u64,
+    total_files: u64,
+    transferring: Value,
+) -> Value {
+    json!({
+        "totalBytes": total_bytes,
+        "bytes": bytes,
+        "transfers": transfers,
+        "totalTransfers": total_files,
+        "completed": [],
+        "transferring": transferring,
+        "preparing": total_bytes == 0 || bytes < total_bytes
+    })
+}
+
 /// Keep preparing uploads in the live list until rclone reports the same job id.
 pub fn merge_preparing_jobs(live: Vec<JobInfo>, history: &[JobInfo]) -> Vec<JobInfo> {
     let mut out = live;
@@ -1945,6 +1963,15 @@ mod tests {
         assert_eq!(preparing.status, "preparing");
         assert_eq!(preparing.stats["preparing"], true);
         assert_eq!(preparing.stats["totalBytes"], 32);
+        let live_stats = preparing_progress_stats(
+            16,
+            32,
+            0,
+            1,
+            json!([{ "name": "a.txt", "bytes": 16, "size": 32 }]),
+        );
+        assert_eq!(live_stats["bytes"], 16);
+        assert_eq!(live_stats["preparing"], true);
         let live = vec![running_job(1, "drive", "sync", "nightly")];
         let merged = merge_preparing_jobs(live.clone(), &[preparing.clone()]);
         assert_eq!(merged[0].id, 9);

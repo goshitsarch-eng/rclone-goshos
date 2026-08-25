@@ -907,6 +907,8 @@ pub struct AppStore {
     pub pending_share_paths: Vec<String>,
     #[serde(default, skip)]
     pub job_meta: HashMap<u64, JobMeta>,
+    #[serde(default, skip)]
+    pub notifications_enabled: bool,
 }
 
 impl AppStore {
@@ -1044,6 +1046,33 @@ impl AppStore {
         if self.job_history.len() > 80 {
             self.job_history.truncate(80);
         }
+    }
+
+    pub fn update_job_stats(&mut self, jobid: u64, stats: Value) -> bool {
+        let Some(job) = self.job_history.iter_mut().find(|j| j.id == jobid) else {
+            return false;
+        };
+        let bytes = stats.get("bytes").and_then(|v| v.as_u64()).unwrap_or(0) as f64;
+        let total = stats
+            .get("totalBytes")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(0) as f64;
+        if total > 0.0 {
+            job.progress = (bytes / total).clamp(0.0, 1.0);
+        }
+        if let Some(list) = stats.get("transferring") {
+            job.transferring = list.clone();
+        }
+        if stats
+            .get("preparing")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false)
+            && job.status != "running"
+        {
+            job.status = "preparing".into();
+        }
+        job.stats = stats;
+        true
     }
 
     pub fn rename_runtime_profile(&mut self, remote: &str, from: &str, to: &str) -> usize {
@@ -1307,6 +1336,9 @@ impl AppStore {
                 let action_ids = rule.action_ids.clone();
                 for action_id in action_ids {
                     if let Some(action) = self.alert_actions.iter().find(|a| a.id == action_id) {
+                        if action.kind == "os_toast" && !self.notifications_enabled {
+                            continue;
+                        }
                         dispatch_action(action, &event);
                     }
                 }
@@ -2017,6 +2049,20 @@ mod tests {
         assert_eq!(store.job_history[0].status, "failed");
         store.dismiss_job(82);
         assert!(store.job_history.iter().all(|j| j.id != 82));
+        store.remember_job(mk(9, "preparing"));
+        assert!(store.update_job_stats(
+            9,
+            json!({
+                "bytes": 16,
+                "totalBytes": 32,
+                "transferring": [{"name": "a.txt"}],
+                "preparing": true
+            })
+        ));
+        assert_eq!(store.job_history[0].progress, 0.5);
+        assert_eq!(store.job_history[0].transferring[0]["name"], "a.txt");
+        assert_eq!(store.job_history[0].status, "preparing");
+        assert!(!store.update_job_stats(99, json!({})));
     }
 
     #[test]

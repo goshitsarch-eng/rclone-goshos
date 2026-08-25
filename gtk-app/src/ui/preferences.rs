@@ -226,7 +226,11 @@ pub fn present(parent: &impl IsA<gtk::Widget>, ctx: AppCtx) {
         "settings.general.notifications.label",
         "Notifications",
         "general.notifications",
-        |_, _| {},
+        |ctx, value| {
+            if let Some(on) = value.as_bool() {
+                ctx.store.borrow_mut().notifications_enabled = on;
+            }
+        },
     );
     add_switch(
         &session,

@@ -86,7 +86,11 @@ impl AppCtx {
         ctx.apply_remote_layout();
         {
             let notifications = ctx.settings.borrow().general.notifications;
-            ctx.store.borrow_mut().seed_alert_defaults(notifications);
+            {
+                let mut store = ctx.store.borrow_mut();
+                store.seed_alert_defaults(notifications);
+                store.notifications_enabled = notifications;
+            }
         }
         ctx.watch_hub
             .borrow_mut()
@@ -526,17 +530,17 @@ impl AppCtx {
         self.refresh_runtime();
     }
 
+    pub fn reload_automations(&self) {
+        let sources = crate::automation::local_watch_sources(&self.store.borrow());
+        self.watch_hub.borrow_mut().ensure_paths(&sources);
+    }
+
     pub fn tick_automations(&self) {
         let Some(client) = self.client() else {
             return;
         };
+        self.reload_automations();
         let records = crate::automation::collect(&self.store.borrow());
-        let local_sources: Vec<String> = records
-            .iter()
-            .flat_map(|r| r.sources.iter().cloned())
-            .filter(|p| crate::automation::is_local_watch_path(p))
-            .collect();
-        self.watch_hub.borrow_mut().ensure_paths(&local_sources);
         let dirty = self.watch_hub.borrow().consume_dirty();
         let now = chrono::Utc::now();
         let mut fired = false;

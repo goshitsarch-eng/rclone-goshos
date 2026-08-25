@@ -4327,6 +4327,9 @@ pub fn restore_preview(
                         }
                     }
                     ctx.persist();
+                    ctx.restart_engine();
+                    ctx.reload_automations();
+                    ctx.refresh_runtime();
                     toast.add_toast(adw::Toast::new(
                         &ctx.t_or("backup.restoreSuccess", "Backup restored successfully"),
                     ));
