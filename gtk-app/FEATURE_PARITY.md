@@ -156,6 +156,13 @@ This client is the GTK 4 + libadwaita rewrite of the Angular/Tauri desktop UI. I
 - Alert history stats plus template-key helper in the action editor
 - Persisted rclone `options/set` store (`backend.json`) applied on backend switch / engine restart
 - Backup export can dump remotes from local or an extra RC backend
+- Quick Run and Start Operation merge live `options/info` flags plus CLI import (and serve-type flags)
+- Job detail: stop group, retryError, and check/cryptcheck resolve + delete actions
+- Template capture can include selected flag categories
+- Alert actions support retry_count and richer test context
+- RC 401 repair opens the backends editor; FUSE repair can run a package-manager install
+- Restrict mode redacts wizard secrets and remote-config JSON
+- Developer menu Memory stats dialog (alloc/heap/GC)
 
 ## Still deepening toward pixel-level Angular parity
 

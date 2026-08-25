@@ -614,9 +614,14 @@ fn operation_page(
     let json_view = gtk::TextView::new();
     json_view.set_monospace(true);
     json_view.set_wrap_mode(gtk::WrapMode::WordChar);
+    let json_doc = if ctx.settings.borrow().general.restrict {
+        crate::restrict::redact_value(&rclone)
+    } else {
+        rclone.clone()
+    };
     json_view
         .buffer()
-        .set_text(&serde_json::to_string_pretty(&rclone).unwrap_or_else(|_| "{}".into()));
+        .set_text(&serde_json::to_string_pretty(&json_doc).unwrap_or_else(|_| "{}".into()));
     let json_scroll = gtk::ScrolledWindow::new();
     json_scroll.set_min_content_height(180);
     json_scroll.set_child(Some(&json_view));

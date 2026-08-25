@@ -39,6 +39,24 @@ pub fn display_value(key: &str, value: &Value, restrict: bool) -> String {
     }
 }
 
+pub fn redact_value(value: &Value) -> Value {
+    match value {
+        Value::Object(map) => {
+            let mut out = serde_json::Map::new();
+            for (key, child) in map {
+                if is_sensitive_key(key) {
+                    out.insert(key.clone(), Value::String(RESTRICTED_LABEL.into()));
+                } else {
+                    out.insert(key.clone(), redact_value(child));
+                }
+            }
+            Value::Object(out)
+        }
+        Value::Array(items) => Value::Array(items.iter().map(redact_value).collect()),
+        other => other.clone(),
+    }
+}
+
 pub fn flatten_settings(prefix: &str, value: &Value, restrict: bool) -> Vec<(String, String)> {
     let mut out = Vec::new();
     flatten_into(prefix, value, restrict, &mut out);
@@ -102,5 +120,8 @@ mod tests {
             .iter()
             .any(|(k, v)| k == "app.token" && v == RESTRICTED_LABEL));
         assert!(rows.iter().any(|(k, v)| k == "app.dryRun" && v == "true"));
+        let redacted = redact_value(&json!({ "token": "abc", "srcFs": "drive:" }));
+        assert_eq!(redacted["token"], RESTRICTED_LABEL);
+        assert_eq!(redacted["srcFs"], "drive:");
     }
 }

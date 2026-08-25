@@ -890,6 +890,55 @@ pub fn about(parent: &impl IsA<gtk::Widget>, ctx: AppCtx) {
     dialog.present(Some(parent));
 }
 
+pub fn memory_stats(parent: &impl IsA<gtk::Widget>, ctx: AppCtx) {
+    let dialog = adw::Dialog::new();
+    dialog.set_title(&ctx.t_or("modals.about.memory", "rclone memory"));
+    dialog.set_content_width(420);
+    let list = gtk::ListBox::new();
+    list.add_css_class("boxed-list");
+    if let Some(mem) = ctx.client().and_then(|c| c.memstats().ok()) {
+        for (key, label) in [
+            ("Alloc", "Allocated"),
+            ("Sys", "System"),
+            ("HeapAlloc", "Heap"),
+            ("NumGC", "GC cycles"),
+        ] {
+            let row = adw::ActionRow::new();
+            row.set_title(label);
+            let value = mem.get(key).cloned().unwrap_or(serde_json::json!(0));
+            row.set_subtitle(&if key == "NumGC" {
+                value.to_string()
+            } else {
+                crate::rclone::format_bytes(value.as_i64().unwrap_or(0))
+            });
+            list.append(&row);
+        }
+    } else {
+        let row = adw::ActionRow::new();
+        row.set_title("Memory stats unavailable");
+        list.append(&row);
+    }
+    let gc = gtk::Button::with_label(&ctx.t_or("titlebar.menu.runGc", "Run GC"));
+    {
+        let ctx = ctx.clone();
+        let parent = parent.clone();
+        let dialog = dialog.clone();
+        gc.connect_clicked(move |_| {
+            if let Some(client) = ctx.client() {
+                let _ = client.gc();
+            }
+            dialog.close();
+            memory_stats(&parent, ctx.clone());
+        });
+    }
+    let box_ = gtk::Box::new(gtk::Orientation::Vertical, 8);
+    box_.set_margin_top(12);
+    box_.append(&scrolled_list(&list));
+    box_.append(&gc);
+    dialog.set_child(Some(&box_));
+    dialog.present(Some(parent));
+}
+
 pub fn updates(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, toast: adw::ToastOverlay) {
     let dialog = adw::Dialog::new();
     dialog.set_title(&ctx.t_or("modals.updates.title", "Updates"));
@@ -2567,20 +2616,12 @@ pub fn start_operation(
     flags_group.set_title("Operation flags");
     let flag_rows: Rc<RefCell<Vec<(String, adw::EntryRow, String)>>> =
         Rc::new(RefCell::new(Vec::new()));
-    for flag in crate::flags::static_flags_for(op) {
+    let live_blocks = operation_flag_blocks(&ctx);
+    for flag in crate::flags::merged_flags_for(op, &live_blocks) {
         if op == OperationType::Serve && flag.field_name == "type" {
             continue;
         }
-        let row = adw::EntryRow::new();
-        row.set_title(&flag.name);
-        if !flag.help.is_empty() {
-            row.set_tooltip_text(Some(&flag.help));
-        }
-        let current = rclone
-            .get(&flag.field_name)
-            .map(|v| v.to_string().trim_matches('"').to_string())
-            .unwrap_or_else(|| flag.default_str.clone());
-        row.set_text(&current);
+        let row = flag_value_row(&flag, &rclone);
         flags_group.add(&row);
         flag_rows
             .borrow_mut()
@@ -2633,6 +2674,7 @@ pub fn start_operation(
             });
         }
     }
+    attach_cli_import(&flags_group, flag_rows.clone());
 
     {
         let profiles = profiles.clone();
@@ -3006,6 +3048,8 @@ pub fn quick_run_editor(
     flags_group.set_title(&ctx.t_or("flow.quickRun.editor.flags", "Operation flags"));
     let flag_rows: Rc<RefCell<Vec<(String, adw::EntryRow, String)>>> =
         Rc::new(RefCell::new(Vec::new()));
+    let serve_flag_rows: Rc<RefCell<Vec<(String, String, adw::EntryRow, String)>>> =
+        Rc::new(RefCell::new(Vec::new()));
     let initial_op = existing
         .as_ref()
         .map(|qr| qr.operation_type)
@@ -3014,21 +3058,54 @@ pub fn quick_run_editor(
         .as_ref()
         .map(|qr| qr.config.rclone.clone())
         .unwrap_or(serde_json::json!({}));
-    for flag in crate::flags::static_flags_for(initial_op) {
-        let row = adw::EntryRow::new();
-        row.set_title(&flag.name);
-        if !flag.help.is_empty() {
-            row.set_tooltip_text(Some(&flag.help));
+    let live_blocks = operation_flag_blocks(&ctx);
+    populate_flag_rows(
+        &flags_group,
+        &flag_rows,
+        initial_op,
+        &initial_rclone,
+        &live_blocks,
+    );
+    let serve = adw::ComboRow::new();
+    serve.set_title(&ctx.t_or("operation.serve.type", "Serve type"));
+    serve.set_model(Some(&gtk::StringList::new(&OperationType::SERVE_TYPES)));
+    serve.set_visible(initial_op == OperationType::Serve);
+    if let Some(t) = initial_rclone.get("type").and_then(|x| x.as_str()) {
+        if let Some(idx) = OperationType::SERVE_TYPES.iter().position(|s| *s == t) {
+            serve.set_selected(idx as u32);
         }
-        let current = initial_rclone
-            .get(&flag.field_name)
-            .map(|v| v.to_string().trim_matches('"').to_string())
-            .unwrap_or_else(|| flag.default_str.clone());
-        row.set_text(&current);
-        flags_group.add(&row);
-        flag_rows
-            .borrow_mut()
-            .push((flag.field_name, row, flag.type_name));
+    }
+    flags_group.add(&serve);
+    if initial_op == OperationType::Serve {
+        populate_serve_flag_rows(
+            &flags_group,
+            &serve_flag_rows,
+            &live_blocks,
+            &initial_rclone,
+            &serve,
+        );
+    }
+    attach_cli_import(&flags_group, flag_rows.clone());
+    {
+        let flags_group = flags_group.clone();
+        let flag_rows = flag_rows.clone();
+        let serve_flag_rows = serve_flag_rows.clone();
+        let serve = serve.clone();
+        let rclone = initial_rclone.clone();
+        let blocks = live_blocks.clone();
+        op_row.connect_selected_notify(move |row| {
+            let op = OperationType::ALL
+                .get(row.selected() as usize)
+                .copied()
+                .unwrap_or(OperationType::Sync);
+            serve.set_visible(op == OperationType::Serve);
+            clear_flag_rows(&flags_group, &flag_rows);
+            clear_serve_flag_rows(&flags_group, &serve_flag_rows);
+            populate_flag_rows(&flags_group, &flag_rows, op, &rclone, &blocks);
+            if op == OperationType::Serve {
+                populate_serve_flag_rows(&flags_group, &serve_flag_rows, &blocks, &rclone, &serve);
+            }
+        });
     }
     let save = gtk::Button::with_label(&ctx.t_or("common.save", "Save"));
     save.add_css_class("suggested-action");
@@ -3040,6 +3117,8 @@ pub fn quick_run_editor(
         let filter_profile = filter_profile.clone();
         let backend_profile = backend_profile.clone();
         let flag_rows = flag_rows.clone();
+        let serve_flag_rows = serve_flag_rows.clone();
+        let serve = serve.clone();
         let dry = dry.clone();
         save.connect_clicked(move |_| {
             let expr = cron.text().to_string();
@@ -3088,8 +3167,31 @@ pub fn quick_run_editor(
             if dry.is_active() {
                 rclone["dryRun"] = serde_json::json!(true);
             }
+            if op == OperationType::Serve {
+                rclone["type"] = serde_json::json!(OperationType::SERVE_TYPES
+                    .get(serve.selected() as usize)
+                    .copied()
+                    .unwrap_or("http"));
+            }
             if let Some(obj) = rclone.as_object_mut() {
                 for (field, row, type_name) in flag_rows.borrow().iter() {
+                    let text = row.text().to_string();
+                    if text.is_empty() {
+                        continue;
+                    }
+                    obj.insert(
+                        field.clone(),
+                        crate::flags::parse_flag_value(type_name, &text),
+                    );
+                }
+                let selected_serve = OperationType::SERVE_TYPES
+                    .get(serve.selected() as usize)
+                    .copied()
+                    .unwrap_or("http");
+                for (serve_type, field, row, type_name) in serve_flag_rows.borrow().iter() {
+                    if serve_type != selected_serve {
+                        continue;
+                    }
                     let text = row.text().to_string();
                     if text.is_empty() {
                         continue;
@@ -3669,6 +3771,24 @@ pub fn job_detail(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, job_id: u64) {
             }
         });
     }
+    let stop_group = gtk::Button::with_label(&ctx.t_or("modals.jobDetail.stopGroup", "Stop group"));
+    {
+        let ctx = ctx.clone();
+        stop_group.connect_clicked(move |_| {
+            if let Some(client) = ctx.client() {
+                let group = ctx
+                    .snapshot
+                    .borrow()
+                    .jobs
+                    .iter()
+                    .find(|j| j.id == job_id)
+                    .map(|j| j.group.clone())
+                    .unwrap_or_else(|| format!("job/{job_id}"));
+                let _ = client.job_stop_group(&group);
+                ctx.refresh_runtime();
+            }
+        });
+    }
     let reset = gtk::Button::with_label(&ctx.t_or("modals.jobDetail.resetStats", "Reset stats"));
     {
         let ctx = ctx.clone();
@@ -3768,6 +3888,7 @@ pub fn job_detail(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, job_id: u64) {
     }
     let actions = gtk::Box::new(gtk::Orientation::Horizontal, 8);
     actions.append(&stop);
+    actions.append(&stop_group);
     actions.append(&reset);
     actions.append(&delete);
     actions.append(&open_src);
@@ -3894,6 +4015,20 @@ pub fn job_detail(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, job_id: u64) {
                         .map(|e| ctx.translate_error(e))
                         .unwrap_or_else(|| "—".into()),
                 ),
+                (
+                    ctx.t_or("modals.jobDetail.fields.retryError", "Retry error"),
+                    if job
+                        .stats
+                        .get("retryError")
+                        .or_else(|| job.stats.get("retry_error"))
+                        .and_then(|x| x.as_bool())
+                        .unwrap_or(false)
+                    {
+                        ctx.t_or("common.yes", "Yes")
+                    } else {
+                        ctx.t_or("common.no", "No")
+                    },
+                ),
             ] {
                 let row = adw::ActionRow::new();
                 row.set_title(&title);
@@ -3919,32 +4054,23 @@ pub fn job_detail(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, job_id: u64) {
                 &dialog,
                 &job.operation,
             );
-            let checks = job
+            let check_source = job
                 .stats
                 .get("checks")
                 .or_else(|| job.output.get("results"))
-                .and_then(|v| v.as_array());
-            if let Some(arr) = checks {
-                if !arr.is_empty() {
-                    let row = adw::ActionRow::new();
-                    row.set_title(&format!("{} check results", arr.len()));
-                    let preview = arr
-                        .iter()
-                        .filter_map(|item| item.get("name").and_then(|x| x.as_str()))
-                        .take(3)
-                        .collect::<Vec<_>>()
-                        .join(", ");
-                    row.set_subtitle(&preview);
-                    completed.append(&row);
-                }
-            }
-            if let Some(cc) = job.output.get("cryptcheck").and_then(|v| v.get("results")) {
-                if let Some(first) = cc.as_array().and_then(|a| a.first()) {
-                    let row = adw::ActionRow::new();
-                    row.set_title("Cryptcheck");
-                    let status = first.get("status").and_then(|x| x.as_str()).unwrap_or("OK");
-                    row.set_subtitle(status);
-                    completed.append(&row);
+                .or_else(|| job.output.get("cryptcheck").and_then(|v| v.get("results")))
+                .cloned()
+                .unwrap_or(serde_json::json!([]));
+            let results = crate::checks::parse_check_items(&check_source, &job.src, &job.dst);
+            if !results.is_empty() {
+                let heading = adw::ActionRow::new();
+                heading.set_title(&format!("{} check results", results.len()));
+                heading.set_subtitle(
+                    "Resolve copies the missing/changed file; delete uses rclone deletefile",
+                );
+                completed.append(&heading);
+                for item in results.into_iter().take(40) {
+                    completed.append(&check_result_row(&ctx, &item, &dialog));
                 }
             }
         }
@@ -4623,24 +4749,7 @@ pub fn templates(parent: &impl IsA<gtk::Widget>, ctx: AppCtx) {
         let ctx = ctx.clone();
         let parent = parent.clone();
         add.connect_clicked(move |_| {
-            let values = ctx
-                .client()
-                .and_then(|c| c.options_get().ok())
-                .unwrap_or(serde_json::json!({}));
-            ctx.store
-                .borrow_mut()
-                .templates
-                .push(crate::store::UserTemplate {
-                    id: uuid::Uuid::new_v4().to_string(),
-                    name: format!("Template {}", chrono::Local::now().format("%Y-%m-%d %H:%M")),
-                    description: "Captured rclone options".into(),
-                    icon: "emblem-ok-symbolic".into(),
-                    created_at: chrono::Utc::now().to_rfc3339(),
-                    updated_at: chrono::Utc::now().to_rfc3339(),
-                    values,
-                });
-            ctx.persist();
-            templates(&parent, ctx.clone());
+            capture_template(&parent, ctx.clone());
         });
     }
     let box_ = gtk::Box::new(gtk::Orientation::Vertical, 8);
@@ -5048,6 +5157,305 @@ fn scrolled_list(list: &gtk::ListBox) -> gtk::ScrolledWindow {
     scroll.set_vexpand(true);
     scroll.set_child(Some(list));
     scroll
+}
+
+fn operation_flag_blocks(ctx: &AppCtx) -> Vec<crate::flags::FlagBlock> {
+    ctx.client()
+        .and_then(|c| c.options_info().ok())
+        .map(|info| crate::flags::parse_options_info(&info))
+        .unwrap_or_default()
+}
+
+fn flag_value_row(flag: &crate::flags::FlagOption, rclone: &serde_json::Value) -> adw::EntryRow {
+    let row = adw::EntryRow::new();
+    row.set_title(&flag.name);
+    if !flag.help.is_empty() {
+        row.set_tooltip_text(Some(&flag.help));
+    }
+    let current = rclone
+        .get(&flag.field_name)
+        .map(|v| v.to_string().trim_matches('"').to_string())
+        .unwrap_or_else(|| flag.default_str.clone());
+    row.set_text(&current);
+    row
+}
+
+fn attach_cli_import(
+    flags_group: &adw::PreferencesGroup,
+    flag_rows: Rc<RefCell<Vec<(String, adw::EntryRow, String)>>>,
+) {
+    let cli = adw::EntryRow::new();
+    cli.set_title("Import rclone CLI flags");
+    let apply_cli = gtk::Button::with_label("Apply");
+    {
+        let flag_rows = flag_rows.clone();
+        let cli = cli.clone();
+        apply_cli.connect_clicked(move |_| {
+            let parsed = crate::jobs::parse_cli_flags(&cli.text());
+            for (field, row, _) in flag_rows.borrow().iter() {
+                if let Some(value) = parsed
+                    .get(field)
+                    .or_else(|| parsed.get(&field.replace('-', "_")))
+                {
+                    row.set_text(&value.to_string().trim_matches('"').to_string());
+                }
+            }
+        });
+    }
+    let cli_row = adw::ActionRow::new();
+    cli_row.set_title("CLI import");
+    cli_row.add_suffix(&apply_cli);
+    flags_group.add(&cli);
+    flags_group.add(&cli_row);
+}
+
+fn clear_flag_rows(
+    flags_group: &adw::PreferencesGroup,
+    flag_rows: &Rc<RefCell<Vec<(String, adw::EntryRow, String)>>>,
+) {
+    for (_, row, _) in flag_rows.borrow().iter() {
+        flags_group.remove(row);
+    }
+    flag_rows.borrow_mut().clear();
+}
+
+fn clear_serve_flag_rows(
+    flags_group: &adw::PreferencesGroup,
+    serve_flag_rows: &Rc<RefCell<Vec<(String, String, adw::EntryRow, String)>>>,
+) {
+    for (_, _, row, _) in serve_flag_rows.borrow().iter() {
+        flags_group.remove(row);
+    }
+    serve_flag_rows.borrow_mut().clear();
+}
+
+fn populate_flag_rows(
+    flags_group: &adw::PreferencesGroup,
+    flag_rows: &Rc<RefCell<Vec<(String, adw::EntryRow, String)>>>,
+    op: OperationType,
+    rclone: &serde_json::Value,
+    blocks: &[crate::flags::FlagBlock],
+) {
+    for flag in crate::flags::merged_flags_for(op, blocks) {
+        if op == OperationType::Serve && flag.field_name == "type" {
+            continue;
+        }
+        let row = flag_value_row(&flag, rclone);
+        flags_group.add(&row);
+        flag_rows
+            .borrow_mut()
+            .push((flag.field_name, row, flag.type_name));
+    }
+}
+
+fn populate_serve_flag_rows(
+    flags_group: &adw::PreferencesGroup,
+    serve_flag_rows: &Rc<RefCell<Vec<(String, String, adw::EntryRow, String)>>>,
+    blocks: &[crate::flags::FlagBlock],
+    rclone: &serde_json::Value,
+    serve: &adw::ComboRow,
+) {
+    for serve_type in OperationType::SERVE_TYPES {
+        for flag in crate::flags::collect_serve_flags(blocks, serve_type) {
+            let row = flag_value_row(&flag, rclone);
+            row.set_title(&format!("{serve_type} · {}", flag.name));
+            let selected = OperationType::SERVE_TYPES
+                .get(serve.selected() as usize)
+                .copied()
+                .unwrap_or("http");
+            row.set_visible(serve_type == selected);
+            flags_group.add(&row);
+            serve_flag_rows.borrow_mut().push((
+                serve_type.to_string(),
+                flag.field_name,
+                row,
+                flag.type_name,
+            ));
+        }
+    }
+    let serve_flag_rows = serve_flag_rows.clone();
+    serve.connect_selected_notify(move |row| {
+        let selected = OperationType::SERVE_TYPES
+            .get(row.selected() as usize)
+            .copied()
+            .unwrap_or("http");
+        for (serve_type, _, widget, _) in serve_flag_rows.borrow().iter() {
+            widget.set_visible(serve_type == selected);
+        }
+    });
+}
+
+fn check_result_row(
+    ctx: &AppCtx,
+    item: &crate::checks::CheckResult,
+    parent: &adw::Dialog,
+) -> adw::ActionRow {
+    let row = adw::ActionRow::new();
+    row.set_title(&item.name);
+    row.set_subtitle(&item.status);
+    if let Some(kind) = item.resolve_kind() {
+        let resolve = gtk::Button::with_label(if item.needs_overwrite_confirm() {
+            "Overwrite"
+        } else {
+            "Resolve"
+        });
+        resolve.set_valign(gtk::Align::Center);
+        let ctx = ctx.clone();
+        let item = item.clone();
+        let parent = parent.clone();
+        resolve.connect_clicked(move |_| {
+            let go = || resolve_check_item(&ctx, &item, kind);
+            if item.needs_overwrite_confirm() {
+                let confirm = adw::AlertDialog::new(
+                    Some("Overwrite destination?"),
+                    Some(&format!("Copy {} onto the destination copy.", item.name)),
+                );
+                confirm.add_response("cancel", "Cancel");
+                confirm.add_response("ok", "Overwrite");
+                confirm.set_response_appearance("ok", adw::ResponseAppearance::Destructive);
+                let ctx = ctx.clone();
+                let item = item.clone();
+                confirm.connect_response(None, move |_, response| {
+                    if response == "ok" {
+                        resolve_check_item(&ctx, &item, kind);
+                    }
+                });
+                confirm.present(Some(&parent));
+            } else {
+                go();
+            }
+        });
+        row.add_suffix(&resolve);
+    }
+    let del_src = gtk::Button::from_icon_name("edit-delete-symbolic");
+    del_src.set_tooltip_text(Some("Delete source"));
+    del_src.set_valign(gtk::Align::Center);
+    {
+        let ctx = ctx.clone();
+        let item = item.clone();
+        del_src.connect_clicked(move |_| {
+            delete_check_side(&ctx, &item.src_fs, &item.name);
+        });
+    }
+    let del_dst = gtk::Button::from_icon_name("user-trash-symbolic");
+    del_dst.set_tooltip_text(Some("Delete destination"));
+    del_dst.set_valign(gtk::Align::Center);
+    {
+        let ctx = ctx.clone();
+        let item = item.clone();
+        del_dst.connect_clicked(move |_| {
+            delete_check_side(&ctx, &item.dst_fs, &item.name);
+        });
+    }
+    row.add_suffix(&del_src);
+    row.add_suffix(&del_dst);
+    row
+}
+
+fn resolve_check_item(ctx: &AppCtx, item: &crate::checks::CheckResult, kind: &str) {
+    let Some(client) = ctx.client() else {
+        return;
+    };
+    let (src_fs, dst_fs) = if kind == "copy_dst_to_src" {
+        (item.dst_fs.as_str(), item.src_fs.as_str())
+    } else {
+        (item.src_fs.as_str(), item.dst_fs.as_str())
+    };
+    if let Err(e) = client.copy_file(src_fs, &item.name, dst_fs, &item.name) {
+        log::warn!("check resolve failed: {e}");
+    } else {
+        ctx.refresh_runtime();
+    }
+}
+
+fn delete_check_side(ctx: &AppCtx, fs: &str, path: &str) {
+    let Some(client) = ctx.client() else {
+        return;
+    };
+    if let Err(e) = client.delete_file(fs, path) {
+        log::warn!("check delete failed: {e}");
+    } else {
+        ctx.refresh_runtime();
+    }
+}
+
+fn capture_template(parent: &impl IsA<gtk::Widget>, ctx: AppCtx) {
+    let dialog = adw::Dialog::new();
+    dialog.set_title("Capture template");
+    dialog.set_content_width(420);
+    let name = adw::EntryRow::new();
+    name.set_title("Name");
+    name.set_text(&format!(
+        "Template {}",
+        chrono::Local::now().format("%Y-%m-%d %H:%M")
+    ));
+    let categories = [
+        ("backend", "Backend / main"),
+        ("filter", "Filter"),
+        ("vfs", "VFS"),
+        ("mount", "Mount"),
+        ("copy", "Copy"),
+        ("sync", "Sync"),
+        ("check", "Check"),
+    ];
+    let switches: Vec<(&'static str, adw::SwitchRow)> = categories
+        .into_iter()
+        .map(|(id, label)| {
+            let row = adw::SwitchRow::new();
+            row.set_title(label);
+            row.set_active(true);
+            (id, row)
+        })
+        .collect();
+    let group = adw::PreferencesGroup::new();
+    group.set_title("Categories to include");
+    group.add(&name);
+    for (_, row) in &switches {
+        group.add(row);
+    }
+    let save = gtk::Button::with_label("Save");
+    save.add_css_class("suggested-action");
+    {
+        let ctx = ctx.clone();
+        let parent = parent.clone();
+        let dialog = dialog.clone();
+        let name = name.clone();
+        let switches = switches.clone();
+        save.connect_clicked(move |_| {
+            let selected: Vec<&str> = switches
+                .iter()
+                .filter(|(_, row)| row.is_active())
+                .map(|(id, _)| *id)
+                .collect();
+            let current = ctx
+                .client()
+                .and_then(|c| c.options_get().ok())
+                .unwrap_or(serde_json::json!({}));
+            let blocks = operation_flag_blocks(&ctx);
+            let values = crate::flags::filter_options_for_categories(&current, &blocks, &selected);
+            ctx.store
+                .borrow_mut()
+                .templates
+                .push(crate::store::UserTemplate {
+                    id: uuid::Uuid::new_v4().to_string(),
+                    name: name.text().to_string(),
+                    description: format!("Captured {} categories", selected.len()),
+                    icon: "emblem-ok-symbolic".into(),
+                    created_at: chrono::Utc::now().to_rfc3339(),
+                    updated_at: chrono::Utc::now().to_rfc3339(),
+                    values,
+                });
+            ctx.persist();
+            dialog.close();
+            templates(&parent, ctx.clone());
+        });
+    }
+    let box_ = gtk::Box::new(gtk::Orientation::Vertical, 8);
+    box_.set_margin_top(12);
+    box_.append(&group);
+    box_.append(&save);
+    dialog.set_child(Some(&box_));
+    dialog.present(Some(parent));
 }
 
 pub(crate) fn present_window_or_dialog(
@@ -5558,6 +5966,15 @@ fn alert_action_editor(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, existing_id:
     } else {
         body.set_text("{{title}}: {{body}}");
     }
+    let retries = adw::SpinRow::with_range(0.0, 5.0, 1.0);
+    retries.set_title("Retry count");
+    retries.set_subtitle("Extra delivery attempts after a failure");
+    retries.set_value(
+        existing
+            .as_ref()
+            .map(crate::store::alert_retry_count)
+            .unwrap_or(0) as f64,
+    );
     let keys = adw::ComboRow::new();
     keys.set_title(&ctx.t_or("alerts.templateKeys", "Insert template key"));
     keys.set_model(Some(&gtk::StringList::new(
@@ -5598,6 +6015,7 @@ fn alert_action_editor(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, existing_id:
         let token = token.clone();
         let extra = extra.clone();
         let body = body.clone();
+        let retries = retries.clone();
         let existing_id = existing_id.clone();
         let ctx = ctx.clone();
         move || {
@@ -5627,6 +6045,7 @@ fn alert_action_editor(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, existing_id:
                     token: token.text().to_string(),
                     extra: extra.text().to_string(),
                     body: body.text().to_string(),
+                    retry_count: retries.value() as u32,
                 },
             );
             action
@@ -5635,14 +6054,22 @@ fn alert_action_editor(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, existing_id:
     {
         let collect = collect.clone();
         let parent = parent.clone();
+        let ctx = ctx.clone();
         test.connect_clicked(move |_| {
             let action = collect();
-            let event = AlertEvent::new(
+            let mut event = AlertEvent::new(
                 AlertEventKind::System,
                 AlertSeverity::Info,
                 "Test alert".into(),
                 format!("Testing action {}", action.name),
             );
+            event.remote = ctx
+                .selected_remote
+                .borrow()
+                .clone()
+                .unwrap_or_else(|| "drive".into());
+            event.profile = "default".into();
+            event.origin = "test".into();
             crate::store::dispatch_action(&action, &event);
             let toast = adw::AlertDialog::new(
                 Some("Test sent"),
@@ -5790,6 +6217,7 @@ fn alert_action_editor(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, existing_id:
     group.add(&token);
     group.add(&extra);
     group.add(&body);
+    group.add(&retries);
     group.add(&keys);
     let buttons = gtk::Box::new(gtk::Orientation::Horizontal, 8);
     buttons.append(&test);
@@ -5861,20 +6289,24 @@ pub fn repair(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, toast: adw::ToastOver
             let parent = parent.clone();
             let kind = issue.kind.clone();
             btn.connect_clicked(move |_| match kind {
-                crate::repair::RepairKind::MissingBinary | crate::repair::RepairKind::VersionTooOld => {
+                crate::repair::RepairKind::MissingBinary
+                | crate::repair::RepairKind::VersionTooOld => {
                     install_rclone_update(&parent, ctx.clone(), toast.clone());
                     ctx.restart_engine();
                 }
-                crate::repair::RepairKind::FuseMissing => {
-                    let help = adw::AlertDialog::new(
-                        Some("Install FUSE"),
-                        Some("On Debian/Ubuntu: sudo apt install fuse3\nOn Fedora: sudo dnf install fuse3\nThen restart the session so /dev/fuse is available."),
-                    );
-                    help.add_response("ok", "OK");
-                    help.present(Some(&parent));
-                }
+                crate::repair::RepairKind::FuseMissing => match crate::repair::try_install_fuse() {
+                    Ok(msg) => toast.add_toast(adw::Toast::new(&msg)),
+                    Err(e) => {
+                        let help = adw::AlertDialog::new(Some("Install FUSE"), Some(&e));
+                        help.add_response("ok", "OK");
+                        help.present(Some(&parent));
+                    }
+                },
                 crate::repair::RepairKind::PasswordRequired => {
                     preferences(&parent, ctx.clone());
+                }
+                crate::repair::RepairKind::AuthFailed => {
+                    backends(&parent, ctx.clone());
                 }
                 crate::repair::RepairKind::ConfigUnreadable => {
                     restore_or_pick_config(&parent, ctx.clone());

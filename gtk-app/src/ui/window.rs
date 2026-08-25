@@ -397,6 +397,10 @@ fn app_menu(ctx: &AppCtx) -> gio::Menu {
         Some("win.open-log"),
     );
     tools.append(
+        Some(&ctx.t_or("modals.about.memory", "Memory stats")),
+        Some("win.memory"),
+    );
+    tools.append(
         Some(&ctx.t_or("titlebar.menu.runGc", "Run GC")),
         Some("win.gc"),
     );
@@ -775,6 +779,14 @@ fn install_actions(
             Box::new(|| {
                 let _ = open::that(crate::settings::AppSettings::log_path());
             }),
+        );
+    }
+    {
+        let ctx = ctx.clone();
+        let window = window.clone();
+        add_action(
+            "memory",
+            Box::new(move || dialogs::memory_stats(&window, ctx.clone())),
         );
     }
     {

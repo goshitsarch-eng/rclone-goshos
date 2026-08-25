@@ -477,6 +477,7 @@ pub struct AlertActionDraft {
     pub token: String,
     pub extra: String,
     pub body: String,
+    pub retry_count: u32,
 }
 
 pub fn alert_action_config(kind: &str, draft: &AlertActionDraft) -> Value {
@@ -485,27 +486,32 @@ pub fn alert_action_config(kind: &str, draft: &AlertActionDraft) -> Value {
     } else {
         draft.body.clone()
     };
+    let retry = draft.retry_count.min(5);
     match kind {
-        "os_toast" => json!({ "body_template": body }),
+        "os_toast" => json!({ "body_template": body, "retry_count": retry }),
         "webhook" => json!({
             "url": draft.url,
             "method": if draft.method.is_empty() { "POST".into() } else { draft.method.clone() },
             "body_template": body,
+            "retry_count": retry,
         }),
         "telegram" => json!({
             "bot_token": draft.token,
             "chat_id": draft.extra,
             "body_template": body,
+            "retry_count": retry,
         }),
         "whatsapp" => json!({
             "apikey": draft.token,
             "phone": draft.extra,
             "gateway_url": draft.url,
             "body_template": body,
+            "retry_count": retry,
         }),
         "script" => json!({
             "command": draft.extra,
             "body_template": body,
+            "retry_count": retry,
         }),
         "email" => json!({
             "smtp_server": draft.url,
@@ -514,15 +520,26 @@ pub fn alert_action_config(kind: &str, draft: &AlertActionDraft) -> Value {
             "from": draft.extra,
             "to": draft.extra,
             "body_template": body,
+            "retry_count": retry,
         }),
         "mqtt" => json!({
             "broker_url": draft.url,
             "topic": if draft.method.is_empty() { "rclone/alerts".into() } else { draft.method.clone() },
             "password": draft.token,
             "body_template": body,
+            "retry_count": retry,
         }),
-        _ => json!({ "body_template": body }),
+        _ => json!({ "body_template": body, "retry_count": retry }),
     }
+}
+
+pub fn alert_retry_count(action: &AlertAction) -> u32 {
+    action
+        .config
+        .get("retry_count")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(0)
+        .min(5) as u32
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -849,6 +866,15 @@ pub fn dispatch_action(action: &AlertAction, event: &AlertEvent) {
     if !action.enabled {
         return;
     }
+    let attempts = alert_retry_count(action) + 1;
+    for attempt in 0..attempts {
+        if dispatch_action_once(action, event) || attempt + 1 == attempts {
+            break;
+        }
+    }
+}
+
+fn dispatch_action_once(action: &AlertAction, event: &AlertEvent) -> bool {
     let body = render_template(
         action
             .config
@@ -858,94 +884,95 @@ pub fn dispatch_action(action: &AlertAction, event: &AlertEvent) {
         event,
     );
     match action.kind.as_str() {
-        "os_toast" => {
-            let _ = notify_rust::Notification::new()
-                .summary(&event.title)
-                .body(&event.body)
-                .show();
-        }
+        "os_toast" => notify_rust::Notification::new()
+            .summary(&event.title)
+            .body(&event.body)
+            .show()
+            .is_ok(),
         "webhook" => {
-            if let Some(url) = action.config.get("url").and_then(|x| x.as_str()) {
-                let method = action
-                    .config
-                    .get("method")
-                    .and_then(|x| x.as_str())
-                    .unwrap_or("POST");
-                let payload = json!({
-                    "title": event.title,
-                    "body": body,
-                    "severity": event.severity.as_str(),
-                    "kind": event.kind.as_str(),
-                });
-                let req = if method.eq_ignore_ascii_case("GET") {
-                    ureq::get(url)
-                } else {
-                    ureq::post(url)
-                };
-                let _ = req
-                    .timeout(std::time::Duration::from_secs(8))
-                    .send_json(payload);
-            }
+            let Some(url) = action.config.get("url").and_then(|x| x.as_str()) else {
+                return false;
+            };
+            let method = action
+                .config
+                .get("method")
+                .and_then(|x| x.as_str())
+                .unwrap_or("POST");
+            let payload = json!({
+                "title": event.title,
+                "body": body,
+                "severity": event.severity.as_str(),
+                "kind": event.kind.as_str(),
+                "remote": event.remote,
+                "profile": event.profile,
+            });
+            let req = if method.eq_ignore_ascii_case("GET") {
+                ureq::get(url)
+            } else {
+                ureq::post(url)
+            };
+            req.timeout(std::time::Duration::from_secs(8))
+                .send_json(payload)
+                .is_ok()
         }
         "telegram" => {
-            if let (Some(token), Some(chat)) = (
+            let (Some(token), Some(chat)) = (
                 action.config.get("bot_token").and_then(|x| x.as_str()),
                 action.config.get("chat_id").and_then(|x| x.as_str()),
-            ) {
-                if !token.is_empty() {
-                    let url = format!("https://api.telegram.org/bot{token}/sendMessage");
-                    let _ = ureq::post(&url).send_json(json!({
-                        "chat_id": chat,
-                        "text": body
-                    }));
-                }
+            ) else {
+                return false;
+            };
+            if token.is_empty() {
+                return false;
             }
+            let url = format!("https://api.telegram.org/bot{token}/sendMessage");
+            ureq::post(&url)
+                .send_json(json!({
+                    "chat_id": chat,
+                    "text": body
+                }))
+                .is_ok()
         }
         "whatsapp" => {
-            if let (Some(phone), Some(key)) = (
+            let (Some(phone), Some(key)) = (
                 action.config.get("phone").and_then(|x| x.as_str()),
                 action.config.get("apikey").and_then(|x| x.as_str()),
-            ) {
-                let url = format!(
-                    "https://api.callmebot.com/whatsapp.php?phone={}&text={}&apikey={}",
-                    urlencoding::encode(phone),
-                    urlencoding::encode(&body),
-                    urlencoding::encode(key)
-                );
-                let _ = ureq::get(&url).call();
-            }
+            ) else {
+                return false;
+            };
+            let url = format!(
+                "https://api.callmebot.com/whatsapp.php?phone={}&text={}&apikey={}",
+                urlencoding::encode(phone),
+                urlencoding::encode(&body),
+                urlencoding::encode(key)
+            );
+            ureq::get(&url).call().is_ok()
         }
         "script" => {
-            if let Some(cmd) = action.config.get("command").and_then(|x| x.as_str()) {
-                if !cmd.is_empty() {
-                    let _ = std::process::Command::new(cmd)
-                        .env("ALERT_TITLE", &event.title)
-                        .env("ALERT_BODY", &event.body)
-                        .env("ALERT_SEVERITY", event.severity.as_str())
-                        .spawn();
-                }
+            let Some(cmd) = action.config.get("command").and_then(|x| x.as_str()) else {
+                return false;
+            };
+            if cmd.is_empty() {
+                return false;
             }
+            std::process::Command::new(cmd)
+                .env("ALERT_TITLE", &event.title)
+                .env("ALERT_BODY", &event.body)
+                .env("ALERT_SEVERITY", event.severity.as_str())
+                .spawn()
+                .is_ok()
         }
         "email" => {
             let title = event.title.clone();
             let body = body.clone();
             let config = action.config.clone();
-            std::thread::spawn(move || {
-                if let Err(e) = crate::smtp::send_alert_email(&config, &title, &body) {
-                    log::warn!("email alert failed: {e}");
-                }
-            });
+            crate::smtp::send_alert_email(&config, &title, &body).is_ok()
         }
-        "mqtt" => {
-            let body = body.clone();
-            let config = action.config.clone();
-            std::thread::spawn(move || {
-                if let Err(e) = crate::mqtt::publish_alert(&config, &body) {
-                    log::warn!("mqtt alert failed: {e}");
-                }
-            });
+        "mqtt" => crate::mqtt::publish_alert(&action.config, &body).is_ok(),
+        other => {
+            log::warn!("unknown alert action kind {other}");
+            false
         }
-        other => log::warn!("unknown alert action kind {other}"),
     }
 }
 
@@ -1415,10 +1442,12 @@ mod tests {
             token: "secret".into(),
             extra: "123".into(),
             body: "{{title}}".into(),
+            retry_count: 2,
         };
         let webhook = alert_action_config("webhook", &draft);
         assert_eq!(webhook["url"], "https://hooks.example/x");
         assert_eq!(webhook["method"], "PUT");
+        assert_eq!(webhook["retry_count"], 2);
         assert!(webhook.get("bot_token").is_none());
         let telegram = alert_action_config("telegram", &draft);
         assert_eq!(telegram["bot_token"], "secret");

@@ -16,6 +16,7 @@ pub enum RepairKind {
     FuseMissing,
     EngineUnreachable,
     ConfigUnreadable,
+    AuthFailed,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -44,6 +45,45 @@ pub fn config_path_from_flags(flags: &[String]) -> Option<String> {
 pub fn looks_like_password_error(message: &str) -> bool {
     let lower = message.to_ascii_lowercase();
     lower.contains("password") || lower.contains("encrypted") || lower.contains("decrypt")
+}
+
+pub fn looks_like_auth_error(message: &str) -> bool {
+    let lower = message.to_ascii_lowercase();
+    lower.contains("http 401") || lower.contains("unauthorized") || lower.contains("authentication")
+}
+
+pub fn fuse_install_hint() -> &'static str {
+    "On Debian/Ubuntu: sudo apt install fuse3\nOn Fedora: sudo dnf install fuse3\nThen restart the session so /dev/fuse is available."
+}
+
+pub fn try_install_fuse() -> Result<String, String> {
+    let (bin, args): (&str, &[&str]) = if which::which("apt-get").is_ok() {
+        ("apt-get", &["install", "-y", "fuse3"])
+    } else if which::which("dnf").is_ok() {
+        ("dnf", &["install", "-y", "fuse3"])
+    } else if which::which("pacman").is_ok() {
+        ("pacman", &["-S", "--noconfirm", "fuse3"])
+    } else {
+        return Err(fuse_install_hint().into());
+    };
+    let helper = if which::which("pkexec").is_ok() {
+        "pkexec"
+    } else {
+        bin
+    };
+    let mut cmd = std::process::Command::new(helper);
+    if helper == "pkexec" {
+        cmd.arg(bin);
+    }
+    let status = cmd.args(args).status().map_err(|e| e.to_string())?;
+    if status.success() {
+        Ok("FUSE package install finished. Re-check /dev/fuse.".into())
+    } else {
+        Err(format!(
+            "Installer exited with {status}. {}",
+            fuse_install_hint()
+        ))
+    }
 }
 
 pub fn diagnose(
@@ -111,6 +151,13 @@ pub fn diagnose(
                     detail: text,
                     action: "Set password".into(),
                 });
+            } else if looks_like_auth_error(&text) {
+                issues.push(RepairIssue {
+                    kind: RepairKind::AuthFailed,
+                    title: "RC authentication failed".into(),
+                    detail: text,
+                    action: "Edit backend credentials".into(),
+                });
             }
         }
     }
@@ -121,6 +168,7 @@ pub fn banner_from_issues(issues: &[RepairIssue]) -> Option<&RepairIssue> {
     const ORDER: &[RepairKind] = &[
         RepairKind::MissingBinary,
         RepairKind::PasswordRequired,
+        RepairKind::AuthFailed,
         RepairKind::EngineUnreachable,
         RepairKind::VersionTooOld,
         RepairKind::FuseMissing,
@@ -173,6 +221,8 @@ mod tests {
         assert!(looks_like_password_error("Failed to decrypt config"));
         assert!(looks_like_password_error("password required"));
         assert!(!looks_like_password_error("connection refused"));
+        assert!(looks_like_auth_error("HTTP 401: unauthorized"));
+        assert!(!looks_like_auth_error("HTTP 500: boom"));
     }
 
     #[test]

@@ -3,6 +3,7 @@ mod alerts;
 mod automation;
 mod backend_options;
 mod backup;
+mod checks;
 mod connection;
 mod fileops;
 mod flags;

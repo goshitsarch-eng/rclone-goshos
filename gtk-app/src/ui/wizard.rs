@@ -500,11 +500,16 @@ fn option_row(
     if !option.help.is_empty() {
         row.set_tooltip_text(Some(&option.help));
     }
-    if option.is_password {
+    let restrict = ctx.settings.borrow().general.restrict;
+    if option.is_password || (restrict && crate::restrict::is_sensitive_key(&option.name)) {
         if let Some(child) = row.first_child() {
             if let Ok(editable) = child.downcast::<gtk::Text>() {
                 editable.set_visibility(false);
             }
+        }
+        if restrict {
+            row.set_text("");
+            return row;
         }
     }
     if !option.default_str.is_empty() {

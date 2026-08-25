@@ -295,6 +295,48 @@ fn string_flag(name: &str, help: &str) -> FlagOption {
     }
 }
 
+pub fn merged_flags_for(op: OperationType, blocks: &[FlagBlock]) -> Vec<FlagOption> {
+    let mut options = static_flags_for(op);
+    if let Some(category) = flag_category_for_op(op) {
+        for (_, option) in options_for_category(blocks, category) {
+            if options.iter().any(|o| o.field_name == option.field_name) {
+                continue;
+            }
+            options.push(option.clone());
+        }
+    }
+    options
+}
+
+pub fn filter_options_for_categories(
+    current: &Value,
+    blocks: &[FlagBlock],
+    categories: &[&str],
+) -> Value {
+    let Some(obj) = current.as_object() else {
+        return json!({});
+    };
+    if categories.is_empty() {
+        return current.clone();
+    }
+    let mut out = Map::new();
+    for (block_name, value) in obj {
+        let category = blocks
+            .iter()
+            .find(|b| b.name.eq_ignore_ascii_case(block_name))
+            .and_then(|b| b.options.first())
+            .map(|o| classify_flag(&o.groups))
+            .unwrap_or("backend");
+        if categories
+            .iter()
+            .any(|wanted| *wanted == category || wanted.eq_ignore_ascii_case(block_name))
+        {
+            out.insert(block_name.clone(), value.clone());
+        }
+    }
+    Value::Object(out)
+}
+
 pub fn flag_category_for_op(op: OperationType) -> Option<&'static str> {
     match op {
         OperationType::Mount => Some("mount"),
@@ -434,6 +476,31 @@ fn merge_maps(dest: &mut Value, src: &Value) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn merges_static_and_live_flags() {
+        let info = json!({
+            "main": [{
+                "Name": "transfers",
+                "FieldName": "transfers",
+                "Help": "Number of file transfers",
+                "Type": "int",
+                "Groups": "Copy",
+                "DefaultStr": "4"
+            }]
+        });
+        let blocks = parse_options_info(&info);
+        let merged = merged_flags_for(OperationType::Copy, &blocks);
+        assert!(merged.iter().any(|f| f.field_name == "createEmptySrcDirs"));
+        assert!(merged.iter().any(|f| f.field_name == "transfers"));
+        let filtered = filter_options_for_categories(
+            &json!({ "main": { "transfers": 8 }, "vfs": { "CacheMode": "full" } }),
+            &blocks,
+            &["copy"],
+        );
+        assert!(filtered.get("main").is_some());
+        assert!(filtered.get("vfs").is_none());
+    }
 
     #[test]
     fn classifies_rclone_groups() {
