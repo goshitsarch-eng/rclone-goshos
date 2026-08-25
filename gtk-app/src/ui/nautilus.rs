@@ -2248,8 +2248,10 @@ impl NautilusView {
         if !cancelled && !crate::picker::can_confirm_selection(dirs, files, &req.config) {
             *self.ctx.pending_picker.borrow_mut() = Some(req);
             self.picker_bar.set_visible(true);
-            self.toast
-                .add_toast(adw::Toast::new("Select a valid item to continue"));
+            self.toast.add_toast(adw::Toast::new(&self.ctx.t_or(
+                "nautilus.notifications.selectValid",
+                "Select a valid item to continue",
+            )));
             return;
         }
         self.picker_bar.set_visible(false);
@@ -2650,8 +2652,10 @@ impl NautilusView {
     fn mkdir_with_selected(&self) {
         let names = self.selected_names();
         if names.is_empty() {
-            self.toast
-                .add_toast(adw::Toast::new("Select items to move into a new folder"));
+            self.toast.add_toast(adw::Toast::new(&self.ctx.t_or(
+                "nautilus.notifications.selectNewFolderItems",
+                "Select items to move into a new folder",
+            )));
             return;
         }
         let Some(win) = self.root.root().and_downcast::<gtk::Window>() else {
@@ -2728,8 +2732,10 @@ impl NautilusView {
 
     fn download_selected(&self) {
         let Some(name) = self.selected_name() else {
-            self.toast
-                .add_toast(adw::Toast::new("Select a file to download"));
+            self.toast.add_toast(adw::Toast::new(&self.ctx.t_or(
+                "nautilus.notifications.selectToDownload",
+                "Select a file to download",
+            )));
             return;
         };
         let Some(win) = self.root.root().and_downcast::<gtk::Window>() else {
@@ -3997,8 +4003,10 @@ impl NautilusView {
 
     fn copy_public_link(&self) {
         let Some(name) = self.selected_name() else {
-            self.toast
-                .add_toast(adw::Toast::new("Select a file to share"));
+            self.toast.add_toast(adw::Toast::new(&self.ctx.t_or(
+                "nautilus.notifications.selectToShare",
+                "Select a file to share",
+            )));
             return;
         };
         let Some(client) = self.ctx.client() else {
@@ -4009,9 +4017,10 @@ impl NautilusView {
         let (fs, remote) = fs_remote(&current.remote, &path);
         match client.public_link(&fs, &remote) {
             Ok(url) if !url.is_empty() => self.copy_text(&url),
-            Ok(_) => self
-                .toast
-                .add_toast(adw::Toast::new("Remote did not return a public link")),
+            Ok(_) => self.toast.add_toast(adw::Toast::new(&self.ctx.t_or(
+                "nautilus.notifications.noPublicLink",
+                "Remote did not return a public link",
+            ))),
             Err(e) => self.toast.add_toast(adw::Toast::new(&e.to_string())),
         }
     }
@@ -4188,8 +4197,10 @@ impl NautilusView {
         match client.rmdirs(&fs, &remote) {
             Ok(_) => {
                 self.reload();
-                self.toast
-                    .add_toast(adw::Toast::new("Removed empty directories"));
+                self.toast.add_toast(adw::Toast::new(&self.ctx.t_or(
+                    "nautilus.notifications.rmdirsDone",
+                    "Removed empty directories",
+                )));
             }
             Err(e) => self.toast.add_toast(adw::Toast::new(&e.to_string())),
         }
@@ -4207,17 +4218,20 @@ impl NautilusView {
             Some(remote.as_str())
         };
         match client.cleanup(&fs, remote_opt) {
-            Ok(_) => self
-                .toast
-                .add_toast(adw::Toast::new("Cleanup started for this remote")),
+            Ok(_) => self.toast.add_toast(adw::Toast::new(&self.ctx.t_or(
+                "nautilus.notifications.cleanupStarted",
+                "Cleanup started for this remote",
+            ))),
             Err(e) => self.toast.add_toast(adw::Toast::new(&e.to_string())),
         }
     }
 
     fn extract_selected(&self) {
         let Some(name) = self.selected_name() else {
-            self.toast
-                .add_toast(adw::Toast::new("Select an archive to extract"));
+            self.toast.add_toast(adw::Toast::new(&self.ctx.t_or(
+                "nautilus.notifications.selectArchive",
+                "Select an archive to extract",
+            )));
             return;
         };
         let Some(win) = self.root.root().and_downcast::<gtk::Window>() else {
@@ -4259,17 +4273,20 @@ impl NautilusView {
 
     fn share_selected(&self) {
         let Some(name) = self.selected_name() else {
-            self.toast
-                .add_toast(adw::Toast::new("Select a file to share"));
+            self.toast.add_toast(adw::Toast::new(&self.ctx.t_or(
+                "nautilus.notifications.selectToShare",
+                "Select a file to share",
+            )));
             return;
         };
         let current = self.current.borrow().clone();
         let path = join_remote_path(&current.path, &name);
         if current.remote == "local" {
             match crate::platform::share_file(std::path::Path::new(&path)) {
-                Ok(()) => self
-                    .toast
-                    .add_toast(adw::Toast::new("Opened system share for the file")),
+                Ok(()) => self.toast.add_toast(adw::Toast::new(&self.ctx.t_or(
+                    "nautilus.notifications.shareOpened",
+                    "Opened system share for the file",
+                ))),
                 Err(e) => self.toast.add_toast(adw::Toast::new(&e)),
             }
             return;
@@ -4281,9 +4298,10 @@ impl NautilusView {
         let dest = std::env::temp_dir().join(&name);
         match client.copy_file(&fs, &remote, "/", &dest.to_string_lossy()) {
             Ok(_) => match crate::platform::share_file(&dest) {
-                Ok(()) => self
-                    .toast
-                    .add_toast(adw::Toast::new("Opened system share for the file")),
+                Ok(()) => self.toast.add_toast(adw::Toast::new(&self.ctx.t_or(
+                    "nautilus.notifications.shareOpened",
+                    "Opened system share for the file",
+                ))),
                 Err(e) => self.toast.add_toast(adw::Toast::new(&e)),
             },
             Err(e) => self.toast.add_toast(adw::Toast::new(&e.to_string())),

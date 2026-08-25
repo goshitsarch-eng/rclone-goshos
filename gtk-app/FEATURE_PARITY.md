@@ -439,6 +439,10 @@ This client is the GTK 4 + libadwaita rewrite of the Angular/Tauri desktop UI. I
 - Repair banner with a password diagnosis opens the unlock sheet instead of the full repair dialog
 - Shared serve cards (copy URL/ID, Open, option count, Stop) on dashboard overview, remote Serve monitoring, and Flow
 - Files undo/redo/copy toasts, tray tooltip, engine-offline, and memory-stats labels use i18n keys
+- About System page: quit rclone engine, FS-cache entry count / clear, Flatpak/portable update instructions
+- Preferences: Files layout, hidden files, list/grid icon sizes, and Flatpak warning toggle
+- Tray Quick Run labels use translated Start/Stop verbs plus the run name (no English prefix parsing)
+- Files toasts, clone-failed alerts, file-viewer Open native / Preview, and helper Save profile use i18n keys
 
 ## Still deepening toward pixel-level Angular parity
 

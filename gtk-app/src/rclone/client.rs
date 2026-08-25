@@ -1330,6 +1330,21 @@ pub fn parse_batch_results(value: &Value) -> Vec<Value> {
         .unwrap_or_default()
 }
 
+/// Count entries from `fscache/entries` (array, `{entries:[…]}`, or `{count:n}`).
+pub fn parse_fscache_entry_count(value: &Value) -> usize {
+    if let Some(n) = value.get("count").and_then(|v| v.as_u64()) {
+        return n as usize;
+    }
+    if let Some(arr) = value
+        .get("entries")
+        .and_then(|v| v.as_array())
+        .or_else(|| value.as_array())
+    {
+        return arr.len();
+    }
+    0
+}
+
 pub fn parse_named_list(value: &Value, keys: &[&str]) -> Vec<String> {
     for key in keys {
         if let Some(arr) = value.get(*key).and_then(|v| v.as_array()) {
@@ -1849,6 +1864,17 @@ mod tests {
         assert_eq!(join_remote_path("Photos", "img.png"), "Photos/img.png");
         assert_eq!(parent_remote_path("Photos/2024/img.png"), "Photos/2024");
         assert_eq!(parent_remote_path("Photos"), "");
+    }
+
+    #[test]
+    fn parses_fscache_entry_count() {
+        assert_eq!(parse_fscache_entry_count(&json!({ "count": 4 })), 4);
+        assert_eq!(
+            parse_fscache_entry_count(&json!({ "entries": ["a", "b"] })),
+            2
+        );
+        assert_eq!(parse_fscache_entry_count(&json!(["x", "y", "z"])), 3);
+        assert_eq!(parse_fscache_entry_count(&json!({})), 0);
     }
 
     #[test]

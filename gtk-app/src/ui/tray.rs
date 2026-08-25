@@ -161,19 +161,21 @@ fn localize_plan(ctx: &AppCtx, items: &mut [TrayMenuItem]) {
                 TrayAction::StopProfile { op, profile, .. } => {
                     format!("{} {op} · {profile}", ctx.t_or("tray.stop", "Stop"))
                 }
-                TrayAction::StartQuickRun(_) => {
-                    if let Some(name) = item.label.strip_prefix("Run ") {
-                        format!("{} {name}", ctx.t_or("tray.start", "Start"))
-                    } else {
-                        item.label.clone()
-                    }
-                }
-                TrayAction::StopQuickRun(_) => {
-                    if let Some(name) = item.label.strip_prefix("Stop ") {
-                        format!("{} {name}", ctx.t_or("tray.stop", "Stop"))
-                    } else {
-                        item.label.clone()
-                    }
+                TrayAction::StartQuickRun(id) | TrayAction::StopQuickRun(id) => {
+                    let name = ctx
+                        .store
+                        .borrow()
+                        .quick_runs
+                        .iter()
+                        .find(|qr| qr.id == *id)
+                        .map(|qr| qr.name.clone())
+                        .unwrap_or_else(|| id.clone());
+                    crate::tray_menu::quick_run_action_label(
+                        matches!(action, TrayAction::StartQuickRun(_)),
+                        &name,
+                        &ctx.t_or("tray.start", "Start"),
+                        &ctx.t_or("tray.stop", "Stop"),
+                    )
                 }
             };
         }

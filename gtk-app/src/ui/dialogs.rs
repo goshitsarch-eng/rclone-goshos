@@ -589,6 +589,128 @@ pub fn about(parent: &impl IsA<gtk::Widget>, ctx: AppCtx) {
         &ctx.t_or("modals.about.legal", "Legal"),
     );
 
+    let system = gtk::Box::new(gtk::Orientation::Vertical, 8);
+    system.set_margin_top(16);
+    system.set_margin_start(16);
+    system.set_margin_end(16);
+    let engine_group = adw::PreferencesGroup::new();
+    engine_group.set_title(&ctx.t_or("modals.about.engine", "Backend Infrastructure"));
+    let pid_row = adw::ActionRow::new();
+    pid_row.set_title(&ctx.t_or("dashboard.system.pid", "rclone PID"));
+    let pid = ctx
+        .client()
+        .and_then(|c| c.pid().ok())
+        .map(|n| n.to_string())
+        .unwrap_or_else(|| "—".into());
+    pid_row.set_subtitle(&pid);
+    engine_group.add(&pid_row);
+    let toast = adw::ToastOverlay::new();
+    {
+        let ctx = ctx.clone();
+        let toast = toast.clone();
+        let quit =
+            gtk::Button::with_label(&ctx.t_or("modals.about.killRclone", "Quit rclone engine"));
+        quit.add_css_class("destructive-action");
+        quit.set_halign(gtk::Align::Start);
+        quit.connect_clicked(move |_| {
+            let local = ctx.settings.borrow().core.active_backend.is_empty()
+                || ctx.settings.borrow().core.active_backend == "local";
+            if local {
+                if ctx.engine.borrow().is_none() {
+                    toast.add_toast(adw::Toast::new(
+                        &ctx.t_or("modals.about.noProcessToKill", "No rclone process to kill"),
+                    ));
+                    return;
+                }
+                *ctx.engine.borrow_mut() = None;
+                ctx.refresh_runtime();
+                toast.add_toast(adw::Toast::new(&ctx.t_or(
+                    "modals.about.killSuccess",
+                    "Rclone process killed successfully",
+                )));
+            } else if let Some(client) = ctx.client() {
+                match client.quit() {
+                    Ok(_) => toast.add_toast(adw::Toast::new(&ctx.t_or(
+                        "modals.about.killSuccess",
+                        "Rclone process killed successfully",
+                    ))),
+                    Err(_) => toast.add_toast(adw::Toast::new(
+                        &ctx.t_or("modals.about.killFailed", "Failed to kill rclone process"),
+                    )),
+                }
+            } else {
+                toast.add_toast(adw::Toast::new(
+                    &ctx.t_or("modals.about.noProcessToKill", "No rclone process to kill"),
+                ));
+            }
+        });
+        system.append(&engine_group);
+        system.append(&quit);
+    }
+    let cache_group = adw::PreferencesGroup::new();
+    cache_group.set_title(&ctx.t_or("modals.about.backendCache", "Backend Cache"));
+    let cache_row = adw::ActionRow::new();
+    cache_row.set_title(&ctx.t_or("modals.about.entries", "Active Entries"));
+    let cache_count = ctx
+        .client()
+        .and_then(|c| c.fscache_entries().ok())
+        .map(|v| crate::rclone::parse_fscache_entry_count(&v).to_string())
+        .unwrap_or_else(|| "—".into());
+    cache_row.set_subtitle(&cache_count);
+    cache_group.add(&cache_row);
+    system.append(&cache_group);
+    {
+        let ctx = ctx.clone();
+        let toast = toast.clone();
+        let cache_row = cache_row.clone();
+        let clear = gtk::Button::with_label(&ctx.t_or("modals.about.clear", "Clear"));
+        clear.set_halign(gtk::Align::Start);
+        clear.connect_clicked(move |_| {
+            if let Some(client) = ctx.client() {
+                match client.fscache_clear() {
+                    Ok(_) => {
+                        let count = client
+                            .fscache_entries()
+                            .ok()
+                            .map(|v| crate::rclone::parse_fscache_entry_count(&v).to_string())
+                            .unwrap_or_else(|| "0".into());
+                        cache_row.set_subtitle(&count);
+                        toast.add_toast(adw::Toast::new(
+                            &ctx.t_or("modals.about.cacheCleared", "Cache cleared successfully"),
+                        ));
+                    }
+                    Err(_) => toast.add_toast(adw::Toast::new(
+                        &ctx.t_or("modals.about.cacheClearFailed", "Failed to clear cache"),
+                    )),
+                }
+            }
+        });
+        system.append(&clear);
+    }
+    let build = crate::platform::managed_build();
+    if let Some(command) = crate::platform::update_command(build) {
+        let cmd_row = adw::ActionRow::new();
+        cmd_row.set_title(&ctx.t_or(
+            "modals.about.managedBuildNotice",
+            "This build cannot be updated by the app updater.",
+        ));
+        cmd_row.set_subtitle(command);
+        system.append(&cmd_row);
+    }
+    if let Some(url) = crate::platform::update_page_url(build) {
+        let label = if matches!(build, crate::platform::ManagedBuild::Flatpak) {
+            ctx.t_or("modals.about.openFlathub", "Open Flathub")
+        } else {
+            ctx.t_or("modals.about.downloadPage", "Download Page")
+        };
+        system.append(&gtk::LinkButton::with_label(url, &label));
+    }
+    stack.add_titled(
+        &system,
+        Some("system"),
+        &ctx.t_or("generalOverview.panels.system", "System"),
+    );
+
     let switcher = adw::ViewSwitcher::new();
     switcher.set_stack(Some(&stack));
     switcher.set_policy(adw::ViewSwitcherPolicy::Wide);
@@ -597,7 +719,8 @@ pub fn about(parent: &impl IsA<gtk::Widget>, ctx: AppCtx) {
     header.set_title_widget(Some(&switcher));
     toolbar.add_top_bar(&header);
     toolbar.set_content(Some(&stack));
-    dialog.set_child(Some(&toolbar));
+    toast.set_child(Some(&toolbar));
+    dialog.set_child(Some(&toast));
     present_window_or_dialog(parent, &ctx, &dialog);
 }
 
@@ -868,7 +991,10 @@ fn start_app_update(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, toast: adw::Toa
         return;
     };
     let Ok(exe) = std::env::current_exe() else {
-        toast.add_toast(adw::Toast::new("Cannot locate the running binary"));
+        toast.add_toast(adw::Toast::new(&ctx.t_or(
+            "modals.about.killFailed",
+            "Cannot locate the running binary",
+        )));
         return;
     };
     run_download_job(
@@ -3750,8 +3876,11 @@ pub fn clone_remote(
     let new_name = crate::store::unique_remote_name(&existing, name);
     let Some(meta) = crate::store::clone_remote_meta(&ctx.store.borrow(), name, &new_name) else {
         let toast = adw::AlertDialog::new(
-            Some("Clone failed"),
-            Some("No saved settings were found for this remote."),
+            Some(&ctx.t_or("home.options.cloneFailed", "Clone failed")),
+            Some(&ctx.t_or(
+                "home.options.cloneNoSettings",
+                "No saved settings were found for this remote.",
+            )),
         );
         toast.add_response("ok", &ctx.t_or("common.ok", "OK"));
         toast.present(Some(parent));
@@ -3759,7 +3888,10 @@ pub fn clone_remote(
     };
     if let Some(client) = ctx.client() {
         if let Err(e) = client.clone_remote_config(name, &new_name) {
-            let toast = adw::AlertDialog::new(Some("Clone failed"), Some(&e.to_string()));
+            let toast = adw::AlertDialog::new(
+                Some(&ctx.t_or("home.options.cloneFailed", "Clone failed")),
+                Some(&e.to_string()),
+            );
             toast.add_response("ok", &ctx.t_or("common.ok", "OK"));
             toast.present(Some(parent));
             return;
@@ -6223,7 +6355,7 @@ pub(crate) fn confirm_delete_path(
     alert.present(Some(parent));
 }
 
-fn pdf_panel(path: Option<std::path::PathBuf>, name: &str) -> gtk::Box {
+fn pdf_panel(path: Option<std::path::PathBuf>, name: &str, ctx: &AppCtx) -> gtk::Box {
     let box_ = gtk::Box::new(gtk::Orientation::Vertical, 8);
     box_.set_margin_start(16);
     box_.set_margin_end(16);
@@ -6303,7 +6435,8 @@ fn pdf_panel(path: Option<std::path::PathBuf>, name: &str) -> gtk::Box {
         if pages > 1 || crate::media::pdf_page_count(&path).unwrap_or(0) > 1 {
             box_.append(&nav);
         }
-        let open = gtk::Button::with_label("Open native");
+        let open =
+            gtk::Button::with_label(&ctx.t_or("fileBrowser.fileViewer.openNative", "Open native"));
         open.add_css_class("suggested-action");
         let p = path.clone();
         open.connect_clicked(move |_| {
@@ -6348,7 +6481,12 @@ fn attach_text_preview(
         let stack = gtk::Stack::new();
         stack.add_named(&source_scroll, Some("source"));
         stack.add_named(&preview_scroll, Some("preview"));
-        let toggle = gtk::ToggleButton::with_label("Preview");
+        let toggle = gtk::ToggleButton::with_label(
+            &remote_save
+                .as_ref()
+                .map(|(ctx, _, _)| ctx.t_or("fileBrowser.fileViewer.showPreview", "Preview"))
+                .unwrap_or_else(|| "Preview".into()),
+        );
         // Label is set by caller context; keep short so the toggle fits the toolbar.
         {
             let stack = stack.clone();
@@ -6607,7 +6745,7 @@ fn append_download_preview_button(
                 .copy_file(&fs, &path, "/", &dest.to_string_lossy())
                 .is_ok()
             {
-                attach_local_media_preview(&box_, &dest, category, &name);
+                attach_local_media_preview(&box_, &dest, category, &name, &ctx);
                 btn.set_sensitive(false);
             }
         });
@@ -6620,6 +6758,7 @@ fn attach_local_media_preview(
     local: &std::path::Path,
     category: crate::operations::FileTypeCategory,
     name: &str,
+    ctx: &AppCtx,
 ) {
     let local_s = local.to_string_lossy();
     if matches!(category, crate::operations::FileTypeCategory::Image) {
@@ -6640,7 +6779,7 @@ fn attach_local_media_preview(
         }
     }
     if matches!(category, crate::operations::FileTypeCategory::Pdf) {
-        parent.append(&pdf_panel(Some(local.to_path_buf()), name));
+        parent.append(&pdf_panel(Some(local.to_path_buf()), name, ctx));
     }
 }
 
@@ -7147,7 +7286,7 @@ pub fn file_viewer(
         }
     }
     if let Some(local) = preview_path.as_ref() {
-        attach_local_media_preview(&box_, local, category, name);
+        attach_local_media_preview(&box_, local, category, name, &ctx);
         if remote == "local" && matches!(category, crate::operations::FileTypeCategory::Text) {
             let text = std::fs::read(local)
                 .ok()
@@ -7933,7 +8072,8 @@ pub fn helper_profiles(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, remote: &str
         let load = load.clone();
         kind.connect_selected_notify(move |_| load());
     }
-    let save = gtk::Button::with_label("Save profile");
+    let save =
+        gtk::Button::with_label(&ctx.t_or("general.remoteConfig.saveProfile", "Save profile"));
     save.add_css_class("suggested-action");
     {
         let ctx = ctx.clone();

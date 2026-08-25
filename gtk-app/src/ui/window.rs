@@ -1087,7 +1087,9 @@ fn install_actions(
             Box::new(move || {
                 if let Some(client) = ctx.client() {
                     match client.fscache_clear() {
-                        Ok(_) => toast.add_toast(adw::Toast::new("FS cache cleared")),
+                        Ok(_) => toast.add_toast(adw::Toast::new(
+                            &ctx.t_or("modals.about.cacheCleared", "Cache cleared successfully"),
+                        )),
                         Err(e) => toast.add_toast(adw::Toast::new(&e.to_string())),
                     }
                 }

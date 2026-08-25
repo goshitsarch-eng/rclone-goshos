@@ -172,6 +172,44 @@ pub fn is_flatpak() -> bool {
     std::env::var_os("FLATPAK_ID").is_some() || Path::new("/.flatpak-info").is_file()
 }
 
+/// Angular `about-modal` `updateInstructions` for managed Linux builds.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ManagedBuild {
+    Flatpak,
+    Portable,
+    Default,
+}
+
+pub fn managed_build() -> ManagedBuild {
+    if is_flatpak() {
+        ManagedBuild::Flatpak
+    } else if std::env::var_os("APPIMAGE").is_some() {
+        ManagedBuild::Portable
+    } else {
+        ManagedBuild::Default
+    }
+}
+
+pub fn update_command(build: ManagedBuild) -> Option<&'static str> {
+    match build {
+        ManagedBuild::Flatpak => Some("flatpak update io.github.zarestia_dev.rclone-manager"),
+        ManagedBuild::Portable => None,
+        ManagedBuild::Default => None,
+    }
+}
+
+pub fn update_page_url(build: ManagedBuild) -> Option<&'static str> {
+    match build {
+        ManagedBuild::Flatpak => {
+            Some("https://flathub.org/apps/io.github.zarestia_dev.rclone-manager")
+        }
+        ManagedBuild::Portable => {
+            Some("https://hakanismail.info/zarestia/rclone-manager/downloads")
+        }
+        ManagedBuild::Default => None,
+    }
+}
+
 struct LogindInhibit {
     _conn: dbus::blocking::Connection,
     _fd: dbus::arg::OwnedFd,
@@ -981,6 +1019,19 @@ mod tests {
         assert_eq!(parsed.path, "Inbox");
         assert_eq!(parsed.files.len(), 2);
         assert!(parse_send_to_args(&["app".into()]).is_none());
+    }
+
+    #[test]
+    fn managed_build_update_instructions() {
+        assert_eq!(
+            update_command(ManagedBuild::Flatpak),
+            Some("flatpak update io.github.zarestia_dev.rclone-manager")
+        );
+        assert!(update_page_url(ManagedBuild::Flatpak)
+            .unwrap()
+            .contains("flathub"));
+        assert!(update_command(ManagedBuild::Default).is_none());
+        assert!(update_page_url(ManagedBuild::Portable).is_some());
     }
 
     #[test]
