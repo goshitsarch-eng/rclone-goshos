@@ -76,13 +76,16 @@ This client is the GTK 4 + libadwaita rewrite of the Angular/Tauri desktop UI. I
 - SMTP STARTTLS / implicit TLS and MQTT TLS (`mqtts://` / port 8883)
 - Directory-contents mtime for local watch automations
 - Static serve + archivecreate flags matching Angular `flag-definitions`
+- Repair diagnosis (missing binary, old version, FUSE, password, config, engine) with targeted actions
+- Nautilus operations panel: progress, stop, job detail, persistent history + dismiss
+- Filesystem watchers via `notify` (plus directory mtime fallback)
+- Backend OS/arch/version identity from `core/version`
+- Wizard path pickers + local disk-usage hints on path-like provider fields
+- Folder artwork next to local audio in the file viewer
 
 ## Still deepening toward pixel-level Angular parity
 
 - Windows/macOS send-to
-- Pixel-level Angular wizard/flag forms (dynamic serve flags, disk usage, in-wizard path pickers)
-- SMTP STARTTLS / MQTT TLS
-- Filesystem watchers via `notify` (mtime polling today)
 - Prevent-sleep via logind D-Bus (systemd-inhibit CLI today)
 - In-app PDF renderer
 - Workflow builder (stub in both apps)

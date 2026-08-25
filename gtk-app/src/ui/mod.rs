@@ -31,6 +31,7 @@ pub struct AppCtx {
     pub pending_browse: Rc<RefCell<Option<(String, String)>>>,
     pub inhibitor: Rc<RefCell<PowerInhibitor>>,
     pub watch_mtimes: Rc<RefCell<HashMap<String, u64>>>,
+    pub watch_hub: Rc<RefCell<crate::watch::WatchHub>>,
 }
 
 impl AppCtx {
@@ -49,6 +50,7 @@ impl AppCtx {
             pending_browse: Rc::new(RefCell::new(None)),
             inhibitor: Rc::new(RefCell::new(PowerInhibitor::new())),
             watch_mtimes: Rc::new(RefCell::new(HashMap::new())),
+            watch_hub: Rc::new(RefCell::new(crate::watch::WatchHub::new())),
         }
     }
 
@@ -215,6 +217,13 @@ impl AppCtx {
             return;
         };
         let records = crate::automation::collect(&self.store.borrow());
+        let local_sources: Vec<String> = records
+            .iter()
+            .flat_map(|r| r.sources.iter().cloned())
+            .filter(|p| crate::automation::is_local_watch_path(p))
+            .collect();
+        self.watch_hub.borrow_mut().ensure_paths(&local_sources);
+        let dirty = self.watch_hub.borrow().consume_dirty();
         let now = chrono::Utc::now();
         let mut fired = false;
         let mut mtimes = self.watch_mtimes.borrow_mut();
@@ -222,11 +231,11 @@ impl AppCtx {
             let due_cron = record.cron_enabled
                 && crate::automation::cron_is_due(&record.cron, record.last_run, now);
             let mut due_watch = record.watch_enabled
-                && crate::automation::watch_triggered(
+                && (crate::automation::watch_triggered(
                     &record.sources,
                     &mut mtimes,
                     record.watch_changed_only,
-                );
+                ) || crate::watch::dirty_matches(&record.sources, &dirty));
             if due_watch {
                 if let Some(last) = record.last_run {
                     if record.watch_delay > 0
@@ -309,6 +318,7 @@ fn notify_job_changes(
     previous: &[crate::store::JobInfo],
     current: &[crate::store::JobInfo],
 ) {
+    let mut dirty = false;
     for job in current {
         let was = previous.iter().find(|j| j.id == job.id);
         if job.status == "failed" && was.map(|j| j.status.as_str()) != Some("failed") {
@@ -322,8 +332,25 @@ fn notify_job_changes(
             );
             event.origin = job.origin.clone();
             ctx.store.borrow_mut().record_event(event);
-            ctx.persist();
+            dirty = true;
         }
+        if job.status != "running" && was.map(|j| j.status.as_str()) != Some(job.status.as_str()) {
+            ctx.store.borrow_mut().remember_job(job.clone());
+            dirty = true;
+        }
+    }
+    for job in previous {
+        if current.iter().all(|j| j.id != job.id) {
+            let mut finished = job.clone();
+            if finished.status == "running" {
+                finished.status = "completed".into();
+            }
+            ctx.store.borrow_mut().remember_job(finished);
+            dirty = true;
+        }
+    }
+    if dirty {
+        ctx.persist();
     }
 }
 

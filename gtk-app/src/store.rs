@@ -536,6 +536,8 @@ pub struct AppStore {
     pub remote_order: Vec<String>,
     #[serde(default)]
     pub automation_last_run: HashMap<String, DateTime<Utc>>,
+    #[serde(default)]
+    pub job_history: Vec<JobInfo>,
 }
 
 impl AppStore {
@@ -558,6 +560,18 @@ impl AppStore {
             Self::path(),
             serde_json::to_string_pretty(self).unwrap_or_default(),
         )
+    }
+
+    pub fn remember_job(&mut self, job: JobInfo) {
+        self.job_history.retain(|existing| existing.id != job.id);
+        self.job_history.insert(0, job);
+        if self.job_history.len() > 80 {
+            self.job_history.truncate(80);
+        }
+    }
+
+    pub fn dismiss_job(&mut self, id: u64) {
+        self.job_history.retain(|job| job.id != id);
     }
 
     pub fn push_log(&mut self, remote: &str, line: String) {
@@ -918,5 +932,39 @@ mod tests {
             meta.visible_operations(),
             vec![OperationType::Sync, OperationType::Copy]
         );
+    }
+
+    #[test]
+    fn job_history_replaces_and_caps() {
+        let mut store = AppStore::default();
+        let mk = |id: u64, status: &str| JobInfo {
+            id,
+            operation: "copy".into(),
+            remote: "drive".into(),
+            profile: "default".into(),
+            status: status.into(),
+            origin: "dashboard".into(),
+            start_time: Utc::now(),
+            error: None,
+            dry_run: false,
+            src: String::new(),
+            dst: String::new(),
+            group: format!("job/{id}"),
+            stats: json!({}),
+            transferring: json!([]),
+            duration: 0.0,
+            progress: 0.0,
+            output: json!({}),
+        };
+        for id in 1..=82u64 {
+            store.remember_job(mk(id, "completed"));
+        }
+        assert_eq!(store.job_history.len(), 80);
+        assert_eq!(store.job_history[0].id, 82);
+        store.remember_job(mk(82, "failed"));
+        assert_eq!(store.job_history.iter().filter(|j| j.id == 82).count(), 1);
+        assert_eq!(store.job_history[0].status, "failed");
+        store.dismiss_job(82);
+        assert!(store.job_history.iter().all(|j| j.id != 82));
     }
 }

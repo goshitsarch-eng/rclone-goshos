@@ -79,6 +79,7 @@ pub fn present(
         parameters: json!({}),
     }));
     rebuild_fields(
+        parent,
         &fields_group,
         &advanced_group,
         &state,
@@ -91,18 +92,29 @@ pub fn present(
         let advanced_group = advanced_group.clone();
         let state = state.clone();
         let providers = providers.clone();
+        let parent = parent.clone();
         type_row.connect_selected_notify(move |row| {
             let provider = providers.get(row.selected() as usize);
-            rebuild_fields(&fields_group, &advanced_group, &state, provider, true);
+            rebuild_fields(
+                &parent,
+                &fields_group,
+                &advanced_group,
+                &state,
+                provider,
+                true,
+            );
         });
     }
 
     let mount = adw::EntryRow::new();
     mount.set_title("Mount point");
+    super::dialogs::attach_folder_picker(parent, &mount);
     let src = adw::EntryRow::new();
     src.set_title("Default source path");
+    super::dialogs::attach_folder_picker(parent, &src);
     let dst = adw::EntryRow::new();
     dst.set_title("Default destination path");
+    super::dialogs::attach_folder_picker(parent, &dst);
     let serve = adw::ComboRow::new();
     serve.set_title("Default serve type");
     serve.set_model(Some(&gtk::StringList::new(&OperationType::SERVE_TYPES)));
@@ -427,6 +439,7 @@ fn provider_type(providers: &[Provider], index: u32) -> String {
 }
 
 fn rebuild_fields(
+    parent: &impl IsA<gtk::Widget>,
     basic: &adw::PreferencesGroup,
     advanced: &adw::PreferencesGroup,
     state: &Rc<RefCell<WizardState>>,
@@ -442,20 +455,20 @@ fn rebuild_fields(
         return;
     };
     for option in provider.basic_options() {
-        let row = option_row(option);
+        let row = option_row(parent, option);
         basic.add(&row);
         state.borrow_mut().fields.insert(option.name.clone(), row);
     }
     if include_advanced {
         for option in provider.advanced_options() {
-            let row = option_row(option);
+            let row = option_row(parent, option);
             advanced.add(&row);
             state.borrow_mut().fields.insert(option.name.clone(), row);
         }
     }
 }
 
-fn option_row(option: &ProviderOption) -> adw::EntryRow {
+fn option_row(parent: &impl IsA<gtk::Widget>, option: &ProviderOption) -> adw::EntryRow {
     let row = adw::EntryRow::new();
     let title = if option.required {
         format!("{} *", option.name)
@@ -480,7 +493,19 @@ fn option_row(option: &ProviderOption) -> adw::EntryRow {
     } else if let Some((example, _)) = option.examples.first() {
         row.set_text(example);
     }
+    if crate::media::is_path_field(&option.name, &option.help) {
+        super::dialogs::attach_folder_picker(parent, &row);
+        apply_path_usage(&row);
+        row.connect_changed(|row| apply_path_usage(row));
+    }
     row
+}
+
+fn apply_path_usage(row: &adw::EntryRow) {
+    let text = row.text().to_string();
+    if let Some(usage) = crate::media::local_path_usage(&text) {
+        row.set_tooltip_text(Some(&format!("{usage} — {}", text)));
+    }
 }
 
 fn collect_params(state: &Rc<RefCell<WizardState>>) -> Value {

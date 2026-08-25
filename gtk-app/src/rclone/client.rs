@@ -106,12 +106,12 @@ impl RcClient {
             .is_ok()
     }
 
+    pub fn version_info(&self) -> Result<Value, RcError> {
+        self.call("core/version", json!({}))
+    }
+
     pub fn version(&self) -> Result<String, RcError> {
-        let v = self.call("core/version", json!({}))?;
-        Ok(v.get("version")
-            .and_then(|x| x.as_str())
-            .unwrap_or("unknown")
-            .to_string())
+        Ok(backend_identity(&self.version_info()?).version)
     }
 
     pub fn list_remotes(&self) -> Result<Vec<String>, RcError> {
@@ -706,6 +706,39 @@ pub fn format_bytes(bytes: i64) -> String {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BackendIdentity {
+    pub version: String,
+    pub os: String,
+    pub arch: String,
+}
+
+impl BackendIdentity {
+    pub fn summary(&self) -> String {
+        format!("{} · {}/{}", self.version, self.os, self.arch)
+    }
+}
+
+pub fn backend_identity(info: &Value) -> BackendIdentity {
+    BackendIdentity {
+        version: info
+            .get("version")
+            .and_then(|x| x.as_str())
+            .unwrap_or("unknown")
+            .to_string(),
+        os: info
+            .get("os")
+            .and_then(|x| x.as_str())
+            .unwrap_or("unknown")
+            .to_string(),
+        arch: info
+            .get("arch")
+            .and_then(|x| x.as_str())
+            .unwrap_or("unknown")
+            .to_string(),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -773,5 +806,16 @@ mod tests {
             cleanup_payload("drive:", Some("")),
             json!({ "fs": "drive:" })
         );
+    }
+
+    #[test]
+    fn backend_identity_from_core_version() {
+        let id = backend_identity(&json!({
+            "version": "v1.68.2",
+            "os": "linux",
+            "arch": "amd64"
+        }));
+        assert_eq!(id.summary(), "v1.68.2 · linux/amd64");
+        assert_eq!(backend_identity(&json!({})).version, "unknown");
     }
 }

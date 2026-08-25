@@ -994,12 +994,23 @@ pub fn backends(parent: &impl IsA<gtk::Widget>, ctx: AppCtx) {
     let active = ctx.settings.borrow().core.active_backend.clone();
     let local = adw::ActionRow::new();
     local.set_title("Local rclone RC");
+    let local_id = ctx
+        .client()
+        .filter(|_| active.is_empty() || active == "local")
+        .and_then(|c| c.version_info().ok())
+        .map(|v| crate::rclone::backend_identity(&v).summary())
+        .unwrap_or_default();
     local.set_subtitle(&format!(
-        "127.0.0.1:{port} · ready={ready}{}",
+        "127.0.0.1:{port} · ready={ready}{}{}",
         if active.is_empty() || active == "local" {
             " · active"
         } else {
             ""
+        },
+        if local_id.is_empty() {
+            String::new()
+        } else {
+            format!(" · {local_id}")
         }
     ));
     let use_local = gtk::Button::with_label("Use");
@@ -1023,7 +1034,33 @@ pub fn backends(parent: &impl IsA<gtk::Widget>, ctx: AppCtx) {
         } else {
             ""
         };
-        row.set_subtitle(&format!("{}:{}{marker}", backend.host, backend.port));
+        let identity = {
+            let user = if backend.user.is_empty() {
+                None
+            } else {
+                Some(backend.user.clone())
+            };
+            let pass = if backend.pass.is_empty() {
+                None
+            } else {
+                Some(backend.pass.clone())
+            };
+            let client =
+                crate::rclone::RcClient::new(&backend.host, backend.port).with_auth(user, pass);
+            client
+                .version_info()
+                .ok()
+                .map(|v| crate::rclone::backend_identity(&v).summary())
+        };
+        row.set_subtitle(&format!(
+            "{}:{}{marker}{}",
+            backend.host,
+            backend.port,
+            identity
+                .as_deref()
+                .map(|s| format!(" · {s}"))
+                .unwrap_or_default()
+        ));
         let test = gtk::Button::from_icon_name("network-transmit-receive-symbolic");
         test.set_valign(gtk::Align::Center);
         test.set_tooltip_text(Some("Test connection"));
@@ -2597,6 +2634,15 @@ pub fn file_viewer(
         video.set_vexpand(true);
         video.set_autoplay(true);
         box_.append(&video);
+        if matches!(category, crate::operations::FileTypeCategory::Audio) {
+            if let Some(cover) = crate::media::sibling_cover(std::path::Path::new(path)) {
+                let picture = gtk::Picture::for_filename(&cover);
+                picture.set_can_shrink(true);
+                picture.set_content_fit(gtk::ContentFit::Contain);
+                picture.set_size_request(-1, 180);
+                box_.append(&picture);
+            }
+        }
     }
     if remote == "local" && matches!(category, crate::operations::FileTypeCategory::Pdf) {
         let note = gtk::Label::new(Some(
@@ -3620,25 +3666,67 @@ fn split_csv(text: &str) -> Vec<String> {
 pub fn repair(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, toast: adw::ToastOverlay) {
     let dialog = adw::Dialog::new();
     dialog.set_title("Repair rclone");
-    dialog.set_content_width(520);
-    let binary = ctx.settings.borrow().core.rclone_binary.clone();
-    let found = crate::rclone::rclone_exists(&binary);
-    let status = gtk::Label::new(Some(&if found {
-        format!(
-            "rclone was found{}.",
-            if binary.is_empty() {
-                String::new()
-            } else {
-                format!(" at {binary}")
-            }
-        )
-    } else {
-        "rclone is missing. Install it or pick a custom binary.".into()
-    }));
-    status.set_wrap(true);
-    status.set_xalign(0.0);
+    dialog.set_content_width(560);
+    dialog.set_content_height(520);
+    let version = ctx
+        .client()
+        .and_then(|c| c.version().ok())
+        .or_else(|| ctx.engine.borrow().as_ref().map(|e| e.version.clone()));
+    let issues = crate::repair::diagnose(
+        &ctx.settings.borrow(),
+        ctx.engine_ready(),
+        ctx.client().as_ref(),
+        version.as_deref(),
+    );
+    let list = gtk::ListBox::new();
+    list.add_css_class("boxed-list");
+    if issues.is_empty() {
+        let row = adw::ActionRow::new();
+        row.set_title("No issues detected");
+        row.set_subtitle("rclone, FUSE, config, and the RC engine look healthy.");
+        list.append(&row);
+    }
+    for issue in issues {
+        let row = adw::ActionRow::new();
+        row.set_title(&issue.title);
+        row.set_subtitle(&issue.detail);
+        let btn = gtk::Button::with_label(&issue.action);
+        btn.set_valign(gtk::Align::Center);
+        btn.add_css_class("suggested-action");
+        {
+            let ctx = ctx.clone();
+            let toast = toast.clone();
+            let parent = parent.clone();
+            let kind = issue.kind.clone();
+            btn.connect_clicked(move |_| match kind {
+                crate::repair::RepairKind::MissingBinary | crate::repair::RepairKind::VersionTooOld => {
+                    install_rclone_update(&parent, ctx.clone(), toast.clone());
+                    ctx.restart_engine();
+                }
+                crate::repair::RepairKind::FuseMissing => {
+                    let help = adw::AlertDialog::new(
+                        Some("Install FUSE"),
+                        Some("On Debian/Ubuntu: sudo apt install fuse3\nOn Fedora: sudo dnf install fuse3\nThen restart the session so /dev/fuse is available."),
+                    );
+                    help.add_response("ok", "OK");
+                    help.present(Some(&parent));
+                }
+                crate::repair::RepairKind::PasswordRequired => {
+                    preferences(&parent, ctx.clone());
+                }
+                crate::repair::RepairKind::ConfigUnreadable => {
+                    restore_or_pick_config(&parent, ctx.clone());
+                }
+                crate::repair::RepairKind::EngineUnreachable => {
+                    ctx.restart_engine();
+                    toast.add_toast(adw::Toast::new("Engine restart requested"));
+                }
+            });
+        }
+        row.add_suffix(&btn);
+        list.append(&row);
+    }
     let install = gtk::Button::with_label("Install rclone");
-    install.add_css_class("suggested-action");
     {
         let ctx = ctx.clone();
         let toast = toast.clone();
@@ -3652,55 +3740,13 @@ pub fn repair(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, toast: adw::ToastOver
     {
         let ctx = ctx.clone();
         let parent = parent.clone();
-        browse.connect_clicked(move |_| {
-            let Some(win) = parent.root().and_downcast::<gtk::Window>() else {
-                return;
-            };
-            let picker = gtk::FileDialog::new();
-            let ctx = ctx.clone();
-            picker.open(
-                Some(&win),
-                None::<gio::Cancellable>.as_ref(),
-                move |result| {
-                    if let Ok(file) = result {
-                        if let Some(path) = file.path() {
-                            ctx.settings.borrow_mut().core.rclone_binary =
-                                path.to_string_lossy().into_owned();
-                            ctx.persist();
-                            ctx.restart_engine();
-                        }
-                    }
-                },
-            );
-        });
+        browse.connect_clicked(move |_| pick_rclone_binary(&parent, ctx.clone()));
     }
     let config_btn = gtk::Button::with_label("Choose rclone.conf…");
     {
         let ctx = ctx.clone();
         let parent = parent.clone();
-        config_btn.connect_clicked(move |_| {
-            let Some(win) = parent.root().and_downcast::<gtk::Window>() else {
-                return;
-            };
-            let picker = gtk::FileDialog::new();
-            let ctx = ctx.clone();
-            picker.open(
-                Some(&win),
-                None::<gio::Cancellable>.as_ref(),
-                move |result| {
-                    if let Ok(file) = result {
-                        if let Some(path) = file.path() {
-                            let flag = format!("--config={}", path.display());
-                            let flags = &mut ctx.settings.borrow_mut().core.rclone_additional_flags;
-                            flags.retain(|f| !f.starts_with("--config"));
-                            flags.push(flag);
-                            ctx.persist();
-                            ctx.restart_engine();
-                        }
-                    }
-                },
-            );
-        });
+        config_btn.connect_clicked(move |_| restore_or_pick_config(&parent, ctx.clone()));
     }
     let restart = gtk::Button::with_label("Restart engine");
     {
@@ -3713,13 +3759,62 @@ pub fn repair(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, toast: adw::ToastOver
     box_.set_margin_top(16);
     box_.set_margin_start(16);
     box_.set_margin_end(16);
-    box_.append(&status);
+    box_.set_margin_bottom(16);
+    let scroll = gtk::ScrolledWindow::new();
+    scroll.set_vexpand(true);
+    scroll.set_min_content_height(220);
+    scroll.set_child(Some(&list));
+    box_.append(&scroll);
     box_.append(&install);
     box_.append(&browse);
     box_.append(&config_btn);
     box_.append(&restart);
     dialog.set_child(Some(&box_));
     present_window_or_dialog(parent, &ctx, &dialog);
+}
+
+fn pick_rclone_binary(parent: &impl IsA<gtk::Widget>, ctx: AppCtx) {
+    let Some(win) = parent.root().and_downcast::<gtk::Window>() else {
+        return;
+    };
+    let picker = gtk::FileDialog::new();
+    picker.open(
+        Some(&win),
+        None::<gio::Cancellable>.as_ref(),
+        move |result| {
+            if let Ok(file) = result {
+                if let Some(path) = file.path() {
+                    ctx.settings.borrow_mut().core.rclone_binary =
+                        path.to_string_lossy().into_owned();
+                    ctx.persist();
+                    ctx.restart_engine();
+                }
+            }
+        },
+    );
+}
+
+fn restore_or_pick_config(parent: &impl IsA<gtk::Widget>, ctx: AppCtx) {
+    let Some(win) = parent.root().and_downcast::<gtk::Window>() else {
+        return;
+    };
+    let picker = gtk::FileDialog::new();
+    picker.open(
+        Some(&win),
+        None::<gio::Cancellable>.as_ref(),
+        move |result| {
+            if let Ok(file) = result {
+                if let Some(path) = file.path() {
+                    let flag = format!("--config={}", path.display());
+                    let flags = &mut ctx.settings.borrow_mut().core.rclone_additional_flags;
+                    flags.retain(|f| !f.starts_with("--config"));
+                    flags.push(flag);
+                    ctx.persist();
+                    ctx.restart_engine();
+                }
+            }
+        },
+    );
 }
 
 pub fn multi_rename(

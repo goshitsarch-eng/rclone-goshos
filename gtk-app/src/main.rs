@@ -6,12 +6,14 @@ mod flags;
 mod i18n;
 mod interactive;
 mod jobs;
+mod media;
 mod mqtt;
 mod operations;
 mod platform;
 mod providers;
 mod rclone;
 mod rename;
+mod repair;
 mod security;
 mod settings;
 mod smtp;
@@ -19,6 +21,7 @@ mod store;
 mod syntax;
 mod ui;
 mod updater;
+mod watch;
 
 use gtk::prelude::*;
 

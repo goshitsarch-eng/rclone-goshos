@@ -1590,18 +1590,77 @@ impl NautilusView {
             self.ops.remove(&child);
         }
         let jobs = self.ctx.snapshot.borrow().jobs.clone();
-        if jobs.is_empty() {
+        let history = self.ctx.store.borrow().job_history.clone();
+        if jobs.is_empty() && history.is_empty() {
             let row = adw::ActionRow::new();
             row.set_title("No file operations");
             self.ops.append(&row);
             return;
         }
-        for job in jobs {
-            let row = adw::ActionRow::new();
-            row.set_title(&format!("{} · {}", job.operation, job.status));
-            row.set_subtitle(&format!("#{} {}", job.id, job.remote));
-            self.ops.append(&row);
+        for job in &jobs {
+            self.ops.append(&self.ops_row(job, true));
         }
+        let running_ids: std::collections::HashSet<u64> = jobs.iter().map(|j| j.id).collect();
+        for job in history
+            .iter()
+            .filter(|j| !running_ids.contains(&j.id))
+            .take(12)
+        {
+            self.ops.append(&self.ops_row(job, false));
+        }
+    }
+
+    fn ops_row(&self, job: &crate::store::JobInfo, live: bool) -> adw::ActionRow {
+        let percent = (job.progress * 100.0).round() as i32;
+        let row = adw::ActionRow::new();
+        row.set_title(&format!("{} · {}", job.operation, job.status));
+        let src = if job.src.is_empty() {
+            job.remote.clone()
+        } else {
+            job.src.clone()
+        };
+        row.set_subtitle(&format!("#{id} · {percent}% · {src}", id = job.id));
+        row.set_activatable(true);
+        {
+            let ctx = self.ctx.clone();
+            let id = job.id;
+            let view = self.clone();
+            row.connect_activated(move |_| {
+                if let Some(win) = view.root.root().and_downcast::<gtk::Window>() {
+                    dialogs::job_detail(&win, ctx.clone(), id);
+                }
+            });
+        }
+        if live && job.status == "running" {
+            let stop = gtk::Button::from_icon_name("media-playback-stop-symbolic");
+            stop.set_valign(gtk::Align::Center);
+            stop.set_tooltip_text(Some("Stop"));
+            let ctx = self.ctx.clone();
+            let id = job.id;
+            let view = self.clone();
+            stop.connect_clicked(move |_| {
+                if let Some(client) = ctx.client() {
+                    let _ = client.job_stop(id);
+                    ctx.refresh_runtime();
+                    view.reload_ops();
+                }
+            });
+            row.add_suffix(&stop);
+        } else {
+            let dismiss = gtk::Button::from_icon_name("window-close-symbolic");
+            dismiss.set_valign(gtk::Align::Center);
+            dismiss.set_tooltip_text(Some("Remove from history"));
+            let ctx = self.ctx.clone();
+            let id = job.id;
+            let view = self.clone();
+            dismiss.connect_clicked(move |_| {
+                ctx.store.borrow_mut().dismiss_job(id);
+                ctx.persist();
+                view.reload_ops();
+            });
+            row.add_suffix(&dismiss);
+        }
+        row
     }
 }
 
