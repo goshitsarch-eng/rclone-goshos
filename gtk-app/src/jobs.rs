@@ -514,6 +514,17 @@ pub fn remember_started(map: &mut HashMap<u64, JobMeta>, result: &str, meta: Job
     }
 }
 
+pub fn rename_jobs_profile(jobs: &mut [JobInfo], remote: &str, from: &str, to: &str) -> usize {
+    let mut updated = 0;
+    for job in jobs {
+        if job.remote == remote && job.profile == from {
+            job.profile = to.to_string();
+            updated += 1;
+        }
+    }
+    updated
+}
+
 pub fn apply_job_meta(job: &mut JobInfo, meta: Option<&JobMeta>) {
     let Some(meta) = meta else {
         return;
@@ -667,6 +678,39 @@ pub fn find_active_serve<'a>(serves: &'a [ServeItem], remote: &str) -> Option<&'
     serves
         .iter()
         .find(|s| s.fs == remote || s.fs == prefix || s.fs.starts_with(&prefix))
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct ShutdownSummary {
+    pub jobs: usize,
+    pub mounts: usize,
+    pub serves: usize,
+}
+
+impl ShutdownSummary {
+    pub fn active(self) -> bool {
+        self.jobs + self.mounts + self.serves > 0
+    }
+}
+
+pub fn shutdown_summary(jobs: &[JobInfo], mounts: usize, serves: usize) -> ShutdownSummary {
+    ShutdownSummary {
+        jobs: jobs.iter().filter(|job| job_is_running(job)).count(),
+        mounts,
+        serves,
+    }
+}
+
+pub fn stop_all_runtime(client: &RcClient, jobs: &[JobInfo], mounts: &[MountedRemote]) {
+    for job in jobs {
+        if job_is_running(job) {
+            let _ = client.job_stop(job.id);
+        }
+    }
+    for mount in mounts {
+        let _ = client.unmount(&mount.mount_point);
+    }
+    let _ = client.serve_stop_all();
 }
 
 pub fn profile_is_active(
@@ -1704,5 +1748,36 @@ mod tests {
             Some(&json!({ "preparing": true, "bytes": 0 })),
         );
         assert_eq!(from_stats.status, "preparing");
+    }
+
+    #[test]
+    fn shutdown_summary_counts_running_only() {
+        let jobs = vec![
+            running_job(1, "drive", "sync", "nightly"),
+            JobInfo {
+                status: "completed".into(),
+                ..running_job(2, "drive", "copy", "nightly")
+            },
+        ];
+        let summary = shutdown_summary(&jobs, 2, 1);
+        assert!(summary.active());
+        assert_eq!(summary.jobs, 1);
+        assert_eq!(summary.mounts, 2);
+        assert_eq!(summary.serves, 1);
+        assert!(!shutdown_summary(&[], 0, 0).active());
+    }
+
+    #[test]
+    fn renames_live_job_profiles() {
+        let mut jobs = vec![
+            running_job(1, "drive", "sync", "nightly"),
+            running_job(2, "other", "sync", "nightly"),
+        ];
+        assert_eq!(
+            rename_jobs_profile(&mut jobs, "drive", "nightly", "weekly"),
+            1
+        );
+        assert_eq!(jobs[0].profile, "weekly");
+        assert_eq!(jobs[1].profile, "nightly");
     }
 }

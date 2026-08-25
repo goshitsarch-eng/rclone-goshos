@@ -15,8 +15,9 @@ use crate::operations::OperationType;
 use crate::rclone::validate_cron;
 use crate::store::{AppConfig, ProfileConfig, RemoteMeta};
 use adw::prelude::*;
+use gtk::glib;
 use serde_json::{json, Map, Value};
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -119,6 +120,8 @@ pub fn present_with(
 
     let current = Rc::new(RefCell::new(EditorStep::Remote));
     let persist_step: Rc<RefCell<Box<dyn Fn()>>> = Rc::new(RefCell::new(Box::new(|| {})));
+    let preferred_profile = Rc::new(RefCell::new(open.profile.clone()));
+    let auto_add = Rc::new(Cell::new(open.auto_add));
 
     let steps = editor_steps();
     for step in &steps {
@@ -149,6 +152,8 @@ pub fn present_with(
         let parent = parent.clone();
         let flag_blocks = flag_blocks.clone();
         let on_done = on_done.clone();
+        let preferred_profile = preferred_profile.clone();
+        let auto_add = auto_add.clone();
         Rc::new(move || {
             persist_step.borrow()();
             while let Some(child) = body.first_child() {
@@ -163,8 +168,17 @@ pub fn present_with(
                     *persist_step.borrow_mut() = Box::new(saver);
                 }
                 EditorStep::Op(op) => {
-                    let (page, saver) =
-                        operation_page(&parent, ctx.clone(), &remote, op, flag_blocks.as_ref());
+                    let add_now = auto_add.replace(false);
+                    let profile = preferred_profile.borrow().clone();
+                    let (page, saver) = operation_page(
+                        &parent,
+                        ctx.clone(),
+                        &remote,
+                        op,
+                        flag_blocks.as_ref(),
+                        profile.as_deref(),
+                        add_now,
+                    );
                     body.append(&page);
                     *persist_step.borrow_mut() = Box::new(saver);
                 }
@@ -598,6 +612,8 @@ fn operation_page(
     remote: &str,
     op: OperationType,
     blocks: &[FlagBlock],
+    preferred_profile: Option<&str>,
+    auto_add: bool,
 ) -> (gtk::Box, impl Fn() + 'static) {
     let names = {
         let store = ctx.store.borrow();
@@ -608,19 +624,23 @@ fn operation_page(
         }
         names
     };
-    let selected = Rc::new(RefCell::new(names[0].clone()));
+    let selected_name = preferred_profile
+        .filter(|name| names.iter().any(|n| n == *name))
+        .unwrap_or(&names[0])
+        .to_string();
+    let selected = Rc::new(RefCell::new(selected_name.clone()));
     let initial = ctx
         .store
         .borrow()
         .remotes
         .get(remote)
-        .and_then(|m| m.get_profile(op, &names[0]))
+        .and_then(|m| m.get_profile(op, &selected_name))
         .unwrap_or_else(|| ProfileConfig {
-            name: names[0].clone(),
+            name: selected_name.clone(),
             ..Default::default()
         });
 
-    let switcher = profile_switcher(&names, &initial.name);
+    let switcher = profile_switcher(&ctx, &names, &initial.name);
     let rclone = flatten_rclone(&initial.rclone);
     let src = adw::EntryRow::new();
     src.set_title(if op == OperationType::Copyurl {
@@ -1030,6 +1050,17 @@ fn operation_page(
         &switcher,
         selected.clone(),
     );
+    if auto_add {
+        let parent = parent.clone();
+        let ctx = ctx.clone();
+        let remote = remote.to_string();
+        let names = switcher.names.clone();
+        let combo = switcher.combo.clone();
+        let selected = selected.clone();
+        glib::idle_add_local_once(move || {
+            prompt_create_profile(&parent, ctx, remote, Some(op), None, names, combo, selected);
+        });
+    }
 
     let saver = {
         let ctx = ctx.clone();
@@ -1183,7 +1214,7 @@ fn helper_page(
         .get(remote)
         .and_then(|m| m.helper_profile(kind, &names[0]))
         .unwrap_or_else(|| json!({}));
-    let switcher = profile_switcher(&names, &names[0]);
+    let switcher = profile_switcher(&ctx, &names, &names[0]);
     let flags_group = adw::PreferencesGroup::new();
     flags_group.set_title("Options");
     let search = adw::EntryRow::new();
@@ -1309,32 +1340,40 @@ struct ProfileSwitcher {
     delete: gtk::Button,
 }
 
-fn profile_switcher(names: &[String], selected: &str) -> ProfileSwitcher {
+fn profile_switcher(ctx: &AppCtx, names: &[String], selected: &str) -> ProfileSwitcher {
     let names = Rc::new(RefCell::new(names.to_vec()));
     let combo = adw::ComboRow::new();
-    combo.set_title("Profile");
+    combo.set_title(&ctx.t_or("modals.remoteConfig.profile", "Profile"));
     refresh_combo(&combo, &names.borrow());
     if let Some(idx) = names.borrow().iter().position(|n| n == selected) {
         combo.set_selected(idx as u32);
     }
     let add = gtk::Button::from_icon_name("list-add-symbolic");
-    add.set_tooltip_text(Some("Add profile"));
+    add.set_tooltip_text(Some(
+        &ctx.t_or("modals.remoteConfig.addProfile", "Add profile"),
+    ));
     add.set_valign(gtk::Align::Center);
     let clone = gtk::Button::from_icon_name("edit-copy-symbolic");
-    clone.set_tooltip_text(Some("Clone profile"));
+    clone.set_tooltip_text(Some(
+        &ctx.t_or("modals.remoteConfig.cloneProfile", "Clone profile"),
+    ));
     clone.set_valign(gtk::Align::Center);
     let rename = gtk::Button::from_icon_name("document-edit-symbolic");
-    rename.set_tooltip_text(Some("Rename profile"));
+    rename.set_tooltip_text(Some(
+        &ctx.t_or("modals.remoteConfig.renameProfile", "Rename profile"),
+    ));
     rename.set_valign(gtk::Align::Center);
     let delete = gtk::Button::from_icon_name("user-trash-symbolic");
-    delete.set_tooltip_text(Some("Delete profile"));
+    delete.set_tooltip_text(Some(
+        &ctx.t_or("modals.remoteConfig.deleteProfile", "Delete profile"),
+    ));
     delete.set_valign(gtk::Align::Center);
     combo.add_suffix(&add);
     combo.add_suffix(&clone);
     combo.add_suffix(&rename);
     combo.add_suffix(&delete);
     let group = adw::PreferencesGroup::new();
-    group.set_title("Profiles");
+    group.set_title(&ctx.t_or("modals.remoteConfig.profiles", "Profiles"));
     group.add(&combo);
     ProfileSwitcher {
         group,
@@ -1345,6 +1384,44 @@ fn profile_switcher(names: &[String], selected: &str) -> ProfileSwitcher {
         rename,
         delete,
     }
+}
+
+fn prompt_create_profile(
+    parent: &impl IsA<gtk::Widget>,
+    ctx: AppCtx,
+    remote: String,
+    op: Option<OperationType>,
+    helper: Option<&'static str>,
+    names: Rc<RefCell<Vec<String>>>,
+    combo: adw::ComboRow,
+    selected: Rc<RefCell<String>>,
+) {
+    let title = ctx.t_or("modals.remoteConfig.addProfile", "Add profile");
+    let label = ctx.t_or("common.name", "Name");
+    dialogs::prompt(parent, &title, &label, "default", move |name| {
+        if name.is_empty() {
+            return;
+        }
+        mutate_profiles(&ctx, &remote, op, helper, |meta| {
+            if let Some(op) = op {
+                meta.upsert_profile(
+                    op,
+                    ProfileConfig {
+                        name: name.clone(),
+                        ..Default::default()
+                    },
+                );
+            } else if let Some(kind) = helper {
+                meta.upsert_helper(kind, &name, json!({}));
+            }
+        });
+        names.borrow_mut().push(name.clone());
+        refresh_combo(&combo, &names.borrow());
+        if let Some(idx) = names.borrow().iter().position(|n| n == &name) {
+            combo.set_selected(idx as u32);
+        }
+        *selected.borrow_mut() = name;
+    });
 }
 
 fn wire_profile_actions(
@@ -1370,37 +1447,16 @@ fn wire_profile_actions(
                 .cloned()
                 .unwrap_or_else(|| "default".into());
             match kind {
-                "add" => dialogs::prompt(&parent, "Add profile", "Name", "default", {
-                    let ctx = ctx.clone();
-                    let remote = remote.clone();
-                    let names = names.clone();
-                    let combo = combo.clone();
-                    let selected = selected.clone();
-                    move |name| {
-                        if name.is_empty() {
-                            return;
-                        }
-                        mutate_profiles(&ctx, &remote, op, helper, |meta| {
-                            if let Some(op) = op {
-                                meta.upsert_profile(
-                                    op,
-                                    ProfileConfig {
-                                        name: name.clone(),
-                                        ..Default::default()
-                                    },
-                                );
-                            } else if let Some(kind) = helper {
-                                meta.upsert_helper(kind, &name, json!({}));
-                            }
-                        });
-                        names.borrow_mut().push(name.clone());
-                        refresh_combo(&combo, &names.borrow());
-                        if let Some(idx) = names.borrow().iter().position(|n| n == &name) {
-                            combo.set_selected(idx as u32);
-                        }
-                        *selected.borrow_mut() = name;
-                    }
-                }),
+                "add" => prompt_create_profile(
+                    &parent,
+                    ctx.clone(),
+                    remote.clone(),
+                    op,
+                    helper,
+                    names.clone(),
+                    combo.clone(),
+                    selected.clone(),
+                ),
                 "clone" => dialogs::prompt(
                     &parent,
                     "Clone profile",
@@ -1435,34 +1491,54 @@ fn wire_profile_actions(
                         }
                     },
                 ),
-                "rename" => dialogs::prompt(&parent, "Rename profile", "New name", &current, {
-                    let ctx = ctx.clone();
-                    let remote = remote.clone();
-                    let names = names.clone();
-                    let combo = combo.clone();
-                    let selected = selected.clone();
-                    let current = current.clone();
-                    move |name| {
-                        if name.is_empty() {
-                            return;
-                        }
-                        mutate_profiles(&ctx, &remote, op, helper, |meta| {
-                            if let Some(op) = op {
-                                let _ = meta.rename_profile(op, &current, &name);
-                            } else if let Some(kind) = helper {
-                                let _ = meta.rename_helper(kind, &current, &name);
+                "rename" => dialogs::prompt(
+                    &parent,
+                    &ctx.t_or("modals.remoteConfig.renameProfile", "Rename profile"),
+                    &ctx.t_or("modals.remoteConfig.newName", "New name"),
+                    &current,
+                    {
+                        let ctx = ctx.clone();
+                        let remote = remote.clone();
+                        let names = names.clone();
+                        let combo = combo.clone();
+                        let selected = selected.clone();
+                        let current = current.clone();
+                        move |name| {
+                            if name.is_empty() {
+                                return;
                             }
-                        });
-                        if let Some(slot) = names.borrow_mut().iter_mut().find(|n| *n == &current) {
-                            *slot = name.clone();
+                            mutate_profiles(&ctx, &remote, op, helper, |meta| {
+                                if let Some(op) = op {
+                                    let _ = meta.rename_profile(op, &current, &name);
+                                } else if let Some(kind) = helper {
+                                    let _ = meta.rename_helper(kind, &current, &name);
+                                }
+                            });
+                            if helper.is_none() {
+                                ctx.store
+                                    .borrow_mut()
+                                    .rename_runtime_profile(&remote, &current, &name);
+                                crate::jobs::rename_jobs_profile(
+                                    &mut ctx.snapshot.borrow_mut().jobs,
+                                    &remote,
+                                    &current,
+                                    &name,
+                                );
+                                ctx.persist();
+                            }
+                            if let Some(slot) =
+                                names.borrow_mut().iter_mut().find(|n| *n == &current)
+                            {
+                                *slot = name.clone();
+                            }
+                            refresh_combo(&combo, &names.borrow());
+                            if let Some(idx) = names.borrow().iter().position(|n| n == &name) {
+                                combo.set_selected(idx as u32);
+                            }
+                            *selected.borrow_mut() = name;
                         }
-                        refresh_combo(&combo, &names.borrow());
-                        if let Some(idx) = names.borrow().iter().position(|n| n == &name) {
-                            combo.set_selected(idx as u32);
-                        }
-                        *selected.borrow_mut() = name;
-                    }
-                }),
+                    },
+                ),
                 "delete" => {
                     let snap = ctx.snapshot.borrow();
                     let usage = crate::jobs::profile_usage(

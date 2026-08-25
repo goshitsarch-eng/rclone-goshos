@@ -347,6 +347,49 @@ pub enum FileTypeCategory {
 }
 
 impl FileTypeCategory {
+    pub fn from_mime(mime: &str) -> Option<Self> {
+        let normalized = mime
+            .to_ascii_lowercase()
+            .split(';')
+            .next()
+            .unwrap_or("")
+            .trim()
+            .to_string();
+        if normalized.is_empty() {
+            return None;
+        }
+        if normalized == "application/pdf" {
+            return Some(Self::Pdf);
+        }
+        if matches!(
+            normalized.as_str(),
+            "application/zip"
+                | "application/x-tar"
+                | "application/gzip"
+                | "application/x-7z-compressed"
+                | "application/x-rar-compressed"
+                | "application/x-bzip2"
+                | "application/x-xz"
+                | "application/x-iso9660-image"
+        ) {
+            return Some(Self::Archive);
+        }
+        Some(match normalized.split('/').next().unwrap_or_default() {
+            "image" => Self::Image,
+            "video" => Self::Video,
+            "audio" => Self::Audio,
+            "text" => Self::Text,
+            _ => return None,
+        })
+    }
+
+    pub fn from_entry(name: &str, is_dir: bool, mime: &str) -> Self {
+        if is_dir {
+            return Self::Directory;
+        }
+        Self::from_mime(mime).unwrap_or_else(|| Self::from_name(name, false))
+    }
+
     pub fn from_name(name: &str, is_dir: bool) -> Self {
         if is_dir {
             return Self::Directory;
@@ -476,6 +519,23 @@ mod tests {
         assert!(!FileTypeCategory::Video.matches_filter("images"));
         assert!(FileTypeCategory::Pdf.matches_filter("documents"));
         assert!(FileTypeCategory::Text.matches_filter("all"));
+        assert_eq!(
+            FileTypeCategory::from_mime("image/jpeg; charset=binary"),
+            Some(FileTypeCategory::Image)
+        );
+        assert_eq!(
+            FileTypeCategory::from_mime("application/pdf"),
+            Some(FileTypeCategory::Pdf)
+        );
+        assert_eq!(
+            FileTypeCategory::from_entry("blob", false, "audio/mpeg"),
+            FileTypeCategory::Audio
+        );
+        assert_eq!(
+            FileTypeCategory::from_entry("notes.md", false, ""),
+            FileTypeCategory::Text
+        );
+        assert_eq!(FileTypeCategory::from_mime(""), None);
     }
 
     #[test]

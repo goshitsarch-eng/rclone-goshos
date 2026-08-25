@@ -2,6 +2,7 @@
 
 pub mod action_order;
 pub mod alerts;
+pub mod ansi;
 pub mod automation;
 pub mod backend_options;
 pub mod backup;
@@ -19,6 +20,7 @@ pub mod logs;
 pub mod markdown;
 pub mod media;
 pub mod migrate;
+pub mod mime;
 pub mod mount_plugin;
 pub mod mqtt;
 pub mod navigation;

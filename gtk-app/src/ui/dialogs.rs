@@ -107,13 +107,32 @@ pub fn present_standalone(
         "quick-run-editor" => quick_run_editor(&window, ctx.clone(), None, noop),
         "template-manager" => templates(&window, ctx.clone()),
         "delete-remote" => delete_remote(&window, ctx.clone(), &remote, noop),
-        "remote-config" => remote_config(
+        "remote-config" => remote_config_open(
             &window,
             ctx.clone(),
             if remote.is_empty() {
                 None
             } else {
                 Some(remote)
+            },
+            super::remote_config::RemoteConfigOpen {
+                initial: req
+                    .data
+                    .get("initial")
+                    .and_then(|v| v.as_str())
+                    .filter(|s| !s.is_empty())
+                    .map(|s| s.to_string()),
+                profile: req
+                    .data
+                    .get("profile")
+                    .and_then(|v| v.as_str())
+                    .filter(|s| !s.is_empty())
+                    .map(|s| s.to_string()),
+                auto_add: req
+                    .data
+                    .get("autoAdd")
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(false),
             },
             noop,
         ),
@@ -156,6 +175,57 @@ pub fn prompt(
         }
     });
     dialog.present(Some(parent));
+}
+
+pub fn confirm_shutdown(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, on_quit: impl Fn() + 'static) {
+    if ctx.shutdown_prompt_open.get() {
+        return;
+    }
+    let summary = {
+        let snap = ctx.snapshot.borrow();
+        crate::jobs::shutdown_summary(&snap.jobs, snap.mounts.len(), snap.serves.len())
+    };
+    if !summary.active() {
+        perform_shutdown(&ctx);
+        on_quit();
+        return;
+    }
+    ctx.shutdown_prompt_open.set(true);
+    let title = ctx.t_or("app.shutdown.confirmTitle", "Active Tasks in Progress");
+    let jobs = summary.jobs.to_string();
+    let mounts = summary.mounts.to_string();
+    let serves = summary.serves.to_string();
+    let message = ctx.tf(
+        "app.shutdown.confirmMessage",
+        &[("jobs", &jobs), ("mounts", &mounts), ("serves", &serves)],
+    );
+    let cancel = ctx.t_or("common.cancel", "Cancel");
+    let quit = ctx.t_or("app.shutdown.stopAndQuit", "Stop & Quit");
+    let dialog = adw::AlertDialog::new(Some(&title), Some(&message));
+    dialog.add_response("cancel", &cancel);
+    dialog.add_response("quit", &quit);
+    dialog.set_response_appearance("quit", adw::ResponseAppearance::Destructive);
+    dialog.set_default_response(Some("cancel"));
+    dialog.set_close_response("cancel");
+    dialog.connect_response(None, move |_, response| {
+        ctx.shutdown_prompt_open.set(false);
+        if response == "quit" {
+            perform_shutdown(&ctx);
+            on_quit();
+        }
+    });
+    dialog.present(Some(parent));
+}
+
+pub fn perform_shutdown(ctx: &AppCtx) {
+    if let Some(client) = ctx.client() {
+        let snap = ctx.snapshot.borrow();
+        crate::jobs::stop_all_runtime(&client, &snap.jobs, &snap.mounts);
+    }
+    ctx.inhibitor.borrow_mut().release();
+    if let Some(mut engine) = ctx.engine.borrow_mut().take() {
+        engine.shutdown();
+    }
 }
 
 pub fn preferences(parent: &impl IsA<gtk::Widget>, ctx: AppCtx) {
@@ -1139,27 +1209,53 @@ pub fn logs(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, remote: Option<String>)
                         display.clipboard().set_text(&formatted);
                     }
                 });
+                let message = gtk::Label::new(None);
+                if crate::ansi::has_ansi(&entry.message) {
+                    message.set_markup(&crate::ansi::ansi_to_pango(&entry.message));
+                } else {
+                    message.set_text(&entry.message);
+                }
+                message.set_wrap(true);
+                message.set_wrap_mode(gtk::pango::WrapMode::WordChar);
+                message.set_xalign(0.0);
+                message.set_hexpand(true);
+                message.set_selectable(true);
+                message.add_css_class("heading");
+                let sub = gtk::Label::new(Some(&subtitle));
+                sub.add_css_class("dim-label");
+                sub.set_xalign(0.0);
+                let text = gtk::Box::new(gtk::Orientation::Vertical, 2);
+                text.set_hexpand(true);
+                text.append(&message);
+                text.append(&sub);
+                let row_box = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+                row_box.set_margin_start(12);
+                row_box.set_margin_end(12);
+                row_box.set_margin_top(8);
+                row_box.set_margin_bottom(8);
+                row_box.append(&text);
+                row_box.append(&copy);
                 if let Some(details) = &entry.context {
-                    let row = adw::ExpanderRow::new();
-                    row.set_title(&entry.message);
-                    row.set_subtitle(&subtitle);
-                    row.add_suffix(&copy);
-                    let label = gtk::Label::new(Some(&format!("{context_label}\n{details}")));
+                    let expander = gtk::Expander::new(Some(&context_label));
+                    let label = gtk::Label::new(Some(details));
                     label.set_wrap(true);
                     label.set_xalign(0.0);
                     label.set_selectable(true);
                     label.add_css_class("monospace");
                     label.set_margin_start(12);
                     label.set_margin_end(12);
-                    label.set_margin_top(8);
+                    label.set_margin_top(4);
                     label.set_margin_bottom(8);
-                    row.add_row(&label);
+                    expander.set_child(Some(&label));
+                    let col = gtk::Box::new(gtk::Orientation::Vertical, 4);
+                    col.append(&row_box);
+                    col.append(&expander);
+                    let row = gtk::ListBoxRow::new();
+                    row.set_child(Some(&col));
                     list.append(&row);
                 } else {
-                    let row = adw::ActionRow::new();
-                    row.set_title(&entry.message);
-                    row.set_subtitle(&subtitle);
-                    row.add_suffix(&copy);
+                    let row = gtk::ListBoxRow::new();
+                    row.set_child(Some(&row_box));
                     list.append(&row);
                 }
             }

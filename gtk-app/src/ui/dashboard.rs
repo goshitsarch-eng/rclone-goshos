@@ -721,7 +721,7 @@ impl Dashboard {
                 }
                 if !serve.addr.is_empty() {
                     let open = gtk::LinkButton::new(&format!("http://{}", serve.addr));
-                    open.set_label("Open");
+                    open.set_label(&self.ctx.t_or("common.open", "Open"));
                     open.set_valign(gtk::Align::Center);
                     row.add_suffix(&open);
                 }
@@ -766,9 +766,13 @@ impl Dashboard {
         bw_group.append(&current);
         let limit = ctx_settings_bandwidth(&self.ctx);
         let limit_row = adw::ActionRow::new();
-        limit_row.set_title("Saved limit");
+        limit_row.set_title(
+            &self
+                .ctx
+                .t_or("dashboard.bandwidth.savedLimit", "Saved limit"),
+        );
         limit_row.set_subtitle(&if limit.is_empty() || limit == "off" {
-            "Unlimited".into()
+            self.ctx.t_or("dashboard.bandwidth.unlimited", "Unlimited")
         } else {
             limit.clone()
         });
@@ -780,11 +784,11 @@ impl Dashboard {
             .map(|v| crate::jobs::parse_bwlimit(&v))
         {
             let live_row = adw::ActionRow::new();
-            live_row.set_title("Live limit");
+            live_row.set_title(&self.ctx.t_or("dashboard.bandwidth.liveLimit", "Live limit"));
             live_row.set_subtitle(&format!(
                 "{} · tx {}/s · rx {}/s",
                 if live.rate == "off" {
-                    "Unlimited".into()
+                    self.ctx.t_or("dashboard.bandwidth.unlimited", "Unlimited")
                 } else {
                     live.rate.clone()
                 },
@@ -810,9 +814,12 @@ impl Dashboard {
         }
         self.overview.append(&presets);
         let custom = adw::EntryRow::new();
-        custom.set_title("Custom limit (e.g. 2M or 1M:10M)");
+        custom.set_title(&self.ctx.t_or(
+            "dashboard.bandwidth.customLimit",
+            "Custom limit (e.g. 2M or 1M:10M)",
+        ));
         custom.set_text(&limit);
-        let apply = gtk::Button::with_label("Apply");
+        let apply = gtk::Button::with_label(&self.ctx.t_or("common.apply", "Apply"));
         apply.set_valign(gtk::Align::Center);
         {
             let ctx = self.ctx.clone();
@@ -847,7 +854,7 @@ impl Dashboard {
             let alloc = mem.get("Alloc").and_then(|x| x.as_i64()).unwrap_or(0);
             let sys_bytes = mem.get("Sys").and_then(|x| x.as_i64()).unwrap_or(0);
             let row = adw::ActionRow::new();
-            row.set_title("Memory");
+            row.set_title(&self.ctx.t_or("dashboard.system.memory", "Memory"));
             row.set_subtitle(&format!(
                 "{} alloc · {} sys",
                 format_bytes(alloc),
@@ -856,7 +863,7 @@ impl Dashboard {
             sys.append(&row);
         }
         let jobs_row = adw::ActionRow::new();
-        jobs_row.set_title("Activity");
+        jobs_row.set_title(&self.ctx.t_or("dashboard.system.activity", "Activity"));
         jobs_row.set_subtitle(&format!(
             "{} running jobs · {} mounts · {} serves",
             snap.jobs.iter().filter(|j| j.status == "running").count(),
@@ -1390,7 +1397,7 @@ impl Dashboard {
         }
         if qlist.first_child().is_none() {
             let row = adw::ActionRow::new();
-            row.set_title("No quick runs");
+            row.set_title(&self.ctx.t_or("dashboard.quickRuns.empty", "No quick runs"));
             qlist.append(&row);
         }
         self.detail.append(&qlist);
@@ -1417,7 +1424,11 @@ impl Dashboard {
         rows.truncate(24);
         if rows.is_empty() {
             let row = adw::ActionRow::new();
-            row.set_title("No saved profile settings");
+            row.set_title(
+                &self
+                    .ctx
+                    .t_or("dashboard.settings.empty", "No saved profile settings"),
+            );
             slist.append(&row);
         } else {
             for (key, display) in rows {

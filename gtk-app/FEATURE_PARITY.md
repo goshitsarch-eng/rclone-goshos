@@ -218,6 +218,12 @@ This client is the GTK 4 + libadwaita rewrite of the Angular/Tauri desktop UI. I
 - Remote-config deep-link (`initial` step + profile) and dashboard Add/Edit profile actions
 - Rclone option title/help translation (`rclone.json` snake_case keys)
 - Localized cron hints and Files shortcuts Alt+←/→ plus Ctrl+Shift+T
+- ANSI SGR coloring in the Logs dialog (Angular `ansiToHtml` → Pango spans)
+- MIME / extension Adwaita icons in Files (Angular `mime-icon-map` + folder aliases)
+- Shutdown confirm when jobs, mounts, or serves are active (tray Quit, Ctrl+Q, close-to-destroy)
+- Profile rename updates live job metadata, job history, and automation last-run/pause keys
+- Dashboard Add profile opens remote-config and immediately prompts for a new profile name
+- Remote-config deep-link selects the named profile; standalone dialogs honor `initial`/`profile`/`autoAdd`
 
 ## Still deepening toward pixel-level Angular parity
 

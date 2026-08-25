@@ -786,6 +786,41 @@ impl AppStore {
         }
     }
 
+    pub fn rename_runtime_profile(&mut self, remote: &str, from: &str, to: &str) -> usize {
+        if remote.is_empty() || from.is_empty() || to.is_empty() || from == to {
+            return 0;
+        }
+        let mut updated = 0;
+        for meta in self.job_meta.values_mut() {
+            if meta.remote == remote && meta.profile == from {
+                meta.profile = to.to_string();
+                updated += 1;
+            }
+        }
+        for job in &mut self.job_history {
+            if job.remote == remote && job.profile == from {
+                job.profile = to.to_string();
+                updated += 1;
+            }
+        }
+        let last_run_keys: Vec<String> = self.automation_last_run.keys().cloned().collect();
+        for key in last_run_keys {
+            if let Some(next) = rewrite_automation_id(&key, remote, from, to) {
+                if let Some(value) = self.automation_last_run.remove(&key) {
+                    self.automation_last_run.insert(next, value);
+                    updated += 1;
+                }
+            }
+        }
+        for id in &mut self.automation_paused {
+            if let Some(next) = rewrite_automation_id(id, remote, from, to) {
+                *id = next;
+                updated += 1;
+            }
+        }
+        updated
+    }
+
     pub fn dismiss_job(&mut self, id: u64) {
         self.job_history.retain(|job| job.id != id);
     }
@@ -1157,6 +1192,17 @@ impl DeleteRemotePlan {
             self.automations.len(),
             self.job_history
         )
+    }
+}
+
+pub fn rewrite_automation_id(id: &str, remote: &str, from: &str, to: &str) -> Option<String> {
+    let prefix = format!("remote:{remote}:");
+    let rest = id.strip_prefix(&prefix)?;
+    let (op, profile) = rest.rsplit_once(':')?;
+    if profile == from && !to.is_empty() && from != to {
+        Some(format!("remote:{remote}:{op}:{to}"))
+    } else {
+        None
     }
 }
 
@@ -1753,5 +1799,67 @@ mod tests {
                 .rclone["srcFs"],
             "photos:Photos"
         );
+    }
+
+    #[test]
+    fn renames_runtime_profile_cache() {
+        assert_eq!(
+            rewrite_automation_id("remote:drive:sync:nightly", "drive", "nightly", "weekly"),
+            Some("remote:drive:sync:weekly".into())
+        );
+        assert_eq!(
+            rewrite_automation_id("remote:drive:sync:nightly", "drive", "other", "weekly"),
+            None
+        );
+        assert_eq!(
+            rewrite_automation_id("quick:abc", "drive", "nightly", "weekly"),
+            None
+        );
+        let mut store = AppStore::default();
+        store.job_meta.insert(
+            7,
+            JobMeta {
+                origin: "dashboard".into(),
+                profile: "nightly".into(),
+                remote: "drive".into(),
+                backend: "local".into(),
+                quick_run_id: String::new(),
+            },
+        );
+        store.job_history.push(JobInfo {
+            id: 7,
+            operation: "sync".into(),
+            remote: "drive".into(),
+            profile: "nightly".into(),
+            status: "running".into(),
+            origin: "dashboard".into(),
+            start_time: Utc::now(),
+            error: None,
+            dry_run: false,
+            src: String::new(),
+            dst: String::new(),
+            group: "job/7".into(),
+            stats: json!({}),
+            transferring: json!([]),
+            duration: 0.0,
+            progress: 0.0,
+            output: json!({}),
+            completed: json!([]),
+        });
+        store
+            .automation_last_run
+            .insert("remote:drive:sync:nightly".into(), Utc::now());
+        store
+            .automation_paused
+            .push("remote:drive:sync:nightly".into());
+        assert!(store.rename_runtime_profile("drive", "nightly", "weekly") >= 4);
+        assert_eq!(store.job_meta[&7].profile, "weekly");
+        assert_eq!(store.job_history[0].profile, "weekly");
+        assert!(store
+            .automation_last_run
+            .contains_key("remote:drive:sync:weekly"));
+        assert_eq!(store.automation_paused, vec!["remote:drive:sync:weekly"]);
+        assert_eq!(store.rename_runtime_profile("drive", "weekly", "weekly"), 0);
+        assert_eq!(store.rename_runtime_profile("", "a", "b"), 0);
     }
 }

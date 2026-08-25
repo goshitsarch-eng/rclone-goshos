@@ -1,5 +1,6 @@
 mod action_order;
 mod alerts;
+mod ansi;
 mod automation;
 mod backend_options;
 mod backup;
@@ -17,6 +18,7 @@ mod logs;
 mod markdown;
 mod media;
 mod migrate;
+mod mime;
 mod mount_plugin;
 mod mqtt;
 mod navigation;

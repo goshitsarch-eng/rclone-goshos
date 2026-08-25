@@ -1505,7 +1505,8 @@ impl NautilusView {
                 let type_filter = self.ctx.settings.borrow().nautilus.file_type_filter.clone();
                 if !type_filter.is_empty() && type_filter != "all" {
                     entries.retain(|e| {
-                        FileTypeCategory::from_name(&e.name, e.is_dir).matches_filter(&type_filter)
+                        crate::mime::category_for_entry(&e.name, e.is_dir, &e.mime)
+                            .matches_filter(&type_filter)
                     });
                 }
                 sort_entries(
@@ -1577,13 +1578,16 @@ impl NautilusView {
         let row = adw::ActionRow::new();
         row.set_title(&entry.name);
         row.set_widget_name(&entry.name);
-        let category = FileTypeCategory::from_name(&entry.name, entry.is_dir);
         row.set_subtitle(&if entry.is_dir {
             self.ctx.t_or("nautilus.selection.folder", "Folder")
         } else {
             format!("{} · {}", format_bytes(entry.size), entry.mod_time)
         });
-        let icon = gtk::Image::from_icon_name(category.icon_name());
+        let icon = gtk::Image::from_icon_name(&crate::mime::icon_for_entry(
+            &entry.name,
+            entry.is_dir,
+            &entry.mime,
+        ));
         row.add_prefix(&icon);
         let size = gtk::Label::new(Some(&if entry.is_dir {
             String::new()
@@ -1612,8 +1616,11 @@ impl NautilusView {
         tile.set_margin_start(8);
         tile.set_margin_end(8);
         tile.set_widget_name(&entry.name);
-        let category = FileTypeCategory::from_name(&entry.name, entry.is_dir);
-        let icon = gtk::Image::from_icon_name(category.icon_name());
+        let icon = gtk::Image::from_icon_name(&crate::mime::icon_for_entry(
+            &entry.name,
+            entry.is_dir,
+            &entry.mime,
+        ));
         icon.set_pixel_size(self.ctx.settings.borrow().nautilus.icon_size.max(48));
         let label = gtk::Label::new(Some(&entry.name));
         label.set_ellipsize(gtk::pango::EllipsizeMode::End);
@@ -1967,7 +1974,8 @@ impl NautilusView {
             let type_filter = self.ctx.settings.borrow().nautilus.file_type_filter.clone();
             if !type_filter.is_empty() && type_filter != "all" {
                 entries.retain(|e| {
-                    FileTypeCategory::from_name(&e.name, e.is_dir).matches_filter(&type_filter)
+                    crate::mime::category_for_entry(&e.name, e.is_dir, &e.mime)
+                        .matches_filter(&type_filter)
                 });
             }
             self.populate_entries(&entries, false);
@@ -2551,7 +2559,7 @@ impl NautilusView {
         let cleanup_ok = info.as_ref().is_none_or(|i| i.has_feature("CleanUp"));
         let archive_selected = selected.iter().any(|name| {
             matches!(
-                FileTypeCategory::from_name(name, false),
+                crate::mime::category_for_entry(name, false, ""),
                 FileTypeCategory::Archive
             )
         });

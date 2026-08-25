@@ -272,9 +272,12 @@ pub fn present_main(app: &adw::Application, ctx: AppCtx) {
                 window_nav.present();
             }
             if ctx_nav.take_quit() {
-                if let Some(app) = window_nav.application() {
-                    app.quit();
-                }
+                let window = window_nav.clone();
+                dialogs::confirm_shutdown(&window_nav, ctx_nav.clone(), move || {
+                    if let Some(app) = window.application() {
+                        app.quit();
+                    }
+                });
             }
             if let Some(target) = ctx_nav.take_nav() {
                 apply_nav(
@@ -346,7 +349,13 @@ pub fn present_main(app: &adw::Application, ctx: AppCtx) {
         let ctx = ctx.clone();
         window.connect_close_request(move |win| {
             if ctx.settings.borrow().developer.destroy_window_on_close {
-                glib::Propagation::Proceed
+                let window = win.clone();
+                dialogs::confirm_shutdown(win, ctx.clone(), move || {
+                    if let Some(app) = window.application() {
+                        app.quit();
+                    }
+                });
+                glib::Propagation::Stop
             } else {
                 win.set_visible(false);
                 glib::Propagation::Stop
@@ -750,7 +759,19 @@ fn install_actions(
     }
     {
         let window = window.clone();
-        add_action("quit", Box::new(move || window.close()));
+        let ctx = ctx.clone();
+        add_action(
+            "quit",
+            Box::new(move || {
+                let window = window.clone();
+                let closer = window.clone();
+                dialogs::confirm_shutdown(&window, ctx.clone(), move || {
+                    if let Some(app) = closer.application() {
+                        app.quit();
+                    }
+                });
+            }),
+        );
     }
 
     let theme_action = gio::SimpleAction::new_stateful(

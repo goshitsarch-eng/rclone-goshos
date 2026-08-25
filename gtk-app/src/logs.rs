@@ -86,7 +86,7 @@ impl LogEntry {
     pub fn search_haystack(&self) -> String {
         let mut hay = format!(
             "{} {} {}",
-            self.message.to_ascii_lowercase(),
+            crate::ansi::strip_ansi(&self.message).to_ascii_lowercase(),
             self.timestamp.to_ascii_lowercase(),
             self.level.as_str().to_ascii_lowercase()
         );
@@ -561,5 +561,21 @@ mod tests {
             infer_remote(r#"Failed to create file system for "sftp:inbox""#).as_deref(),
             Some("sftp")
         );
+    }
+
+    #[test]
+    fn search_ignores_ansi_codes() {
+        let entry = LogEntry {
+            timestamp: "now".into(),
+            remote_name: None,
+            level: LogLevel::Error,
+            message: "\u{1b}[31mcopy failed\u{1b}[0m".into(),
+            context: None,
+            operation: None,
+            raw: String::new(),
+        };
+        assert!(entry.search_haystack().contains("copy failed"));
+        assert!(!entry.search_haystack().contains('\u{1b}'));
+        assert!(filter_entries(&[entry], "copy", "ERROR", None).len() == 1);
     }
 }
