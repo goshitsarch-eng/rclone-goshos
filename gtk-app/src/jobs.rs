@@ -851,6 +851,82 @@ pub fn find_job_by_id(live: &[JobInfo], history: &[JobInfo], id: u64) -> Option<
         .cloned()
 }
 
+pub fn job_from_meta(id: u64, meta: &JobMeta) -> JobInfo {
+    let first = meta
+        .transfer_snapshot
+        .as_array()
+        .and_then(|items| items.first());
+    let src = first
+        .and_then(|item| item.get("src"))
+        .and_then(|value| value.as_str())
+        .unwrap_or_default()
+        .to_string();
+    let dst = first
+        .and_then(|item| item.get("dst"))
+        .and_then(|value| value.as_str())
+        .unwrap_or_default()
+        .to_string();
+    let operation = match meta.origin.as_str() {
+        "filemanager" | "files" | "check-resolve" => "copy",
+        other if !other.is_empty() => other,
+        _ => "job",
+    }
+    .to_string();
+    let mut job = JobInfo {
+        id,
+        operation: operation.clone(),
+        remote: meta.remote.clone(),
+        profile: if meta.profile.is_empty() {
+            "default".into()
+        } else {
+            meta.profile.clone()
+        },
+        status: "completed".into(),
+        origin: if meta.origin.is_empty() {
+            "dashboard".into()
+        } else {
+            meta.origin.clone()
+        },
+        start_time: Utc::now(),
+        error: None,
+        dry_run: false,
+        src,
+        dst,
+        group: if meta.group.is_empty() {
+            format!("job/{id}")
+        } else {
+            meta.group.clone()
+        },
+        stats: json!({}),
+        transferring: json!([]),
+        duration: 0.0,
+        progress: 1.0,
+        output: json!({ "operation": operation, "origin": meta.origin }),
+        completed: json!([]),
+        parent_job_id: meta.parent_job_id,
+    };
+    apply_job_meta(&mut job, Some(meta));
+    job
+}
+
+pub fn find_stored_job(
+    live: &[JobInfo],
+    history: &[JobInfo],
+    meta: &HashMap<u64, JobMeta>,
+    id: u64,
+) -> Option<JobInfo> {
+    find_job_by_id(live, history, id).or_else(|| meta.get(&id).map(|item| job_from_meta(id, item)))
+}
+
+pub fn history_with_meta(history: &[JobInfo], meta: &HashMap<u64, JobMeta>) -> Vec<JobInfo> {
+    let extra: Vec<JobInfo> = meta
+        .iter()
+        .filter(|(id, _)| history.iter().all(|job| job.id != **id))
+        .map(|(id, item)| job_from_meta(*id, item))
+        .collect();
+    merge_job_lists(history, &extra)
+}
+
 pub fn merge_job_lists(live: &[JobInfo], history: &[JobInfo]) -> Vec<JobInfo> {
     let mut out = live.to_vec();
     let ids: HashSet<u64> = out.iter().map(|job| job.id).collect();
@@ -3308,5 +3384,28 @@ mod tests {
         assert_eq!(status["finished"], true);
         assert_eq!(status["success"], true);
         assert_eq!(status["group"], "job/2");
+        let mut meta = HashMap::new();
+        meta.insert(
+            186,
+            JobMeta {
+                origin: "filemanager".into(),
+                remote: "testdrive".into(),
+                transfer_snapshot: json!([
+                    {
+                        "name": "k.txt",
+                        "src": "/tmp/gtk-upload-test/k.txt",
+                        "dst": "testdrive:k.txt"
+                    }
+                ]),
+                ..Default::default()
+            },
+        );
+        let restored = find_stored_job(&[], &[], &meta, 186).unwrap();
+        assert_eq!(restored.remote, "testdrive");
+        assert_eq!(restored.origin, "filemanager");
+        assert_eq!(restored.src, "/tmp/gtk-upload-test/k.txt");
+        let combined = history_with_meta(&history, &meta);
+        assert!(combined.iter().any(|job| job.id == 186));
+        assert!(combined.iter().any(|job| job.id == 2));
     }
 }

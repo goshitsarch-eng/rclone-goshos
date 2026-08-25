@@ -474,6 +474,10 @@ This client is the GTK 4 + libadwaita rewrite of the Angular/Tauri desktop UI. I
 - `job_meta` (transfer snapshots, execute IDs, groups) is persisted in `store.json` so Job detail rows survive restart
 - Preparing/starting rows from a previous process are finalized on store load so they are not re-injected as live jobs
 - Onboarding Import opens the same restore-preview flow as the menu Import action
+- Job detail falls back to `job_history` / `job_meta` when rclone no longer has the job id (restart, new rcd)
+- Dashboard and Flow activity merge finished history (and meta-only snapshots) with live jobs
+- Check results honor the transfer search box, hide/override rows after delete, and link resolve copies to the parent check job
+- rclone 1.60 `job/list` noise is not written to history; leftover noise is dropped on store load
 
 ## Still deepening toward pixel-level Angular parity
 

@@ -872,12 +872,15 @@ impl FlowView {
     }
 
     fn append_transfer_activity(&self, name: &str, snap: &crate::store::RuntimeSnapshot) {
-        let jobs = crate::jobs::merge_overview_jobs(
-            &snap.jobs,
-            &self.ctx.store.borrow().job_history,
-            name,
-            None,
-        );
+        let jobs = {
+            let store = self.ctx.store.borrow();
+            crate::jobs::merge_overview_jobs(
+                &snap.jobs,
+                &crate::jobs::history_with_meta(&store.job_history, &store.job_meta),
+                name,
+                None,
+            )
+        };
         self.append_transfers(&self.content, &jobs);
     }
 

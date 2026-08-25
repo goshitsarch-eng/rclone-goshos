@@ -940,17 +940,19 @@ impl AppStore {
             Self::default()
         };
         store.seed_alert_defaults(true);
-        let before: Vec<String> = store
+        let before: HashMap<u64, String> = store
             .job_history
             .iter()
-            .map(|job| job.status.clone())
+            .map(|job| (job.id, job.status.clone()))
             .collect();
         store.finalize_stale_preparing();
-        if store
-            .job_history
-            .iter()
-            .zip(before.iter())
-            .any(|(job, status)| job.status != *status)
+        store.job_history.retain(crate::jobs::is_managed_job);
+        if store.job_history.len() != before.len()
+            || store.job_history.iter().any(|job| {
+                before
+                    .get(&job.id)
+                    .is_some_and(|status| status != &job.status)
+            })
         {
             let _ = store.save();
         }
@@ -1092,6 +1094,9 @@ impl AppStore {
     }
 
     pub fn remember_job(&mut self, job: JobInfo) {
+        if !crate::jobs::is_managed_job(&job) {
+            return;
+        }
         self.job_history.retain(|existing| existing.id != job.id);
         self.job_history.insert(0, job);
         if self.job_history.len() > 80 {
@@ -2155,6 +2160,28 @@ mod tests {
         assert_eq!(store.job_history[0].transferring[0]["name"], "a.txt");
         assert_eq!(store.job_history[0].status, "preparing");
         assert!(!store.update_job_stats(99, json!({})));
+        store.remember_job(JobInfo {
+            id: 540356,
+            operation: "job/540356".into(),
+            remote: String::new(),
+            profile: "default".into(),
+            status: "completed".into(),
+            origin: "dashboard".into(),
+            start_time: Utc::now(),
+            error: None,
+            dry_run: false,
+            src: String::new(),
+            dst: String::new(),
+            group: "job/540356".into(),
+            stats: json!({}),
+            transferring: json!([]),
+            duration: 0.0,
+            progress: 1.0,
+            output: json!({}),
+            completed: json!([]),
+            parent_job_id: None,
+        });
+        assert!(store.job_history.iter().all(|job| job.id != 540356));
     }
 
     #[test]

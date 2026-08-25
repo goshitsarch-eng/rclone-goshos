@@ -1726,12 +1726,15 @@ impl Dashboard {
         ));
         let activity = gtk::ListBox::new();
         activity.add_css_class("boxed-list");
-        let remote_jobs = crate::jobs::merge_overview_jobs(
-            &snap.jobs,
-            &self.ctx.store.borrow().job_history,
-            &name,
-            None,
-        );
+        let remote_jobs = {
+            let store = self.ctx.store.borrow();
+            crate::jobs::merge_overview_jobs(
+                &snap.jobs,
+                &crate::jobs::history_with_meta(&store.job_history, &store.job_meta),
+                &name,
+                None,
+            )
+        };
         if remote_jobs.is_empty() {
             let row = adw::ActionRow::new();
             row.set_title(&self.ctx.t_or(
@@ -3292,12 +3295,15 @@ impl Dashboard {
         snap: &crate::store::RuntimeSnapshot,
         profile: Option<&str>,
     ) {
-        let jobs = crate::jobs::merge_overview_jobs(
-            &snap.jobs,
-            &self.ctx.store.borrow().job_history,
-            name,
-            profile,
-        );
+        let jobs = {
+            let store = self.ctx.store.borrow();
+            crate::jobs::merge_overview_jobs(
+                &snap.jobs,
+                &crate::jobs::history_with_meta(&store.job_history, &store.job_meta),
+                name,
+                profile,
+            )
+        };
         let mut rows = Vec::new();
         for job in &jobs {
             if let Some(arr) = job.transferring.as_array() {

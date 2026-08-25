@@ -4370,18 +4370,16 @@ impl NautilusView {
             })
             .cloned()
             .collect();
-        let history: Vec<_> = self
-            .ctx
-            .store
-            .borrow()
-            .job_history
-            .iter()
-            .filter(|job| {
-                crate::jobs::is_overview_job(job)
-                    && crate::jobs::origin_matches(&job.origin, "filemanager")
-            })
-            .cloned()
-            .collect();
+        let history: Vec<_> = {
+            let store = self.ctx.store.borrow();
+            crate::jobs::history_with_meta(&store.job_history, &store.job_meta)
+                .into_iter()
+                .filter(|job| {
+                    crate::jobs::is_overview_job(job)
+                        && crate::jobs::origin_matches(&job.origin, "filemanager")
+                })
+                .collect()
+        };
         if jobs.is_empty() && history.is_empty() {
             let row = adw::ActionRow::new();
             row.set_title(

@@ -5871,11 +5871,15 @@ pub fn job_detail(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, job_id: u64) {
         let ctx = ctx.clone();
         stop_group.connect_clicked(move |_| {
             if let Some(client) = ctx.client() {
-                let group = crate::jobs::find_job_by_id(
-                    &ctx.snapshot.borrow().jobs,
-                    &ctx.store.borrow().job_history,
-                    job_id,
-                )
+                let group = {
+                    let store = ctx.store.borrow();
+                    crate::jobs::find_stored_job(
+                        &ctx.snapshot.borrow().jobs,
+                        &store.job_history,
+                        &store.job_meta,
+                        job_id,
+                    )
+                }
                 .map(|job| job.group)
                 .filter(|group| !group.is_empty())
                 .unwrap_or_else(|| format!("job/{job_id}"));
@@ -6014,21 +6018,29 @@ pub fn job_detail(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, job_id: u64) {
                     .and_then(|client| client.stats(Some(&group)).ok());
                 (job_from_status(job_id, &status, stats.as_ref()), status)
             } else {
-                let Some(stored) = crate::jobs::find_job_by_id(
-                    &ctx.snapshot.borrow().jobs,
-                    &ctx.store.borrow().job_history,
-                    job_id,
-                ) else {
+                let stored = {
+                    let store = ctx.store.borrow();
+                    crate::jobs::find_stored_job(
+                        &ctx.snapshot.borrow().jobs,
+                        &store.job_history,
+                        &store.job_meta,
+                        job_id,
+                    )
+                };
+                let Some(stored) = stored else {
                     return;
                 };
                 let status = crate::jobs::job_status_value(&stored);
                 (stored, status)
             };
             let registry = ctx.store.borrow().job_meta.clone();
-            let siblings = crate::jobs::merge_job_lists(
-                &ctx.snapshot.borrow().jobs,
-                &ctx.store.borrow().job_history,
-            );
+            let siblings = {
+                let store = ctx.store.borrow();
+                crate::jobs::merge_job_lists(
+                    &ctx.snapshot.borrow().jobs,
+                    &crate::jobs::history_with_meta(&store.job_history, &store.job_meta),
+                )
+            };
             crate::jobs::decorate_job_transfers(&mut job, &registry, &siblings);
             populate_opens(&job.src, &job.dst);
             progress.set_fraction(job.progress);
