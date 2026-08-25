@@ -61,6 +61,11 @@
     "monthlyDaysAt": "毎月 {{days}} 日 {{time}}",
     "yearlyOn": "毎年 {{month}} {{dom}} 日 {{time}}",
     "atReboot": "再起動時",
+    "lastDayOfMonthAt": "毎月最終日 {{time}}",
+    "lastWeekdayAt": "最後の{{day}} {{time}}",
+    "nthWeekdayAt": "{{nth}} の{{day}} {{time}}",
+    "inMonthsAt": "{{months}} {{time}}",
+    "inMonthsOnDayAt": "{{months}} {{dom}} 日 {{time}}",
     "days": {
       "0": "日曜日",
       "1": "月曜日",

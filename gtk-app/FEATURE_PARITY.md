@@ -266,6 +266,9 @@ This client is the GTK 4 + libadwaita rewrite of the Angular/Tauri desktop UI. I
 - Files grid tiles show size and relative Modified dates
 - Remaining dialog chrome (quick-add, CLI import, helper profiles, template capture, path kind) uses i18n fallbacks
 - Cron descriptions: `@hourly/@daily/@weekly/@monthly/@yearly/@reboot`, named weekdays, 6-field seconds, minute ranges, multi-day monthly, yearly month names
+- Files view-options menu: Angular sort radios, icon-size +/-, split, hidden (grid 48–256 / list 16–48)
+- Files status bar: listing count and Angular-style selection summary
+- Cron descriptions: last day of month, last/nth weekday, month lists, trailing timezone token
 
 ## Still deepening toward pixel-level Angular parity
 
@@ -273,4 +276,4 @@ This client is the GTK 4 + libadwaita rewrite of the Angular/Tauri desktop UI. I
 - Live GUI session against rclone rcd (no display in this environment)
 - Native share portal / Android share intent (Linux uses `--share-intake` + Files banner)
 - Remaining dialogs/Files English labels (core chrome now localized)
-- Remaining cronstrue forms (lists of months, last/nth weekday, timezone suffixes)
+- Remaining cronstrue forms (complex lists, Quartz `L-n` offsets)

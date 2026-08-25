@@ -5,7 +5,7 @@ use crate::rclone::{
     format_bytes, format_relative_mod_time, join_remote_path, parent_remote_path, remote_fs,
     split_remote_path, DirEntry,
 };
-use crate::store::{sort_entries, Bookmark};
+use crate::store::{apply_sort_option, sort_entries, sort_option_key, Bookmark};
 use adw::prelude::*;
 use gtk::prelude::*;
 use gtk::{gio, glib};
@@ -104,7 +104,10 @@ impl NautilusView {
         reload.set_tooltip_text(Some(&ctx.t_or("common.refresh", "Reload")));
         let path_entry = gtk::Entry::new();
         path_entry.set_hexpand(true);
-        path_entry.set_placeholder_text(Some("remote:path or /local/path"));
+        path_entry.set_placeholder_text(Some(&ctx.t_or(
+            "nautilus.titles.pathPlaceholder",
+            "remote:path or /local/path",
+        )));
         let crumbs = gtk::Box::new(gtk::Orientation::Horizontal, 2);
         crumbs.add_css_class("linked");
         let crumbs_scroll = gtk::ScrolledWindow::new();
@@ -138,8 +141,9 @@ impl NautilusView {
         hidden_btn.set_tooltip_text(Some(
             &ctx.t_or("nautilus.view.showHidden", "Toggle hidden files"),
         ));
-        let sort_btn = gtk::Button::from_icon_name("view-sort-ascending-symbolic");
-        sort_btn.set_tooltip_text(Some(&ctx.t_or("nautilus.sort.label", "Sort listing")));
+        let sort_btn = gtk::MenuButton::new();
+        sort_btn.set_icon_name("view-more-symbolic");
+        sort_btn.set_tooltip_text(Some(&ctx.t_or("nautilus.view.viewOptions", "View options")));
         let new_tab = gtk::Button::from_icon_name("tab-new-symbolic");
         new_tab.set_tooltip_text(Some(&ctx.t_or("nautilus.contextMenu.newTab", "New tab")));
         let split_btn = gtk::Button::from_icon_name("view-dual-symbolic");
@@ -221,7 +225,7 @@ impl NautilusView {
         ops_scroll.set_min_content_height(90);
         ops_scroll.set_child(Some(&ops));
 
-        let status = gtk::Label::new(Some("Ready"));
+        let status = gtk::Label::new(Some(&ctx.t_or("common.ready", "Ready")));
         status.add_css_class("dim-label");
         status.set_xalign(0.0);
         status.set_margin_start(10);
@@ -476,9 +480,30 @@ impl NautilusView {
                     );
                 });
         }
+        view.attach_view_options(&sort_btn);
         {
             let view = view.clone();
-            sort_btn.connect_clicked(move |_| view.cycle_sort());
+            view.list
+                .clone()
+                .connect_selected_rows_changed(move |_| view.refresh_selection_status());
+        }
+        {
+            let view = view.clone();
+            view.list_right
+                .clone()
+                .connect_selected_rows_changed(move |_| view.refresh_selection_status());
+        }
+        {
+            let view = view.clone();
+            view.grid
+                .clone()
+                .connect_selected_children_changed(move |_| view.refresh_selection_status());
+        }
+        {
+            let view = view.clone();
+            view.grid_right
+                .clone()
+                .connect_selected_children_changed(move |_| view.refresh_selection_status());
         }
         view.attach_file_controllers(&view.list, false, true);
         view.attach_file_controllers(&view.list_right, false, false);
@@ -515,24 +540,30 @@ impl NautilusView {
         self.ctx.settings.borrow().nautilus.layout == "grid"
     }
 
-    fn cycle_sort(&self) {
-        let next = match self.ctx.settings.borrow().nautilus.sort_by.as_str() {
-            "name" => "size",
-            "size" => "modified",
-            _ => "name",
-        };
-        if next == "name" {
-            let desc = self.ctx.settings.borrow().nautilus.sort_desc;
-            self.ctx.settings.borrow_mut().nautilus.sort_desc = !desc;
+    fn current_sort_key(&self) -> &'static str {
+        let nautilus = self.ctx.settings.borrow().nautilus.clone();
+        sort_option_key(&nautilus.sort_by, nautilus.sort_desc)
+    }
+
+    fn apply_sort_key(&self, key: &str) {
+        {
+            let mut settings = self.ctx.settings.borrow_mut();
+            let mut by = settings.nautilus.sort_by.clone();
+            let mut desc = settings.nautilus.sort_desc;
+            apply_sort_option(&mut by, &mut desc, key);
+            settings.nautilus.sort_by = by;
+            settings.nautilus.sort_desc = desc;
         }
-        self.ctx.settings.borrow_mut().nautilus.sort_by = next.to_string();
         self.ctx.persist();
-        let desc = self.ctx.settings.borrow().nautilus.sort_desc;
-        self.status.set_text(&format!(
-            "Sorted by {next}{}",
-            if desc { " (desc)" } else { "" }
-        ));
         self.reload();
+    }
+
+    fn icon_size_steps(&self) -> &'static [i32] {
+        if self.is_grid() {
+            &[48, 64, 96, 128, 160, 256]
+        } else {
+            &[16, 24, 32, 48]
+        }
     }
 
     fn current_icon_size(&self) -> i32 {
@@ -544,13 +575,16 @@ impl NautilusView {
         }
     }
 
-    fn cycle_icon_size(&self) {
-        let next = match self.current_icon_size() {
-            48 => 64,
-            64 => 96,
-            96 => 128,
-            _ => 48,
-        };
+    fn bump_icon_size(&self, dir: i32) {
+        let steps = self.icon_size_steps();
+        let cur = self.current_icon_size();
+        let idx = steps
+            .iter()
+            .position(|&s| s == cur)
+            .or_else(|| steps.iter().position(|&s| s > cur))
+            .unwrap_or(0);
+        let next_idx = (idx as i32 + dir).clamp(0, steps.len() as i32 - 1) as usize;
+        let next = steps[next_idx];
         if self.is_grid() {
             self.ctx.settings.borrow_mut().nautilus.grid_icon_size = next;
         } else {
@@ -562,6 +596,218 @@ impl NautilusView {
             self.ctx.t_or("nautilus.view.iconSize", "Icon size")
         )));
         self.reload();
+    }
+
+    fn cycle_icon_size(&self) {
+        let steps = self.icon_size_steps();
+        let cur = self.current_icon_size();
+        let idx = steps.iter().position(|&s| s == cur).unwrap_or(0);
+        let next = steps[(idx + 1) % steps.len()];
+        if self.is_grid() {
+            self.ctx.settings.borrow_mut().nautilus.grid_icon_size = next;
+        } else {
+            self.ctx.settings.borrow_mut().nautilus.icon_size = next;
+        }
+        self.ctx.persist();
+        self.icon_btn.set_tooltip_text(Some(&format!(
+            "{}: {next}px",
+            self.ctx.t_or("nautilus.view.iconSize", "Icon size")
+        )));
+        self.reload();
+    }
+
+    fn attach_view_options(&self, button: &gtk::MenuButton) {
+        let popover = gtk::Popover::new();
+        button.set_popover(Some(&popover));
+        let view = self.clone();
+        popover.connect_show(move |popover| {
+            popover.set_child(Some(&view.build_view_options()));
+        });
+    }
+
+    fn build_view_options(&self) -> gtk::Box {
+        let box_ = gtk::Box::new(gtk::Orientation::Vertical, 6);
+        box_.set_margin_top(10);
+        box_.set_margin_bottom(10);
+        box_.set_margin_start(12);
+        box_.set_margin_end(12);
+        let size_row = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+        let size_label =
+            gtk::Label::new(Some(&self.ctx.t_or("nautilus.view.iconSize", "Icon size")));
+        size_label.set_hexpand(true);
+        size_label.set_xalign(0.0);
+        let minus = gtk::Button::from_icon_name("list-remove-symbolic");
+        minus.set_tooltip_text(Some(&self.ctx.t_or("nautilus.view.smaller", "Smaller")));
+        let plus = gtk::Button::from_icon_name("list-add-symbolic");
+        plus.set_tooltip_text(Some(&self.ctx.t_or("nautilus.view.larger", "Larger")));
+        {
+            let view = self.clone();
+            minus.connect_clicked(move |_| view.bump_icon_size(-1));
+        }
+        {
+            let view = self.clone();
+            plus.connect_clicked(move |_| view.bump_icon_size(1));
+        }
+        size_row.append(&size_label);
+        size_row.append(&minus);
+        size_row.append(&plus);
+        box_.append(&size_row);
+        let sort_heading = gtk::Label::new(Some(&self.ctx.t_or("nautilus.sort.label", "Sort")));
+        sort_heading.add_css_class("heading");
+        sort_heading.set_xalign(0.0);
+        sort_heading.set_margin_top(6);
+        box_.append(&sort_heading);
+        let current = self.current_sort_key();
+        let options = [
+            ("name-asc", "nautilus.sort.az", "A-Z"),
+            ("name-desc", "nautilus.sort.za", "Z-A"),
+            (
+                "modified-desc",
+                "nautilus.sort.lastModified",
+                "Last Modified",
+            ),
+            (
+                "modified-asc",
+                "nautilus.sort.firstModified",
+                "First Modified",
+            ),
+            (
+                "size-desc",
+                "nautilus.sort.sizeLargest",
+                "Size (Largest First)",
+            ),
+            (
+                "size-asc",
+                "nautilus.sort.sizeSmallest",
+                "Size (Smallest First)",
+            ),
+        ];
+        let mut group: Option<gtk::CheckButton> = None;
+        for (key, i18n_key, fallback) in options {
+            let btn = gtk::CheckButton::with_label(&self.ctx.t_or(i18n_key, fallback));
+            if let Some(leader) = &group {
+                btn.set_group(Some(leader));
+            } else {
+                group = Some(btn.clone());
+            }
+            btn.set_active(current == key);
+            {
+                let view = self.clone();
+                btn.connect_toggled(move |btn| {
+                    if btn.is_active() {
+                        view.apply_sort_key(key);
+                    }
+                });
+            }
+            box_.append(&btn);
+        }
+        let split = gtk::CheckButton::with_label(
+            &self
+                .ctx
+                .t_or("nautilus.contextMenu.toggleSplit", "Split view"),
+        );
+        split.set_active(*self.split_enabled.borrow());
+        {
+            let view = self.clone();
+            split.connect_toggled(move |btn| {
+                if btn.is_active() != *view.split_enabled.borrow() {
+                    view.toggle_split();
+                }
+            });
+        }
+        box_.append(&split);
+        let hidden = gtk::CheckButton::with_label(
+            &self
+                .ctx
+                .t_or("nautilus.view.showHidden", "Show hidden files"),
+        );
+        hidden.set_active(self.ctx.settings.borrow().nautilus.show_hidden);
+        {
+            let view = self.clone();
+            hidden.connect_toggled(move |btn| {
+                let current = view.ctx.settings.borrow().nautilus.show_hidden;
+                if btn.is_active() != current {
+                    view.ctx.settings.borrow_mut().nautilus.show_hidden = btn.is_active();
+                    view.ctx.persist();
+                    view.reload();
+                }
+            });
+        }
+        box_.append(&hidden);
+        box_
+    }
+
+    fn listing_count_label(&self, count: usize) -> String {
+        if count == 0 {
+            return self
+                .ctx
+                .t_or("nautilus.empty.folderEmpty", "Folder is Empty");
+        }
+        let label = if count == 1 {
+            self.ctx.t_or("nautilus.selection.item", "item")
+        } else {
+            self.ctx.t_or("nautilus.selection.items", "items")
+        };
+        format!("{count} {label}")
+    }
+
+    fn selection_status(&self) -> String {
+        let names = self.selected_names();
+        if names.is_empty() {
+            return String::new();
+        }
+        let listing = self.last_listing.borrow();
+        let selected: Vec<&DirEntry> = listing
+            .iter()
+            .filter(|entry| names.iter().any(|name| name == &entry.name))
+            .collect();
+        if selected.is_empty() {
+            return String::new();
+        }
+        let sel = self.ctx.t_or("nautilus.selection.selected", "selected");
+        if selected.len() == 1 {
+            let item = selected[0];
+            return if item.is_dir {
+                format!("\"{}\" {sel}", item.name)
+            } else {
+                format!("\"{}\" {sel} ({})", item.name, format_bytes(item.size))
+            };
+        }
+        let folders = selected.iter().filter(|entry| entry.is_dir).count();
+        let files: Vec<&&DirEntry> = selected.iter().filter(|entry| !entry.is_dir).collect();
+        let mut parts = Vec::new();
+        if folders > 0 {
+            let label = if folders == 1 {
+                self.ctx.t_or("nautilus.selection.folder", "folder")
+            } else {
+                self.ctx.t_or("nautilus.selection.folders", "folders")
+            };
+            parts.push(format!("{folders} {label} {sel}"));
+        }
+        if !files.is_empty() {
+            let total: i64 = files.iter().map(|entry| entry.size).sum();
+            let label = if files.len() == 1 {
+                self.ctx.t_or("nautilus.selection.item", "item")
+            } else {
+                self.ctx.t_or("nautilus.selection.items", "items")
+            };
+            parts.push(format!(
+                "{} {label} {sel} ({})",
+                files.len(),
+                format_bytes(total)
+            ));
+        }
+        parts.join(", ")
+    }
+
+    fn refresh_selection_status(&self) {
+        let text = self.selection_status();
+        if text.is_empty() {
+            self.status
+                .set_text(&self.listing_count_label(self.last_listing.borrow().len()));
+        } else {
+            self.status.set_text(&text);
+        }
     }
 
     fn current_location(&self) -> String {
@@ -658,7 +904,8 @@ impl NautilusView {
                     .t_or("nautilus.empty.noStarred", "No Starred Files"),
             );
         } else {
-            self.status.set_text(&format!("{} items", entries.len()));
+            self.status
+                .set_text(&self.listing_count_label(entries.len()));
         }
         self.path_entry.set_text("");
         self.refresh_crumbs();
@@ -1959,7 +2206,8 @@ impl NautilusView {
                     &self.ctx.settings.borrow().nautilus.sort_by,
                     self.ctx.settings.borrow().nautilus.sort_desc,
                 );
-                self.status.set_text(&format!("{} items", entries.len()));
+                self.status
+                    .set_text(&self.listing_count_label(entries.len()));
                 self.populate_entries(&entries, true);
                 if *self.split_enabled.borrow() {
                     self.reload_pane(&self.secondary.borrow());

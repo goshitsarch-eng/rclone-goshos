@@ -61,6 +61,11 @@
     "monthlyDaysAt": "Her ayın {{days}} günleri {{time}}",
     "yearlyOn": "Her yıl {{month}} {{dom}} {{time}}",
     "atReboot": "Açılışta",
+    "lastDayOfMonthAt": "Ayın son günü {{time}}",
+    "lastWeekdayAt": "Son {{day}} {{time}}",
+    "nthWeekdayAt": "{{nth}} {{day}} {{time}}",
+    "inMonthsAt": "{{months}} içinde {{time}}",
+    "inMonthsOnDayAt": "{{months}} ayının {{dom}}. günü {{time}}",
     "days": {
       "0": "Pazar",
       "1": "Pazartesi",

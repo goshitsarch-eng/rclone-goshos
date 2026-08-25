@@ -206,6 +206,22 @@ fn cron_day_name(dow: &str, i18n: &crate::i18n::I18n) -> String {
     )
 }
 
+fn cron_ordinal(n: &str) -> String {
+    match n {
+        "1" => "1st".into(),
+        "2" => "2nd".into(),
+        "3" => "3rd".into(),
+        other => format!("{other}th"),
+    }
+}
+
+fn cron_month_list(mon: &str, i18n: &crate::i18n::I18n) -> String {
+    mon.split(',')
+        .map(|m| cron_month_name(m.trim(), i18n))
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
 fn cron_month_name(mon: &str, i18n: &crate::i18n::I18n) -> String {
     let key = format!("cron.months.{mon}");
     i18n.t_or(
@@ -270,7 +286,15 @@ pub fn describe_cron_i18n(expression: &str, i18n: &crate::i18n::I18n) -> String 
     let normalized = cron_expand_nickname(trimmed);
     let parts: Vec<&str> = normalized.split_whitespace().collect();
     let fields = if parts.len() >= 6 {
-        &parts[parts.len() - 5..]
+        let last = parts[parts.len() - 1];
+        if last
+            .chars()
+            .all(|c| c.is_ascii_alphabetic() || c == '_' || c == '/')
+        {
+            &parts[..5]
+        } else {
+            &parts[parts.len() - 5..]
+        }
     } else {
         &parts[..]
     };
@@ -356,6 +380,71 @@ pub fn describe_cron_i18n(expression: &str, i18n: &crate::i18n::I18n) -> String 
             i18n.tf("cron.weekendsAt", &[("time", &time)])
         } else {
             format!("Weekends at {time}")
+        };
+    }
+    if cron_is_int(min)
+        && cron_is_int(hour)
+        && dom.eq_ignore_ascii_case("L")
+        && mon == "*"
+        && dow == "*"
+    {
+        let time = cron_time(hour, min);
+        return if i18n.has("cron.lastDayOfMonthAt") {
+            i18n.tf("cron.lastDayOfMonthAt", &[("time", &time)])
+        } else {
+            format!("Last day of the month at {time}")
+        };
+    }
+    if cron_is_int(min) && cron_is_int(hour) && dom == "*" && mon == "*" {
+        if let Some((day, nth)) = dow.split_once('#') {
+            if cron_is_int(day) && cron_is_int(nth) {
+                let time = cron_time(hour, min);
+                let day_name = cron_day_name(day, i18n);
+                let nth = cron_ordinal(nth);
+                return if i18n.has("cron.nthWeekdayAt") {
+                    i18n.tf(
+                        "cron.nthWeekdayAt",
+                        &[("nth", &nth), ("day", &day_name), ("time", &time)],
+                    )
+                } else {
+                    format!("{nth} {day_name} at {time}")
+                };
+            }
+        }
+        if let Some(day) = dow.strip_suffix('L').or_else(|| dow.strip_suffix('l')) {
+            if cron_is_int(day) {
+                let time = cron_time(hour, min);
+                let day_name = cron_day_name(day, i18n);
+                return if i18n.has("cron.lastWeekdayAt") {
+                    i18n.tf("cron.lastWeekdayAt", &[("day", &day_name), ("time", &time)])
+                } else {
+                    format!("Last {day_name} at {time}")
+                };
+            }
+        }
+    }
+    if cron_is_int(min)
+        && cron_is_int(hour)
+        && mon.contains(',')
+        && dow == "*"
+        && (cron_is_int(dom) || dom == "*")
+    {
+        let time = cron_time(hour, min);
+        let months = cron_month_list(mon, i18n);
+        if cron_is_int(dom) {
+            return if i18n.has("cron.inMonthsOnDayAt") {
+                i18n.tf(
+                    "cron.inMonthsOnDayAt",
+                    &[("months", &months), ("dom", dom), ("time", &time)],
+                )
+            } else {
+                format!("In {months} on day {dom} at {time}")
+            };
+        }
+        return if i18n.has("cron.inMonthsAt") {
+            i18n.tf("cron.inMonthsAt", &[("months", &months), ("time", &time)])
+        } else {
+            format!("In {months} at {time}")
         };
     }
     if cron_is_int(min) && cron_is_int(hour) && cron_is_int(dom) && cron_is_int(mon) && dow == "*" {
@@ -492,6 +581,16 @@ mod tests {
         assert_eq!(describe_cron("@yearly"), "Yearly on January 1 at 0:00");
         assert_eq!(describe_cron("@reboot"), "At reboot");
         assert_eq!(describe_cron("0 0 9 * * *"), "Daily at 9:00");
+        assert_eq!(describe_cron("0 9 * * * UTC"), "Daily at 9:00");
+        assert_eq!(describe_cron("0 0 L * *"), "Last day of the month at 0:00");
+        assert_eq!(describe_cron("0 9 * * 5L"), "Last Friday at 9:00");
+        assert_eq!(describe_cron("0 9 * * 1#2"), "2nd Monday at 9:00");
+        assert_eq!(describe_cron("0 9 * * MON#2"), "2nd Monday at 9:00");
+        assert_eq!(
+            describe_cron("0 0 1 1,6 *"),
+            "In January, June on day 1 at 0:00"
+        );
+        assert_eq!(describe_cron("0 0 * 1,6 *"), "In January, June at 0:00");
         let i18n = crate::i18n::I18n::default();
         assert_eq!(describe_cron_i18n("*/5 * * * *", &i18n), "Every 5 minutes");
         assert_eq!(describe_cron_i18n("* * * * *", &i18n), "Every minute");

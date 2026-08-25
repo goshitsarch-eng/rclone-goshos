@@ -61,6 +61,11 @@
     "monthlyDaysAt": "Ежемесячно {{days}}-го в {{time}}",
     "yearlyOn": "Ежегодно {{dom}} {{month}} в {{time}}",
     "atReboot": "При перезагрузке",
+    "lastDayOfMonthAt": "Последний день месяца в {{time}}",
+    "lastWeekdayAt": "Последний {{day}} в {{time}}",
+    "nthWeekdayAt": "{{nth}} {{day}} в {{time}}",
+    "inMonthsAt": "В {{months}} в {{time}}",
+    "inMonthsOnDayAt": "{{dom}} {{months}} в {{time}}",
     "days": {
       "0": "воскресенье",
       "1": "понедельник",

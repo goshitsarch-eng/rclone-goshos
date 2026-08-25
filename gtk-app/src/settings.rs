@@ -194,7 +194,11 @@ impl NautilusSettings {
     }
 
     pub fn list_icon_px(&self) -> i32 {
-        self.icon_size.max(32)
+        if self.icon_size > 0 {
+            self.icon_size
+        } else {
+            32
+        }
     }
 
     pub fn grid_icon_px(&self) -> i32 {

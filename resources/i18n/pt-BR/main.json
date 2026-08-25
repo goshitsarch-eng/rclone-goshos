@@ -61,6 +61,11 @@
     "monthlyDaysAt": "Todo mês nos dias {{days}} às {{time}}",
     "yearlyOn": "Todo ano em {{dom}} de {{month}} às {{time}}",
     "atReboot": "Na reinicialização",
+    "lastDayOfMonthAt": "Último dia do mês às {{time}}",
+    "lastWeekdayAt": "Último {{day}} às {{time}}",
+    "nthWeekdayAt": "{{nth}} {{day}} às {{time}}",
+    "inMonthsAt": "Em {{months}} às {{time}}",
+    "inMonthsOnDayAt": "Dia {{dom}} de {{months}} às {{time}}",
     "days": {
       "0": "domingo",
       "1": "segunda-feira",

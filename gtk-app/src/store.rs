@@ -1419,6 +1419,47 @@ pub fn disk_usage_ratio(about: &Value) -> Option<f64> {
     }
 }
 
+/// Angular `sortOptions` keys: `name-asc`, `name-desc`, `modified-desc`, …
+pub fn sort_option_key(sort_by: &str, sort_desc: bool) -> &'static str {
+    match (sort_by, sort_desc) {
+        ("name", true) => "name-desc",
+        ("modified", true) => "modified-desc",
+        ("modified", false) => "modified-asc",
+        ("size", true) => "size-desc",
+        ("size", false) => "size-asc",
+        _ => "name-asc",
+    }
+}
+
+pub fn apply_sort_option(sort_by: &mut String, sort_desc: &mut bool, key: &str) {
+    match key {
+        "name-desc" => {
+            *sort_by = "name".into();
+            *sort_desc = true;
+        }
+        "modified-desc" => {
+            *sort_by = "modified".into();
+            *sort_desc = true;
+        }
+        "modified-asc" => {
+            *sort_by = "modified".into();
+            *sort_desc = false;
+        }
+        "size-desc" => {
+            *sort_by = "size".into();
+            *sort_desc = true;
+        }
+        "size-asc" => {
+            *sort_by = "size".into();
+            *sort_desc = false;
+        }
+        _ => {
+            *sort_by = "name".into();
+            *sort_desc = false;
+        }
+    }
+}
+
 pub fn sort_entries(entries: &mut [DirEntry], sort_by: &str, desc: bool) {
     entries.sort_by(|a, b| {
         if a.is_dir != b.is_dir {
@@ -1588,6 +1629,17 @@ mod tests {
         sort_entries(&mut entries, "name", false);
         assert!(entries[0].is_dir);
         assert_eq!(entries[1].name, "b.txt");
+        assert_eq!(sort_option_key("name", false), "name-asc");
+        assert_eq!(sort_option_key("modified", true), "modified-desc");
+        assert_eq!(sort_option_key("size", false), "size-asc");
+        let mut by = "name".to_string();
+        let mut desc = false;
+        apply_sort_option(&mut by, &mut desc, "size-desc");
+        assert_eq!(by, "size");
+        assert!(desc);
+        apply_sort_option(&mut by, &mut desc, "name-asc");
+        assert_eq!(by, "name");
+        assert!(!desc);
     }
 
     #[test]

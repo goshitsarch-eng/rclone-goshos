@@ -61,6 +61,11 @@
     "monthlyDaysAt": "每月 {{days}} 日 {{time}}",
     "yearlyOn": "每年 {{month}} {{dom}} 日 {{time}}",
     "atReboot": "开机时",
+    "lastDayOfMonthAt": "每月最后一天 {{time}}",
+    "lastWeekdayAt": "最后一个{{day}} {{time}}",
+    "nthWeekdayAt": "第 {{nth}} 个{{day}} {{time}}",
+    "inMonthsAt": "在 {{months}} {{time}}",
+    "inMonthsOnDayAt": "在 {{months}} {{dom}} 日 {{time}}",
     "days": {
       "0": "星期日",
       "1": "星期一",
