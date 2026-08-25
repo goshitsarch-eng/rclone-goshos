@@ -4004,17 +4004,6 @@ pub fn quick_run_editor(
     ));
     let tray = adw::SwitchRow::new();
     tray.set_title(&ctx.t_or("flow.quickRun.editor.showOnTray", "Show on tray"));
-    let vfs_profile = adw::EntryRow::new();
-    vfs_profile.set_title(&ctx.t_or("flow.quickRun.editor.tabVfs", "VFS profile name"));
-    let filter_profile = adw::EntryRow::new();
-    filter_profile.set_title(&ctx.t_or("flow.quickRun.editor.tabFilter", "Filter profile name"));
-    let backend_profile = adw::EntryRow::new();
-    backend_profile.set_title(&ctx.t_or("flow.quickRun.editor.tabBackend", "Backend profile name"));
-    let runtime_profile = adw::EntryRow::new();
-    runtime_profile.set_title(&ctx.t_or(
-        "flow.quickRun.editor.tabRuntimeRemote",
-        "Runtime remote profile",
-    ));
     let runtime_json = adw::EntryRow::new();
     runtime_json.set_title(&ctx.t_or(
         "flow.quickRun.editor.runtimeRemoteJson",
@@ -4080,10 +4069,6 @@ pub fn quick_run_editor(
         }
         watch_changed.set_active(qr.config.app.watch_changed_only);
         tray.set_active(qr.show_on_tray);
-        vfs_profile.set_text(&qr.config.app.vfs_profile);
-        filter_profile.set_text(&qr.config.app.filter_profile);
-        backend_profile.set_text(&qr.config.app.backend_profile);
-        runtime_profile.set_text(&qr.config.app.runtime_remote_profile);
         if let Some(value) = qr.config.rclone.get("runtimeRemote") {
             runtime_json.set_text(&value.to_string());
         }
@@ -4093,6 +4078,91 @@ pub fn quick_run_editor(
         {
             op_row.set_selected(idx as u32);
         }
+    }
+    let remote_name = existing
+        .as_ref()
+        .map(|qr| qr.remote_name.clone())
+        .unwrap_or_else(|| remote.text().to_string());
+    let vfs_names = Rc::new(RefCell::new(qr_helper_names(&ctx, &remote_name, "vfs")));
+    let filter_names = Rc::new(RefCell::new(qr_helper_names(&ctx, &remote_name, "filter")));
+    let backend_names = Rc::new(RefCell::new(qr_helper_names(&ctx, &remote_name, "backend")));
+    let runtime_names = Rc::new(RefCell::new(qr_helper_names(&ctx, &remote_name, "runtime")));
+    let vfs_sel = existing
+        .as_ref()
+        .map(|qr| qr.config.app.vfs_profile.clone())
+        .unwrap_or_default();
+    let filter_sel = existing
+        .as_ref()
+        .map(|qr| qr.config.app.filter_profile.clone())
+        .unwrap_or_default();
+    let backend_sel = existing
+        .as_ref()
+        .map(|qr| qr.config.app.backend_profile.clone())
+        .unwrap_or_default();
+    let runtime_sel = existing
+        .as_ref()
+        .map(|qr| qr.config.app.runtime_remote_profile.clone())
+        .unwrap_or_default();
+    let vfs_profile = helper_combo(
+        &ctx.t_or("flow.quickRun.editor.tabVfs", "VFS profile"),
+        &vfs_names.borrow(),
+        &vfs_sel,
+    );
+    let filter_profile = helper_combo(
+        &ctx.t_or("flow.quickRun.editor.tabFilter", "Filter profile"),
+        &filter_names.borrow(),
+        &filter_sel,
+    );
+    let backend_profile = helper_combo(
+        &ctx.t_or("flow.quickRun.editor.tabBackend", "Backend profile"),
+        &backend_names.borrow(),
+        &backend_sel,
+    );
+    let runtime_profile = helper_combo(
+        &ctx.t_or(
+            "flow.quickRun.editor.tabRuntimeRemote",
+            "Runtime remote profile",
+        ),
+        &runtime_names.borrow(),
+        &runtime_sel,
+    );
+    let edit_helpers =
+        gtk::Button::with_label(&ctx.t_or("remote.editHelpers", "Edit helper profiles"));
+    {
+        let ctx = ctx.clone();
+        let remote = remote.clone();
+        let parent = parent.clone();
+        edit_helpers.connect_clicked(move |_| {
+            helper_profiles(&parent, ctx.clone(), &remote.text());
+        });
+    }
+    let helpers_row = adw::ActionRow::new();
+    helpers_row.set_title(&ctx.t_or(
+        "general.remoteConfig.advancedProfiles.title",
+        "Helper profiles",
+    ));
+    helpers_row.add_suffix(&edit_helpers);
+    {
+        let ctx = ctx.clone();
+        let vfs_profile = vfs_profile.clone();
+        let filter_profile = filter_profile.clone();
+        let backend_profile = backend_profile.clone();
+        let runtime_profile = runtime_profile.clone();
+        let vfs_names = vfs_names.clone();
+        let filter_names = filter_names.clone();
+        let backend_names = backend_names.clone();
+        let runtime_names = runtime_names.clone();
+        remote.connect_changed(move |row| {
+            let name = row.text().to_string();
+            *vfs_names.borrow_mut() = qr_helper_names(&ctx, &name, "vfs");
+            *filter_names.borrow_mut() = qr_helper_names(&ctx, &name, "filter");
+            *backend_names.borrow_mut() = qr_helper_names(&ctx, &name, "backend");
+            *runtime_names.borrow_mut() = qr_helper_names(&ctx, &name, "runtime");
+            refresh_helper_combo(&vfs_profile, &vfs_names.borrow(), "");
+            refresh_helper_combo(&filter_profile, &filter_names.borrow(), "");
+            refresh_helper_combo(&backend_profile, &backend_names.borrow(), "");
+            refresh_helper_combo(&runtime_profile, &runtime_names.borrow(), "");
+        });
     }
     group.add(&name);
     group.add(&description);
@@ -4187,10 +4257,12 @@ pub fn quick_run_editor(
     group.add(&watch_delay);
     group.add(&watch_changed);
     group.add(&tray);
+    vfs_profile.set_visible(initial_op.supports_vfs());
     group.add(&vfs_profile);
     group.add(&filter_profile);
     group.add(&backend_profile);
     group.add(&runtime_profile);
+    group.add(&helpers_row);
     group.add(&runtime_json);
     let dry = adw::SwitchRow::new();
     dry.set_title(&ctx.t_or("detailShared.jobs.dryRun", "Dry run"));
@@ -4289,6 +4361,7 @@ pub fn quick_run_editor(
         let dst_kind = dst_kind.clone();
         let ctx_titles = ctx.clone();
         let group = group.clone();
+        let vfs_profile = vfs_profile.clone();
         op_row.connect_selected_notify(move |row| {
             let op = OperationType::ALL
                 .get(row.selected() as usize)
@@ -4328,7 +4401,117 @@ pub fn quick_run_editor(
                     &serve_types,
                 );
             }
+            vfs_profile.set_visible(op.supports_vfs());
             refresh_guidance();
+        });
+    }
+    let vfs_flag_rows: Rc<RefCell<Vec<(String, adw::EntryRow, String)>>> =
+        Rc::new(RefCell::new(Vec::new()));
+    let filter_flag_rows: Rc<RefCell<Vec<(String, adw::EntryRow, String)>>> =
+        Rc::new(RefCell::new(Vec::new()));
+    let backend_flag_rows: Rc<RefCell<Vec<(String, adw::EntryRow, String)>>> =
+        Rc::new(RefCell::new(Vec::new()));
+    let vfs_flags = adw::PreferencesGroup::new();
+    vfs_flags.set_title(&ctx.t_or("flow.quickRun.editor.tabVfs", "VFS flags"));
+    vfs_flags.set_visible(initial_op.supports_vfs());
+    let filter_flags = adw::PreferencesGroup::new();
+    filter_flags.set_title(&ctx.t_or("flow.quickRun.editor.tabFilter", "Filter flags"));
+    let backend_flags = adw::PreferencesGroup::new();
+    backend_flags.set_title(&ctx.t_or("flow.quickRun.editor.tabBackend", "Backend flags"));
+    populate_helper_flag_rows(
+        &ctx,
+        &vfs_flags,
+        &vfs_flag_rows,
+        "vfs",
+        &live_blocks,
+        &remote.text(),
+        &helper_selected(&vfs_profile, &vfs_names.borrow()),
+    );
+    populate_helper_flag_rows(
+        &ctx,
+        &filter_flags,
+        &filter_flag_rows,
+        "filter",
+        &live_blocks,
+        &remote.text(),
+        &helper_selected(&filter_profile, &filter_names.borrow()),
+    );
+    populate_helper_flag_rows(
+        &ctx,
+        &backend_flags,
+        &backend_flag_rows,
+        "backend",
+        &live_blocks,
+        &remote.text(),
+        &helper_selected(&backend_profile, &backend_names.borrow()),
+    );
+    {
+        let ctx = ctx.clone();
+        let vfs_flags = vfs_flags.clone();
+        let vfs_flag_rows = vfs_flag_rows.clone();
+        let blocks = live_blocks.clone();
+        let remote = remote.clone();
+        let vfs_names = vfs_names.clone();
+        vfs_profile.connect_selected_notify(move |row| {
+            populate_helper_flag_rows(
+                &ctx,
+                &vfs_flags,
+                &vfs_flag_rows,
+                "vfs",
+                &blocks,
+                &remote.text(),
+                &helper_selected(row, &vfs_names.borrow()),
+            );
+        });
+    }
+    {
+        let ctx = ctx.clone();
+        let filter_flags = filter_flags.clone();
+        let filter_flag_rows = filter_flag_rows.clone();
+        let blocks = live_blocks.clone();
+        let remote = remote.clone();
+        let filter_names = filter_names.clone();
+        filter_profile.connect_selected_notify(move |row| {
+            populate_helper_flag_rows(
+                &ctx,
+                &filter_flags,
+                &filter_flag_rows,
+                "filter",
+                &blocks,
+                &remote.text(),
+                &helper_selected(row, &filter_names.borrow()),
+            );
+        });
+    }
+    {
+        let ctx = ctx.clone();
+        let backend_flags = backend_flags.clone();
+        let backend_flag_rows = backend_flag_rows.clone();
+        let blocks = live_blocks.clone();
+        let remote = remote.clone();
+        let backend_names = backend_names.clone();
+        backend_profile.connect_selected_notify(move |row| {
+            populate_helper_flag_rows(
+                &ctx,
+                &backend_flags,
+                &backend_flag_rows,
+                "backend",
+                &blocks,
+                &remote.text(),
+                &helper_selected(row, &backend_names.borrow()),
+            );
+        });
+    }
+    {
+        let vfs_flags = vfs_flags.clone();
+        let vfs_profile = vfs_profile.clone();
+        op_row.connect_selected_notify(move |row| {
+            let op = OperationType::ALL
+                .get(row.selected() as usize)
+                .copied()
+                .unwrap_or(OperationType::Sync);
+            vfs_profile.set_visible(op.supports_vfs());
+            vfs_flags.set_visible(op.supports_vfs());
         });
     }
     let save = gtk::Button::with_label(&ctx.t_or("common.save", "Save"));
@@ -4341,6 +4524,13 @@ pub fn quick_run_editor(
         let filter_profile = filter_profile.clone();
         let backend_profile = backend_profile.clone();
         let runtime_profile = runtime_profile.clone();
+        let vfs_names = vfs_names.clone();
+        let filter_names = filter_names.clone();
+        let backend_names = backend_names.clone();
+        let runtime_names = runtime_names.clone();
+        let vfs_flag_rows = vfs_flag_rows.clone();
+        let filter_flag_rows = filter_flag_rows.clone();
+        let backend_flag_rows = backend_flag_rows.clone();
         let runtime_json = runtime_json.clone();
         let flag_rows = flag_rows.clone();
         let serve_flag_rows = serve_flag_rows.clone();
@@ -4393,10 +4583,33 @@ pub fn quick_run_editor(
             qr.config.app.watch_changed_only = watch_changed.is_active();
             qr.config.app.cron_enabled = !expr.is_empty();
             qr.config.app.cron_expression = expr;
-            qr.config.app.vfs_profile = vfs_profile.text().to_string();
-            qr.config.app.filter_profile = filter_profile.text().to_string();
-            qr.config.app.backend_profile = backend_profile.text().to_string();
-            qr.config.app.runtime_remote_profile = runtime_profile.text().to_string();
+            qr.config.app.vfs_profile = helper_selected(&vfs_profile, &vfs_names.borrow());
+            qr.config.app.filter_profile = helper_selected(&filter_profile, &filter_names.borrow());
+            qr.config.app.backend_profile =
+                helper_selected(&backend_profile, &backend_names.borrow());
+            qr.config.app.runtime_remote_profile =
+                helper_selected(&runtime_profile, &runtime_names.borrow());
+            save_helper_from_rows(
+                &ctx,
+                &remote.text(),
+                "vfs",
+                &qr.config.app.vfs_profile,
+                &vfs_flag_rows.borrow(),
+            );
+            save_helper_from_rows(
+                &ctx,
+                &remote.text(),
+                "filter",
+                &qr.config.app.filter_profile,
+                &filter_flag_rows.borrow(),
+            );
+            save_helper_from_rows(
+                &ctx,
+                &remote.text(),
+                "backend",
+                &qr.config.app.backend_profile,
+                &backend_flag_rows.borrow(),
+            );
             qr.show_on_tray = tray.is_active();
             let mut sources = vec![src.text().to_string()];
             for row in extra_sources.borrow().iter() {
@@ -4506,6 +4719,9 @@ pub fn quick_run_editor(
     box_.append(&guidance);
     box_.append(&cron_hint);
     box_.append(&flags_group);
+    box_.append(&vfs_flags);
+    box_.append(&filter_flags);
+    box_.append(&backend_flags);
     box_.append(&save);
     dialog.set_child(Some(&box_));
     dialog.present(Some(parent));
@@ -8501,6 +8717,78 @@ pub(crate) fn present_window_or_dialog(
         win.present();
     } else {
         dialog.present(Some(parent));
+    }
+}
+
+fn qr_helper_names(ctx: &AppCtx, remote: &str, kind: &str) -> Vec<String> {
+    let mut names = vec!["—".into()];
+    if let Some(meta) = ctx.store.borrow().remotes.get(remote) {
+        names.extend(meta.helper_names(kind));
+    }
+    names
+}
+
+fn refresh_helper_combo(row: &adw::ComboRow, names: &[String], selected: &str) {
+    let refs: Vec<&str> = names.iter().map(|s| s.as_str()).collect();
+    row.set_model(Some(&gtk::StringList::new(&refs)));
+    if let Some(idx) = names.iter().position(|n| n == selected && !n.is_empty()) {
+        row.set_selected(idx as u32);
+    } else {
+        row.set_selected(0);
+    }
+}
+
+fn populate_helper_flag_rows(
+    ctx: &AppCtx,
+    group: &adw::PreferencesGroup,
+    rows: &Rc<RefCell<Vec<(String, adw::EntryRow, String)>>>,
+    kind: &str,
+    blocks: &[crate::flags::FlagBlock],
+    remote: &str,
+    selected: &str,
+) {
+    clear_flag_rows(group, rows);
+    if selected.is_empty() {
+        return;
+    }
+    let current = ctx
+        .store
+        .borrow()
+        .remotes
+        .get(remote)
+        .and_then(|meta| meta.helper_profile(kind, selected))
+        .unwrap_or_else(|| serde_json::json!({}));
+    for (_, option) in crate::flags::options_for_category(blocks, kind) {
+        let row = flag_value_row(option, &current);
+        group.add(&row);
+        rows.borrow_mut()
+            .push((option.field_name.clone(), row, option.type_name.clone()));
+    }
+}
+
+fn save_helper_from_rows(
+    ctx: &AppCtx,
+    remote: &str,
+    kind: &str,
+    name: &str,
+    rows: &[(String, adw::EntryRow, String)],
+) {
+    if remote.is_empty() || name.is_empty() {
+        return;
+    }
+    let mut map = serde_json::Map::new();
+    for (field, row, type_name) in rows {
+        let text = row.text().to_string();
+        if text.is_empty() {
+            continue;
+        }
+        map.insert(
+            field.clone(),
+            crate::flags::parse_flag_value(type_name, &text),
+        );
+    }
+    if let Some(meta) = ctx.store.borrow_mut().remotes.get_mut(remote) {
+        meta.upsert_helper(kind, name, serde_json::Value::Object(map));
     }
 }
 
