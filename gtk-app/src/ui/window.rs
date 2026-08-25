@@ -882,14 +882,18 @@ fn install_actions(
             "stop-jobs",
             Box::new(move || {
                 if let Some(c) = ctx.client() {
-                    if let Ok(list) = c.job_list() {
-                        if let Some(arr) = list.get("jobids").and_then(|x| x.as_array()) {
-                            for id in arr {
-                                if let Some(jobid) = id.as_u64() {
-                                    let _ = c.job_stop(jobid);
-                                }
-                            }
-                        }
+                    let ids: Vec<u64> = ctx
+                        .snapshot
+                        .borrow()
+                        .jobs
+                        .iter()
+                        .filter(|job| {
+                            crate::jobs::job_is_running(job) || crate::jobs::job_is_pending(job)
+                        })
+                        .map(|job| job.id)
+                        .collect();
+                    for jobid in ids {
+                        let _ = c.job_stop(jobid);
                     }
                     ctx.refresh_runtime();
                 }

@@ -46,6 +46,7 @@ pub struct AppCtx {
     pub updates: Rc<RefCell<crate::updater::PendingUpdates>>,
     pub last_update_check: Rc<RefCell<Option<std::time::Instant>>>,
     pub action_busy: Rc<RefCell<HashSet<String>>>,
+    dump_cache: Rc<RefCell<Option<(std::time::Instant, serde_json::Value)>>>,
 }
 
 impl AppCtx {
@@ -85,6 +86,7 @@ impl AppCtx {
             updates: Rc::new(RefCell::new(crate::updater::PendingUpdates::default())),
             last_update_check: Rc::new(RefCell::new(Some(std::time::Instant::now()))),
             action_busy: Rc::new(RefCell::new(HashSet::new())),
+            dump_cache: Rc::new(RefCell::new(None)),
         };
         ctx.apply_remote_layout();
         {
@@ -101,6 +103,17 @@ impl AppCtx {
                 .to_string_lossy()
                 .into_owned()]);
         ctx
+    }
+
+    fn cached_dump(&self, client: &crate::rclone::RcClient) -> serde_json::Value {
+        if let Some((at, value)) = self.dump_cache.borrow().clone() {
+            if at.elapsed() < std::time::Duration::from_secs(5) {
+                return value;
+            }
+        }
+        let dump = client.dump_config().unwrap_or(serde_json::json!({}));
+        *self.dump_cache.borrow_mut() = Some((std::time::Instant::now(), dump.clone()));
+        dump
     }
 
     pub fn runtime_busy(&self) -> bool {
@@ -505,7 +518,7 @@ impl AppCtx {
         let Some(client) = self.client() else {
             return;
         };
-        let dump = client.dump_config().unwrap_or(serde_json::json!({}));
+        let dump = self.cached_dump(&client);
         let mounts = client.list_mounts().unwrap_or_default();
         let serves = client.serve_list().unwrap_or_default();
         let stats = client.stats(None).unwrap_or(serde_json::json!({}));
@@ -513,8 +526,9 @@ impl AppCtx {
             .local_disks()
             .unwrap_or_else(|_| local_fallback_disks());
         let hidden = self.store.borrow().hidden_remotes.clone();
+        let known: Vec<u64> = self.store.borrow().job_meta.keys().copied().collect();
         let mut jobs = crate::jobs::merge_preparing_jobs(
-            collect_jobs(&client),
+            collect_jobs(&client, &known),
             &self.store.borrow().job_history,
         );
         {
@@ -712,11 +726,11 @@ impl Drop for ActionBusyGuard {
     }
 }
 
-fn collect_jobs(client: &crate::rclone::RcClient) -> Vec<crate::store::JobInfo> {
+fn collect_jobs(client: &crate::rclone::RcClient, known: &[u64]) -> Vec<crate::store::JobInfo> {
     let Ok(list) = client.job_list() else {
         return Vec::new();
     };
-    let ids: Vec<u64> = list
+    let listed: Vec<u64> = list
         .get("jobids")
         .and_then(|x| x.as_array())
         .cloned()
@@ -724,6 +738,7 @@ fn collect_jobs(client: &crate::rclone::RcClient) -> Vec<crate::store::JobInfo> 
         .into_iter()
         .filter_map(|id| id.as_u64())
         .collect();
+    let ids = crate::jobs::select_job_ids(&listed, known, crate::jobs::MAX_JOB_STATUS_FETCH);
     let inputs: Vec<serde_json::Value> = ids
         .iter()
         .map(|jobid| {
@@ -869,4 +884,42 @@ fn local_fallback_disks() -> Vec<String> {
         disks.push(home.to_string_lossy().into_owned());
     }
     disks
+}
+
+pub(super) fn detail_page_switcher(
+    stack: &adw::ViewStack,
+    page: &Rc<RefCell<String>>,
+    pages: &[(&str, String)],
+) -> gtk::Box {
+    use gtk::prelude::*;
+    let row = gtk::Box::new(gtk::Orientation::Horizontal, 0);
+    row.add_css_class("linked");
+    row.set_halign(gtk::Align::Center);
+    if stack.child_by_name(page.borrow().as_str()).is_some() {
+        stack.set_visible_child_name(page.borrow().as_str());
+    }
+    let mut group: Option<gtk::ToggleButton> = None;
+    for (name, label) in pages {
+        let btn = gtk::ToggleButton::with_label(label);
+        btn.set_hexpand(true);
+        if let Some(anchor) = &group {
+            btn.set_group(Some(anchor));
+        } else {
+            group = Some(btn.clone());
+        }
+        if page.borrow().as_str() == *name {
+            btn.set_active(true);
+        }
+        let stack = stack.clone();
+        let page = page.clone();
+        let name = (*name).to_string();
+        btn.connect_toggled(move |button| {
+            if button.is_active() {
+                *page.borrow_mut() = name.clone();
+                stack.set_visible_child_name(&name);
+            }
+        });
+        row.append(&btn);
+    }
+    row
 }

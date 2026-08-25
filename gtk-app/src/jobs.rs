@@ -1368,14 +1368,37 @@ pub fn job_from_status(jobid: u64, status: &Value, stats: Option<&Value>) -> Job
     job
 }
 
+pub const MAX_JOB_STATUS_FETCH: usize = 48;
+
+/// rclone 1.60 `job/list` can return hundreds of thousands of leftover IDs.
+/// Prefer jobs we started; only scan unknowns when the list is small.
+pub fn select_job_ids(listed: &[u64], known: &[u64], max: usize) -> Vec<u64> {
+    if listed.len() <= max {
+        return listed.to_vec();
+    }
+    let known_set: std::collections::HashSet<u64> = known.iter().copied().collect();
+    let mut selected: Vec<u64> = listed
+        .iter()
+        .copied()
+        .filter(|id| known_set.contains(id))
+        .collect();
+    selected.truncate(max);
+    selected
+}
+
 /// rclone 1.60 `job/list` includes finished internal RC jobs (empty src/dst,
-/// operation `job/<id>`). Keep only jobs the app started or can identify.
-pub fn is_managed_job(job: &JobInfo) -> bool {
-    matches!(job.status.as_str(), "running" | "starting" | "preparing")
-        || !job.src.is_empty()
+/// operation `job/<id>`). Unfinished leftovers are also reported as running —
+/// keep only jobs the app started or can identify.
+pub fn is_identifiable_job(job: &JobInfo) -> bool {
+    !job.src.is_empty()
         || !job.dst.is_empty()
+        || !job.remote.is_empty()
         || crate::operations::OperationType::parse(&job.operation).is_some()
         || (!job.origin.is_empty() && job.origin != "dashboard")
+}
+
+pub fn is_managed_job(job: &JobInfo) -> bool {
+    is_identifiable_job(job)
 }
 
 /// Local job shown immediately after `start_job` returns, before rclone reports transfers.
@@ -1994,8 +2017,26 @@ mod tests {
         );
         assert_eq!(noise.operation, "job/99");
         assert!(!is_managed_job(&noise));
+        let running_noise = job_from_status(
+            100,
+            &json!({
+                "finished": false,
+                "group": "job/100",
+                "output": {}
+            }),
+            None,
+        );
+        assert_eq!(running_noise.status, "running");
+        assert!(!is_managed_job(&running_noise));
         let upload = preparing_job(3, "drive", "/tmp/a.txt", "drive:Inbox", 1, 12);
         assert!(is_managed_job(&upload));
+        assert_eq!(
+            select_job_ids(&[1, 2, 3], &[2], 48),
+            vec![1, 2, 3],
+            "small lists are fetched in full"
+        );
+        let huge: Vec<u64> = (1..=200).collect();
+        assert_eq!(select_job_ids(&huge, &[7, 9, 400], 48), vec![7, 9]);
     }
 
     #[test]

@@ -1811,10 +1811,12 @@ impl Dashboard {
             }
             let dry = adw::SwitchRow::new();
             dry.set_title(&self.ctx.t_or("dashboard.appDetail.dryRun", "Dry run"));
-            dry.set_subtitle(&self.ctx.t_or(
-                "dashboard.appDetail.dryRunActive",
-                "Start the next operation without writing changes",
-            ));
+            if self.dry_run.get() {
+                dry.set_subtitle(&self.ctx.t_or(
+                    "dashboard.appDetail.dryRunActive",
+                    "Start the next operation without writing changes",
+                ));
+            }
             dry.set_active(self.dry_run.get());
             {
                 let flag = self.dry_run.clone();
@@ -1845,6 +1847,7 @@ impl Dashboard {
             }
             self.detail_box().append(&resync);
         }
+        self.append_operation_control(&name, detail_op, &profile_name);
 
         let selected_profile = (tab == AppTab::Operations)
             .then(|| self.selected_profile_name(&name, self.selected_sync_op(&name)));
@@ -2400,23 +2403,22 @@ impl Dashboard {
                     .ctx
                     .t_or("dashboard.appDetail.configuration", "Configuration"),
             );
-            if stack
-                .child_by_name(self.detail_page.borrow().as_str())
-                .is_some()
-            {
-                stack.set_visible_child_name(self.detail_page.borrow().as_str());
-            }
-            {
-                let page = self.detail_page.clone();
-                stack.connect_visible_child_notify(move |stack| {
-                    if let Some(name) = stack.visible_child_name() {
-                        *page.borrow_mut() = name.to_string();
-                    }
-                });
-            }
-            let switcher = adw::ViewSwitcher::new();
-            switcher.set_stack(Some(&stack));
-            switcher.set_policy(adw::ViewSwitcherPolicy::Wide);
+            let switcher = super::detail_page_switcher(
+                &stack,
+                &self.detail_page,
+                &[
+                    (
+                        "monitoring",
+                        self.ctx
+                            .t_or("dashboard.appDetail.monitoring", "Monitoring"),
+                    ),
+                    (
+                        "configuration",
+                        self.ctx
+                            .t_or("dashboard.appDetail.configuration", "Configuration"),
+                    ),
+                ],
+            );
             self.detail_box().append(&switcher);
             self.detail_box().append(&stack);
         }
@@ -3099,6 +3101,65 @@ impl Dashboard {
             row.set_subtitle(&subtitle);
             self.detail_box().append(&row);
         }
+    }
+
+    fn append_operation_control(&self, name: &str, op: OperationType, profile: &str) {
+        let snap = self.ctx.snapshot.borrow().clone();
+        let active = crate::jobs::profile_is_active(
+            name,
+            op,
+            profile,
+            &snap.jobs,
+            &snap.mounts,
+            &snap.serves,
+        );
+        let row = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+        let start = gtk::Button::with_label(&self.ctx.t_or("actions.start", "Start"));
+        start.add_css_class("suggested-action");
+        start.set_hexpand(true);
+        let stop = gtk::Button::with_label(&self.ctx.t_or("actions.stop", "Stop"));
+        stop.add_css_class("destructive-action");
+        stop.set_hexpand(true);
+        start.set_sensitive(!active);
+        stop.set_sensitive(active);
+        mark_action_busy(
+            &start,
+            crate::jobs::action_in_progress(
+                name,
+                op,
+                profile,
+                &snap.jobs,
+                self.ctx.is_busy(name, op.as_str(), profile),
+            ),
+            &self.ctx,
+        );
+        {
+            let ctx = self.ctx.clone();
+            let toast = self.toast.clone();
+            let remote = name.to_string();
+            let profile = profile.to_string();
+            let dry = self.dry_run.clone();
+            let resync = self.resync.clone();
+            let dash = self.clone();
+            start.connect_clicked(move |_| {
+                toggle_profile(&ctx, &remote, op, &profile, &toast, dry.get(), resync.get());
+                dash.refresh();
+            });
+        }
+        {
+            let ctx = self.ctx.clone();
+            let toast = self.toast.clone();
+            let remote = name.to_string();
+            let profile = profile.to_string();
+            let dash = self.clone();
+            stop.connect_clicked(move |_| {
+                toggle_profile(&ctx, &remote, op, &profile, &toast, false, false);
+                dash.refresh();
+            });
+        }
+        row.append(&start);
+        row.append(&stop);
+        self.detail_box().append(&row);
     }
 
     fn append_operation_paths(

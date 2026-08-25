@@ -422,6 +422,10 @@ This client is the GTK 4 + libadwaita rewrite of the Angular/Tauri desktop UI. I
 - Flow Quick Run Monitoring/Configuration tab selection survives runtime refresh
 - Remaining dialog OK buttons use `common.ok`
 - Dashboard poll no longer rebuilds remote detail unless jobs, mounts, serves, tab, or remote change, so Monitoring/Configuration and the overflow menu stay clickable
+- rclone 1.60 `job/list` leftovers are ignored unless identifiable; status fetch is capped so idle CPU stays sane
+- Monitoring/Configuration use linked toggle buttons instead of ViewSwitcher
+- Dashboard remote detail has Angular-style Start/Stop for the selected profile
+- Config dump is cached for 5s to avoid creating more leftover RC jobs on rclone 1.60
 
 ## Still deepening toward pixel-level Angular parity
 
