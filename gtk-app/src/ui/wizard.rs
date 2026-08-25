@@ -195,6 +195,20 @@ pub fn present(
     interactive_box.append(&answer_row);
     interactive_box.append(&answer_switch);
     interactive_box.append(&oauth_status);
+    let cancel_oauth = gtk::Button::with_label("Cancel OAuth");
+    {
+        let ctx = ctx.clone();
+        let oauth_status = oauth_status.clone();
+        cancel_oauth.connect_clicked(move |_| {
+            if let Some(client) = ctx.client() {
+                match client.oauth_stop() {
+                    Ok(_) => oauth_status.set_text("OAuth cancelled"),
+                    Err(e) => oauth_status.set_text(&e.to_string()),
+                }
+            }
+        });
+    }
+    interactive_box.append(&cancel_oauth);
     nav.add_titled(&interactive_box, Some("interactive"), "Authorize");
 
     let profiles = adw::PreferencesPage::new();

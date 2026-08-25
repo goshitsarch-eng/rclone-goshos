@@ -39,7 +39,7 @@ pub struct NautilusView {
     secondary: Rc<RefCell<TabState>>,
     history: Rc<RefCell<Vec<(String, String)>>>,
     future: Rc<RefCell<Vec<(String, String)>>>,
-    clipboard: Rc<RefCell<Option<(String, String, bool)>>>,
+    clipboard: Rc<RefCell<Vec<(String, String, bool)>>>,
     undo: Rc<RefCell<Vec<String>>>,
     tab_bar: gtk::Box,
     next_tab_id: Rc<RefCell<u32>>,
@@ -186,7 +186,7 @@ impl NautilusView {
             secondary: Rc::new(RefCell::new(initial)),
             history: Rc::new(RefCell::new(vec![])),
             future: Rc::new(RefCell::new(vec![])),
-            clipboard: Rc::new(RefCell::new(None)),
+            clipboard: Rc::new(RefCell::new(Vec::new())),
             undo: Rc::new(RefCell::new(vec![])),
             tab_bar,
             next_tab_id: Rc::new(RefCell::new(2)),
@@ -534,7 +534,7 @@ impl NautilusView {
         self.sidebar.append(&row);
     }
 
-    fn navigate_to(&self, input: &str) {
+    pub fn navigate_to(&self, input: &str) {
         let current = self.current.borrow().clone();
         self.history
             .borrow_mut()
@@ -974,82 +974,74 @@ impl NautilusView {
     }
 
     fn delete_selected(&self) {
-        let Some(name) = self.selected_name() else {
+        let names = self.selected_names();
+        if names.is_empty() {
             return;
-        };
+        }
         let Some(client) = self.ctx.client() else {
             return;
         };
         let current = self.current.borrow().clone();
-        let fs = if current.remote == "local" {
-            "/".into()
-        } else {
-            remote_fs(&current.remote, "")
-        };
-        let path = join_remote_path(&current.path, &name);
-        let remote = if current.remote == "local" {
-            path.trim_start_matches('/').to_string()
-        } else {
-            path
-        };
-        match client.delete_file(&fs, &remote) {
-            Ok(_) => self.reload(),
-            Err(_) => {
+        for name in names {
+            let path = join_remote_path(&current.path, &name);
+            let (fs, remote) = fs_remote(&current.remote, &path);
+            if client.delete_file(&fs, &remote).is_err() {
                 let _ = client.purge(&fs, &remote);
-                self.reload();
             }
         }
+        self.reload();
     }
 
     fn cut_or_copy(&self, cut: bool) {
-        let Some(name) = self.selected_name() else {
+        let names = self.selected_names();
+        if names.is_empty() {
             return;
-        };
+        }
         let current = self.current.borrow().clone();
-        let path = join_remote_path(&current.path, &name);
-        *self.clipboard.borrow_mut() = Some((current.remote, path, cut));
+        let items = names
+            .into_iter()
+            .map(|name| {
+                (
+                    current.remote.clone(),
+                    join_remote_path(&current.path, &name),
+                    cut,
+                )
+            })
+            .collect();
+        *self.clipboard.borrow_mut() = items;
         self.toast
             .add_toast(adw::Toast::new(if cut { "Cut" } else { "Copied" }));
     }
 
     fn paste(&self) {
-        let Some((src_remote, src_path, cut)) = self.clipboard.borrow().clone() else {
+        let items = self.clipboard.borrow().clone();
+        if items.is_empty() {
             return;
-        };
+        }
         let Some(client) = self.ctx.client() else {
             return;
         };
         let current = self.current.borrow().clone();
-        let name = src_path.rsplit('/').next().unwrap_or(&src_path).to_string();
-        let dst_path = join_remote_path(&current.path, &name);
-        let src_fs = if src_remote == "local" {
-            "/".into()
+        let mut error = None;
+        for (src_remote, src_path, cut) in items {
+            let name = src_path.rsplit('/').next().unwrap_or(&src_path).to_string();
+            let dst_path = join_remote_path(&current.path, &name);
+            let (src_fs, src_remote_path) = fs_remote(&src_remote, &src_path);
+            let (dst_fs, dst_remote_path) = fs_remote(&current.remote, &dst_path);
+            let result = if cut {
+                client.move_file(&src_fs, &src_remote_path, &dst_fs, &dst_remote_path)
+            } else {
+                client.copy_file(&src_fs, &src_remote_path, &dst_fs, &dst_remote_path)
+            };
+            if let Err(e) = result {
+                error = Some(e.to_string());
+                break;
+            }
+        }
+        if let Some(e) = error {
+            self.toast.add_toast(adw::Toast::new(&e));
         } else {
-            remote_fs(&src_remote, "")
-        };
-        let dst_fs = if current.remote == "local" {
-            "/".into()
-        } else {
-            remote_fs(&current.remote, "")
-        };
-        let src_remote_path = if src_remote == "local" {
-            src_path.trim_start_matches('/').to_string()
-        } else {
-            src_path
-        };
-        let dst_remote_path = if current.remote == "local" {
-            dst_path.trim_start_matches('/').to_string()
-        } else {
-            dst_path
-        };
-        let result = if cut {
-            client.move_file(&src_fs, &src_remote_path, &dst_fs, &dst_remote_path)
-        } else {
-            client.copy_file(&src_fs, &src_remote_path, &dst_fs, &dst_remote_path)
-        };
-        match result {
-            Ok(_) => self.reload(),
-            Err(e) => self.toast.add_toast(adw::Toast::new(&e.to_string())),
+            self.reload();
         }
     }
 
@@ -1155,16 +1147,25 @@ impl NautilusView {
         let box_ = gtk::Box::new(gtk::Orientation::Vertical, 4);
         for (label, action) in [
             ("Open", "open"),
+            ("Open native", "native"),
             ("Open in new tab", "tab"),
+            ("Refresh", "reload"),
             ("Copy", "copy"),
             ("Cut", "cut"),
             ("Paste", "paste"),
+            ("Copy path", "copypath"),
+            ("Copy public link", "public"),
+            ("Copy URL into folder…", "copyurl"),
             ("Rename", "rename"),
             ("Delete", "delete"),
             ("Properties", "props"),
             ("New folder", "mkdir"),
+            ("Upload folder…", "uploaddir"),
             ("Bookmark", "star"),
             ("Create archive", "archive"),
+            ("Extract archive…", "extract"),
+            ("Remove empty folders", "rmdirs"),
+            ("Empty trash / cleanup", "cleanup"),
             ("Send to…", "sendto"),
             ("Undo", "undo"),
         ] {
@@ -1176,15 +1177,24 @@ impl NautilusView {
                         view.open_name(&name);
                     }
                 }
-                "tab" => view.open_new_tab(),
+                "native" => view.open_native_selected(),
+                "tab" => view.open_selected_in_new_tab(),
+                "reload" => view.reload(),
                 "copy" => view.cut_or_copy(false),
                 "cut" => view.cut_or_copy(true),
                 "paste" => view.paste(),
+                "copypath" => view.copy_selected_path(),
+                "public" => view.copy_public_link(),
+                "copyurl" => view.copy_url_prompt(),
                 "rename" => view.rename_selected(),
                 "delete" => view.delete_selected(),
                 "props" => view.properties_selected(),
                 "mkdir" => view.mkdir_prompt(),
+                "uploaddir" => view.upload_folder_prompt(),
                 "star" => view.add_bookmark(),
+                "extract" => view.extract_selected(),
+                "rmdirs" => view.remove_empty_dirs(),
+                "cleanup" => view.cleanup_remote(),
                 "archive" => {
                     if let Some(win) = view.root.root().and_downcast::<gtk::Window>() {
                         let current = view.current.borrow().clone();
@@ -1226,6 +1236,267 @@ impl NautilusView {
         popover.popup();
     }
 
+    fn formatted_path(&self, name: Option<&str>) -> String {
+        let current = self.current.borrow().clone();
+        let path = match name {
+            Some(name) => join_remote_path(&current.path, name),
+            None => current.path.clone(),
+        };
+        if current.remote == "local" {
+            path
+        } else if path.is_empty() {
+            format!("{}:", current.remote)
+        } else {
+            format!("{}:{}", current.remote, path)
+        }
+    }
+
+    fn copy_text(&self, text: &str) {
+        if let Some(display) = gtk::gdk::Display::default() {
+            display.clipboard().set_text(text);
+            self.toast.add_toast(adw::Toast::new("Copied to clipboard"));
+        }
+    }
+
+    fn copy_selected_path(&self) {
+        let text = self.formatted_path(self.selected_name().as_deref());
+        self.copy_text(&text);
+    }
+
+    fn copy_public_link(&self) {
+        let Some(name) = self.selected_name() else {
+            self.toast
+                .add_toast(adw::Toast::new("Select a file to share"));
+            return;
+        };
+        let Some(client) = self.ctx.client() else {
+            return;
+        };
+        let current = self.current.borrow().clone();
+        let path = join_remote_path(&current.path, &name);
+        let (fs, remote) = fs_remote(&current.remote, &path);
+        match client.public_link(&fs, &remote) {
+            Ok(url) if !url.is_empty() => self.copy_text(&url),
+            Ok(_) => self
+                .toast
+                .add_toast(adw::Toast::new("Remote did not return a public link")),
+            Err(e) => self.toast.add_toast(adw::Toast::new(&e.to_string())),
+        }
+    }
+
+    fn copy_url_prompt(&self) {
+        let Some(win) = self.root.root().and_downcast::<gtk::Window>() else {
+            return;
+        };
+        let view = self.clone();
+        dialogs::prompt(
+            &win,
+            "Copy URL",
+            "Download this URL into the current folder",
+            "https://",
+            move |url| {
+                if url.is_empty() {
+                    return;
+                }
+                let Some(client) = view.ctx.client() else {
+                    return;
+                };
+                let current = view.current.borrow().clone();
+                let (fs, remote) = fs_remote(&current.remote, &current.path);
+                match client.copy_url(&url, &fs, &remote) {
+                    Ok(_) => {
+                        view.reload();
+                        view.toast.add_toast(adw::Toast::new("Started URL copy"));
+                    }
+                    Err(e) => view.toast.add_toast(adw::Toast::new(&e.to_string())),
+                }
+            },
+        );
+    }
+
+    fn upload_folder_prompt(&self) {
+        let Some(win) = self.root.root().and_downcast::<gtk::Window>() else {
+            return;
+        };
+        let dialog = gtk::FileDialog::new();
+        let view = self.clone();
+        dialog.select_folder(
+            Some(&win),
+            None::<gio::Cancellable>.as_ref(),
+            move |result| {
+                if let Ok(file) = result {
+                    if let Some(path) = file.path() {
+                        view.upload_local_tree(&path);
+                    }
+                }
+            },
+        );
+    }
+
+    fn upload_local_tree(&self, root: &std::path::Path) {
+        let name = root
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("upload")
+            .to_string();
+        let current = self.current.borrow().clone();
+        let dest = join_remote_path(&current.path, &name);
+        match self.upload_tree_into(root, &dest) {
+            Ok(count) => {
+                self.reload();
+                self.toast
+                    .add_toast(adw::Toast::new(&format!("Uploaded {count} items")));
+            }
+            Err(e) => self.toast.add_toast(adw::Toast::new(&e)),
+        }
+    }
+
+    fn upload_tree_into(&self, local: &std::path::Path, dest_dir: &str) -> Result<usize, String> {
+        let Some(client) = self.ctx.client() else {
+            return Err("Engine offline".into());
+        };
+        let current = self.current.borrow().clone();
+        let (fs, remote) = fs_remote(&current.remote, dest_dir);
+        let _ = client.mkdir(&fs, &remote);
+        let mut count = 1;
+        let entries = std::fs::read_dir(local).map_err(|e| e.to_string())?;
+        for entry in entries.flatten() {
+            let path = entry.path();
+            let name = path
+                .file_name()
+                .and_then(|n| n.to_str())
+                .unwrap_or("item")
+                .to_string();
+            let dest = join_remote_path(dest_dir, &name);
+            if path.is_dir() {
+                count += self.upload_tree_into(&path, &dest)?;
+            } else {
+                let (dst_fs, dst_remote) = fs_remote(&current.remote, &dest);
+                client
+                    .copy_file("/", &path.to_string_lossy(), &dst_fs, &dst_remote)
+                    .map_err(|e| e.to_string())?;
+                count += 1;
+            }
+        }
+        Ok(count)
+    }
+
+    fn remove_empty_dirs(&self) {
+        let Some(client) = self.ctx.client() else {
+            return;
+        };
+        let current = self.current.borrow().clone();
+        let path = self
+            .selected_name()
+            .map(|n| join_remote_path(&current.path, &n))
+            .unwrap_or_else(|| current.path.clone());
+        let (fs, remote) = fs_remote(&current.remote, &path);
+        match client.rmdirs(&fs, &remote) {
+            Ok(_) => {
+                self.reload();
+                self.toast
+                    .add_toast(adw::Toast::new("Removed empty directories"));
+            }
+            Err(e) => self.toast.add_toast(adw::Toast::new(&e.to_string())),
+        }
+    }
+
+    fn cleanup_remote(&self) {
+        let Some(client) = self.ctx.client() else {
+            return;
+        };
+        let current = self.current.borrow().clone();
+        let (fs, remote) = fs_remote(&current.remote, &current.path);
+        let remote_opt = if remote.is_empty() {
+            None
+        } else {
+            Some(remote.as_str())
+        };
+        match client.cleanup(&fs, remote_opt) {
+            Ok(_) => self
+                .toast
+                .add_toast(adw::Toast::new("Cleanup started for this remote")),
+            Err(e) => self.toast.add_toast(adw::Toast::new(&e.to_string())),
+        }
+    }
+
+    fn extract_selected(&self) {
+        let Some(name) = self.selected_name() else {
+            self.toast
+                .add_toast(adw::Toast::new("Select an archive to extract"));
+            return;
+        };
+        let Some(win) = self.root.root().and_downcast::<gtk::Window>() else {
+            return;
+        };
+        let current = self.current.borrow().clone();
+        let src = self.formatted_path(Some(&name));
+        let default_dst = current.path.clone();
+        let view = self.clone();
+        dialogs::prompt(
+            &win,
+            "Extract archive",
+            "Destination path",
+            &default_dst,
+            move |dst| {
+                let Some(client) = view.ctx.client() else {
+                    return;
+                };
+                let dest = if dst.is_empty() {
+                    view.formatted_path(None)
+                } else if current.remote == "local" || dst.contains(':') {
+                    dst
+                } else {
+                    format!("{}:{dst}", current.remote)
+                };
+                match client.archive_extract(&src, &dest) {
+                    Ok(id) => {
+                        view.ctx.refresh_runtime();
+                        view.toast
+                            .add_toast(adw::Toast::new(&format!("Extract job #{id}")));
+                    }
+                    Err(e) => view.toast.add_toast(adw::Toast::new(&e.to_string())),
+                }
+            },
+        );
+    }
+
+    fn open_native_selected(&self) {
+        let Some(name) = self.selected_name() else {
+            return;
+        };
+        let current = self.current.borrow().clone();
+        let path = join_remote_path(&current.path, &name);
+        if current.remote == "local" {
+            let _ = open::that(&path);
+            return;
+        }
+        let Some(client) = self.ctx.client() else {
+            return;
+        };
+        let (fs, remote) = fs_remote(&current.remote, &path);
+        let dest = std::env::temp_dir().join(&name);
+        match client.copy_file(&fs, &remote, "/", &dest.to_string_lossy()) {
+            Ok(_) => {
+                let _ = open::that(&dest);
+            }
+            Err(e) => self.toast.add_toast(adw::Toast::new(&e.to_string())),
+        }
+    }
+
+    fn open_selected_in_new_tab(&self) {
+        if let Some(name) = self.selected_name() {
+            let current = self.current.borrow().clone();
+            let next = join_remote_path(&current.path, &name);
+            self.open_new_tab();
+            self.current.borrow_mut().path = next;
+            self.current.borrow_mut().remote = current.remote;
+            self.reload();
+            return;
+        }
+        self.open_new_tab();
+    }
+
     fn reload_ops(&self) {
         while let Some(child) = self.ops.first_child() {
             self.ops.remove(&child);
@@ -1243,6 +1514,14 @@ impl NautilusView {
             row.set_subtitle(&format!("#{} {}", job.id, job.remote));
             self.ops.append(&row);
         }
+    }
+}
+
+fn fs_remote(remote: &str, path: &str) -> (String, String) {
+    if remote == "local" {
+        ("/".into(), path.trim_start_matches('/').to_string())
+    } else {
+        (remote_fs(remote, ""), path.to_string())
     }
 }
 

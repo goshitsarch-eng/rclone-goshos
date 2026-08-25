@@ -28,6 +28,7 @@ pub struct AppCtx {
     pub snapshot: Rc<RefCell<RuntimeSnapshot>>,
     pub selected_remote: Rc<RefCell<Option<String>>>,
     pub selected_quick_run: Rc<RefCell<Option<String>>>,
+    pub pending_browse: Rc<RefCell<Option<(String, String)>>>,
     pub inhibitor: Rc<RefCell<PowerInhibitor>>,
     pub watch_mtimes: Rc<RefCell<HashMap<String, u64>>>,
 }
@@ -45,6 +46,7 @@ impl AppCtx {
             snapshot: Rc::new(RefCell::new(RuntimeSnapshot::default())),
             selected_remote: Rc::new(RefCell::new(None)),
             selected_quick_run: Rc::new(RefCell::new(None)),
+            pending_browse: Rc::new(RefCell::new(None)),
             inhibitor: Rc::new(RefCell::new(PowerInhibitor::new())),
             watch_mtimes: Rc::new(RefCell::new(HashMap::new())),
         }
@@ -52,6 +54,10 @@ impl AppCtx {
 
     pub fn t(&self, key: &str) -> String {
         self.i18n.borrow().t(key)
+    }
+
+    pub fn request_browse(&self, remote: &str, path: &str) {
+        *self.pending_browse.borrow_mut() = Some((remote.to_string(), path.to_string()));
     }
 
     pub fn persist(&self) {

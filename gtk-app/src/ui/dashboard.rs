@@ -284,6 +284,7 @@ impl Dashboard {
                 let dash = self.clone();
                 browse.connect_clicked(move |_| {
                     *ctx.selected_remote.borrow_mut() = Some(name.clone());
+                    ctx.request_browse(&name, "");
                     dash.refresh();
                 });
             }
@@ -366,6 +367,28 @@ impl Dashboard {
                 let row = adw::ActionRow::new();
                 row.set_title(&format!("{} · {}", serve.serve_type, serve.fs));
                 row.set_subtitle(&serve.addr);
+                let stop = gtk::Button::from_icon_name("media-playback-stop-symbolic");
+                stop.set_valign(gtk::Align::Center);
+                stop.set_tooltip_text(Some("Stop this serve"));
+                {
+                    let ctx = self.ctx.clone();
+                    let id = serve.id.clone();
+                    let dash = self.clone();
+                    stop.connect_clicked(move |_| {
+                        if let Some(c) = ctx.client() {
+                            let _ = c.serve_stop(&id);
+                            ctx.refresh_runtime();
+                            dash.refresh();
+                        }
+                    });
+                }
+                if !serve.addr.is_empty() {
+                    let open = gtk::LinkButton::new(&format!("http://{}", serve.addr));
+                    open.set_label("Open");
+                    open.set_valign(gtk::Align::Center);
+                    row.add_suffix(&open);
+                }
+                row.add_suffix(&stop);
                 serves.append(&row);
             }
         }
@@ -616,6 +639,7 @@ impl Dashboard {
             btn.connect_clicked(move |_| match kind {
                 "browse" => {
                     *ctx.selected_remote.borrow_mut() = Some(name.clone());
+                    ctx.request_browse(&name, "");
                 }
                 "about" => {
                     if let Some(win) = dash.root.root().and_downcast::<gtk::Window>() {

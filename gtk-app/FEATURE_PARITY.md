@@ -56,6 +56,10 @@ This client is the GTK 4 + libadwaita rewrite of the Angular/Tauri desktop UI. I
 - True Nautilus FlowBox icon grid with lasso hit-testing and dual-pane support
 - Live syntax re-highlight in the text viewer (tags only — buffer text is not rewritten)
 - Skip spawning a local `rclone rcd` when an extra RC backend is active
+- Nautilus multi-select copy/cut/delete/paste; copy path; public link; copy URL; upload folder; extract archive; rmdirs; remote cleanup; open native; open selection in new tab
+- Dashboard browse opens the Files workspace at that remote; per-serve stop + open URL
+- Properties: disk usage, MD5/SHA1/SHA256, public link, copy path
+- Logs filter + clear; wizard Cancel OAuth
 
 ## Still deepening toward pixel-level Angular parity
 

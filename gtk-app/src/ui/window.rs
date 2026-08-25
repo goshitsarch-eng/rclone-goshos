@@ -125,6 +125,29 @@ pub fn present_main(app: &adw::Application, ctx: AppCtx) {
     let dash_poll = dashboard.clone();
     let flow_poll = flow.clone();
     let banner_poll = banner.clone();
+    {
+        let ctx_nav = ctx.clone();
+        let stack_nav = view_stack.clone();
+        let nautilus_nav = nautilus.clone();
+        glib::timeout_add_local(std::time::Duration::from_millis(200), move || {
+            if let Some((remote, path)) = ctx_nav.pending_browse.borrow_mut().take() {
+                stack_nav.set_visible_child_name("nautilus");
+                let target = if remote == "local" {
+                    if path.is_empty() {
+                        "/".into()
+                    } else {
+                        path
+                    }
+                } else if path.is_empty() {
+                    format!("{remote}:")
+                } else {
+                    format!("{remote}:{path}")
+                };
+                nautilus_nav.navigate_to(&target);
+            }
+            glib::ControlFlow::Continue
+        });
+    }
     glib::timeout_add_local(std::time::Duration::from_secs(3), move || {
         ctx_poll.tick_automations();
         ctx_poll.refresh_runtime();

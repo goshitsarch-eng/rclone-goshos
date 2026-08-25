@@ -311,6 +311,25 @@ impl RcClient {
         self.call("operations/size", json!({ "fs": fs, "remote": remote }))
     }
 
+    pub fn rmdirs(&self, fs: &str, remote: &str) -> Result<Value, RcError> {
+        self.call("operations/rmdirs", json!({ "fs": fs, "remote": remote }))
+    }
+
+    pub fn cleanup(&self, fs: &str, remote: Option<&str>) -> Result<Value, RcError> {
+        self.call("operations/cleanup", cleanup_payload(fs, remote))
+    }
+
+    pub fn archive_extract(&self, src: &str, dst: &str) -> Result<u64, RcError> {
+        self.start_job(
+            "operations/archive",
+            json!({
+                "action": "extract",
+                "src": src,
+                "dst": dst
+            }),
+        )
+    }
+
     pub fn public_link(&self, fs: &str, remote: &str) -> Result<String, RcError> {
         let v = self.call(
             "operations/publiclink",
@@ -622,6 +641,13 @@ pub fn parent_remote_path(path: &str) -> String {
     }
 }
 
+pub fn cleanup_payload(fs: &str, remote: Option<&str>) -> Value {
+    match remote {
+        Some(path) if !path.is_empty() => json!({ "fs": fs, "remote": path }),
+        _ => json!({ "fs": fs }),
+    }
+}
+
 pub fn format_bytes(bytes: i64) -> String {
     if bytes < 0 {
         return "—".into();
@@ -688,5 +714,18 @@ mod tests {
     fn basic_auth_encodes() {
         let header = basic_auth_header("user", "pass");
         assert!(header.starts_with("Basic "));
+    }
+
+    #[test]
+    fn cleanup_payload_omits_empty_remote() {
+        assert_eq!(cleanup_payload("drive:", None), json!({ "fs": "drive:" }));
+        assert_eq!(
+            cleanup_payload("drive:", Some("Trash")),
+            json!({ "fs": "drive:", "remote": "Trash" })
+        );
+        assert_eq!(
+            cleanup_payload("drive:", Some("")),
+            json!({ "fs": "drive:" })
+        );
     }
 }

@@ -320,18 +320,68 @@ pub fn logs(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, remote: Option<String>)
     let view = gtk::TextView::new();
     view.set_editable(false);
     view.set_monospace(true);
-    let key = remote.unwrap_or_else(|| "_engine".into());
-    let text = ctx
+    let key = remote.clone().unwrap_or_else(|| "_engine".into());
+    let lines = ctx
         .store
         .borrow()
         .logs
         .get(&key)
-        .map(|lines| lines.join("\n"))
-        .unwrap_or_else(|| "No logs yet.".into());
-    view.buffer().set_text(&text);
+        .cloned()
+        .unwrap_or_default();
+    let search = gtk::Entry::new();
+    search.set_placeholder_text(Some("Filter logs"));
+    let apply = {
+        let view = view.clone();
+        let lines = lines.clone();
+        move |query: &str| {
+            let q = query.to_ascii_lowercase();
+            let text = if q.is_empty() {
+                if lines.is_empty() {
+                    "No logs yet.".into()
+                } else {
+                    lines.join("\n")
+                }
+            } else {
+                lines
+                    .iter()
+                    .filter(|line| line.to_ascii_lowercase().contains(&q))
+                    .cloned()
+                    .collect::<Vec<_>>()
+                    .join("\n")
+            };
+            view.buffer().set_text(&text);
+        }
+    };
+    apply("");
+    {
+        let apply = apply.clone();
+        search.connect_changed(move |entry| apply(&entry.text()));
+    }
+    let clear = gtk::Button::with_label("Clear");
+    {
+        let ctx = ctx.clone();
+        let key = key.clone();
+        let view = view.clone();
+        clear.connect_clicked(move |_| {
+            ctx.store.borrow_mut().logs.remove(&key);
+            ctx.persist();
+            view.buffer().set_text("No logs yet.");
+        });
+    }
+    let toolbar = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+    toolbar.set_margin_start(8);
+    toolbar.set_margin_end(8);
+    toolbar.set_margin_top(8);
+    search.set_hexpand(true);
+    toolbar.append(&search);
+    toolbar.append(&clear);
     let scroll = gtk::ScrolledWindow::new();
+    scroll.set_vexpand(true);
     scroll.set_child(Some(&view));
-    dialog.set_child(Some(&scroll));
+    let box_ = gtk::Box::new(gtk::Orientation::Vertical, 8);
+    box_.append(&toolbar);
+    box_.append(&scroll);
+    dialog.set_child(Some(&box_));
     dialog.present(Some(parent));
 }
 
@@ -1575,20 +1625,62 @@ pub fn properties(
         } else {
             remote_fs(remote, "")
         };
+        if let Ok(about) = client.about(&fs) {
+            let used = about.get("used").and_then(|x| x.as_i64()).unwrap_or(-1);
+            let total = about.get("total").and_then(|x| x.as_i64()).unwrap_or(-1);
+            let free = about.get("free").and_then(|x| x.as_i64()).unwrap_or(-1);
+            let row = adw::ActionRow::new();
+            row.set_title("Disk usage");
+            row.set_subtitle(&format!(
+                "used {} · free {} · total {}",
+                crate::rclone::format_bytes(used),
+                crate::rclone::format_bytes(free),
+                crate::rclone::format_bytes(total)
+            ));
+            list.append(&row);
+        }
         if let Ok(size) = client.size(&fs, path) {
             let row = adw::ActionRow::new();
             row.set_title("Size");
             row.set_subtitle(&size.to_string());
             list.append(&row);
         }
-        if let Ok(hash) = client.hashsum(&fs, path, "MD5") {
-            let row = adw::ActionRow::new();
-            row.set_title("MD5");
-            row.set_subtitle(&hash.to_string());
-            list.append(&row);
+        for hash_type in ["MD5", "SHA1", "SHA256"] {
+            if let Ok(hash) = client.hashsum(&fs, path, hash_type) {
+                let row = adw::ActionRow::new();
+                row.set_title(hash_type);
+                row.set_subtitle(&hash.to_string());
+                list.append(&row);
+            }
+        }
+        if remote != "local" {
+            if let Ok(url) = client.public_link(&fs, path) {
+                if !url.is_empty() {
+                    let row = adw::ActionRow::new();
+                    row.set_title("Public link");
+                    row.set_subtitle(&url);
+                    list.append(&row);
+                }
+            }
         }
     }
-    dialog.set_child(Some(&list));
+    let copy_path = gtk::Button::with_label("Copy path");
+    {
+        let text = if remote == "local" {
+            path.to_string()
+        } else {
+            format!("{remote}:{path}")
+        };
+        copy_path.connect_clicked(move |_| {
+            if let Some(display) = gtk::gdk::Display::default() {
+                display.clipboard().set_text(&text);
+            }
+        });
+    }
+    let box_ = gtk::Box::new(gtk::Orientation::Vertical, 8);
+    box_.append(&list);
+    box_.append(&copy_path);
+    dialog.set_child(Some(&box_));
     dialog.present(Some(parent));
 }
 
