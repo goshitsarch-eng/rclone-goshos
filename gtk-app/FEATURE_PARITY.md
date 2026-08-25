@@ -341,6 +341,8 @@ This client is the GTK 4 + libadwaita rewrite of the Angular/Tauri desktop UI. I
 - Local rcd starts with `--rc-serve` so remote image/video/audio stream over HTTP Range URLs
 - File viewer probes `--rc-serve` (`GET Range: bytes=0-1`) and plays via `gio::File` / `gtk::Video` / `gtk::Picture`
 - Compact dashboard cards show up to 3 primary-action Start/Stop icons (Angular `primaryActionsFor`)
+- Compact cards with multiple profiles open a Start/Stop picker popover (Angular profile blossom)
+- Active mount/sync jobs expose folder-open shortcuts for src/dst / mount point
 
 ## Still deepening toward pixel-level Angular parity
 

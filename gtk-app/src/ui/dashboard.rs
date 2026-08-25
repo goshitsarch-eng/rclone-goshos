@@ -678,7 +678,16 @@ impl Dashboard {
                     })
                     .unwrap_or_else(|| tab.compact_primary_ops(&[], &[], 3));
                 let snap = self.ctx.snapshot.borrow().clone();
+                let mut open_paths: Vec<String> = Vec::new();
                 for op in compact_ops {
+                    let names = self
+                        .ctx
+                        .store
+                        .borrow()
+                        .remotes
+                        .get(&remote.name)
+                        .map(|meta| meta.profile_names(op))
+                        .unwrap_or_default();
                     let active = match op {
                         OperationType::Mount => remote.mounted,
                         OperationType::Serve => remote.serving,
@@ -688,8 +697,34 @@ impl Dashboard {
                                 && crate::jobs::job_is_running(job)
                         }),
                     };
-                    let btn = gtk::Button::from_icon_name(op.icon_name());
-                    btn.set_valign(gtk::Align::Center);
+                    if active {
+                        match op {
+                            OperationType::Mount => {
+                                let point = snap
+                                    .mounts
+                                    .iter()
+                                    .find(|m| {
+                                        m.fs.trim_end_matches(':') == remote.name
+                                            || m.fs == format!("{}:", remote.name)
+                                    })
+                                    .map(|m| m.mount_point.as_str());
+                                open_paths
+                                    .extend(crate::jobs::active_open_paths(op, "", "", point));
+                            }
+                            OperationType::Serve => {}
+                            other => {
+                                if let Some(job) = snap.jobs.iter().find(|job| {
+                                    crate::jobs::job_belongs_to_remote(job, &remote.name)
+                                        && crate::jobs::job_operation_matches(&job.operation, other)
+                                        && crate::jobs::job_is_running(job)
+                                }) {
+                                    open_paths.extend(crate::jobs::active_open_paths(
+                                        other, &job.src, &job.dst, None,
+                                    ));
+                                }
+                            }
+                        }
+                    }
                     let label = self
                         .ctx
                         .t_or(&format!("actions.{}", op.as_str()), op.api_label());
@@ -698,43 +733,95 @@ impl Dashboard {
                     } else {
                         self.ctx.t_or("actions.start", "Start")
                     };
-                    btn.set_tooltip_text(Some(&format!("{verb} {label}")));
-                    if active {
-                        btn.add_css_class("destructive-action");
-                    }
-                    let ctx = self.ctx.clone();
-                    let name = remote.name.clone();
-                    let mounted = remote.mounted;
-                    let toast = self.toast.clone();
-                    let dash = self.clone();
-                    let dry = self.dry_run.clone();
-                    let resync = self.resync.clone();
-                    let pname = self
-                        .ctx
-                        .store
-                        .borrow()
-                        .remotes
-                        .get(&remote.name)
-                        .and_then(|meta| meta.profile_names(op).into_iter().next())
-                        .unwrap_or_else(|| "default".into());
-                    btn.connect_clicked(move |_| {
-                        if op == OperationType::Mount {
-                            toggle_mount(&ctx, &name, mounted, &toast);
-                        } else {
-                            toggle_profile(
-                                &ctx,
-                                &name,
+                    if names.len() > 1 {
+                        let btn = gtk::MenuButton::new();
+                        btn.set_icon_name(op.icon_name());
+                        btn.set_valign(gtk::Align::Center);
+                        btn.set_tooltip_text(Some(&format!("{verb} {label} · {}", names.len())));
+                        if active {
+                            btn.add_css_class("destructive-action");
+                        }
+                        let popover = gtk::Popover::new();
+                        let list = gtk::Box::new(gtk::Orientation::Vertical, 4);
+                        list.set_margin_top(6);
+                        list.set_margin_bottom(6);
+                        list.set_margin_start(6);
+                        list.set_margin_end(6);
+                        for pname in names {
+                            let profile_active = crate::jobs::profile_is_active(
+                                &remote.name,
                                 op,
                                 &pname,
-                                &toast,
-                                dry.get(),
-                                resync.get(),
+                                &snap.jobs,
+                                &snap.mounts,
+                                &snap.serves,
                             );
+                            let item = gtk::Button::with_label(&pname);
+                            if profile_active {
+                                item.add_css_class("destructive-action");
+                            }
+                            let ctx = self.ctx.clone();
+                            let name = remote.name.clone();
+                            let toast = self.toast.clone();
+                            let dash = self.clone();
+                            let dry = self.dry_run.clone();
+                            let resync = self.resync.clone();
+                            let popover = popover.clone();
+                            item.connect_clicked(move |_| {
+                                toggle_profile(
+                                    &ctx,
+                                    &name,
+                                    op,
+                                    &pname,
+                                    &toast,
+                                    dry.get(),
+                                    resync.get(),
+                                );
+                                popover.popdown();
+                                dash.refresh();
+                            });
+                            list.append(&item);
                         }
-                        dash.refresh();
-                    });
-                    row.add_suffix(&btn);
+                        popover.set_child(Some(&list));
+                        btn.set_popover(Some(&popover));
+                        row.add_suffix(&btn);
+                    } else {
+                        let btn = gtk::Button::from_icon_name(op.icon_name());
+                        btn.set_valign(gtk::Align::Center);
+                        btn.set_tooltip_text(Some(&format!("{verb} {label}")));
+                        if active {
+                            btn.add_css_class("destructive-action");
+                        }
+                        let ctx = self.ctx.clone();
+                        let name = remote.name.clone();
+                        let mounted = remote.mounted;
+                        let toast = self.toast.clone();
+                        let dash = self.clone();
+                        let dry = self.dry_run.clone();
+                        let resync = self.resync.clone();
+                        let pname = names.into_iter().next().unwrap_or_else(|| "default".into());
+                        btn.connect_clicked(move |_| {
+                            if op == OperationType::Mount {
+                                toggle_mount(&ctx, &name, mounted, &toast);
+                            } else {
+                                toggle_profile(
+                                    &ctx,
+                                    &name,
+                                    op,
+                                    &pname,
+                                    &toast,
+                                    dry.get(),
+                                    resync.get(),
+                                );
+                            }
+                            dash.refresh();
+                        });
+                        row.add_suffix(&btn);
+                    }
                 }
+                open_paths.sort();
+                open_paths.dedup();
+                append_open_folder_suffix(&row, &self.ctx, &remote.name, &open_paths);
             }
             if editing {
                 let hide = gtk::Button::from_icon_name(if remote.hidden {
@@ -2783,6 +2870,60 @@ impl Dashboard {
         }
         self.detail.append(&list);
     }
+}
+
+fn append_open_folder_suffix(row: &adw::ActionRow, ctx: &AppCtx, remote: &str, paths: &[String]) {
+    if paths.is_empty() {
+        return;
+    }
+    if paths.len() == 1 {
+        let folder = gtk::Button::from_icon_name("folder-open-symbolic");
+        folder.set_valign(gtk::Align::Center);
+        folder.set_tooltip_text(Some(&paths[0]));
+        let ctx = ctx.clone();
+        let remote = remote.to_string();
+        let path = paths[0].clone();
+        folder.connect_clicked(move |_| open_overview_path(&ctx, &remote, &path));
+        row.add_suffix(&folder);
+        return;
+    }
+    let btn = gtk::MenuButton::new();
+    btn.set_icon_name("folder-open-symbolic");
+    btn.set_valign(gtk::Align::Center);
+    btn.set_tooltip_text(Some(
+        &ctx.t_or("overviews.remoteCard.browse", "Browse active folders"),
+    ));
+    let popover = gtk::Popover::new();
+    let list = gtk::Box::new(gtk::Orientation::Vertical, 4);
+    list.set_margin_top(6);
+    list.set_margin_bottom(6);
+    list.set_margin_start(6);
+    list.set_margin_end(6);
+    for path in paths {
+        let item = gtk::Button::with_label(path);
+        item.set_hexpand(true);
+        let ctx = ctx.clone();
+        let remote = remote.to_string();
+        let path = path.clone();
+        let popover = popover.clone();
+        item.connect_clicked(move |_| {
+            open_overview_path(&ctx, &remote, &path);
+            popover.popdown();
+        });
+        list.append(&item);
+    }
+    popover.set_child(Some(&list));
+    btn.set_popover(Some(&popover));
+    row.add_suffix(&btn);
+}
+
+fn open_overview_path(ctx: &AppCtx, current_remote: &str, raw: &str) {
+    let typed = crate::path_kind::parse_typed_path(raw, current_remote);
+    if typed.kind == crate::path_kind::PathKind::Local {
+        let _ = open::that(&typed.path);
+        return;
+    }
+    ctx.request_browse(&typed.remote, &typed.path);
 }
 
 fn toggle_mount(ctx: &AppCtx, name: &str, mounted: bool, toast: &adw::ToastOverlay) {

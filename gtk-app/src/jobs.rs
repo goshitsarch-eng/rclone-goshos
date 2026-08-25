@@ -70,6 +70,40 @@ pub fn first_path(value: &Value, keys: &[&str]) -> Option<String> {
     path_list(value, keys).into_iter().next()
 }
 
+/// Paths the Angular remote card can open while an operation is active.
+/// Serve has no folder blossom. Mount uses the live mount point; sync ops use src/dst.
+pub fn active_open_paths(
+    op: OperationType,
+    src: &str,
+    dst: &str,
+    mount_point: Option<&str>,
+) -> Vec<String> {
+    if matches!(op, OperationType::Serve) {
+        return Vec::new();
+    }
+    let mut paths = Vec::new();
+    let push = |paths: &mut Vec<String>, value: &str| {
+        let trimmed = value.trim();
+        if trimmed.is_empty() || trimmed == "—" {
+            return;
+        }
+        if !paths.iter().any(|existing| existing == trimmed) {
+            paths.push(trimmed.to_string());
+        }
+    };
+    if op == OperationType::Mount {
+        if let Some(point) = mount_point.filter(|s| !s.trim().is_empty()) {
+            push(&mut paths, point);
+        } else {
+            push(&mut paths, dst);
+        }
+        return paths;
+    }
+    push(&mut paths, src);
+    push(&mut paths, dst);
+    paths
+}
+
 pub fn is_dry_run(rclone: &Value) -> bool {
     for key in ["DryRun", "dry_run", "dryRun"] {
         if rclone.get(key).and_then(|v| v.as_bool()).unwrap_or(false) {
@@ -2289,6 +2323,35 @@ mod tests {
         assert_eq!(profile.rclone["mountPoint"], "/mnt/drive");
         assert!(preferred_mount_profile(None).is_none());
         assert!(preferred_mount_profile(Some(&RemoteMeta::default())).is_none());
+    }
+
+    #[test]
+    fn active_open_paths_match_angular_blossom() {
+        assert!(
+            active_open_paths(OperationType::Serve, "drive:", "http://127.0.0.1", None).is_empty()
+        );
+        assert_eq!(
+            active_open_paths(
+                OperationType::Mount,
+                "drive:",
+                "/mnt/unused",
+                Some("/mnt/drive")
+            ),
+            vec!["/mnt/drive".to_string()]
+        );
+        assert_eq!(
+            active_open_paths(OperationType::Mount, "drive:", "/mnt/drive", None),
+            vec!["/mnt/drive".to_string()]
+        );
+        assert_eq!(
+            active_open_paths(OperationType::Sync, "drive:Photos", "/tmp/out", None),
+            vec!["drive:Photos".to_string(), "/tmp/out".to_string()]
+        );
+        assert_eq!(
+            active_open_paths(OperationType::Copy, "drive:", "drive:", None),
+            vec!["drive:".to_string()]
+        );
+        assert!(active_open_paths(OperationType::Sync, "", "—", None).is_empty());
     }
 
     #[test]
