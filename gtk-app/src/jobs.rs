@@ -108,6 +108,74 @@ pub fn extra_flags(rclone: &Value) -> Map<String, Value> {
     out
 }
 
+pub fn assemble_rclone(
+    op: OperationType,
+    sources: &[String],
+    dest: &str,
+    flags: Map<String, Value>,
+) -> Value {
+    let mut obj = flags;
+    let filtered: Vec<String> = sources
+        .iter()
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+        .collect();
+    match op {
+        OperationType::Mount => {
+            if let Some(source) = filtered.first() {
+                obj.insert("srcFs".into(), json!(source));
+                obj.insert("fs".into(), json!(source));
+            }
+            if !dest.is_empty() {
+                obj.insert("mountPoint".into(), json!(dest));
+            }
+        }
+        OperationType::Serve => {
+            if let Some(source) = filtered.first() {
+                obj.insert("fs".into(), json!(source));
+            }
+            if !dest.is_empty() {
+                obj.insert("addr".into(), json!(dest));
+            }
+        }
+        OperationType::Copyurl => {
+            if let Some(source) = filtered.first() {
+                obj.insert("url".into(), json!(source));
+            }
+            if !dest.is_empty() {
+                obj.insert("dstFs".into(), json!(dest));
+                obj.insert("fs".into(), json!(dest));
+            }
+        }
+        OperationType::Delete => insert_sources(&mut obj, &filtered),
+        _ => {
+            insert_sources(&mut obj, &filtered);
+            if !dest.is_empty() {
+                obj.insert("dstFs".into(), json!(dest));
+                if op == OperationType::Bisync {
+                    obj.insert("path2".into(), json!(dest));
+                    if let Some(source) = filtered.first() {
+                        obj.insert("path1".into(), json!(source));
+                    }
+                }
+            }
+        }
+    }
+    Value::Object(obj)
+}
+
+fn insert_sources(obj: &mut Map<String, Value>, sources: &[String]) {
+    match sources {
+        [] => {}
+        [one] => {
+            obj.insert("srcFs".into(), json!(one));
+        }
+        many => {
+            obj.insert("srcFs".into(), json!(many));
+        }
+    }
+}
+
 pub fn default_source(remote: &str, rclone: &Value) -> String {
     first_path(&flatten_rclone(rclone), SOURCE_KEYS).unwrap_or_else(|| remote_fs(remote, ""))
 }
@@ -767,6 +835,37 @@ mod tests {
         assert_eq!(path_list(&rclone, SOURCE_KEYS), vec!["drive:a", "drive:b"]);
         assert!(OperationType::Sync.supports_multi_source());
         assert!(!OperationType::Mount.supports_multi_source());
+    }
+
+    #[test]
+    fn assembles_profile_rclone() {
+        let sync = assemble_rclone(
+            OperationType::Sync,
+            &["drive:a".into(), "drive:b".into()],
+            "/tmp/out",
+            Map::from_iter([("createEmptySrcDirs".into(), json!(true))]),
+        );
+        assert_eq!(sync["srcFs"], json!(["drive:a", "drive:b"]));
+        assert_eq!(sync["dstFs"], "/tmp/out");
+        assert_eq!(sync["createEmptySrcDirs"], true);
+        let mount = assemble_rclone(
+            OperationType::Mount,
+            &["drive:".into()],
+            "/mnt/drive",
+            Map::new(),
+        );
+        assert_eq!(mount["mountPoint"], "/mnt/drive");
+        assert_eq!(mount["srcFs"], "drive:");
+        let serve = assemble_rclone(
+            OperationType::Serve,
+            &["drive:pub".into()],
+            "127.0.0.1:8080",
+            Map::from_iter([("type".into(), json!("webdav"))]),
+        );
+        assert_eq!(serve["addr"], "127.0.0.1:8080");
+        assert_eq!(serve["type"], "webdav");
+        let empty = assemble_rclone(OperationType::Delete, &[], "", Map::new());
+        assert!(empty.as_object().unwrap().is_empty());
     }
 
     #[test]

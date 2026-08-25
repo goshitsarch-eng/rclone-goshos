@@ -3,6 +3,7 @@ mod dialogs;
 mod flow;
 mod nautilus;
 mod onboarding;
+mod remote_config;
 mod tray;
 mod window;
 mod wizard;
@@ -106,7 +107,11 @@ impl AppCtx {
 
     pub fn restart_engine(&self) {
         let settings = self.settings.borrow().clone();
-        *self.engine.borrow_mut() = Some(crate::rclone::RcloneEngine::start(&settings));
+        if !settings.core.active_backend.is_empty() && settings.core.active_backend != "local" {
+            *self.engine.borrow_mut() = None;
+        } else {
+            *self.engine.borrow_mut() = Some(crate::rclone::RcloneEngine::start(&settings));
+        }
         if self.engine_ready() {
             self.start_autostarts();
         } else {

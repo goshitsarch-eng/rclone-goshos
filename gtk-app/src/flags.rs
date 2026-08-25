@@ -289,6 +289,16 @@ fn string_flag(name: &str, help: &str) -> FlagOption {
     }
 }
 
+pub fn flag_category_for_op(op: OperationType) -> Option<&'static str> {
+    match op {
+        OperationType::Mount => Some("mount"),
+        OperationType::Sync => Some("sync"),
+        OperationType::Copy | OperationType::Move => Some("copy"),
+        OperationType::Check | OperationType::Cryptcheck => Some("check"),
+        _ => None,
+    }
+}
+
 pub fn options_for_category<'a>(
     blocks: &'a [FlagBlock],
     category: &str,
@@ -378,6 +388,9 @@ mod tests {
         assert!(!static_flags_for(OperationType::Bisync).is_empty());
         assert!(!static_flags_for(OperationType::Check).is_empty());
         assert!(static_flags_for(OperationType::Mount).is_empty());
+        assert_eq!(flag_category_for_op(OperationType::Mount), Some("mount"));
+        assert_eq!(flag_category_for_op(OperationType::Move), Some("copy"));
+        assert_eq!(flag_category_for_op(OperationType::Serve), None);
     }
 
     #[test]

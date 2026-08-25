@@ -41,15 +41,114 @@ impl RemoteMeta {
     }
 
     pub fn helper_names(&self, kind: &str) -> Vec<String> {
-        let map = match kind {
+        let mut names: Vec<String> = self.helper_map(kind).keys().cloned().collect();
+        names.sort();
+        names
+    }
+
+    pub fn helper_map(&self, kind: &str) -> &HashMap<String, Value> {
+        match kind {
             "vfs" => &self.vfs_configs,
             "filter" => &self.filter_configs,
             "backend" => &self.backend_configs,
             _ => &self.runtime_remote_configs,
-        };
-        let mut names: Vec<String> = map.keys().cloned().collect();
+        }
+    }
+
+    pub fn helper_map_mut(&mut self, kind: &str) -> &mut HashMap<String, Value> {
+        match kind {
+            "vfs" => &mut self.vfs_configs,
+            "filter" => &mut self.filter_configs,
+            "backend" => &mut self.backend_configs,
+            _ => &mut self.runtime_remote_configs,
+        }
+    }
+
+    pub fn upsert_helper(&mut self, kind: &str, name: &str, value: Value) {
+        if name.is_empty() {
+            return;
+        }
+        self.helper_map_mut(kind).insert(name.to_string(), value);
+    }
+
+    pub fn remove_helper(&mut self, kind: &str, name: &str) -> bool {
+        self.helper_map_mut(kind).remove(name).is_some()
+    }
+
+    pub fn rename_helper(&mut self, kind: &str, from: &str, to: &str) -> bool {
+        if to.is_empty() || from == to {
+            return false;
+        }
+        if let Some(value) = self.helper_map_mut(kind).remove(from) {
+            self.helper_map_mut(kind).insert(to.to_string(), value);
+            true
+        } else {
+            false
+        }
+    }
+
+    pub fn profile_names(&self, op: OperationType) -> Vec<String> {
+        let mut names: Vec<String> = self
+            .profiles
+            .get(op.as_str())
+            .map(|m| m.keys().cloned().collect())
+            .unwrap_or_default();
         names.sort();
         names
+    }
+
+    pub fn get_profile(&self, op: OperationType, name: &str) -> Option<ProfileConfig> {
+        self.profiles
+            .get(op.as_str())
+            .and_then(|m| m.get(name))
+            .cloned()
+    }
+
+    pub fn upsert_profile(&mut self, op: OperationType, profile: ProfileConfig) {
+        if profile.name.is_empty() {
+            return;
+        }
+        self.profiles
+            .entry(op.as_str().to_string())
+            .or_default()
+            .insert(profile.name.clone(), profile);
+    }
+
+    pub fn remove_profile(&mut self, op: OperationType, name: &str) -> bool {
+        self.profiles
+            .get_mut(op.as_str())
+            .map(|m| m.remove(name).is_some())
+            .unwrap_or(false)
+    }
+
+    pub fn rename_profile(&mut self, op: OperationType, from: &str, to: &str) -> bool {
+        if to.is_empty() || from == to {
+            return false;
+        }
+        if let Some(mut profile) = self
+            .profiles
+            .get_mut(op.as_str())
+            .and_then(|m| m.remove(from))
+        {
+            profile.name = to.to_string();
+            self.upsert_profile(op, profile);
+            true
+        } else {
+            false
+        }
+    }
+
+    pub fn clone_profile(&mut self, op: OperationType, from: &str, to: &str) -> bool {
+        if to.is_empty() {
+            return false;
+        }
+        if let Some(mut profile) = self.get_profile(op, from) {
+            profile.name = to.to_string();
+            self.upsert_profile(op, profile);
+            true
+        } else {
+            false
+        }
     }
 }
 
@@ -769,5 +868,35 @@ mod tests {
         sort_entries(&mut entries, "name", false);
         assert!(entries[0].is_dir);
         assert_eq!(entries[1].name, "b.txt");
+    }
+
+    #[test]
+    fn profile_and_helper_crud() {
+        let mut meta = RemoteMeta::default();
+        let mut profile = ProfileConfig::default();
+        profile.name = "default".into();
+        profile.app.auto_start = true;
+        meta.upsert_profile(OperationType::Sync, profile);
+        assert_eq!(meta.profile_names(OperationType::Sync), vec!["default"]);
+        assert!(meta.clone_profile(OperationType::Sync, "default", "nightly"));
+        assert!(meta.rename_profile(OperationType::Sync, "nightly", "weekly"));
+        assert_eq!(
+            meta.profile_names(OperationType::Sync),
+            vec!["default", "weekly"]
+        );
+        assert!(meta.remove_profile(OperationType::Sync, "weekly"));
+        assert_eq!(meta.profile_names(OperationType::Sync), vec!["default"]);
+
+        meta.upsert_helper("vfs", "fast", json!({ "CacheMode": "full" }));
+        assert_eq!(meta.helper_names("vfs"), vec!["fast"]);
+        assert!(meta.rename_helper("vfs", "fast", "full"));
+        assert_eq!(
+            meta.helper_profile("vfs", "full").unwrap()["CacheMode"],
+            "full"
+        );
+        assert!(meta.remove_helper("vfs", "full"));
+        assert!(meta.helper_names("vfs").is_empty());
+        meta.upsert_helper("runtime", "", json!({}));
+        assert!(meta.helper_names("runtime").is_empty());
     }
 }

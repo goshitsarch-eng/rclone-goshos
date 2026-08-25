@@ -1,0 +1,1068 @@
+//! Angular-style remote configuration sidenav: per-operation profiles,
+//! helper configs (VFS / filter / backend / runtime), and remote metadata.
+
+use super::dialogs;
+use super::AppCtx;
+use crate::flags::{
+    flag_category_for_op, options_for_category, parse_flag_value, parse_options_info,
+    static_flags_for, FlagBlock, FlagOption,
+};
+use crate::jobs::{
+    assemble_rclone, default_dest, default_source, extra_flags, flatten_rclone, path_list,
+    SOURCE_KEYS,
+};
+use crate::operations::OperationType;
+use crate::rclone::validate_cron;
+use crate::store::{AppConfig, ProfileConfig, RemoteMeta};
+use adw::prelude::*;
+use serde_json::{json, Map, Value};
+use std::cell::RefCell;
+use std::rc::Rc;
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum EditorStep {
+    Remote,
+    Op(OperationType),
+    Helper(&'static str),
+}
+
+const HELPERS: &[(&str, &str, &str)] = &[
+    ("vfs", "VFS", "drive-harddisk-symbolic"),
+    ("filter", "Filter", "view-filter-symbolic"),
+    ("backend", "Backend", "preferences-system-symbolic"),
+    ("runtime", "Runtime", "emblem-system-symbolic"),
+];
+
+pub fn present(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, remote: String, on_done: Rc<dyn Fn()>) {
+    ctx.store
+        .borrow_mut()
+        .remotes
+        .entry(remote.clone())
+        .or_default();
+
+    let dialog = adw::Dialog::new();
+    dialog.set_title(&format!("Configure {remote}"));
+    dialog.set_content_width(980);
+    dialog.set_content_height(780);
+
+    let split = adw::OverlaySplitView::new();
+    split.set_min_sidebar_width(230.0);
+    split.set_show_sidebar(true);
+
+    let sidebar = gtk::ListBox::new();
+    sidebar.add_css_class("navigation-sidebar");
+    sidebar.set_selection_mode(gtk::SelectionMode::Single);
+    let side_scroll = gtk::ScrolledWindow::new();
+    side_scroll.set_child(Some(&sidebar));
+    split.set_sidebar(Some(&side_scroll));
+
+    let content = gtk::Box::new(gtk::Orientation::Vertical, 8);
+    content.set_hexpand(true);
+    content.set_vexpand(true);
+    let title = gtk::Label::new(Some("Remote"));
+    title.add_css_class("title-3");
+    title.set_xalign(0.0);
+    title.set_margin_start(12);
+    title.set_margin_top(10);
+    let body = gtk::Box::new(gtk::Orientation::Vertical, 8);
+    body.set_hexpand(true);
+    body.set_vexpand(true);
+    let body_scroll = gtk::ScrolledWindow::new();
+    body_scroll.set_vexpand(true);
+    body_scroll.set_child(Some(&body));
+    let save_bar = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+    save_bar.set_margin_start(12);
+    save_bar.set_margin_end(12);
+    save_bar.set_margin_bottom(10);
+    let save = gtk::Button::with_label("Save step");
+    save.add_css_class("suggested-action");
+    let close = gtk::Button::with_label("Close");
+    save_bar.append(&save);
+    save_bar.append(&close);
+    content.append(&title);
+    content.append(&body_scroll);
+    content.append(&save_bar);
+    split.set_content(Some(&content));
+    dialog.set_child(Some(&split));
+
+    let flag_blocks: Rc<Vec<FlagBlock>> = Rc::new(
+        ctx.client()
+            .and_then(|c| c.options_info().ok())
+            .map(|v| parse_options_info(&v))
+            .unwrap_or_default(),
+    );
+
+    let current = Rc::new(RefCell::new(EditorStep::Remote));
+    let persist_step: Rc<RefCell<Box<dyn Fn()>>> = Rc::new(RefCell::new(Box::new(|| {})));
+
+    let steps = editor_steps();
+    for step in &steps {
+        let row = adw::ActionRow::new();
+        row.set_title(step_label(*step));
+        row.set_activatable(true);
+        let icon = gtk::Image::from_icon_name(step_icon(*step));
+        row.add_prefix(&icon);
+        sidebar.append(&row);
+    }
+    if let Some(first) = sidebar.row_at_index(0) {
+        sidebar.select_row(Some(&first));
+    }
+
+    let rebuild = {
+        let ctx = ctx.clone();
+        let remote = remote.clone();
+        let body = body.clone();
+        let title = title.clone();
+        let persist_step = persist_step.clone();
+        let current = current.clone();
+        let parent = parent.clone();
+        let flag_blocks = flag_blocks.clone();
+        let on_done = on_done.clone();
+        Rc::new(move || {
+            persist_step.borrow()();
+            while let Some(child) = body.first_child() {
+                body.remove(&child);
+            }
+            let step = *current.borrow();
+            title.set_text(step_label(step));
+            match step {
+                EditorStep::Remote => {
+                    let (page, saver) = remote_page(&parent, ctx.clone(), &remote, on_done.clone());
+                    body.append(&page);
+                    *persist_step.borrow_mut() = Box::new(saver);
+                }
+                EditorStep::Op(op) => {
+                    let (page, saver) =
+                        operation_page(&parent, ctx.clone(), &remote, op, flag_blocks.as_ref());
+                    body.append(&page);
+                    *persist_step.borrow_mut() = Box::new(saver);
+                }
+                EditorStep::Helper(kind) => {
+                    let (page, saver) =
+                        helper_page(&parent, ctx.clone(), &remote, kind, flag_blocks.as_ref());
+                    body.append(&page);
+                    *persist_step.borrow_mut() = Box::new(saver);
+                }
+            }
+        })
+    };
+    rebuild();
+
+    {
+        let current = current.clone();
+        let rebuild = rebuild.clone();
+        sidebar.connect_row_selected(move |_, row| {
+            let Some(row) = row else {
+                return;
+            };
+            let idx = row.index();
+            if idx < 0 {
+                return;
+            }
+            if let Some(step) = editor_steps().get(idx as usize).copied() {
+                *current.borrow_mut() = step;
+                rebuild();
+            }
+        });
+    }
+    {
+        let persist_step = persist_step.clone();
+        save.connect_clicked(move |_| persist_step.borrow()());
+    }
+    {
+        let dialog = dialog.clone();
+        let persist_step = persist_step.clone();
+        let on_done = on_done.clone();
+        close.connect_clicked(move |_| {
+            persist_step.borrow()();
+            on_done();
+            dialog.close();
+        });
+    }
+
+    dialogs::present_window_or_dialog(parent, &ctx, &dialog);
+}
+
+fn editor_steps() -> Vec<EditorStep> {
+    let mut steps = vec![EditorStep::Remote];
+    steps.extend(OperationType::ALL.iter().copied().map(EditorStep::Op));
+    steps.extend(HELPERS.iter().map(|(kind, _, _)| EditorStep::Helper(*kind)));
+    steps
+}
+
+fn step_label(step: EditorStep) -> &'static str {
+    match step {
+        EditorStep::Remote => "Remote",
+        EditorStep::Op(op) => op.api_label(),
+        EditorStep::Helper(kind) => HELPERS
+            .iter()
+            .find(|(k, _, _)| *k == kind)
+            .map(|(_, label, _)| *label)
+            .unwrap_or(kind),
+    }
+}
+
+fn step_icon(step: EditorStep) -> &'static str {
+    match step {
+        EditorStep::Remote => "network-server-symbolic",
+        EditorStep::Op(op) => op.icon_name(),
+        EditorStep::Helper(kind) => HELPERS
+            .iter()
+            .find(|(k, _, _)| *k == kind)
+            .map(|(_, _, icon)| *icon)
+            .unwrap_or("preferences-other-symbolic"),
+    }
+}
+
+fn remote_page(
+    parent: &impl IsA<gtk::Widget>,
+    ctx: AppCtx,
+    remote: &str,
+    on_done: Rc<dyn Fn()>,
+) -> (gtk::Box, impl Fn() + 'static) {
+    let meta = ctx
+        .store
+        .borrow()
+        .remotes
+        .get(remote)
+        .cloned()
+        .unwrap_or_default();
+    let tray = adw::SwitchRow::new();
+    tray.set_title("Show on tray");
+    tray.set_active(meta.show_on_tray);
+    let hidden = adw::SwitchRow::new();
+    hidden.set_title("Hide from sidebar");
+    hidden.set_active(meta.hidden);
+    let primary = adw::EntryRow::new();
+    primary.set_title("Primary actions (comma-separated)");
+    primary.set_text(&meta.primary_actions.join(", "));
+    let sync = adw::EntryRow::new();
+    sync.set_title("Sync actions (comma-separated)");
+    sync.set_text(&meta.sync_actions.join(", "));
+
+    let provider = gtk::Button::with_label("Edit provider fields…");
+    {
+        let ctx = ctx.clone();
+        let parent = parent.clone();
+        let remote = remote.to_string();
+        let on_done = on_done.clone();
+        provider.connect_clicked(move |_| {
+            super::wizard::present(&parent, ctx.clone(), Some(remote.clone()), on_done.clone());
+        });
+    }
+    let helpers = gtk::Button::with_label("Helper JSON editor…");
+    {
+        let ctx = ctx.clone();
+        let parent = parent.clone();
+        let remote = remote.to_string();
+        helpers.connect_clicked(move |_| {
+            dialogs::helper_profiles(&parent, ctx.clone(), &remote);
+        });
+    }
+
+    let group = adw::PreferencesGroup::new();
+    group.set_title("Remote metadata");
+    group.add(&tray);
+    group.add(&hidden);
+    group.add(&primary);
+    group.add(&sync);
+    let actions = adw::PreferencesGroup::new();
+    actions.set_title("Provider");
+    let provider_row = adw::ActionRow::new();
+    provider_row.set_title("Rclone remote definition");
+    provider_row.add_suffix(&provider);
+    let helper_row = adw::ActionRow::new();
+    helper_row.set_title("Named helper profiles");
+    helper_row.add_suffix(&helpers);
+    actions.add(&provider_row);
+    actions.add(&helper_row);
+
+    let page = adw::PreferencesPage::new();
+    page.add(&group);
+    page.add(&actions);
+    let box_ = gtk::Box::new(gtk::Orientation::Vertical, 0);
+    box_.append(&page);
+
+    let saver = {
+        let ctx = ctx.clone();
+        let remote = remote.to_string();
+        let tray = tray.clone();
+        let hidden = hidden.clone();
+        let primary = primary.clone();
+        let sync = sync.clone();
+        move || {
+            if let Some(meta) = ctx.store.borrow_mut().remotes.get_mut(&remote) {
+                meta.show_on_tray = tray.is_active();
+                meta.hidden = hidden.is_active();
+                meta.primary_actions = split_csv(&primary.text());
+                meta.sync_actions = split_csv(&sync.text());
+            }
+            ctx.persist();
+        }
+    };
+    (box_, saver)
+}
+
+fn operation_page(
+    parent: &impl IsA<gtk::Widget>,
+    ctx: AppCtx,
+    remote: &str,
+    op: OperationType,
+    blocks: &[FlagBlock],
+) -> (gtk::Box, impl Fn() + 'static) {
+    let names = {
+        let store = ctx.store.borrow();
+        let meta = store.remotes.get(remote);
+        let mut names = meta.map(|m| m.profile_names(op)).unwrap_or_default();
+        if names.is_empty() {
+            names.push("default".into());
+        }
+        names
+    };
+    let selected = Rc::new(RefCell::new(names[0].clone()));
+    let initial = ctx
+        .store
+        .borrow()
+        .remotes
+        .get(remote)
+        .and_then(|m| m.get_profile(op, &names[0]))
+        .unwrap_or_else(|| ProfileConfig {
+            name: names[0].clone(),
+            ..Default::default()
+        });
+
+    let switcher = profile_switcher(&names, &initial.name);
+    let rclone = flatten_rclone(&initial.rclone);
+    let src = adw::EntryRow::new();
+    src.set_title(if op == OperationType::Copyurl {
+        "URL"
+    } else {
+        "Source"
+    });
+    src.set_text(&default_source(remote, &rclone));
+    dialogs::attach_folder_picker(parent, &src);
+    let extra_sources: Rc<RefCell<Vec<adw::EntryRow>>> = Rc::new(RefCell::new(Vec::new()));
+    let more = path_list(&rclone, SOURCE_KEYS);
+    if more.len() > 1 {
+        for extra in more.iter().skip(1) {
+            let row = extra_source_row(parent, extra);
+            extra_sources.borrow_mut().push(row);
+        }
+    }
+    let dst = adw::EntryRow::new();
+    dst.set_title(match op {
+        OperationType::Mount => "Mount point",
+        OperationType::Serve => "Listen address",
+        OperationType::Copyurl => "Destination fs",
+        OperationType::Delete => "Unused destination",
+        _ => "Destination",
+    });
+    dst.set_text(&default_dest(remote, &rclone, op));
+    dst.set_visible(op != OperationType::Delete);
+    dialogs::attach_folder_picker(parent, &dst);
+
+    let serve = adw::ComboRow::new();
+    serve.set_title("Serve type");
+    serve.set_model(Some(&gtk::StringList::new(&OperationType::SERVE_TYPES)));
+    serve.set_visible(op == OperationType::Serve);
+    if let Some(t) = rclone
+        .get("type")
+        .and_then(|x| x.as_str())
+        .or_else(|| rclone.get("typeName").and_then(|x| x.as_str()))
+    {
+        if let Some(idx) = OperationType::SERVE_TYPES.iter().position(|s| *s == t) {
+            serve.set_selected(idx as u32);
+        }
+    }
+
+    let auto_start = adw::SwitchRow::new();
+    auto_start.set_title("Start with application");
+    auto_start.set_active(initial.app.auto_start);
+    let cron_enabled = adw::SwitchRow::new();
+    cron_enabled.set_title("Scheduled (cron)");
+    cron_enabled.set_active(initial.app.cron_enabled);
+    cron_enabled.set_visible(op.is_automatable());
+    let cron = adw::EntryRow::new();
+    cron.set_title("Cron expression");
+    cron.set_text(&initial.app.cron_expression);
+    cron.set_visible(op.is_automatable());
+    let cron_hint = gtk::Label::new(None);
+    cron_hint.add_css_class("dim-label");
+    cron_hint.set_xalign(0.0);
+    cron_hint.set_wrap(true);
+    cron_hint.set_visible(op.is_automatable());
+    update_cron_hint(&cron, &cron_hint);
+    {
+        let cron_hint = cron_hint.clone();
+        cron.connect_changed(move |row| update_cron_hint(row, &cron_hint));
+    }
+    let watch_enabled = adw::SwitchRow::new();
+    watch_enabled.set_title("Watch local sources");
+    watch_enabled.set_active(initial.app.watch_enabled);
+    watch_enabled.set_visible(op.is_automatable());
+    let watch_delay = adw::EntryRow::new();
+    watch_delay.set_title("Watch delay (seconds)");
+    watch_delay.set_text(&initial.app.watch_delay.to_string());
+    watch_delay.set_visible(op.is_automatable());
+    let watch_changed = adw::SwitchRow::new();
+    watch_changed.set_title("Changed files only");
+    watch_changed.set_active(initial.app.watch_changed_only);
+    watch_changed.set_visible(op.is_automatable());
+
+    let helper_names = |kind: &str| -> Vec<String> {
+        let mut names = vec!["—".into()];
+        if let Some(meta) = ctx.store.borrow().remotes.get(remote) {
+            names.extend(meta.helper_names(kind));
+        }
+        names
+    };
+    let vfs_names = helper_names("vfs");
+    let filter_names = helper_names("filter");
+    let backend_names = helper_names("backend");
+    let runtime_names = helper_names("runtime");
+    let vfs_row = dialogs::helper_combo("VFS profile", &vfs_names, &initial.app.vfs_profile);
+    let filter_row =
+        dialogs::helper_combo("Filter profile", &filter_names, &initial.app.filter_profile);
+    let backend_row = dialogs::helper_combo(
+        "Backend profile",
+        &backend_names,
+        &initial.app.backend_profile,
+    );
+    let runtime_row = dialogs::helper_combo(
+        "Runtime profile",
+        &runtime_names,
+        &initial.app.runtime_remote_profile,
+    );
+    vfs_row.set_visible(op.supports_vfs());
+
+    let identity = adw::PreferencesGroup::new();
+    identity.set_title("Paths");
+    identity.add(&src);
+    for row in extra_sources.borrow().iter() {
+        identity.add(row);
+    }
+    if op.supports_multi_source() {
+        let add_src = gtk::Button::with_label("Add source");
+        let extra_sources = extra_sources.clone();
+        let identity_for_add = identity.clone();
+        let parent = parent.clone();
+        add_src.connect_clicked(move |_| {
+            let row = extra_source_row(&parent, "");
+            identity_for_add.add(&row);
+            extra_sources.borrow_mut().push(row);
+        });
+        let add_row = adw::ActionRow::new();
+        add_row.set_title("Multiple sources");
+        add_row.add_suffix(&add_src);
+        identity.add(&add_row);
+    }
+    identity.add(&dst);
+    identity.add(&serve);
+
+    let automation = adw::PreferencesGroup::new();
+    automation.set_title("Automation");
+    automation.add(&auto_start);
+    automation.add(&cron_enabled);
+    automation.add(&cron);
+    automation.add(&watch_enabled);
+    automation.add(&watch_delay);
+    automation.add(&watch_changed);
+
+    let helpers = adw::PreferencesGroup::new();
+    helpers.set_title("Linked helper profiles");
+    helpers.add(&vfs_row);
+    helpers.add(&filter_row);
+    helpers.add(&backend_row);
+    helpers.add(&runtime_row);
+
+    let flags_group = adw::PreferencesGroup::new();
+    flags_group.set_title("Flags");
+    let search = adw::EntryRow::new();
+    search.set_title("Filter flags");
+    flags_group.add(&search);
+    let flag_rows: Rc<RefCell<Vec<(String, adw::EntryRow, String)>>> =
+        Rc::new(RefCell::new(Vec::new()));
+    let mut options: Vec<FlagOption> = static_flags_for(op);
+    if let Some(category) = flag_category_for_op(op) {
+        for (_, option) in options_for_category(blocks, category) {
+            if options.iter().any(|o| o.field_name == option.field_name) {
+                continue;
+            }
+            options.push(option.clone());
+        }
+    }
+    for flag in options {
+        let row = flag_entry(&flag, &rclone);
+        flags_group.add(&row);
+        flag_rows
+            .borrow_mut()
+            .push((flag.field_name, row, flag.type_name));
+    }
+    {
+        let flag_rows = flag_rows.clone();
+        search.connect_changed(move |entry| {
+            let query = entry.text().to_ascii_lowercase();
+            for (field, row, _) in flag_rows.borrow().iter() {
+                row.set_visible(query.is_empty() || field.to_ascii_lowercase().contains(&query));
+            }
+        });
+    }
+
+    let cli = adw::EntryRow::new();
+    cli.set_title("Import rclone CLI flags");
+    let apply_cli = gtk::Button::with_label("Apply");
+    {
+        let flag_rows = flag_rows.clone();
+        let cli = cli.clone();
+        apply_cli.connect_clicked(move |_| {
+            let parsed = crate::jobs::parse_cli_flags(&cli.text());
+            for (field, row, _) in flag_rows.borrow().iter() {
+                if let Some(value) = parsed
+                    .get(field)
+                    .or_else(|| parsed.get(&field.replace('-', "_")))
+                {
+                    row.set_text(&value_to_text(value));
+                }
+            }
+        });
+    }
+    let cli_row = adw::ActionRow::new();
+    cli_row.set_title("CLI import");
+    cli_row.add_suffix(&apply_cli);
+    flags_group.add(&cli);
+    flags_group.add(&cli_row);
+
+    let page = adw::PreferencesPage::new();
+    page.add(&switcher.group);
+    page.add(&identity);
+    page.add(&automation);
+    page.add(&helpers);
+    page.add(&flags_group);
+    let box_ = gtk::Box::new(gtk::Orientation::Vertical, 4);
+    box_.set_margin_start(4);
+    box_.set_margin_end(4);
+    box_.append(&page);
+    box_.append(&cron_hint);
+
+    {
+        let ctx = ctx.clone();
+        let remote = remote.to_string();
+        let selected = selected.clone();
+        let combo = switcher.combo.clone();
+        let names = switcher.names.clone();
+        let src = src.clone();
+        let dst = dst.clone();
+        combo.connect_selected_notify(move |row| {
+            let Some(name) = names.borrow().get(row.selected() as usize).cloned() else {
+                return;
+            };
+            *selected.borrow_mut() = name.clone();
+            if let Some(profile) = ctx
+                .store
+                .borrow()
+                .remotes
+                .get(&remote)
+                .and_then(|m| m.get_profile(op, &name))
+            {
+                let rclone = flatten_rclone(&profile.rclone);
+                src.set_text(&default_source(&remote, &rclone));
+                dst.set_text(&default_dest(&remote, &rclone, op));
+            }
+        });
+    }
+    wire_profile_actions(
+        parent,
+        ctx.clone(),
+        remote,
+        Some(op),
+        None,
+        &switcher,
+        selected.clone(),
+    );
+
+    let saver = {
+        let ctx = ctx.clone();
+        let remote = remote.to_string();
+        let selected = selected.clone();
+        let src = src.clone();
+        let dst = dst.clone();
+        let serve = serve.clone();
+        let extra_sources = extra_sources.clone();
+        let auto_start = auto_start.clone();
+        let cron_enabled = cron_enabled.clone();
+        let cron = cron.clone();
+        let watch_enabled = watch_enabled.clone();
+        let watch_delay = watch_delay.clone();
+        let watch_changed = watch_changed.clone();
+        let vfs_row = vfs_row.clone();
+        let filter_row = filter_row.clone();
+        let backend_row = backend_row.clone();
+        let runtime_row = runtime_row.clone();
+        let vfs_names = vfs_names.clone();
+        let filter_names = filter_names.clone();
+        let backend_names = backend_names.clone();
+        let runtime_names = runtime_names.clone();
+        let flag_rows = flag_rows.clone();
+        move || {
+            let name = selected.borrow().clone();
+            if name.is_empty() {
+                return;
+            }
+            let mut flags = Map::new();
+            if op == OperationType::Serve {
+                flags.insert(
+                    "type".into(),
+                    json!(OperationType::SERVE_TYPES
+                        .get(serve.selected() as usize)
+                        .copied()
+                        .unwrap_or("webdav")),
+                );
+            }
+            for (field, row, type_name) in flag_rows.borrow().iter() {
+                let text = row.text().to_string();
+                if !text.is_empty() {
+                    flags.insert(field.clone(), parse_flag_value(type_name, &text));
+                }
+            }
+            let mut sources = vec![src.text().to_string()];
+            for row in extra_sources.borrow().iter() {
+                let text = row.text().to_string();
+                if !text.is_empty() {
+                    sources.push(text);
+                }
+            }
+            let rclone = assemble_rclone(op, &sources, &dst.text(), flags);
+            let profile = ProfileConfig {
+                name: name.clone(),
+                app: AppConfig {
+                    auto_start: auto_start.is_active(),
+                    cron_enabled: cron_enabled.is_active(),
+                    cron_expression: cron.text().to_string(),
+                    watch_enabled: watch_enabled.is_active(),
+                    watch_delay: watch_delay.text().parse().unwrap_or(0),
+                    watch_changed_only: watch_changed.is_active(),
+                    vfs_profile: dialogs::helper_selected(&vfs_row, &vfs_names),
+                    filter_profile: dialogs::helper_selected(&filter_row, &filter_names),
+                    backend_profile: dialogs::helper_selected(&backend_row, &backend_names),
+                    runtime_remote_profile: dialogs::helper_selected(&runtime_row, &runtime_names),
+                },
+                rclone,
+            };
+            if let Some(meta) = ctx.store.borrow_mut().remotes.get_mut(&remote) {
+                meta.upsert_profile(op, profile);
+            }
+            ctx.persist();
+        }
+    };
+    (box_, saver)
+}
+
+fn helper_page(
+    parent: &impl IsA<gtk::Widget>,
+    ctx: AppCtx,
+    remote: &str,
+    kind: &'static str,
+    blocks: &[FlagBlock],
+) -> (gtk::Box, impl Fn() + 'static) {
+    let names = {
+        let mut names = ctx
+            .store
+            .borrow()
+            .remotes
+            .get(remote)
+            .map(|m| m.helper_names(kind))
+            .unwrap_or_default();
+        if names.is_empty() {
+            names.push("default".into());
+        }
+        names
+    };
+    let selected = Rc::new(RefCell::new(names[0].clone()));
+    let current = ctx
+        .store
+        .borrow()
+        .remotes
+        .get(remote)
+        .and_then(|m| m.helper_profile(kind, &names[0]))
+        .unwrap_or_else(|| json!({}));
+    let switcher = profile_switcher(&names, &names[0]);
+    let flags_group = adw::PreferencesGroup::new();
+    flags_group.set_title("Options");
+    let search = adw::EntryRow::new();
+    search.set_title("Filter flags");
+    flags_group.add(&search);
+    let category = match kind {
+        "runtime" => "backend",
+        other => other,
+    };
+    let flag_rows: Rc<RefCell<Vec<(String, adw::EntryRow, String)>>> =
+        Rc::new(RefCell::new(Vec::new()));
+    for (_, option) in options_for_category(blocks, category) {
+        let row = flag_entry(option, &current);
+        flags_group.add(&row);
+        flag_rows
+            .borrow_mut()
+            .push((option.field_name.clone(), row, option.type_name.clone()));
+    }
+    if flag_rows.borrow().is_empty() {
+        let json_row = adw::EntryRow::new();
+        json_row.set_title("JSON object");
+        json_row.set_text(&serde_json::to_string(&current).unwrap_or_else(|_| "{}".into()));
+        flags_group.add(&json_row);
+        flag_rows
+            .borrow_mut()
+            .push(("_json".into(), json_row, "string".into()));
+    }
+    {
+        let flag_rows = flag_rows.clone();
+        search.connect_changed(move |entry| {
+            let query = entry.text().to_ascii_lowercase();
+            for (field, row, _) in flag_rows.borrow().iter() {
+                row.set_visible(query.is_empty() || field.to_ascii_lowercase().contains(&query));
+            }
+        });
+    }
+
+    let page = adw::PreferencesPage::new();
+    page.add(&switcher.group);
+    page.add(&flags_group);
+    let box_ = gtk::Box::new(gtk::Orientation::Vertical, 0);
+    box_.append(&page);
+
+    {
+        let ctx = ctx.clone();
+        let remote = remote.to_string();
+        let selected = selected.clone();
+        let combo = switcher.combo.clone();
+        let names = switcher.names.clone();
+        let flag_rows = flag_rows.clone();
+        combo.connect_selected_notify(move |row| {
+            let Some(name) = names.borrow().get(row.selected() as usize).cloned() else {
+                return;
+            };
+            *selected.borrow_mut() = name.clone();
+            let value = ctx
+                .store
+                .borrow()
+                .remotes
+                .get(&remote)
+                .and_then(|m| m.helper_profile(kind, &name))
+                .unwrap_or_else(|| json!({}));
+            for (field, row, _) in flag_rows.borrow().iter() {
+                if field == "_json" {
+                    row.set_text(&serde_json::to_string(&value).unwrap_or_else(|_| "{}".into()));
+                } else if let Some(v) = value.get(field) {
+                    row.set_text(&value_to_text(v));
+                } else {
+                    row.set_text("");
+                }
+            }
+        });
+    }
+    wire_profile_actions(
+        parent,
+        ctx.clone(),
+        remote,
+        None,
+        Some(kind),
+        &switcher,
+        selected.clone(),
+    );
+
+    let saver = {
+        let ctx = ctx.clone();
+        let remote = remote.to_string();
+        let selected = selected.clone();
+        let flag_rows = flag_rows.clone();
+        move || {
+            let name = selected.borrow().clone();
+            if name.is_empty() {
+                return;
+            }
+            let mut obj = Map::new();
+            for (field, row, type_name) in flag_rows.borrow().iter() {
+                let text = row.text().to_string();
+                if field == "_json" {
+                    if let Ok(Value::Object(map)) = serde_json::from_str::<Value>(&text) {
+                        obj = map;
+                    }
+                    break;
+                }
+                if !text.is_empty() {
+                    obj.insert(field.clone(), parse_flag_value(type_name, &text));
+                }
+            }
+            if let Some(meta) = ctx.store.borrow_mut().remotes.get_mut(&remote) {
+                meta.upsert_helper(kind, &name, Value::Object(obj));
+            }
+            ctx.persist();
+        }
+    };
+    (box_, saver)
+}
+
+struct ProfileSwitcher {
+    group: adw::PreferencesGroup,
+    combo: adw::ComboRow,
+    names: Rc<RefCell<Vec<String>>>,
+    add: gtk::Button,
+    clone: gtk::Button,
+    rename: gtk::Button,
+    delete: gtk::Button,
+}
+
+fn profile_switcher(names: &[String], selected: &str) -> ProfileSwitcher {
+    let names = Rc::new(RefCell::new(names.to_vec()));
+    let combo = adw::ComboRow::new();
+    combo.set_title("Profile");
+    refresh_combo(&combo, &names.borrow());
+    if let Some(idx) = names.borrow().iter().position(|n| n == selected) {
+        combo.set_selected(idx as u32);
+    }
+    let add = gtk::Button::from_icon_name("list-add-symbolic");
+    add.set_tooltip_text(Some("Add profile"));
+    add.set_valign(gtk::Align::Center);
+    let clone = gtk::Button::from_icon_name("edit-copy-symbolic");
+    clone.set_tooltip_text(Some("Clone profile"));
+    clone.set_valign(gtk::Align::Center);
+    let rename = gtk::Button::from_icon_name("document-edit-symbolic");
+    rename.set_tooltip_text(Some("Rename profile"));
+    rename.set_valign(gtk::Align::Center);
+    let delete = gtk::Button::from_icon_name("user-trash-symbolic");
+    delete.set_tooltip_text(Some("Delete profile"));
+    delete.set_valign(gtk::Align::Center);
+    combo.add_suffix(&add);
+    combo.add_suffix(&clone);
+    combo.add_suffix(&rename);
+    combo.add_suffix(&delete);
+    let group = adw::PreferencesGroup::new();
+    group.set_title("Profiles");
+    group.add(&combo);
+    ProfileSwitcher {
+        group,
+        combo,
+        names,
+        add,
+        clone,
+        rename,
+        delete,
+    }
+}
+
+fn wire_profile_actions(
+    parent: &impl IsA<gtk::Widget>,
+    ctx: AppCtx,
+    remote: &str,
+    op: Option<OperationType>,
+    helper: Option<&'static str>,
+    switcher: &ProfileSwitcher,
+    selected: Rc<RefCell<String>>,
+) {
+    let bind = |btn: &gtk::Button, kind: &'static str| {
+        let ctx = ctx.clone();
+        let parent = parent.clone();
+        let remote = remote.to_string();
+        let combo = switcher.combo.clone();
+        let names = switcher.names.clone();
+        let selected = selected.clone();
+        btn.connect_clicked(move |_| {
+            let current = names
+                .borrow()
+                .get(combo.selected() as usize)
+                .cloned()
+                .unwrap_or_else(|| "default".into());
+            match kind {
+                "add" => dialogs::prompt(&parent, "Add profile", "Name", "default", {
+                    let ctx = ctx.clone();
+                    let remote = remote.clone();
+                    let names = names.clone();
+                    let combo = combo.clone();
+                    let selected = selected.clone();
+                    move |name| {
+                        if name.is_empty() {
+                            return;
+                        }
+                        mutate_profiles(&ctx, &remote, op, helper, |meta| {
+                            if let Some(op) = op {
+                                meta.upsert_profile(
+                                    op,
+                                    ProfileConfig {
+                                        name: name.clone(),
+                                        ..Default::default()
+                                    },
+                                );
+                            } else if let Some(kind) = helper {
+                                meta.upsert_helper(kind, &name, json!({}));
+                            }
+                        });
+                        names.borrow_mut().push(name.clone());
+                        refresh_combo(&combo, &names.borrow());
+                        if let Some(idx) = names.borrow().iter().position(|n| n == &name) {
+                            combo.set_selected(idx as u32);
+                        }
+                        *selected.borrow_mut() = name;
+                    }
+                }),
+                "clone" => dialogs::prompt(
+                    &parent,
+                    "Clone profile",
+                    "New name",
+                    &format!("{current}-copy"),
+                    {
+                        let ctx = ctx.clone();
+                        let remote = remote.clone();
+                        let names = names.clone();
+                        let combo = combo.clone();
+                        let selected = selected.clone();
+                        let current = current.clone();
+                        move |name| {
+                            if name.is_empty() {
+                                return;
+                            }
+                            mutate_profiles(&ctx, &remote, op, helper, |meta| {
+                                if let Some(op) = op {
+                                    let _ = meta.clone_profile(op, &current, &name);
+                                } else if let Some(kind) = helper {
+                                    if let Some(value) = meta.helper_profile(kind, &current) {
+                                        meta.upsert_helper(kind, &name, value);
+                                    }
+                                }
+                            });
+                            names.borrow_mut().push(name.clone());
+                            refresh_combo(&combo, &names.borrow());
+                            if let Some(idx) = names.borrow().iter().position(|n| n == &name) {
+                                combo.set_selected(idx as u32);
+                            }
+                            *selected.borrow_mut() = name;
+                        }
+                    },
+                ),
+                "rename" => dialogs::prompt(&parent, "Rename profile", "New name", &current, {
+                    let ctx = ctx.clone();
+                    let remote = remote.clone();
+                    let names = names.clone();
+                    let combo = combo.clone();
+                    let selected = selected.clone();
+                    let current = current.clone();
+                    move |name| {
+                        if name.is_empty() {
+                            return;
+                        }
+                        mutate_profiles(&ctx, &remote, op, helper, |meta| {
+                            if let Some(op) = op {
+                                let _ = meta.rename_profile(op, &current, &name);
+                            } else if let Some(kind) = helper {
+                                let _ = meta.rename_helper(kind, &current, &name);
+                            }
+                        });
+                        if let Some(slot) = names.borrow_mut().iter_mut().find(|n| *n == &current) {
+                            *slot = name.clone();
+                        }
+                        refresh_combo(&combo, &names.borrow());
+                        if let Some(idx) = names.borrow().iter().position(|n| n == &name) {
+                            combo.set_selected(idx as u32);
+                        }
+                        *selected.borrow_mut() = name;
+                    }
+                }),
+                "delete" => {
+                    mutate_profiles(&ctx, &remote, op, helper, |meta| {
+                        if let Some(op) = op {
+                            let _ = meta.remove_profile(op, &current);
+                        } else if let Some(kind) = helper {
+                            let _ = meta.remove_helper(kind, &current);
+                        }
+                    });
+                    names.borrow_mut().retain(|n| n != &current);
+                    if names.borrow().is_empty() {
+                        names.borrow_mut().push("default".into());
+                    }
+                    refresh_combo(&combo, &names.borrow());
+                    combo.set_selected(0);
+                    *selected.borrow_mut() = names.borrow()[0].clone();
+                }
+                _ => {}
+            }
+        });
+    };
+    bind(&switcher.add, "add");
+    bind(&switcher.clone, "clone");
+    bind(&switcher.rename, "rename");
+    bind(&switcher.delete, "delete");
+}
+
+fn mutate_profiles(
+    ctx: &AppCtx,
+    remote: &str,
+    _op: Option<OperationType>,
+    _helper: Option<&str>,
+    f: impl FnOnce(&mut RemoteMeta),
+) {
+    if let Some(meta) = ctx.store.borrow_mut().remotes.get_mut(remote) {
+        f(meta);
+    }
+    ctx.persist();
+}
+
+fn refresh_combo(combo: &adw::ComboRow, names: &[String]) {
+    let refs: Vec<&str> = names.iter().map(|s| s.as_str()).collect();
+    combo.set_model(Some(&gtk::StringList::new(&refs)));
+}
+
+fn extra_source_row(parent: &impl IsA<gtk::Widget>, value: &str) -> adw::EntryRow {
+    let row = adw::EntryRow::new();
+    row.set_title("Additional source");
+    row.set_text(value);
+    dialogs::attach_folder_picker(parent, &row);
+    row
+}
+
+fn flag_entry(flag: &FlagOption, current: &Value) -> adw::EntryRow {
+    let row = adw::EntryRow::new();
+    row.set_title(&flag.name);
+    if !flag.help.is_empty() {
+        row.set_tooltip_text(Some(&flag.help));
+    }
+    let text = current
+        .get(&flag.field_name)
+        .or_else(|| current.get(&flag.name))
+        .map(value_to_text)
+        .or_else(|| {
+            extra_flags(current)
+                .get(&flag.field_name)
+                .map(value_to_text)
+        })
+        .unwrap_or_else(|| flag.default_str.clone());
+    row.set_text(&text);
+    row
+}
+
+fn value_to_text(value: &Value) -> String {
+    match value {
+        Value::String(s) => s.clone(),
+        Value::Bool(b) => b.to_string(),
+        Value::Number(n) => n.to_string(),
+        Value::Null => String::new(),
+        other => other.to_string().trim_matches('"').to_string(),
+    }
+}
+
+fn split_csv(text: &str) -> Vec<String> {
+    text.split(',')
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(|s| s.to_string())
+        .collect()
+}
+
+fn update_cron_hint(row: &adw::EntryRow, hint: &gtk::Label) {
+    let expr = row.text().to_string();
+    if expr.is_empty() {
+        hint.set_text("");
+        return;
+    }
+    match validate_cron(&expr) {
+        Ok(()) => hint.set_text(&crate::rclone::describe_cron(&expr)),
+        Err(e) => hint.set_text(&format!("Invalid cron: {e}")),
+    }
+}

@@ -27,6 +27,11 @@ pub struct NautilusView {
     sidebar: gtk::ListBox,
     list: gtk::ListBox,
     list_right: gtk::ListBox,
+    grid: gtk::FlowBox,
+    grid_right: gtk::FlowBox,
+    left_stack: gtk::Stack,
+    right_stack: gtk::Stack,
+    layout_btn: gtk::Button,
     path_entry: gtk::Entry,
     status: gtk::Label,
     tabs: Rc<RefCell<Vec<TabState>>>,
@@ -103,15 +108,23 @@ impl NautilusView {
         let list = gtk::ListBox::new();
         list.add_css_class("boxed-list");
         list.set_selection_mode(gtk::SelectionMode::Multiple);
+        let grid = make_flow();
+        let left_stack = gtk::Stack::new();
+        left_stack.add_named(&list, Some("list"));
+        left_stack.add_named(&grid, Some("grid"));
         let files_scroll = gtk::ScrolledWindow::new();
         files_scroll.set_vexpand(true);
-        files_scroll.set_child(Some(&list));
+        files_scroll.set_child(Some(&left_stack));
         let list_right = gtk::ListBox::new();
         list_right.add_css_class("boxed-list");
         list_right.set_selection_mode(gtk::SelectionMode::Multiple);
+        let grid_right = make_flow();
+        let right_stack = gtk::Stack::new();
+        right_stack.add_named(&list_right, Some("list"));
+        right_stack.add_named(&grid_right, Some("grid"));
         let right_scroll = gtk::ScrolledWindow::new();
         right_scroll.set_vexpand(true);
-        right_scroll.set_child(Some(&list_right));
+        right_scroll.set_child(Some(&right_stack));
         right_scroll.set_visible(false);
         let paned = gtk::Paned::new(gtk::Orientation::Horizontal);
         paned.set_start_child(Some(&files_scroll));
@@ -161,6 +174,11 @@ impl NautilusView {
             sidebar,
             list,
             list_right,
+            grid,
+            grid_right,
+            left_stack,
+            right_stack,
+            layout_btn: layout.clone(),
             path_entry,
             status,
             tabs: Rc::new(RefCell::new(vec![initial.clone()])),
@@ -211,13 +229,10 @@ impl NautilusView {
         {
             let view = view.clone();
             layout.connect_clicked(move |_| {
-                let next = if view.ctx.settings.borrow().nautilus.layout == "grid" {
-                    "list"
-                } else {
-                    "grid"
-                };
+                let next = if view.is_grid() { "list" } else { "grid" };
                 view.ctx.settings.borrow_mut().nautilus.layout = next.into();
                 view.ctx.persist();
+                view.sync_layout();
                 view.reload();
             });
         }
@@ -240,6 +255,34 @@ impl NautilusView {
         }
         {
             let view = view.clone();
+            view.list_right
+                .clone()
+                .connect_row_activated(move |_, row| {
+                    if let Some(name) = row_name(row) {
+                        view.open_name(&name);
+                    }
+                });
+        }
+        {
+            let view = view.clone();
+            view.grid.clone().connect_child_activated(move |_, child| {
+                if let Some(name) = flow_child_name(child) {
+                    view.open_name(&name);
+                }
+            });
+        }
+        {
+            let view = view.clone();
+            view.grid_right
+                .clone()
+                .connect_child_activated(move |_, child| {
+                    if let Some(name) = flow_child_name(child) {
+                        view.open_name(&name);
+                    }
+                });
+        }
+        {
+            let view = view.clone();
             new_tab.connect_clicked(move |_| view.open_new_tab());
         }
         {
@@ -250,72 +293,105 @@ impl NautilusView {
             let view = view.clone();
             star.connect_clicked(move |_| view.add_bookmark());
         }
-        {
-            let view = view.clone();
-            let list = view.list.clone();
-            let gesture = gtk::GestureClick::new();
-            gesture.set_button(3);
-            gesture.connect_pressed(move |_, _, _, _| view.popup_context());
-            list.add_controller(gesture);
-        }
-        {
-            let view = view.clone();
-            let drop = gtk::DropTarget::new(gio::File::static_type(), gtk::gdk::DragAction::COPY);
-            {
-                let view = view.clone();
-                drop.connect_drop(move |_, value, _, _| {
-                    if let Ok(file) = value.get::<gio::File>() {
-                        if let Some(path) = file.path() {
-                            view.upload_local_path(&path);
-                            return true;
-                        }
-                    }
-                    false
-                });
-            }
-            view.list.add_controller(drop);
-        }
-        {
-            let view = view.clone();
-            let list = view.list.clone();
-            let drag = gtk::GestureDrag::new();
-            drag.connect_drag_end(move |g, _, _| {
-                let Some((_, y)) = g.start_point() else {
-                    return;
-                };
-                let Some((_, ey)) = g.offset() else {
-                    return;
-                };
-                let y1 = y.min(y + ey);
-                let y2 = y.max(y + ey);
-                if (y2 - y1).abs() < 12.0 {
-                    return;
-                }
-                view.list.unselect_all();
-                let mut child = view.list.first_child();
-                let mut acc = 0.0;
-                while let Some(row) = child {
-                    let h = row.height() as f64;
-                    let top = acc;
-                    let bottom = acc + h;
-                    if bottom >= y1 && top <= y2 {
-                        if let Ok(list_row) = row.clone().downcast::<gtk::ListBoxRow>() {
-                            view.list.select_row(Some(&list_row));
-                        }
-                    }
-                    acc = bottom;
-                    child = row.next_sibling();
-                }
-            });
-            list.add_controller(drag);
-        }
+        view.attach_file_controllers(&view.list, false);
+        view.attach_file_controllers(&view.list_right, false);
+        view.attach_file_controllers(&view.grid, true);
+        view.attach_file_controllers(&view.grid_right, true);
 
+        view.sync_layout();
         view.reload_sidebar();
         view.reload();
         view.refresh_tabs();
         view.reload_ops();
         view.install_keybinds();
         view
+    }
+
+    fn is_grid(&self) -> bool {
+        self.ctx.settings.borrow().nautilus.layout == "grid"
+    }
+
+    fn sync_layout(&self) {
+        let name = if self.is_grid() { "grid" } else { "list" };
+        self.left_stack.set_visible_child_name(name);
+        self.right_stack.set_visible_child_name(name);
+        self.layout_btn.set_icon_name(if self.is_grid() {
+            "view-grid-symbolic"
+        } else {
+            "view-list-symbolic"
+        });
+    }
+
+    fn attach_file_controllers(&self, widget: &impl IsA<gtk::Widget>, grid: bool) {
+        let gesture = gtk::GestureClick::new();
+        gesture.set_button(3);
+        {
+            let view = self.clone();
+            gesture.connect_pressed(move |_, _, _, _| view.popup_context());
+        }
+        widget.add_controller(gesture);
+
+        let drop = gtk::DropTarget::new(gio::File::static_type(), gtk::gdk::DragAction::COPY);
+        {
+            let view = self.clone();
+            drop.connect_drop(move |_, value, _, _| {
+                if let Ok(file) = value.get::<gio::File>() {
+                    if let Some(path) = file.path() {
+                        view.upload_local_path(&path);
+                        return true;
+                    }
+                }
+                false
+            });
+        }
+        widget.add_controller(drop);
+
+        let drag = gtk::GestureDrag::new();
+        {
+            let view = self.clone();
+            drag.connect_drag_end(move |g, _, _| {
+                let Some((x, y)) = g.start_point() else {
+                    return;
+                };
+                let Some((ox, oy)) = g.offset() else {
+                    return;
+                };
+                view.apply_lasso(x, y, x + ox, y + oy, grid);
+            });
+        }
+        widget.add_controller(drag);
+    }
+
+    fn apply_lasso(&self, x1: f64, y1: f64, x2: f64, y2: f64, grid: bool) {
+        let left = x1.min(x2);
+        let right = x1.max(x2);
+        let top = y1.min(y2);
+        let bottom = y1.max(y2);
+        if (bottom - top).abs() < 12.0 && (!grid || (right - left).abs() < 12.0) {
+            return;
+        }
+        if grid {
+            select_flow_in_rect(&self.grid, left, top, right, bottom);
+            if *self.split_enabled.borrow() {
+                select_flow_in_rect(&self.grid_right, left, top, right, bottom);
+            }
+            return;
+        }
+        self.list.unselect_all();
+        let mut child = self.list.first_child();
+        let mut acc = 0.0;
+        while let Some(row) = child {
+            let h = row.height() as f64;
+            let row_top = acc;
+            let row_bottom = acc + h;
+            if row_bottom >= top && row_top <= bottom {
+                if let Ok(list_row) = row.clone().downcast::<gtk::ListBoxRow>() {
+                    self.list.select_row(Some(&list_row));
+                }
+            }
+            acc = row_bottom;
+            child = row.next_sibling();
+        }
     }
 
     fn install_keybinds(&self) {
@@ -383,7 +459,17 @@ impl NautilusView {
                 return glib::Propagation::Stop;
             }
             if ctrl && key == gtk::gdk::Key::a {
-                view.list.select_all();
+                if view.is_grid() {
+                    view.grid.select_all();
+                    if *view.split_enabled.borrow() {
+                        view.grid_right.select_all();
+                    }
+                } else {
+                    view.list.select_all();
+                    if *view.split_enabled.borrow() {
+                        view.list_right.select_all();
+                    }
+                }
                 return glib::Propagation::Stop;
             }
             if ctrl && key == gtk::gdk::Key::h {
@@ -493,9 +579,8 @@ impl NautilusView {
     }
 
     fn reload(&self) {
-        while let Some(child) = self.list.first_child() {
-            self.list.remove(&child);
-        }
+        clear_list(&self.list);
+        clear_flow(&self.grid);
         let current = self.current.borrow().clone();
         let display = if current.remote == "local" {
             current.path.clone()
@@ -534,16 +619,36 @@ impl NautilusView {
                     self.ctx.settings.borrow().nautilus.sort_desc,
                 );
                 self.status.set_text(&format!("{} items", entries.len()));
-                for entry in entries {
-                    self.list.append(&self.entry_row(entry));
-                }
+                self.populate_entries(&entries, true);
                 if *self.split_enabled.borrow() {
-                    self.reload_pane(&self.list_right, &self.secondary.borrow());
+                    self.reload_pane(&self.secondary.borrow());
                 }
             }
             Err(err) => {
                 self.status.set_text(&err.to_string());
                 self.toast.add_toast(adw::Toast::new(&err.to_string()));
+            }
+        }
+    }
+
+    fn populate_entries(&self, entries: &[DirEntry], primary: bool) {
+        if self.is_grid() {
+            let grid = if primary {
+                &self.grid
+            } else {
+                &self.grid_right
+            };
+            for entry in entries {
+                grid.insert(&self.entry_tile(entry.clone()), -1);
+            }
+        } else {
+            let list = if primary {
+                &self.list
+            } else {
+                &self.list_right
+            };
+            for entry in entries {
+                list.append(&self.entry_row(entry.clone()));
             }
         }
     }
@@ -558,32 +663,59 @@ impl NautilusView {
             format!("{} · {}", format_bytes(entry.size), entry.mod_time)
         });
         let icon = gtk::Image::from_icon_name(category.icon_name());
-        if self.ctx.settings.borrow().nautilus.layout == "grid" {
-            icon.set_pixel_size(self.ctx.settings.borrow().nautilus.icon_size.max(32));
-        }
         row.add_prefix(&icon);
         row.set_activatable(true);
         row
     }
 
+    fn entry_tile(&self, entry: DirEntry) -> gtk::Box {
+        let tile = gtk::Box::new(gtk::Orientation::Vertical, 4);
+        tile.set_halign(gtk::Align::Center);
+        tile.set_valign(gtk::Align::Start);
+        tile.set_margin_top(8);
+        tile.set_margin_bottom(8);
+        tile.set_margin_start(8);
+        tile.set_margin_end(8);
+        tile.set_widget_name(&entry.name);
+        let category = FileTypeCategory::from_name(&entry.name, entry.is_dir);
+        let icon = gtk::Image::from_icon_name(category.icon_name());
+        icon.set_pixel_size(self.ctx.settings.borrow().nautilus.icon_size.max(48));
+        let label = gtk::Label::new(Some(&entry.name));
+        label.set_ellipsize(gtk::pango::EllipsizeMode::End);
+        label.set_max_width_chars(14);
+        label.set_justify(gtk::Justification::Center);
+        label.set_wrap(true);
+        tile.append(&icon);
+        tile.append(&label);
+        tile
+    }
+
     fn selected_name(&self) -> Option<String> {
-        self.list.selected_row().and_then(|row| row_name(&row))
+        self.selected_names().into_iter().next()
     }
 
     fn selected_names(&self) -> Vec<String> {
-        let mut names = Vec::new();
-        let mut child = self.list.first_child();
-        while let Some(widget) = child {
-            if let Ok(row) = widget.clone().downcast::<gtk::ListBoxRow>() {
-                if row.is_selected() {
-                    if let Some(name) = row_name(&row) {
-                        names.push(name);
+        if self.is_grid() {
+            self.grid
+                .selected_children()
+                .into_iter()
+                .filter_map(|child| flow_child_name(&child))
+                .collect()
+        } else {
+            let mut names = Vec::new();
+            let mut child = self.list.first_child();
+            while let Some(widget) = child {
+                if let Ok(row) = widget.clone().downcast::<gtk::ListBoxRow>() {
+                    if row.is_selected() {
+                        if let Some(name) = row_name(&row) {
+                            names.push(name);
+                        }
                     }
                 }
+                child = widget.next_sibling();
             }
-            child = widget.next_sibling();
+            names
         }
-        names
     }
 
     fn open_name(&self, name: &str) {
@@ -721,10 +853,9 @@ impl NautilusView {
         let _ = &self.paned;
     }
 
-    fn reload_pane(&self, list: &gtk::ListBox, tab: &TabState) {
-        while let Some(child) = list.first_child() {
-            list.remove(&child);
-        }
+    fn reload_pane(&self, tab: &TabState) {
+        clear_list(&self.list_right);
+        clear_flow(&self.grid_right);
         let Some(client) = self.ctx.client() else {
             return;
         };
@@ -742,9 +873,7 @@ impl NautilusView {
             if !self.ctx.settings.borrow().nautilus.show_hidden {
                 entries.retain(|e| !e.name.starts_with('.'));
             }
-            for entry in entries {
-                list.append(&self.entry_row(entry));
-            }
+            self.populate_entries(&entries, false);
         }
     }
 
@@ -1121,4 +1250,59 @@ fn row_name(row: &gtk::ListBoxRow) -> Option<String> {
     row.child()
         .and_then(|child| child.downcast::<adw::ActionRow>().ok())
         .map(|r| r.title().to_string())
+}
+
+fn make_flow() -> gtk::FlowBox {
+    let grid = gtk::FlowBox::new();
+    grid.set_selection_mode(gtk::SelectionMode::Multiple);
+    grid.set_homogeneous(true);
+    grid.set_min_children_per_line(2);
+    grid.set_max_children_per_line(12);
+    grid.set_row_spacing(8);
+    grid.set_column_spacing(8);
+    grid.set_valign(gtk::Align::Start);
+    grid.set_vexpand(true);
+    grid
+}
+
+fn clear_list(list: &gtk::ListBox) {
+    while let Some(child) = list.first_child() {
+        list.remove(&child);
+    }
+}
+
+fn clear_flow(flow: &gtk::FlowBox) {
+    while let Some(child) = flow.first_child() {
+        flow.remove(&child);
+    }
+}
+
+fn flow_child_name(child: &gtk::FlowBoxChild) -> Option<String> {
+    child.child().and_then(|widget| {
+        let name = widget.widget_name().to_string();
+        if name.is_empty() {
+            None
+        } else {
+            Some(name)
+        }
+    })
+}
+
+fn select_flow_in_rect(flow: &gtk::FlowBox, x1: f64, y1: f64, x2: f64, y2: f64) {
+    flow.unselect_all();
+    let mut child = flow.first_child();
+    while let Some(widget) = child {
+        if let Some(bounds) = widget.compute_bounds(flow) {
+            let left = f64::from(bounds.x());
+            let top = f64::from(bounds.y());
+            let right = left + f64::from(bounds.width());
+            let bottom = top + f64::from(bounds.height());
+            if right >= x1 && left <= x2 && bottom >= y1 && top <= y2 {
+                if let Ok(item) = widget.clone().downcast::<gtk::FlowBoxChild>() {
+                    flow.select_child(&item);
+                }
+            }
+        }
+        child = widget.next_sibling();
+    }
 }

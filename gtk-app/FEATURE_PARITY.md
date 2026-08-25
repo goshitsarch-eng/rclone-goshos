@@ -51,11 +51,19 @@ This client is the GTK 4 + libadwaita rewrite of the Angular/Tauri desktop UI. I
 - Email (SMTP) and MQTT QoS 0 alert delivery
 - Helper profile JSON editor per remote
 - Nautilus list/grid icon-size toggle
+- Remote-config sidenav: per-operation profiles (add/clone/rename/delete), src/dst/multi-source, cron/watch/autostart, linked VFS/filter/backend/runtime helpers, static + `options/info` flags, CLI import
+- Helper-profile flag editors (VFS / filter / backend / runtime) with profile switcher
+- True Nautilus FlowBox icon grid with lasso hit-testing and dual-pane support
+- Live syntax re-highlight in the text viewer (tags only — buffer text is not rewritten)
+- Skip spawning a local `rclone rcd` when an extra RC backend is active
 
 ## Still deepening toward pixel-level Angular parity
 
-- CodeMirror-class live re-highlight while typing (static highlight on open)
 - Windows/macOS send-to
-- Full remote-config sidenav (per-op flag tabs matching Angular pixel-for-pixel)
-- True FlowBox icon grid with lasso hit-testing
+- Pixel-level Angular wizard/flag forms (dynamic serve flags, disk usage, in-wizard path pickers)
+- SMTP STARTTLS / MQTT TLS
+- Filesystem watchers via `notify` (mtime polling today)
+- Prevent-sleep via logind D-Bus (systemd-inhibit CLI today)
+- In-app PDF renderer
+- Workflow builder (stub in both apps)
 - Live GUI session against rclone rcd (no display in this environment)

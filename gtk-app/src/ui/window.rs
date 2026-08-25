@@ -16,7 +16,9 @@ pub fn activate(app: &adw::Application) {
     ctx.apply_theme();
 
     let settings = ctx.settings.borrow().clone();
-    *ctx.engine.borrow_mut() = Some(RcloneEngine::start(&settings));
+    if settings.core.active_backend.is_empty() || settings.core.active_backend == "local" {
+        *ctx.engine.borrow_mut() = Some(RcloneEngine::start(&settings));
+    }
     if settings.general.start_on_startup {
         let _ = crate::platform::set_autostart(true);
     }

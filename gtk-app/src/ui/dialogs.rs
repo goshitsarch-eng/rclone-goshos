@@ -776,7 +776,11 @@ pub fn remote_config(
     existing: Option<String>,
     on_done: Rc<dyn Fn()>,
 ) {
-    super::wizard::present(parent, ctx, existing, on_done);
+    if let Some(name) = existing {
+        super::remote_config::present(parent, ctx, name, on_done);
+    } else {
+        super::wizard::present(parent, ctx, None, on_done);
+    }
 }
 
 fn remote_editor(
@@ -1808,6 +1812,7 @@ pub fn file_viewer(
             };
             apply_syntax_highlight(&view, name, &shown);
         }
+        attach_live_syntax(&view, name);
         let save = gtk::Button::with_label("Save");
         save.add_css_class("suggested-action");
         {
@@ -1836,6 +1841,24 @@ pub fn file_viewer(
                 .is_ok()
             {
                 info.set_text(&format!("Downloaded preview to {}", dest.display()));
+                if matches!(category, crate::operations::FileTypeCategory::Text) {
+                    if let Ok(text) = std::fs::read_to_string(&dest) {
+                        let view = gtk::TextView::new();
+                        view.set_monospace(true);
+                        view.set_editable(false);
+                        let shown = if text.len() > 200_000 {
+                            format!("{}\n\n… truncated …", &text[..200_000])
+                        } else {
+                            text
+                        };
+                        apply_syntax_highlight(&view, name, &shown);
+                        attach_live_syntax(&view, name);
+                        let scroll = gtk::ScrolledWindow::new();
+                        scroll.set_vexpand(true);
+                        scroll.set_child(Some(&view));
+                        box_.append(&scroll);
+                    }
+                }
             }
         }
     }
@@ -2219,7 +2242,11 @@ fn scrolled_list(list: &gtk::ListBox) -> gtk::ScrolledWindow {
     scroll
 }
 
-fn present_window_or_dialog(parent: &impl IsA<gtk::Widget>, ctx: &AppCtx, dialog: &adw::Dialog) {
+pub(crate) fn present_window_or_dialog(
+    parent: &impl IsA<gtk::Widget>,
+    ctx: &AppCtx,
+    dialog: &adw::Dialog,
+) {
     if ctx.settings.borrow().general.standalone_dialogs {
         let win = adw::Window::new();
         let title = dialog.title();
@@ -2245,7 +2272,7 @@ fn present_window_or_dialog(parent: &impl IsA<gtk::Widget>, ctx: &AppCtx, dialog
     }
 }
 
-fn helper_combo(title: &str, names: &[String], selected: &str) -> adw::ComboRow {
+pub(crate) fn helper_combo(title: &str, names: &[String], selected: &str) -> adw::ComboRow {
     let row = adw::ComboRow::new();
     row.set_title(title);
     let refs: Vec<&str> = names.iter().map(|s| s.as_str()).collect();
@@ -2256,7 +2283,7 @@ fn helper_combo(title: &str, names: &[String], selected: &str) -> adw::ComboRow 
     row
 }
 
-fn helper_selected(row: &adw::ComboRow, names: &[String]) -> String {
+pub(crate) fn helper_selected(row: &adw::ComboRow, names: &[String]) -> String {
     names
         .get(row.selected() as usize)
         .cloned()
@@ -2264,7 +2291,7 @@ fn helper_selected(row: &adw::ComboRow, names: &[String]) -> String {
         .unwrap_or_default()
 }
 
-fn attach_folder_picker(parent: &impl IsA<gtk::Widget>, row: &adw::EntryRow) {
+pub(crate) fn attach_folder_picker(parent: &impl IsA<gtk::Widget>, row: &adw::EntryRow) {
     let btn = gtk::Button::from_icon_name("folder-open-symbolic");
     btn.set_valign(gtk::Align::Center);
     btn.set_tooltip_text(Some("Browse"));
@@ -2293,8 +2320,7 @@ fn attach_folder_picker(parent: &impl IsA<gtk::Widget>, row: &adw::EntryRow) {
     row.add_suffix(&btn);
 }
 
-fn apply_syntax_highlight(view: &gtk::TextView, name: &str, text: &str) {
-    let buffer = view.buffer();
+fn ensure_syntax_tags(buffer: &gtk::TextBuffer) {
     let table = buffer.tag_table();
     for kind in [
         crate::syntax::TokenKind::Keyword,
@@ -2310,14 +2336,35 @@ fn apply_syntax_highlight(view: &gtk::TextView, name: &str, text: &str) {
             table.add(&tag);
         }
     }
-    buffer.set_text(text);
-    if let Some(lang) = crate::syntax::language_from_name(name) {
-        for span in crate::syntax::highlight(text, lang) {
-            let start = buffer.iter_at_offset(span.start as i32);
-            let end = buffer.iter_at_offset(span.end as i32);
-            buffer.apply_tag_by_name(span.kind.tag_name(), &start, &end);
-        }
+}
+
+fn paint_syntax(buffer: &gtk::TextBuffer, name: &str, text: &str) {
+    let start = buffer.start_iter();
+    let end = buffer.end_iter();
+    buffer.remove_all_tags(&start, &end);
+    let Some(lang) = crate::syntax::language_from_name(name) else {
+        return;
+    };
+    for span in crate::syntax::highlight(text, lang) {
+        let start = buffer.iter_at_offset(span.start as i32);
+        let end = buffer.iter_at_offset(span.end as i32);
+        buffer.apply_tag_by_name(span.kind.tag_name(), &start, &end);
     }
+}
+
+fn apply_syntax_highlight(view: &gtk::TextView, name: &str, text: &str) {
+    let buffer = view.buffer();
+    ensure_syntax_tags(&buffer);
+    buffer.set_text(text);
+    paint_syntax(&buffer, name, text);
+}
+
+fn attach_live_syntax(view: &gtk::TextView, name: &str) {
+    let name = name.to_string();
+    view.buffer().connect_changed(move |buffer| {
+        let text = buffer.text(&buffer.start_iter(), &buffer.end_iter(), false);
+        paint_syntax(buffer, &name, text.as_str());
+    });
 }
 
 const ACTION_KINDS: &[&str] = &[
