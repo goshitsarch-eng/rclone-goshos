@@ -2227,6 +2227,9 @@ pub fn backends(parent: &impl IsA<gtk::Widget>, ctx: AppCtx) {
                 &row.text(),
             );
             ctx.persist();
+            if let Some(client) = ctx.client() {
+                crate::rclone::apply_backend_rc_config(&client, Some(row.text().as_str()), None);
+            }
         });
     }
     list.append(&config_path);
@@ -2583,6 +2586,11 @@ fn backend_editor(
                     }
                 }
             }
+            crate::rclone::apply_backend_rc_config(
+                &rc_client_for_entry(&entry),
+                Some(entry.config_path.as_str()),
+                Some(entry.config_password.as_str()),
+            );
             if !source_id.is_empty() {
                 if let (Some(source), dest) =
                     (rc_client_for(&ctx, &source_id), rc_client_for_entry(&entry))

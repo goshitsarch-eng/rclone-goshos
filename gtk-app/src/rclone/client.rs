@@ -567,7 +567,11 @@ impl RcClient {
     }
 
     pub fn config_unlock(&self, password: &str) -> Result<Value, RcError> {
-        self.call("config/unlock", json!({ "configPassword": password }))
+        self.call("config/unlock", config_unlock_payload(password))
+    }
+
+    pub fn config_setpath(&self, path: &str) -> Result<Value, RcError> {
+        self.call("config/setpath", config_setpath_payload(path))
     }
 
     pub fn cat(&self, fs: &str, remote: &str, count: Option<i64>) -> Result<String, RcError> {
@@ -1342,6 +1346,32 @@ pub fn parse_named_list(value: &Value, keys: &[&str]) -> Vec<String> {
             .collect();
     }
     Vec::new()
+}
+
+pub fn config_setpath_payload(path: &str) -> Value {
+    json!({ "path": path })
+}
+
+pub fn config_unlock_payload(password: &str) -> Value {
+    json!({ "configPassword": password })
+}
+
+/// Point a running RC at a rclone.conf and unlock it (Tauri `configure_remote_backend`).
+pub fn apply_backend_rc_config(
+    client: &RcClient,
+    config_path: Option<&str>,
+    password: Option<&str>,
+) {
+    if let Some(path) = config_path.map(str::trim).filter(|p| !p.is_empty()) {
+        if let Err(e) = client.config_setpath(path) {
+            log::warn!("config/setpath failed: {e}");
+        }
+    }
+    if let Some(pass) = password.map(str::trim).filter(|p| !p.is_empty()) {
+        if let Err(e) = client.config_unlock(pass) {
+            log::warn!("config/unlock failed: {e}");
+        }
+    }
 }
 
 pub fn public_link_payload(fs: &str, remote: &str, expire: Option<&str>, unlink: bool) -> Value {
@@ -2186,5 +2216,17 @@ mod tests {
         );
         assert!(!client.probe_rc_serve("http://127.0.0.1:1/[drive:]/missing.bin"));
         assert!(!client.probe_rc_serve(""));
+    }
+
+    #[test]
+    fn config_setpath_and_unlock_payloads() {
+        assert_eq!(
+            config_setpath_payload("/tmp/rclone.conf"),
+            json!({ "path": "/tmp/rclone.conf" })
+        );
+        assert_eq!(
+            config_unlock_payload("secret"),
+            json!({ "configPassword": "secret" })
+        );
     }
 }

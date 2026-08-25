@@ -367,6 +367,7 @@ impl AppCtx {
         self.apply_remote_layout();
         self.persist();
         self.apply_persisted_options();
+        self.apply_active_backend_config();
         self.refresh_runtime();
     }
 
@@ -441,10 +442,44 @@ impl AppCtx {
         }
         if self.engine_ready() {
             self.apply_persisted_options();
+            self.apply_active_backend_config();
             self.start_autostarts();
         } else {
             self.refresh_runtime();
         }
+    }
+
+    pub fn apply_active_backend_config(&self) {
+        let settings = self.settings.borrow().clone();
+        let Some(client) = self.client() else {
+            return;
+        };
+        let active = settings.core.active_backend.clone();
+        if !active.is_empty() && active != "local" {
+            if let Some(entry) = settings
+                .core
+                .extra_backends
+                .iter()
+                .find(|b| b.name == active)
+            {
+                crate::rclone::apply_backend_rc_config(
+                    &client,
+                    Some(entry.config_path.as_str()),
+                    Some(entry.config_password.as_str()),
+                );
+            }
+            return;
+        }
+        let path = crate::repair::config_path_from_flags(&settings.core.rclone_additional_flags);
+        let password = crate::keyring::load_password().or_else(|| {
+            let stored = settings.core.config_password.clone();
+            if stored.is_empty() {
+                None
+            } else {
+                Some(stored)
+            }
+        });
+        crate::rclone::apply_backend_rc_config(&client, path.as_deref(), password.as_deref());
     }
 
     pub fn apply_effective_bandwidth(&self) {
