@@ -116,6 +116,20 @@ pub fn present(
     existing: Option<String>,
     on_done: Rc<dyn Fn()>,
 ) {
+    present_ex(parent, ctx, existing, false, on_done);
+}
+
+pub fn present_quick_add(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, on_done: Rc<dyn Fn()>) {
+    present_ex(parent, ctx, None, true, on_done);
+}
+
+fn present_ex(
+    parent: &impl IsA<gtk::Widget>,
+    ctx: AppCtx,
+    existing: Option<String>,
+    oauth_only: bool,
+    on_done: Rc<dyn Fn()>,
+) {
     let dialog = adw::Dialog::new();
     let title = if existing.is_some() {
         ctx.t_or("modals.remoteConfig.title", "Remote Configuration")
@@ -126,11 +140,14 @@ pub fn present(
     dialog.set_content_width(680);
     dialog.set_content_height(780);
 
-    let providers = ctx
+    let mut providers = ctx
         .client()
         .and_then(|c| c.providers().ok())
         .map(|v| parse_providers(&v))
         .unwrap_or_default();
+    if oauth_only {
+        providers = crate::providers::oauth_supported_providers(&providers);
+    }
     let existing_params = existing.as_ref().and_then(|name| {
         ctx.client()
             .and_then(|c| c.dump_config().ok())

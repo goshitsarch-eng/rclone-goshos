@@ -370,6 +370,7 @@ This client is the GTK 4 + libadwaita rewrite of the Angular/Tauri desktop UI. I
 - Native Open shows `fileBrowser.fileViewer.openingNative` and translates engine-offline errors
 - Flow overview Edit layout hides/reorders `quick_run_layout` panels (same model as the dashboard)
 - Repair corrupt-config offers Restore Backup (import preview) or Choose rclone.conf
+- Quick Add lists only OAuth-capable providers (Angular `get_oauth_supported_remotes`)
 
 ## Still deepening toward pixel-level Angular parity
 

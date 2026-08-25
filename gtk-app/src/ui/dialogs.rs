@@ -2983,7 +2983,7 @@ pub fn alerts(parent: &impl IsA<gtk::Widget>, ctx: AppCtx) {
 }
 
 pub fn quick_add_remote(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, on_done: Rc<dyn Fn()>) {
-    super::wizard::present(parent, ctx, None, on_done);
+    super::wizard::present_quick_add(parent, ctx, on_done);
 }
 
 pub fn remote_config(

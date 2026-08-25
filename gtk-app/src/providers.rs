@@ -40,6 +40,22 @@ impl Provider {
     pub fn advanced_options(&self) -> impl Iterator<Item = &ProviderOption> {
         self.options.iter().filter(|o| o.advanced)
     }
+
+    /// Angular `get_oauth_supported_remotes`: a `token` option whose help
+    /// describes an OAuth access-token JSON blob.
+    pub fn supports_oauth(&self) -> bool {
+        self.options.iter().any(|option| {
+            option.name == "token" && option.help.contains("OAuth Access Token as a JSON blob")
+        })
+    }
+}
+
+pub fn oauth_supported_providers(providers: &[Provider]) -> Vec<Provider> {
+    providers
+        .iter()
+        .filter(|provider| provider.supports_oauth())
+        .cloned()
+        .collect()
 }
 
 pub fn parse_providers(value: &Value) -> Vec<Provider> {
@@ -384,5 +400,26 @@ mod tests {
         assert!(parse_parameters_json("   ").unwrap().is_empty());
         assert!(parse_parameters_json("[1,2]").is_err());
         assert!(parse_parameters_json("{").is_err());
+    }
+
+    #[test]
+    fn filters_oauth_supported_providers() {
+        let providers = parse_providers(&json!({
+            "providers": [
+                {"Name": "local", "Prefix": "local", "Options": [
+                    {"Name": "nounc", "Help": "Disable UNC"}
+                ]},
+                {"Name": "drive", "Prefix": "drive", "Options": [
+                    {"Name": "token", "Help": "OAuth Access Token as a JSON blob."}
+                ]},
+                {"Name": "alias", "Prefix": "alias", "Options": [
+                    {"Name": "token", "Help": "Some other token"}
+                ]}
+            ]
+        }));
+        assert!(!providers[0].supports_oauth());
+        let oauth = oauth_supported_providers(&providers);
+        assert_eq!(oauth.len(), 1);
+        assert_eq!(oauth[0].name, "drive");
     }
 }
