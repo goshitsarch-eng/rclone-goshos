@@ -18,7 +18,7 @@
 
 ## 📖 Introduction
 
-**RClone Manager Headless** brings the full power of the desktop application to your browser. It is designed for:
+**RClone Manager Headless** runs the Rust backend as a service (health + `/api`). The desktop UI is the GTK 4 + libadwaita client. Headless is designed for:
 
 - **Linux Servers & VPS**
 - **NAS Devices** (Unraid, Synology, TrueNAS)
@@ -26,7 +26,7 @@
 
 ### ⚠️ Architecture Note (Tauri + Xvfb)
 
-This is a **headless desktop application**, not a native web server. It uses **Xvfb** (Virtual Framebuffer) to run the GUI in the background and streams the interface to your browser.
+This is a **headless backend**, not a browser GUI. It uses **Xvfb** so the Tauri process can start without a physical display. The landing page at `/` is a static notice; use the GTK client for the full desktop UI.
 
 - **Docker:** Handles all dependencies automatically (Recommended).
 - **Binary:** Requires `xvfb`, `gtk3`, and `webkit2gtk` installed on your system.
@@ -47,7 +47,7 @@ docker run -d \
   ghcr.io/zarestia-dev/rclone-manager:latest
 ```
 
-- **Web UI:** `http://YOUR_IP:8080`
+- **Health / API:** `http://YOUR_IP:8080/health` and `http://YOUR_IP:8080/api`
 - **Volumes:** `/data` (app data & binaries) and `/config` (`rclone.conf`).
 - **OAuth / Cloud Auth:** Use `--net=host` or SSH port forwarding (`ssh -L 53682:127.0.0.1:53682 user@host`) for Google Drive/OneDrive 1-click OAuth.
 

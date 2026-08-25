@@ -44,7 +44,7 @@ Closes #
 - [ ] This change is trivial **OR** it has been discussed and agreed in the linked issue.
 - [ ] I have read the [contribution guidelines](CONTRIBUTING.md) and [AGENTS.md](AGENTS.md).
 - [ ] **(If I used AI tools to help write this code)** I have read and understood the AI-assisted contributions guidance in [AGENTS.md](AGENTS.md), and I have compiled, linted, tested, and take full ownership of this change myself.
-- [ ] I have run frontend lints (`npx eslint "**/*.{ts,html}"` & `npx prettier --check "**/*.{ts,html,scss,json}"`) or `npm run fix:all`.
+- [ ] I have run GTK client tests (`cd gtk-app && cargo test --lib`).
 - [ ] I have run backend Clippy & formatting checks (`cargo clippy` and `cargo fmt -- --check` in `src-tauri`).
 - [ ] I have added tests or updated documentation where appropriate.
 - [ ] This Pull Request is ready for review.

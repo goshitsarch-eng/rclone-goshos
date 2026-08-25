@@ -2170,7 +2170,7 @@ pub fn rclone_flags(parent: &impl IsA<gtk::Widget>, ctx: AppCtx) {
     let g = adw::PreferencesGroup::new();
     g.set_description(Some(&ctx.t_or(
         "remoteConfig.flagsApplyHelp",
-        "Edits are sent to rclone via options/set. Categories match the Angular flag panels.",
+        "Edits are sent to rclone via options/set. Categories match the flag panels.",
     )));
     let row = adw::ActionRow::new();
     row.set_title(&ctx.t_or(

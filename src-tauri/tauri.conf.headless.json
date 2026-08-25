@@ -5,9 +5,7 @@
   "version": "0.3.2",
   "identifier": "com.rclone.manager.headless",
   "build": {
-    "beforeDevCommand": "npx ng serve --configuration headless",
-    "devUrl": "http://localhost:1420",
-    "beforeBuildCommand": "npm run build && node scripts/ensure-tauri-empty-dir.cjs",
+    "beforeBuildCommand": "node scripts/ensure-tauri-empty-dir.cjs",
     "frontendDist": "empty"
   },
   "app": {
@@ -17,7 +15,7 @@
   },
   "bundle": {
     "resources": {
-      "../dist/rclone-manager/browser": "browser",
+      "../web": "browser",
       "../resources/i18n": "i18n/"
     },
     "active": true,

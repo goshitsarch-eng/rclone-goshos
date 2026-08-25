@@ -19,7 +19,7 @@
 
 <p align="center">
   <b>Una interfaz gráfica potente y multiplataforma para gestionar remotos de Rclone con estilo y facilidad.</b><br>
-  <i>Creado con Angular 22 + Tauri · Soporte para Linux • Windows • macOS • Android (Beta) • ARM</i>
+  <i>Linux: GTK 4 + libadwaita · Rust (Tauri) · Linux • Windows • macOS • Android (Beta) • ARM</i>
 </p>
 
 <p align="center">
@@ -144,5 +144,5 @@ Instala RClone Manager usando tu gestor de paquetes preferido, o descarga los bi
 
 <p align="center">
   Creado con ❤️ por el equipo de desarrollo de Zarestia<br>
-  <sub>Desarrollado por Rclone | Construido con Angular y Tauri</sub>
+  <sub>Desarrollado por Rclone | Construido con GTK 4, libadwaita y Rust</sub>
 </p>

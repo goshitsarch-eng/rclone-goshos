@@ -19,7 +19,7 @@
 
 <p align="center">
   <b>スタイリッシュかつ簡単に Rclone リモートを管理できる強力なクロスプラットフォーム GUI</b><br>
-  <i>Angular 22 + Tauri で構築 · Linux • Windows • macOS • Android (ベータ) • ARM 対応</i>
+  <i>Linux: GTK 4 + libadwaita · Rust (Tauri) · Linux • Windows • macOS • Android (ベータ) • ARM 対応</i>
 </p>
 
 <p align="center">
@@ -143,5 +143,5 @@
 
 <p align="center">
   Zarestia Dev Team が ❤️ を込めて開発<br>
-  <sub>Rclone 搭載 | Angular & Tauri で構築</sub>
+  <sub>Rclone 搭載 | GTK 4、libadwaita、Rust で構築</sub>
 </p>

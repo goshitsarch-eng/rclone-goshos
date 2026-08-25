@@ -19,7 +19,7 @@
 
 <p align="center">
   <b>一个强大且跨平台的 GUI，用于以时尚、轻松的方式管理 Rclone 远程连接。</b><br>
-  <i>使用 Angular 22 + Tauri 构建 · 支持 Linux • Windows • macOS • Android (测试版) • ARM</i>
+  <i>Linux：GTK 4 + libadwaita · Rust (Tauri) · Linux • Windows • macOS • Android (测试版) • ARM</i>
 </p>
 
 <p align="center">
@@ -143,5 +143,5 @@
 
 <p align="center">
   由 Zarestia 团队倾心制作<br>
-  <sub>基于 Rclone | 使用 Angular & Tauri 构建</sub>
+  <sub>基于 Rclone | 使用 GTK 4、libadwaita 和 Rust 构建</sub>
 </p>

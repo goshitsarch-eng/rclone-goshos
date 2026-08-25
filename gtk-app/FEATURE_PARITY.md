@@ -1,6 +1,6 @@
 # GTK rewrite feature parity
 
-This client is the GTK 4 + libadwaita rewrite of the Angular/Tauri desktop UI. It talks to a local `rclone rcd` instance (or a selected extra RC backend) and persists app state under `~/.config/rclone-manager/`.
+This client is the GTK 4 + libadwaita desktop UI. It talks to a local `rclone rcd` instance (or a selected extra RC backend) and persists app state under `~/.config/rclone-manager/`. The Rust backend remains in `src-tauri/`.
 
 ## Implemented
 
@@ -498,9 +498,9 @@ This client is the GTK 4 + libadwaita rewrite of the Angular/Tauri desktop UI. I
 - Restoring an Alerts or Connections backup merges that slice instead of replacing the whole store/settings
 - Alert action body templates use a multi-line editor so Discord/Slack JSON presets can be viewed and edited
 
-## Still deepening toward pixel-level Angular parity
+## Still deepening
 
 - Workflow builder (stub in both apps)
 - Template manager edit/rename and per-key capture
 - Remaining dialogs/Files English labels (core chrome now localized)
-- Pixel-level Angular layouts and leftover English `t_or` fallbacks
+- Pixel-level layouts and leftover English `t_or` fallbacks

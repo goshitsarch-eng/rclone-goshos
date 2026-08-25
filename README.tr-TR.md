@@ -19,7 +19,7 @@
 
 <p align="center">
   <b>Rclone uzak bağlantılarını stil ve kolaylıkla yönetmek için güçlü, çapraz platform bir GUI.</b><br>
-  <i>Angular 22 + Tauri ile yapıldı · Linux • Windows • macOS • Android (Beta) • ARM Desteği</i>
+  <i>Linux: GTK 4 + libadwaita · Rust (Tauri) · Linux • Windows • macOS • Android (Beta) • ARM Desteği</i>
 </p>
 
 <p align="center">
@@ -143,5 +143,5 @@ Her türlü katkıyı memnuniyetle karşılıyoruz!
 
 <p align="center">
   Zarestia Dev Ekibi tarafından ❤️ ile yapıldı<br>
-  <sub>Rclone ile Desteklenmektedir | Angular & Tauri ile Yapılmıştır</sub>
+  <sub>Rclone ile Desteklenmektedir | GTK 4, libadwaita ve Rust ile Yapılmıştır</sub>
 </p>

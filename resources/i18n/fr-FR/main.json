@@ -128,7 +128,7 @@
     "vfsPollUpdated": "Poll interval updated",
     "vfsQueueExpiry": "Queue id / expiry",
     "vfsExpiryUpdated": "Queue expiry updated",
-    "flagsApplyHelp": "Edits are sent to rclone via options/set. Categories match the Angular flag panels.",
+    "flagsApplyHelp": "Edits are sent to rclone via options/set. Categories match the flag panels.",
     "flagsWriteEngine": "Write flags to the running engine",
     "jsonMode": "JSON",
     "jsonPayload": "Raw options/set payload",
