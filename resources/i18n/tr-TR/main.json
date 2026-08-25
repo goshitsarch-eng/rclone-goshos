@@ -1936,7 +1936,8 @@
       "pid": "rclone PID",
       "groups": "Job groups",
       "memory": "Memory",
-      "activity": "Activity"
+      "activity": "Activity",
+      "activitySummary": "{{jobs}} running jobs · {{mounts}} mounts · {{serves}} serves"
     },
     "quickRuns": {
       "empty": "No quick runs",
@@ -2153,7 +2154,9 @@
       "entries": "Aktif Girdi",
       "clear": "Temizle",
       "cacheCleared": "Önbellek başarıyla temizlendi",
-      "cacheClearFailed": "Önbellek temizlenemedi"
+      "cacheClearFailed": "Önbellek temizlenemedi",
+      "appUpdateAvailable": "App update {{version}} available",
+      "rcloneUpdateAvailableMsg": "rclone update {{version}} available"
     },
     "logs": {
       "fetchError": "Uygulama günlükleri alınamadı.",
@@ -2968,14 +2971,24 @@
       "lastError": "Son Hata:",
       "runningJobs": "Çalışan İşler",
       "starting": "Başlatılıyor...",
-      "noRunning": "Şu anda çalışan aktif iş yok."
+      "noRunning": "Şu anda çalışan aktif iş yok.",
+      "originDashboard": "Dashboard",
+      "originQuickRun": "Quick Run",
+      "originAutomation": "Automation",
+      "originFiles": "Files",
+      "originManual": "Manual"
     },
     "automations": {
       "activeCount": "{{active}} aktif / {{total}} toplam",
       "noScheduled": "Otomasyon yok",
       "noConfigured": "Otomasyon yapılandırılmamış. Otomasyon oluşturmak için cron zamanlamaları veya gerçek zamanlı dosya izlemeyi yapılandırın.",
       "nextRun": "Sonraki Çalışma:",
-      "title": "Automations"
+      "title": "Automations",
+      "watchEvery": "Watch every {{seconds}}s",
+      "changedOnly": "changed only",
+      "paused": "paused",
+      "pauseResume": "Pause or resume this automation",
+      "runNow": "Run now"
     },
     "serves": {
       "activeCount": "{{count}} aktif sunum",

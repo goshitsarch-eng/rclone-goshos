@@ -470,12 +470,17 @@ pub fn about(parent: &impl IsA<gtk::Widget>, ctx: AppCtx) {
     let app_update = crate::updater::fetch_app_update(env!("CARGO_PKG_VERSION"))
         .ok()
         .filter(|u| u.available)
-        .map(|u| format!("App update {} available", u.latest))
+        .map(|u| ctx.tf("modals.about.appUpdateAvailable", &[("version", &u.latest)]))
         .unwrap_or_else(|| ctx.t_or("modals.about.upToDate", "App is up to date"));
     let rclone_update = crate::updater::fetch_rclone_update(&version)
         .ok()
         .filter(|u| u.available)
-        .map(|u| format!("rclone update {} available", u.latest))
+        .map(|u| {
+            ctx.tf(
+                "modals.about.rcloneUpdateAvailableMsg",
+                &[("version", &u.latest)],
+            )
+        })
         .unwrap_or_else(|| ctx.t_or("modals.about.rcloneUpToDate", "rclone is up to date"));
     let dialog = adw::Dialog::new();
     dialog.set_title(&ctx.t_or("modals.about.title", "About"));
@@ -507,6 +512,16 @@ pub fn about(parent: &impl IsA<gtk::Widget>, ctx: AppCtx) {
     );
     details.append(&site);
     details.append(&issues);
+    let wiki = gtk::LinkButton::with_label(
+        "https://github.com/Zarestia-Dev/rclone-manager/wiki",
+        &ctx.t_or("modals.about.wiki", "Wiki Page"),
+    );
+    let rclone_site = gtk::LinkButton::with_label(
+        "https://rclone.org",
+        &ctx.t_or("modals.about.rcloneWebsite", "Rclone Website"),
+    );
+    details.append(&wiki);
+    details.append(&rclone_site);
     {
         let parent = parent.clone();
         let ctx = ctx.clone();
@@ -955,6 +970,22 @@ pub fn updates(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, toast: adw::ToastOve
     }
     group.add(&rclone_row);
 
+    let skipped_app = skipped_versions_group(
+        &ctx,
+        &ctx.t_or("modals.about.skippedUpdates", "Skipped Updates"),
+        &ctx.settings.borrow().runtime.app_skipped_updates,
+        true,
+    );
+    let skipped_rclone = skipped_versions_group(
+        &ctx,
+        &ctx.t_or(
+            "modals.about.skippedRcloneUpdates",
+            "Skipped Rclone Updates",
+        ),
+        &ctx.settings.borrow().runtime.rclone_skipped_updates,
+        false,
+    );
+
     let refresh = gtk::Button::with_label(&ctx.t_or("common.refresh", "Check again"));
     {
         let ctx = ctx.clone();
@@ -972,9 +1003,58 @@ pub fn updates(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, toast: adw::ToastOve
     box_.set_margin_start(12);
     box_.set_margin_end(12);
     box_.append(&group);
+    if let Some(skipped) = skipped_app {
+        box_.append(&skipped);
+    }
+    if let Some(skipped) = skipped_rclone {
+        box_.append(&skipped);
+    }
     box_.append(&refresh);
     dialog.set_child(Some(&box_));
     present_window_or_dialog(parent, &ctx, &dialog);
+}
+
+fn skipped_versions_group(
+    ctx: &AppCtx,
+    title: &str,
+    versions: &[String],
+    app: bool,
+) -> Option<adw::PreferencesGroup> {
+    if versions.is_empty() {
+        return None;
+    }
+    let group = adw::PreferencesGroup::new();
+    group.set_title(title);
+    for version in versions {
+        let row = adw::ActionRow::new();
+        row.set_title(version);
+        let restore = gtk::Button::with_label(&ctx.t_or("modals.about.restoreUpdate", "Restore"));
+        restore.set_valign(gtk::Align::Center);
+        {
+            let ctx = ctx.clone();
+            let version = version.clone();
+            restore.connect_clicked(move |_| {
+                let mut settings = ctx.settings.borrow_mut();
+                if app {
+                    settings
+                        .runtime
+                        .app_skipped_updates
+                        .retain(|item| item != &version);
+                } else {
+                    settings
+                        .runtime
+                        .rclone_skipped_updates
+                        .retain(|item| item != &version);
+                }
+                drop(settings);
+                ctx.persist();
+                ctx.refresh_updates();
+            });
+        }
+        row.add_suffix(&restore);
+        group.add(&row);
+    }
+    Some(group)
 }
 
 fn start_app_update(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, toast: adw::ToastOverlay) {
@@ -6107,6 +6187,71 @@ fn append_open_job_paths(
     }
 }
 
+pub(crate) fn transfer_activity_row(
+    ctx: &AppCtx,
+    parsed: &crate::transfers::TransferRow,
+    completed: bool,
+    job_type: &str,
+    parent: &impl IsA<gtk::Widget>,
+) -> gtk::ListBoxRow {
+    let wrap = gtk::Box::new(gtk::Orientation::Vertical, 4);
+    wrap.set_margin_top(4);
+    wrap.set_margin_bottom(4);
+    let row = adw::ActionRow::new();
+    row.set_title(&parsed.name);
+    let src = if parsed.src.is_empty() {
+        "—".into()
+    } else {
+        parsed.src.clone()
+    };
+    let dst = if parsed.dst.is_empty() {
+        "—".into()
+    } else {
+        parsed.dst.clone()
+    };
+    let status = match crate::transfers::transfer_status(completed, parsed) {
+        crate::transfers::TransferStatus::Preparing => {
+            ctx.t_or("shared.transferActivity.status.preparing", "Preparing")
+        }
+        crate::transfers::TransferStatus::Finalizing => {
+            ctx.t_or("shared.transferActivity.status.finalizing", "Finalizing...")
+        }
+        crate::transfers::TransferStatus::Completed => ctx.t_or(
+            "shared.transferActivity.status.transferCompleted",
+            "Transfer completed",
+        ),
+        crate::transfers::TransferStatus::Error => ctx.t_or(
+            "shared.transferActivity.status.transferError",
+            "Transfer error",
+        ),
+        crate::transfers::TransferStatus::Progress => format!("{}%", parsed.percentage),
+    };
+    let meta = crate::transfers::transfer_meta_caption(parsed);
+    let subtitle = if meta.is_empty() {
+        format!("{status} · {src} → {dst}")
+    } else {
+        format!("{status} · {meta} · {src} → {dst}")
+    };
+    row.set_subtitle(&subtitle);
+    if !parsed.error.is_empty() {
+        row.add_css_class("error");
+        row.set_tooltip_text(Some(&parsed.error));
+    }
+    row.add_suffix(&transfer_row_actions(
+        ctx, parent, parsed, job_type, completed,
+    ));
+    wrap.append(&row);
+    if !completed {
+        let bar = gtk::ProgressBar::new();
+        bar.set_fraction((parsed.percentage as f64 / 100.0).clamp(0.0, 1.0));
+        bar.set_hexpand(true);
+        wrap.append(&bar);
+    }
+    let list_row = gtk::ListBoxRow::new();
+    list_row.set_child(Some(&wrap));
+    list_row
+}
+
 fn append_transfer_rows(
     list: &gtk::ListBox,
     items: Option<&Vec<serde_json::Value>>,
@@ -6139,27 +6284,9 @@ fn append_transfer_rows(
         if !query.is_empty() && !parsed.name.to_lowercase().contains(query) {
             continue;
         }
-        let row = adw::ActionRow::new();
-        row.set_title(&parsed.name);
-        let src = if parsed.src.is_empty() {
-            "—".into()
-        } else {
-            parsed.src.clone()
-        };
-        let dst = if parsed.dst.is_empty() {
-            "—".into()
-        } else {
-            parsed.dst.clone()
-        };
-        row.set_subtitle(&format!(
-            "{}% · {} · {src} → {dst}",
-            parsed.percentage,
-            crate::rclone::format_bytes(parsed.size)
+        list.append(&transfer_activity_row(
+            ctx, &parsed, !active, job_type, parent,
         ));
-        row.add_suffix(&transfer_row_actions(
-            ctx, parent, &parsed, job_type, !active,
-        ));
-        list.append(&row);
         shown += 1;
     }
     if shown == 0 {
@@ -6232,13 +6359,14 @@ fn transfer_side_actions(
     } else {
         crate::transfers::can_delete_dest(job_type, allow_dest_ops) && !path.is_empty()
     };
-    if let Some((remote, rest)) = crate::transfers::browse_for(path) {
+    if let Some((remote, _rest)) = crate::transfers::browse_for(path) {
         let open = gtk::Button::from_icon_name("folder-open-symbolic");
         open.set_tooltip_text(Some(&ctx.t_or("common.browse", "Open in Files")));
         open.set_valign(gtk::Align::Center);
         let ctx = ctx.clone();
+        let raw = path.to_string();
         open.connect_clicked(move |_| {
-            ctx.request_browse(&remote, &rest);
+            ctx.open_typed_path(&remote, &raw);
         });
         side.append(&open);
     }
@@ -8553,8 +8681,7 @@ pub(super) fn check_result_row(
         name: item.name.clone(),
         src: crate::transfers::join_fs_name(&item.src_fs, &item.name),
         dst: crate::transfers::join_fs_name(&item.dst_fs, &item.name),
-        percentage: 0,
-        size: 0,
+        ..crate::transfers::TransferRow::default()
     };
     row.add_suffix(&transfer_row_actions(ctx, parent, &parsed, "copy", true));
     wrap.append(&row);

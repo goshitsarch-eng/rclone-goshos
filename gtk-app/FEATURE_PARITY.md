@@ -446,6 +446,10 @@ This client is the GTK 4 + libadwaita rewrite of the Angular/Tauri desktop UI. I
 - Serve start falls back to a local `rclone serve` process when `serve/start` is missing (rclone < 1.64). `core/command serve` is not used — it can panic rcd on 1.60. List/stop merge the process registry. Serve can start without a saved profile (same as Mount).
 - Serve profiles honor `type` / `serveType` / `addr` (default HTTP) and pass extra flags through RC or CLI
 - Overview Job Information matches Angular: aggregate progress/ETA, speed/transfers/checks/errors, and per-job captions with stop
+- Transfer activity rows show preparing/finalizing/error badges, bytes/speed/ETA, and a progress bar
+- Browse opens a mounted folder in the OS file manager (or a Quick Run src/dst); transfer Open uses typed-path routing
+- About update strings are i18n; Updates lists skipped app/rclone versions with Restore; wiki + rclone.org links
+- Dashboard hidden/activity/automation watch-pause labels use i18n; job origins use translated pills
 
 ## Still deepening toward pixel-level Angular parity
 

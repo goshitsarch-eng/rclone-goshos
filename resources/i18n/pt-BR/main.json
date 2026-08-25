@@ -1936,7 +1936,8 @@
       "pid": "rclone PID",
       "groups": "Job groups",
       "memory": "Memory",
-      "activity": "Activity"
+      "activity": "Activity",
+      "activitySummary": "{{jobs}} running jobs · {{mounts}} mounts · {{serves}} serves"
     },
     "quickRuns": {
       "empty": "No quick runs",
@@ -2153,7 +2154,9 @@
       "entries": "Entradas Ativas",
       "clear": "Limpar",
       "cacheCleared": "O cache foi limpo com sucesso",
-      "cacheClearFailed": "Falha ao limpar o cache"
+      "cacheClearFailed": "Falha ao limpar o cache",
+      "appUpdateAvailable": "App update {{version}} available",
+      "rcloneUpdateAvailableMsg": "rclone update {{version}} available"
     },
     "logs": {
       "fetchError": "Falha ao recuperar os registros da aplicação.",
@@ -2968,14 +2971,24 @@
       "lastError": "Último Erro:",
       "runningJobs": "Tarefas em Execução",
       "starting": "Começando...",
-      "noRunning": "Nenhuma tarefa ativa está sendo executada atualmente."
+      "noRunning": "Nenhuma tarefa ativa está sendo executada atualmente.",
+      "originDashboard": "Dashboard",
+      "originQuickRun": "Quick Run",
+      "originAutomation": "Automation",
+      "originFiles": "Files",
+      "originManual": "Manual"
     },
     "automations": {
       "activeCount": "{{active}} ativo / {{total}} total",
       "noScheduled": "Sem automação",
       "noConfigured": "Nenhuma automação configurada. Configure operações com agendas de cron ou monitoramento em tempo real de arquivos para criar automações.",
       "nextRun": "Próxima Execução:",
-      "title": "Automations"
+      "title": "Automations",
+      "watchEvery": "Watch every {{seconds}}s",
+      "changedOnly": "changed only",
+      "paused": "paused",
+      "pauseResume": "Pause or resume this automation",
+      "runNow": "Run now"
     },
     "serves": {
       "activeCount": "{{count}} serviço{{s}} ativos",

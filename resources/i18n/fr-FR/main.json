@@ -1936,7 +1936,8 @@
       "pid": "rclone PID",
       "groups": "Job groups",
       "memory": "Memory",
-      "activity": "Activity"
+      "activity": "Activity",
+      "activitySummary": "{{jobs}} running jobs · {{mounts}} mounts · {{serves}} serves"
     },
     "quickRuns": {
       "empty": "No quick runs",
@@ -2153,7 +2154,9 @@
       "entries": "Entrées actives",
       "clear": "Effacer",
       "cacheCleared": "Cache effacé avec succès",
-      "cacheClearFailed": "Échec du vidage du cache"
+      "cacheClearFailed": "Échec du vidage du cache",
+      "appUpdateAvailable": "App update {{version}} available",
+      "rcloneUpdateAvailableMsg": "rclone update {{version}} available"
     },
     "logs": {
       "fetchError": "Impossible de récupérer les logs de l'application.",
@@ -2968,14 +2971,24 @@
       "lastError": "Dernière erreur :",
       "runningJobs": "Jobs en cours",
       "starting": "Démarrage...",
-      "noRunning": "Aucun travail actif n'est en cours d'exécution."
+      "noRunning": "Aucun travail actif n'est en cours d'exécution.",
+      "originDashboard": "Dashboard",
+      "originQuickRun": "Quick Run",
+      "originAutomation": "Automation",
+      "originFiles": "Files",
+      "originManual": "Manual"
     },
     "automations": {
       "activeCount": "{{active}} actif/ {{total}} total",
       "noScheduled": "Aucune automatisation",
       "noConfigured": "Aucune automatisation configurée. Configurez des opérations avec des calendriers de cron ou une surveillance de fichiers en temps réel pour créer des automatisations.",
       "nextRun": "Prochaine exécution :",
-      "title": "Automations"
+      "title": "Automations",
+      "watchEvery": "Watch every {{seconds}}s",
+      "changedOnly": "changed only",
+      "paused": "paused",
+      "pauseResume": "Pause or resume this automation",
+      "runNow": "Run now"
     },
     "serves": {
       "activeCount": "{{count}} service{{s}} de partage actif",

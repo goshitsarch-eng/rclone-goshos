@@ -303,11 +303,14 @@ pub fn overview_jobs_panel(
         for job in &running {
             let row = adw::ActionRow::new();
             row.set_title(&format!("{} · {}", job.operation, job.remote));
-            let origin = if job.origin.is_empty() {
-                "dashboard"
-            } else {
-                job.origin.as_str()
-            };
+            let origin = ctx.t_or(
+                crate::jobs::origin_label_key(&job.origin),
+                if job.origin.is_empty() {
+                    "Dashboard"
+                } else {
+                    job.origin.as_str()
+                },
+            );
             let caption = job_transfer_caption(job);
             let subtitle = if caption.is_empty() {
                 format!("{} · {} · {}", job.status, job.profile, origin)
@@ -318,13 +321,12 @@ pub fn overview_jobs_panel(
                 )
             };
             row.set_subtitle(&subtitle);
-            if job.progress > 0.0 || crate::jobs::stats_i64(&job.stats, &["totalBytes"]) > 0 {
-                let bar = gtk::ProgressBar::new();
-                bar.set_fraction(job.progress.clamp(0.0, 1.0));
-                bar.set_valign(gtk::Align::Center);
-                bar.set_width_request(80);
-                row.add_suffix(&bar);
-            }
+            let bar = gtk::ProgressBar::new();
+            bar.set_fraction(job.progress.clamp(0.0, 1.0));
+            bar.set_valign(gtk::Align::Center);
+            bar.set_hexpand(true);
+            bar.set_width_request(96);
+            row.add_suffix(&bar);
             let stop = gtk::Button::from_icon_name("media-playback-stop-symbolic");
             stop.set_valign(gtk::Align::Center);
             stop.set_tooltip_text(Some(&ctx.t_or("detailShared.jobs.actions.stop", "Stop")));

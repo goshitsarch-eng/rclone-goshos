@@ -1936,7 +1936,8 @@
       "pid": "rclone PID",
       "groups": "Job groups",
       "memory": "Memory",
-      "activity": "Activity"
+      "activity": "Activity",
+      "activitySummary": "{{jobs}} running jobs · {{mounts}} mounts · {{serves}} serves"
     },
     "quickRuns": {
       "empty": "No quick runs",
@@ -2153,7 +2154,9 @@
       "entries": "有効なエントリ数",
       "clear": "消去",
       "cacheCleared": "キャッシュを正常に消去しました",
-      "cacheClearFailed": "キャッシュの消去に失敗しました"
+      "cacheClearFailed": "キャッシュの消去に失敗しました",
+      "appUpdateAvailable": "App update {{version}} available",
+      "rcloneUpdateAvailableMsg": "rclone update {{version}} available"
     },
     "logs": {
       "fetchError": "アプリログの取得に失敗しました。",
@@ -2968,14 +2971,24 @@
       "lastError": "最後のエラー:",
       "runningJobs": "実行中のジョブ",
       "starting": "開始中...",
-      "noRunning": "現在実行中のアクティブなジョブはありません。"
+      "noRunning": "現在実行中のアクティブなジョブはありません。",
+      "originDashboard": "Dashboard",
+      "originQuickRun": "Quick Run",
+      "originAutomation": "Automation",
+      "originFiles": "Files",
+      "originManual": "Manual"
     },
     "automations": {
       "activeCount": "{{active}} 有効 / 全 {{total}} 件",
       "noScheduled": "自動化はありません",
       "noConfigured": "自動化が設定されていません。Cronスケジュールやリアルタイムファイル監視を伴う操作を設定して自動化を作成してください。",
       "nextRun": "次回実行:",
-      "title": "Automations"
+      "title": "Automations",
+      "watchEvery": "Watch every {{seconds}}s",
+      "changedOnly": "changed only",
+      "paused": "paused",
+      "pauseResume": "Pause or resume this automation",
+      "runNow": "Run now"
     },
     "serves": {
       "activeCount": "{{count}} 件の実行中の公開サーバー",

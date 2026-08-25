@@ -3,13 +3,26 @@
 use crate::rclone::{browse_target, split_remote_path};
 use serde_json::Value;
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Default)]
 pub struct TransferRow {
     pub name: String,
     pub src: String,
     pub dst: String,
     pub percentage: i64,
     pub size: i64,
+    pub bytes: i64,
+    pub speed: f64,
+    pub eta: f64,
+    pub error: String,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TransferStatus {
+    Preparing,
+    Progress,
+    Finalizing,
+    Completed,
+    Error,
 }
 
 pub fn parse_transfer_row(item: &Value) -> TransferRow {
@@ -30,13 +43,74 @@ pub fn parse_transfer_row(item: &Value) -> TransferRow {
         .and_then(|x| x.as_i64())
         .unwrap_or(0);
     let size = item.get("size").and_then(|x| x.as_i64()).unwrap_or(0);
+    let bytes = item
+        .get("bytes")
+        .or_else(|| item.get("bytesSoFar"))
+        .and_then(|x| x.as_i64())
+        .unwrap_or(0);
+    let speed = item.get("speed").and_then(|x| x.as_f64()).unwrap_or(0.0);
+    let eta = item.get("eta").and_then(|x| x.as_f64()).unwrap_or(0.0);
+    let error = item
+        .get("error")
+        .or_else(|| item.get("lastError"))
+        .and_then(|x| x.as_str())
+        .unwrap_or_default()
+        .to_string();
     TransferRow {
         name,
         src,
         dst,
         percentage,
         size,
+        bytes,
+        speed,
+        eta,
+        error,
     }
+}
+
+pub fn transfer_status(completed: bool, row: &TransferRow) -> TransferStatus {
+    if !row.error.is_empty() {
+        return TransferStatus::Error;
+    }
+    if completed {
+        return TransferStatus::Completed;
+    }
+    if row.percentage <= 0 && row.bytes <= 0 {
+        return TransferStatus::Preparing;
+    }
+    if row.percentage >= 100 {
+        return TransferStatus::Finalizing;
+    }
+    TransferStatus::Progress
+}
+
+pub fn transfer_meta_caption(row: &TransferRow) -> String {
+    let size = if row.size > 0 {
+        format!(
+            "{} / {}",
+            crate::rclone::format_bytes(row.bytes.max(0)),
+            crate::rclone::format_bytes(row.size)
+        )
+    } else if row.bytes > 0 {
+        crate::rclone::format_bytes(row.bytes)
+    } else {
+        String::new()
+    };
+    let mut parts = Vec::new();
+    if !size.is_empty() {
+        parts.push(size);
+    }
+    if row.speed > 0.0 {
+        parts.push(format!(
+            "{}/s",
+            crate::rclone::format_bytes(row.speed.round() as i64)
+        ));
+    }
+    if row.eta > 0.0 {
+        parts.push(crate::jobs::format_seconds(row.eta));
+    }
+    parts.join(" · ")
 }
 
 fn first_str(item: &Value, keys: &[&str]) -> Option<String> {
@@ -197,6 +271,9 @@ mod tests {
         assert_eq!(row.src, "drive:Photos/a.jpg");
         assert_eq!(row.dst, "/tmp/out/Photos/a.jpg");
         assert_eq!(row.percentage, 40);
+        assert_eq!(row.bytes, 0);
+        assert!(row.error.is_empty());
+        assert_eq!(transfer_status(false, &row), TransferStatus::Progress);
         assert_eq!(
             browse_for(&row.src).map(|(r, _)| r).as_deref(),
             Some("drive")
@@ -242,5 +319,35 @@ mod tests {
         assert!(remote_name_from_path("/tmp/x").is_none());
         assert!(is_move_job("copy/move"));
         assert!(is_delete_job("delete/purge"));
+    }
+
+    #[test]
+    fn transfer_status_and_caption_match_angular() {
+        let preparing = TransferRow {
+            name: "a.bin".into(),
+            ..TransferRow::default()
+        };
+        assert_eq!(
+            transfer_status(false, &preparing),
+            TransferStatus::Preparing
+        );
+        let done = parse_transfer_row(&json!({
+            "name": "b.bin",
+            "percentage": 100,
+            "bytes": 1024,
+            "size": 1024,
+            "speed": 512.0,
+            "eta": 2
+        }));
+        assert_eq!(transfer_status(false, &done), TransferStatus::Finalizing);
+        assert_eq!(transfer_status(true, &done), TransferStatus::Completed);
+        let caption = transfer_meta_caption(&done);
+        assert!(caption.contains("KiB"));
+        let failed = parse_transfer_row(&json!({
+            "name": "c.bin",
+            "error": "denied",
+            "percentage": 10
+        }));
+        assert_eq!(transfer_status(false, &failed), TransferStatus::Error);
     }
 }

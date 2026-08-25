@@ -1143,7 +1143,7 @@ impl FlowView {
         {
             let ctx = self.ctx.clone();
             let remote = name.to_string();
-            browse.connect_clicked(move |_| ctx.request_browse(&remote, ""));
+            browse.connect_clicked(move |_| ctx.browse_remote_home(&remote));
         }
         let configure = gtk::Button::with_label(&self.ctx.t_or(
             "dashboard.generalDetail.editConfiguration",

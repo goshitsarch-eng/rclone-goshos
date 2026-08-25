@@ -1936,7 +1936,8 @@
       "pid": "rclone PID",
       "groups": "Job groups",
       "memory": "Memory",
-      "activity": "Activity"
+      "activity": "Activity",
+      "activitySummary": "{{jobs}} running jobs · {{mounts}} mounts · {{serves}} serves"
     },
     "quickRuns": {
       "empty": "No quick runs",
@@ -2153,7 +2154,9 @@
       "entries": "Активні записи",
       "clear": "Очистити",
       "cacheCleared": "Кеш успішно очищено",
-      "cacheClearFailed": "Не вдалося очистити кеш"
+      "cacheClearFailed": "Не вдалося очистити кеш",
+      "appUpdateAvailable": "App update {{version}} available",
+      "rcloneUpdateAvailableMsg": "rclone update {{version}} available"
     },
     "logs": {
       "fetchError": "Не вдалося отримати журнали застосунку.",
@@ -2968,14 +2971,24 @@
       "lastError": "Остання помилка:",
       "runningJobs": "Активні завдання",
       "starting": "Запуск...",
-      "noRunning": "Зараз немає активних завдань."
+      "noRunning": "Зараз немає активних завдань.",
+      "originDashboard": "Dashboard",
+      "originQuickRun": "Quick Run",
+      "originAutomation": "Automation",
+      "originFiles": "Files",
+      "originManual": "Manual"
     },
     "automations": {
       "activeCount": "{{active}} активних / {{total}} усього",
       "noScheduled": "Немає автоматизацій",
       "noConfigured": "Автоматизації не налаштовано. Налаштуйте операції з cron-розкладами або моніторингом файлів у реальному часі, щоб створити автоматизації.",
       "nextRun": "Наступний запуск:",
-      "title": "Automations"
+      "title": "Automations",
+      "watchEvery": "Watch every {{seconds}}s",
+      "changedOnly": "changed only",
+      "paused": "paused",
+      "pauseResume": "Pause or resume this automation",
+      "runNow": "Run now"
     },
     "serves": {
       "activeCount": "Активних роздач: {{count}}{{s}}",

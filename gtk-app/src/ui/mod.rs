@@ -166,6 +166,34 @@ impl AppCtx {
         self.request_browse(&typed.remote, &typed.path);
     }
 
+    pub fn browse_remote_home(&self, name: &str) {
+        let mount = self
+            .snapshot
+            .borrow()
+            .mounts
+            .iter()
+            .find(|mount| {
+                mount.fs == name
+                    || mount.fs == format!("{name}:")
+                    || mount.fs.starts_with(&format!("{name}:"))
+            })
+            .map(|mount| mount.mount_point.clone());
+        if let Some(point) = mount.filter(|p| !p.is_empty()) {
+            self.open_typed_path(name, &point);
+            return;
+        }
+        self.request_browse(name, "");
+    }
+
+    pub fn browse_quick_run(&self, qr: &crate::store::QuickRun) {
+        let (src, dst) = crate::store::quick_run_paths(&qr.config.rclone, qr.operation_type);
+        if let Some(path) = src.or(dst).filter(|p| !p.is_empty()) {
+            self.open_typed_path(&qr.remote_name, &path);
+            return;
+        }
+        self.browse_remote_home(&qr.remote_name);
+    }
+
     pub fn fs_info(&self, remote: &str) -> Option<crate::rclone::FsInfo> {
         if let Some(cached) = self.fsinfo_cache.borrow().get(remote).cloned() {
             return Some(cached);

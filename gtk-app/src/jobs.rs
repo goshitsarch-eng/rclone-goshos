@@ -689,6 +689,16 @@ pub fn preferred_mount_profile_name(meta: Option<&RemoteMeta>) -> String {
         .unwrap_or_else(|| "default".into())
 }
 
+pub fn origin_label_key(origin: &str) -> &'static str {
+    match origin.trim().to_ascii_lowercase().as_str() {
+        "quick-run" | "quickrun" | "flow" => "generalOverview.jobs.originQuickRun",
+        "automation" | "autostart" => "generalOverview.jobs.originAutomation",
+        "filemanager" | "files" | "nautilus" => "generalOverview.jobs.originFiles",
+        "dashboard" | "" => "generalOverview.jobs.originDashboard",
+        _ => "generalOverview.jobs.originManual",
+    }
+}
+
 pub fn origin_matches(origin: &str, filter: &str) -> bool {
     if filter.is_empty() || filter.eq_ignore_ascii_case("all") {
         return true;
@@ -2348,6 +2358,15 @@ mod tests {
             &jobs,
             false
         ));
+        assert_eq!(
+            origin_label_key("quick-run"),
+            "generalOverview.jobs.originQuickRun"
+        );
+        assert_eq!(origin_label_key(""), "generalOverview.jobs.originDashboard");
+        assert_eq!(
+            origin_label_key("filemanager"),
+            "generalOverview.jobs.originFiles"
+        );
         assert!(allows_unconfigured_start(OperationType::Mount));
         assert!(allows_unconfigured_start(OperationType::Serve));
         assert!(!allows_unconfigured_start(OperationType::Sync));

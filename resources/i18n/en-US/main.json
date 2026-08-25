@@ -1942,7 +1942,8 @@
       "pid": "rclone PID",
       "groups": "Job groups",
       "memory": "Memory",
-      "activity": "Activity"
+      "activity": "Activity",
+      "activitySummary": "{{jobs}} running jobs · {{mounts}} mounts · {{serves}} serves"
     },
     "quickRuns": {
       "empty": "No quick runs",
@@ -2159,7 +2160,9 @@
       "entries": "Active Entries",
       "clear": "Clear",
       "cacheCleared": "Cache cleared successfully",
-      "cacheClearFailed": "Failed to clear cache"
+      "cacheClearFailed": "Failed to clear cache",
+      "appUpdateAvailable": "App update {{version}} available",
+      "rcloneUpdateAvailableMsg": "rclone update {{version}} available"
     },
     "logs": {
       "fetchError": "Failed to fetch application logs.",
@@ -2979,14 +2982,24 @@
       "lastError": "Last Error:",
       "runningJobs": "Running Jobs",
       "starting": "Starting...",
-      "noRunning": "No active jobs are currently running."
+      "noRunning": "No active jobs are currently running.",
+      "originDashboard": "Dashboard",
+      "originQuickRun": "Quick Run",
+      "originAutomation": "Automation",
+      "originFiles": "Files",
+      "originManual": "Manual"
     },
     "automations": {
       "activeCount": "{{active}} active / {{total}} total",
       "noScheduled": "No automations",
       "noConfigured": "No automations configured. Configure operations with cron schedules or real-time file monitoring to create automations.",
       "nextRun": "Next Run:",
-      "title": "Automations"
+      "title": "Automations",
+      "watchEvery": "Watch every {{seconds}}s",
+      "changedOnly": "changed only",
+      "paused": "paused",
+      "pauseResume": "Pause or resume this automation",
+      "runNow": "Run now"
     },
     "serves": {
       "activeCount": "{{count}} active serve{{s}}",

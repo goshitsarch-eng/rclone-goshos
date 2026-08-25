@@ -745,7 +745,14 @@ impl Dashboard {
                 "{} · {}{}",
                 remote.r#type,
                 remote_state_label(&self.ctx, remote.mounted, remote.serving, remote.job_active,),
-                if remote.hidden { " · hidden" } else { "" }
+                if remote.hidden {
+                    format!(
+                        " · {}",
+                        self.ctx.t_or("generalOverview.layout.hidden", "Hidden")
+                    )
+                } else {
+                    String::new()
+                }
             ));
             row.add_prefix(&gtk::Image::from_icon_name(
                 crate::providers::provider_icon(&remote.r#type),
@@ -767,7 +774,7 @@ impl Dashboard {
                 let dash = self.clone();
                 browse.connect_clicked(move |_| {
                     *ctx.selected_remote.borrow_mut() = Some(name.clone());
-                    ctx.request_browse(&name, "");
+                    ctx.browse_remote_home(&name);
                     dash.refresh();
                 });
             }
@@ -1398,15 +1405,24 @@ impl Dashboard {
         }
         let jobs_row = adw::ActionRow::new();
         jobs_row.set_title(&self.ctx.t_or("dashboard.system.activity", "Activity"));
-        jobs_row.set_subtitle(&format!(
-            "{} running jobs · {} mounts · {} serves",
-            snap.jobs
-                .iter()
-                .filter(|j| crate::jobs::is_overview_job(j) && j.status == "running")
-                .count(),
-            snap.mounts.len(),
-            snap.serves.len()
-        ));
+        jobs_row.set_subtitle(
+            &self.ctx.tf(
+                "dashboard.system.activitySummary",
+                &[
+                    (
+                        "jobs",
+                        &snap
+                            .jobs
+                            .iter()
+                            .filter(|j| crate::jobs::is_overview_job(j) && j.status == "running")
+                            .count()
+                            .to_string(),
+                    ),
+                    ("mounts", &snap.mounts.len().to_string()),
+                    ("serves", &snap.serves.len().to_string()),
+                ],
+            ),
+        );
         sys.append(&jobs_row);
         self.host().append(&sys);
     }
@@ -1448,26 +1464,43 @@ impl Dashboard {
                     self.ctx.t_or("common.off", "off")
                 };
                 let watch = if record.watch_enabled {
-                    format!(
-                        "watch {}s{}",
-                        record.watch_delay,
-                        if record.watch_changed_only {
-                            " changed"
-                        } else {
-                            ""
-                        }
-                    )
+                    let delay = self.ctx.tf(
+                        "generalOverview.automations.watchEvery",
+                        &[("seconds", &record.watch_delay.to_string())],
+                    );
+                    if record.watch_changed_only {
+                        format!(
+                            "{delay} · {}",
+                            self.ctx
+                                .t_or("generalOverview.automations.changedOnly", "changed only")
+                        )
+                    } else {
+                        delay
+                    }
                 } else {
                     self.ctx.t_or("common.off", "off")
                 };
+                let paused_suffix = if paused {
+                    format!(
+                        " · {}",
+                        self.ctx
+                            .t_or("generalOverview.automations.paused", "paused")
+                    )
+                } else {
+                    String::new()
+                };
                 row.set_subtitle(&format!(
-                    "{} · {cron} · {watch} · next {next}{}",
+                    "{} · {cron} · {watch} · {} {next}{paused_suffix}",
                     record.operation,
-                    if paused { " · paused" } else { "" }
+                    self.ctx
+                        .t_or("generalOverview.automations.nextRun", "Next Run:")
                 ));
                 let enabled = gtk::Switch::new();
                 enabled.set_valign(gtk::Align::Center);
-                enabled.set_tooltip_text(Some("Pause or resume this automation"));
+                enabled.set_tooltip_text(Some(&self.ctx.t_or(
+                    "generalOverview.automations.pauseResume",
+                    "Pause or resume this automation",
+                )));
                 enabled.set_active(!paused);
                 {
                     let ctx = self.ctx.clone();
@@ -1486,7 +1519,11 @@ impl Dashboard {
                 }
                 let run = gtk::Button::from_icon_name("media-playback-start-symbolic");
                 run.set_valign(gtk::Align::Center);
-                run.set_tooltip_text(Some("Run now"));
+                run.set_tooltip_text(Some(
+                    &self
+                        .ctx
+                        .t_or("generalOverview.automations.runNow", "Run now"),
+                ));
                 let nav_id = record.id.clone();
                 {
                     let ctx = self.ctx.clone();
@@ -2029,9 +2066,9 @@ impl Dashboard {
                 }
                 {
                     let ctx = self.ctx.clone();
-                    let remote = qr.remote_name.clone();
+                    let qr = qr.clone();
                     open.connect_clicked(move |_| {
-                        ctx.request_browse(&remote, "");
+                        ctx.browse_quick_run(&qr);
                     });
                 }
                 row.add_suffix(&open);
@@ -2127,7 +2164,7 @@ impl Dashboard {
         btn.connect_clicked(move |_| match kind {
             "browse" => {
                 *ctx.selected_remote.borrow_mut() = Some(name.clone());
-                ctx.request_browse(&name, "");
+                ctx.browse_remote_home(&name);
             }
             "about" => {
                 if let Some(win) = dash.root.root().and_downcast::<gtk::Window>() {
@@ -3068,13 +3105,15 @@ impl Dashboard {
             let row = adw::ActionRow::new();
             row.set_title(&self.ctx.t_or(title_key, fallback));
             row.set_subtitle(&path);
-            if let Some((remote, rest)) = crate::transfers::browse_for(&path) {
+            if crate::transfers::browse_for(&path).is_some() {
                 let open = gtk::Button::from_icon_name("folder-open-symbolic");
                 open.set_tooltip_text(Some(&self.ctx.t_or("common.browse", "Open in Files")));
                 open.set_valign(gtk::Align::Center);
                 let ctx = self.ctx.clone();
+                let current = name.to_string();
+                let raw = path.clone();
                 open.connect_clicked(move |_| {
-                    ctx.request_browse(&remote, &rest);
+                    ctx.open_typed_path(&current, &raw);
                 });
                 row.add_suffix(&open);
             }
@@ -3445,33 +3484,13 @@ impl Dashboard {
                     continue;
                 }
             }
-            let item = adw::ActionRow::new();
-            item.set_title(&row.name);
-            let src = if row.src.is_empty() {
-                "—".into()
-            } else {
-                row.src.clone()
-            };
-            let dst = if row.dst.is_empty() {
-                "—".into()
-            } else {
-                row.dst.clone()
-            };
-            let state = if completed {
-                self.ctx
-                    .t_or("shared.transferActivity.status.completed", "Completed")
-            } else {
-                format!("{}%", row.percentage)
-            };
-            item.set_subtitle(&format!("{state} · {src} → {dst}"));
-            item.add_suffix(&dialogs::transfer_row_actions(
+            list.append(&dialogs::transfer_activity_row(
                 &self.ctx,
-                &self.toast,
                 &row,
-                &operation,
                 completed,
+                &operation,
+                &self.toast,
             ));
-            list.append(&item);
         }
         self.detail_box().append(&list);
     }
@@ -3498,22 +3517,34 @@ impl Dashboard {
             let schedule = if record.cron_enabled {
                 crate::rclone::describe_cron_i18n(&record.cron, &self.ctx.i18n.borrow())
             } else if record.watch_enabled {
-                format!(
-                    "watch {}s{}",
-                    record.watch_delay,
-                    if record.watch_changed_only {
-                        " changed"
-                    } else {
-                        ""
-                    }
-                )
+                let delay = self.ctx.tf(
+                    "generalOverview.automations.watchEvery",
+                    &[("seconds", &record.watch_delay.to_string())],
+                );
+                if record.watch_changed_only {
+                    format!(
+                        "{delay} · {}",
+                        self.ctx
+                            .t_or("generalOverview.automations.changedOnly", "changed only")
+                    )
+                } else {
+                    delay
+                }
             } else {
                 self.ctx.t_or("common.off", "off")
             };
             row.set_subtitle(&format!(
                 "{} · {schedule}{}",
                 record.operation,
-                if paused { " · paused" } else { "" }
+                if paused {
+                    format!(
+                        " · {}",
+                        self.ctx
+                            .t_or("generalOverview.automations.paused", "paused")
+                    )
+                } else {
+                    String::new()
+                }
             ));
             let enabled = gtk::Switch::new();
             enabled.set_valign(gtk::Align::Center);
