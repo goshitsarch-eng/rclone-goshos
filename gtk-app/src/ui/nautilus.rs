@@ -3198,19 +3198,29 @@ impl NautilusView {
                     } else {
                         dst
                     };
-                    match client.move_file(&fs, &src, &fs, &dst) {
-                        Ok(_) => {
-                            view.push_undo(
-                                crate::fileops::FileOp::Rename {
-                                    fs,
-                                    from: src,
-                                    to: dst,
-                                }
-                                .encode(),
-                            );
+                    let is_dir = view
+                        .last_listing
+                        .borrow()
+                        .iter()
+                        .any(|entry| entry.name == old && entry.is_dir);
+                    let item = crate::fileops::RenameItem {
+                        fs,
+                        from: src,
+                        to: dst,
+                        is_dir,
+                    };
+                    match crate::fileops::start_grouped_renames(
+                        &client,
+                        &[item.clone()],
+                        "filemanager",
+                    ) {
+                        Ok((_group, ids)) => {
+                            view.remember_file_jobs(&ids, "filemanager");
+                            view.push_undo(item.file_op().encode());
+                            view.ctx.refresh_runtime();
                             view.reload();
                         }
-                        Err(e) => view.toast.add_toast(adw::Toast::new(&e.to_string())),
+                        Err(e) => view.toast.add_toast(adw::Toast::new(&e)),
                     }
                 }
             },
@@ -3226,9 +3236,15 @@ impl NautilusView {
             return;
         };
         let current = self.current.borrow().clone();
+        let listing = self.last_listing.borrow().clone();
+        let mut items = Vec::new();
+        let mut undos = Vec::new();
         for name in names {
             let path = join_remote_path(&current.path, &name);
             let (fs, remote) = fs_remote(&current.remote, &path);
+            let is_dir = listing
+                .iter()
+                .any(|entry| entry.name == name && entry.is_dir);
             let trash = if current.remote == "local" {
                 let local = if path.starts_with('/') {
                     path.clone()
@@ -3239,19 +3255,25 @@ impl NautilusView {
             } else {
                 None
             };
-            if client.delete_file(&fs, &remote).is_err() {
-                let _ = client.purge(&fs, &remote);
-            }
-            self.push_undo(
-                crate::fileops::FileOp::Delete {
-                    fs,
-                    path: remote,
-                    trash,
-                }
-                .encode(),
-            );
+            let item = crate::fileops::DeleteItem {
+                fs,
+                path: remote,
+                is_dir,
+            };
+            undos.push(item.file_op(trash).encode());
+            items.push(item);
         }
-        self.reload();
+        match crate::fileops::start_grouped_deletes(&client, &items, "filemanager") {
+            Ok((_group, ids)) => {
+                self.remember_file_jobs(&ids, "filemanager");
+                for token in undos {
+                    self.push_undo(token);
+                }
+                self.ctx.refresh_runtime();
+                self.reload();
+            }
+            Err(e) => self.toast.add_toast(adw::Toast::new(&e)),
+        }
     }
 
     fn cut_or_copy(&self, cut: bool) {

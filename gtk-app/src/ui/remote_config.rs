@@ -524,14 +524,22 @@ fn remote_page(
         edit_primary.connect_clicked(move |_| {
             let catalog = crate::action_order::catalog_ids();
             let current = primary_ids.borrow().clone();
-            dialogs::action_order(&parent, &ctx, "Primary actions", &catalog, &current, {
-                let primary_ids = primary_ids.clone();
-                let primary_row = primary_row.clone();
-                move |ids| {
-                    primary_row.set_subtitle(&action_summary(&ids));
-                    *primary_ids.borrow_mut() = ids;
-                }
-            });
+            dialogs::action_order(
+                &parent,
+                &ctx,
+                &ctx.t_or("remoteConfig.primaryActions", "Primary actions"),
+                &catalog,
+                &current,
+                Some(3),
+                {
+                    let primary_ids = primary_ids.clone();
+                    let primary_row = primary_row.clone();
+                    move |ids| {
+                        primary_row.set_subtitle(&action_summary(&ids));
+                        *primary_ids.borrow_mut() = ids;
+                    }
+                },
+            );
         });
     }
     primary_row.add_suffix(&edit_primary);
@@ -552,14 +560,22 @@ fn remote_page(
                 .map(|op| op.as_str())
                 .collect();
             let current = sync_ids.borrow().clone();
-            dialogs::action_order(&parent, &ctx, "Sync actions", &catalog, &current, {
-                let sync_ids = sync_ids.clone();
-                let sync_row = sync_row.clone();
-                move |ids| {
-                    sync_row.set_subtitle(&action_summary(&ids));
-                    *sync_ids.borrow_mut() = ids;
-                }
-            });
+            dialogs::action_order(
+                &parent,
+                &ctx,
+                &ctx.t_or("remoteConfig.syncActions", "Sync actions"),
+                &catalog,
+                &current,
+                Some(3),
+                {
+                    let sync_ids = sync_ids.clone();
+                    let sync_row = sync_row.clone();
+                    move |ids| {
+                        sync_row.set_subtitle(&action_summary(&ids));
+                        *sync_ids.borrow_mut() = ids;
+                    }
+                },
+            );
         });
     }
     sync_row.add_suffix(&edit_sync);

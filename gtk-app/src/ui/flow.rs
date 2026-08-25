@@ -879,9 +879,14 @@ impl FlowView {
                 clone.id = uuid::Uuid::new_v4().to_string();
                 clone.name = format!("{} copy", qr.name);
                 clone.status = "idle".into();
-                view.ctx.store.borrow_mut().quick_runs.push(clone);
-                view.ctx.persist();
-                view.refresh();
+                clone.last_job_id = None;
+                clone.run_count = 0;
+                if let Some(win) = view.root.root().and_downcast::<gtk::Window>() {
+                    dialogs::quick_run_editor(&win, view.ctx.clone(), Some(clone), {
+                        let view = view.clone();
+                        Rc::new(move || view.refresh())
+                    });
+                }
             });
         }
         {

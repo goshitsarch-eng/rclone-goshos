@@ -2,8 +2,8 @@ use super::AppCtx;
 use crate::backup;
 use crate::guidance::{operation_banners, BannerKind};
 use crate::jobs::{
-    build_job_params, default_dest, default_source, flatten_rclone, job_from_status,
-    merge_template_into, start_request,
+    assemble_rclone, build_job_params, default_dest, default_source, flatten_rclone,
+    job_from_status, merge_template_into, path_list, start_request, SOURCE_KEYS,
 };
 use crate::operations::OperationType;
 use crate::rclone::{
@@ -184,7 +184,10 @@ pub fn present_standalone(
         "keyboard-shortcuts" => shortcuts(&window, &ctx),
         "alerts" => alerts(&window, ctx.clone()),
         "archive-create" => archive_create(&window, ctx.clone(), &remote, &path, &[]),
-        "quick-run-editor" => quick_run_editor(&window, ctx.clone(), None, noop),
+        "quick-run-editor" => {
+            let existing = serde_json::from_value::<QuickRun>(req.data.clone()).ok();
+            quick_run_editor(&window, ctx.clone(), existing, noop);
+        }
         "template-manager" => templates(&window, ctx.clone()),
         "delete-remote" => delete_remote(&window, ctx.clone(), &remote, noop),
         "remote-config" => remote_config_open(
@@ -217,7 +220,21 @@ pub fn present_standalone(
             noop,
         ),
         "quick-add-remote" => quick_add_remote(&window, ctx.clone(), noop),
-        "restore-preview" => {}
+        "restore-preview" => {
+            let backup = req
+                .data
+                .get("path")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string();
+            restore_preview(
+                &window,
+                ctx.clone(),
+                toast.clone(),
+                std::path::PathBuf::from(backup),
+                noop,
+            );
+        }
         _ => {}
     }
     let result_path = req.result_path.clone();
@@ -2082,15 +2099,18 @@ pub fn action_order(
     title: &str,
     catalog: &[&str],
     current: &[String],
+    max_visible: Option<usize>,
     on_save: impl Fn(Vec<String>) + 'static,
 ) {
     let dialog = adw::Dialog::new();
     dialog.set_title(title);
     dialog.set_content_width(480);
     dialog.set_content_height(560);
-    let items = Rc::new(RefCell::new(crate::action_order::build_items(
-        current, catalog,
-    )));
+    let items = Rc::new(RefCell::new({
+        let mut built = crate::action_order::build_items(current, catalog);
+        crate::action_order::cap_visible(&mut built, max_visible);
+        built
+    }));
     let list = gtk::ListBox::new();
     list.add_css_class("boxed-list");
     let rebuild: Rc<RefCell<Box<dyn Fn()>>> = Rc::new(RefCell::new(Box::new(|| {})));
@@ -2106,23 +2126,41 @@ pub fn action_order(
         let hidden_l = hidden_l.clone();
         let up_tip = up_tip.clone();
         let down_tip = down_tip.clone();
+        let ctx = ctx.clone();
         Rc::new(move || {
             while let Some(child) = list.first_child() {
                 list.remove(&child);
             }
             let snapshot = items.borrow().clone();
+            let can_show_more = crate::action_order::can_show_more(&snapshot, max_visible);
             for (idx, item) in snapshot.iter().enumerate() {
                 let row = adw::ActionRow::new();
-                row.set_title(&item.id);
+                let title = OperationType::parse(&item.id)
+                    .map(|op| ctx.t_or(op.action_label_key(), op.api_label()))
+                    .unwrap_or_else(|| item.id.clone());
+                row.set_title(&title);
                 row.set_subtitle(if item.visible { &visible_l } else { &hidden_l });
                 let visible = gtk::Switch::new();
                 visible.set_active(item.visible);
                 visible.set_valign(gtk::Align::Center);
+                if !item.visible && !can_show_more {
+                    visible.set_sensitive(false);
+                }
                 {
                     let items = items.clone();
                     let rebuild = rebuild.clone();
                     let id = item.id.clone();
                     visible.connect_active_notify(move |sw| {
+                        if sw.is_active()
+                            && !crate::action_order::can_show_more(&items.borrow(), max_visible)
+                            && !items
+                                .borrow()
+                                .iter()
+                                .any(|item| item.id == id && item.visible)
+                        {
+                            sw.set_active(false);
+                            return;
+                        }
                         crate::action_order::apply_visibility(
                             &mut items.borrow_mut(),
                             &id,
@@ -2172,7 +2210,9 @@ pub fn action_order(
         let dialog = dialog.clone();
         let items = items.clone();
         save.connect_clicked(move |_| {
-            on_save(crate::action_order::visible_ids(&items.borrow()));
+            let mut snapshot = items.borrow().clone();
+            crate::action_order::cap_visible(&mut snapshot, max_visible);
+            on_save(crate::action_order::visible_ids(&snapshot));
             dialog.close();
         });
     }
@@ -2190,7 +2230,9 @@ pub fn action_order(
         let catalog: Vec<String> = catalog.iter().map(|s| (*s).to_string()).collect();
         reset.connect_clicked(move |_| {
             let refs: Vec<&str> = catalog.iter().map(|s| s.as_str()).collect();
-            *items.borrow_mut() = crate::action_order::build_items(&[], &refs);
+            let mut built = crate::action_order::build_items(&[], &refs);
+            crate::action_order::cap_visible(&mut built, max_visible);
+            *items.borrow_mut() = built;
             rebuild.borrow()();
         });
     }
@@ -2207,10 +2249,17 @@ pub fn action_order(
     box_.set_margin_bottom(12);
     box_.set_margin_start(12);
     box_.set_margin_end(12);
-    let hint = gtk::Label::new(Some(&ctx.t_or(
-        "modals.actionSelection.description",
-        "Toggle visibility and reorder. Hidden actions stay available in Configure.",
-    )));
+    let hint = gtk::Label::new(Some(&if let Some(max) = max_visible {
+        ctx.tf(
+            "modals.actionSelection.description",
+            &[("name", title), ("max", &max.to_string())],
+        )
+    } else {
+        ctx.t_or(
+            "modals.actionSelection.description",
+            "Toggle visibility and reorder. Hidden actions stay available in Configure.",
+        )
+    }));
     hint.add_css_class("dim-label");
     hint.set_wrap(true);
     hint.set_xalign(0.0);
@@ -3786,7 +3835,11 @@ pub fn quick_run_editor(
     existing: Option<QuickRun>,
     on_done: Rc<dyn Fn()>,
 ) {
-    if try_spawn_standalone(&ctx, "quick-run-editor", serde_json::json!({})) {
+    let spawn_data = existing
+        .as_ref()
+        .and_then(|qr| serde_json::to_value(qr).ok())
+        .unwrap_or_else(|| serde_json::json!({}));
+    if try_spawn_standalone(&ctx, "quick-run-editor", spawn_data) {
         return;
     }
     let dialog = adw::Dialog::new();
@@ -3805,8 +3858,13 @@ pub fn quick_run_editor(
     remote.set_title(&ctx.t_or("flow.quickRun.editor.remote", "Remote"));
     let src = adw::EntryRow::new();
     src.set_title(&ctx.t_or("fileBrowser.operations.details.source", "Source"));
-    attach_path_picker(&ctx, &src, crate::picker::FilePickerConfig::folders());
     let extra_sources: Rc<RefCell<Vec<adw::EntryRow>>> = Rc::new(RefCell::new(Vec::new()));
+    let extra_filenames: Rc<RefCell<Vec<adw::EntryRow>>> = Rc::new(RefCell::new(Vec::new()));
+    let url_filename = adw::EntryRow::new();
+    url_filename.set_title(&ctx.t_or(
+        "wizards.appOperation.copyUrlFilename",
+        "Filename (optional)",
+    ));
     let dst = adw::EntryRow::new();
     dst.set_title(&ctx.t_or(
         "fileBrowser.operations.details.destination",
@@ -3872,19 +3930,52 @@ pub fn quick_run_editor(
         description.set_text(&qr.description);
         remote.set_text(&qr.remote_name);
         let (s, d) = qr.paths();
-        let sources = crate::jobs::path_list(&qr.config.rclone, crate::jobs::SOURCE_KEYS);
+        let copyurl = qr.operation_type == OperationType::Copyurl;
+        let sources = if copyurl {
+            path_list(&qr.config.rclone, &["url", "srcFs", "source"])
+        } else {
+            path_list(&qr.config.rclone, SOURCE_KEYS)
+        };
         if let Some(first) = sources.first() {
             src.set_text(first);
         } else if let Some(s) = s {
             src.set_text(&s);
         }
         dst.set_text(&d.unwrap_or_default());
+        let saved_filenames: Vec<String> = qr
+            .config
+            .rclone
+            .get("filenames")
+            .and_then(|v| v.as_array())
+            .map(|arr| {
+                arr.iter()
+                    .map(|v| v.as_str().unwrap_or("").to_string())
+                    .collect()
+            })
+            .unwrap_or_default();
+        if let Some(first) = saved_filenames.first() {
+            url_filename.set_text(first);
+        }
         for extra in sources.iter().skip(1) {
             let row = adw::EntryRow::new();
             row.set_title(&ctx.t_or("wizards.appOperation.addSource", "Additional source"));
-            attach_path_picker(&ctx, &row, crate::picker::FilePickerConfig::folders());
+            if !copyurl {
+                attach_path_picker(&ctx, &row, crate::picker::FilePickerConfig::folders());
+            }
             row.set_text(extra);
             extra_sources.borrow_mut().push(row);
+        }
+        if copyurl {
+            for name in saved_filenames.iter().skip(1) {
+                extra_filenames
+                    .borrow_mut()
+                    .push(quick_run_filename_row(&ctx, name));
+            }
+            while extra_filenames.borrow().len() < extra_sources.borrow().len() {
+                extra_filenames
+                    .borrow_mut()
+                    .push(quick_run_filename_row(&ctx, ""));
+            }
         }
         cron.set_text(&qr.config.app.cron_expression);
         auto.set_active(qr.config.app.auto_start);
@@ -3915,6 +4006,18 @@ pub fn quick_run_editor(
         .as_ref()
         .map(|qr| qr.operation_type)
         .unwrap_or(OperationType::Sync);
+    if initial_op != OperationType::Copyurl {
+        attach_path_picker(&ctx, &src, crate::picker::FilePickerConfig::folders());
+    }
+    apply_quick_run_path_titles(&ctx, initial_op, &src, &dst);
+    url_filename.set_visible(initial_op == OperationType::Copyurl);
+    let src_kind = attach_path_kind(&ctx, &src, &remote.text());
+    let dst_kind = attach_path_kind(&ctx, &dst, &remote.text());
+    src_kind.set_visible(initial_op != OperationType::Copyurl);
+    dst_kind.set_visible(!matches!(
+        initial_op,
+        OperationType::Mount | OperationType::Serve | OperationType::Delete
+    ));
     let current_op = {
         let op_row = op_row.clone();
         Rc::new(move || {
@@ -3924,29 +4027,51 @@ pub fn quick_run_editor(
                 .unwrap_or(OperationType::Sync)
         }) as Rc<dyn Fn() -> OperationType>
     };
-    let (guidance, refresh_guidance) =
-        attach_operation_guidance(&ctx, false, &watch, &src, &extra_sources, &dst, current_op);
+    let (guidance, refresh_guidance) = attach_operation_guidance(
+        &ctx,
+        false,
+        &watch,
+        &src,
+        &extra_sources,
+        &dst,
+        current_op.clone(),
+    );
     group.add(&op_row);
+    group.add(&src_kind);
     group.add(&src);
-    for row in extra_sources.borrow().iter() {
+    group.add(&url_filename);
+    for (idx, row) in extra_sources.borrow().iter().enumerate() {
         group.add(row);
+        if let Some(name) = extra_filenames.borrow().get(idx) {
+            group.add(name);
+        }
     }
     let add_src = gtk::Button::with_label(&ctx.t_or("remoteConfig.addSource", "Add source"));
     {
         let extra_sources = extra_sources.clone();
+        let extra_filenames = extra_filenames.clone();
         let group = group.clone();
         let ctx = ctx.clone();
         let refresh_guidance = refresh_guidance.clone();
+        let current_op = current_op.clone();
         add_src.connect_clicked(move |_| {
+            let op = current_op();
             let row = adw::EntryRow::new();
             row.set_title(&ctx.t_or("wizards.appOperation.addSource", "Additional source"));
-            attach_path_picker(&ctx, &row, crate::picker::FilePickerConfig::folders());
+            if op != OperationType::Copyurl {
+                attach_path_picker(&ctx, &row, crate::picker::FilePickerConfig::folders());
+            }
             {
                 let refresh_guidance = refresh_guidance.clone();
                 row.connect_changed(move |_| refresh_guidance());
             }
             group.add(&row);
             extra_sources.borrow_mut().push(row);
+            if op == OperationType::Copyurl {
+                let name = quick_run_filename_row(&ctx, "");
+                group.add(&name);
+                extra_filenames.borrow_mut().push(name);
+            }
             refresh_guidance();
         });
     }
@@ -3955,6 +4080,7 @@ pub fn quick_run_editor(
     add_src_row.add_suffix(&add_src);
     add_src_row.set_visible(initial_op.supports_multi_source());
     group.add(&add_src_row);
+    group.add(&dst_kind);
     group.add(&dst);
     group.add(&cron);
     let cron_preset_row = adw::ActionRow::new();
@@ -4059,6 +4185,15 @@ pub fn quick_run_editor(
         let blocks = live_blocks.clone();
         let add_src_row = add_src_row.clone();
         let refresh_guidance = refresh_guidance.clone();
+        let src = src.clone();
+        let dst = dst.clone();
+        let url_filename = url_filename.clone();
+        let extra_filenames = extra_filenames.clone();
+        let extra_sources = extra_sources.clone();
+        let src_kind = src_kind.clone();
+        let dst_kind = dst_kind.clone();
+        let ctx_titles = ctx.clone();
+        let group = group.clone();
         op_row.connect_selected_notify(move |row| {
             let op = OperationType::ALL
                 .get(row.selected() as usize)
@@ -4068,6 +4203,23 @@ pub fn quick_run_editor(
             mount_type.set_visible(op == OperationType::Mount);
             resync.set_visible(op == OperationType::Bisync);
             add_src_row.set_visible(op.supports_multi_source());
+            apply_quick_run_path_titles(&ctx_titles, op, &src, &dst);
+            url_filename.set_visible(op == OperationType::Copyurl);
+            src_kind.set_visible(op != OperationType::Copyurl);
+            dst_kind.set_visible(!matches!(
+                op,
+                OperationType::Mount | OperationType::Serve | OperationType::Delete
+            ));
+            if op == OperationType::Copyurl {
+                while extra_filenames.borrow().len() < extra_sources.borrow().len() {
+                    let name = quick_run_filename_row(&ctx_titles, "");
+                    group.add(&name);
+                    extra_filenames.borrow_mut().push(name);
+                }
+            }
+            for row in extra_filenames.borrow().iter() {
+                row.set_visible(op == OperationType::Copyurl);
+            }
             clear_flag_rows(&flags_group, &flag_rows);
             clear_serve_flag_rows(&flags_group, &serve_flag_rows);
             populate_flag_rows(&flags_group, &flag_rows, op, &rclone, &blocks);
@@ -4107,6 +4259,8 @@ pub fn quick_run_editor(
         let watch_delay = watch_delay.clone();
         let watch_changed = watch_changed.clone();
         let extra_sources = extra_sources.clone();
+        let extra_filenames = extra_filenames.clone();
+        let url_filename = url_filename.clone();
         save.connect_clicked(move |_| {
             let expr = cron.text().to_string();
             if !expr.is_empty() {
@@ -4157,71 +4311,86 @@ pub fn quick_run_editor(
                 }
             }
             sources.retain(|s| !s.is_empty());
-            let src_value = if sources.len() > 1 {
-                serde_json::json!(sources)
-            } else {
-                serde_json::json!(sources.first().cloned().unwrap_or_default())
-            };
-            let mut rclone = serde_json::json!({
-                "srcFs": src_value,
-                "dstFs": dst.text().to_string(),
-                "mountPoint": dst.text().to_string(),
-                "fs": src_value,
-            });
+            let remote_name = remote.text().to_string();
+            if op != OperationType::Copyurl {
+                sources = sources
+                    .into_iter()
+                    .map(|s| crate::path_kind::resolve_job_path(&s, &remote_name))
+                    .collect();
+            }
+            let mut flags = serde_json::Map::new();
             if dry.is_active() {
-                rclone["dryRun"] = serde_json::json!(true);
+                flags.insert("dryRun".into(), serde_json::json!(true));
             }
             if op == OperationType::Bisync && resync.is_active() {
-                rclone["Resync"] = serde_json::json!(true);
+                flags.insert("Resync".into(), serde_json::json!(true));
             }
             if op == OperationType::Serve {
-                rclone["type"] = serde_json::json!(crate::operations::selected_or(
-                    &serve_types,
-                    serve.selected(),
-                    "http"
-                ));
+                flags.insert(
+                    "type".into(),
+                    serde_json::json!(crate::operations::selected_or(
+                        &serve_types,
+                        serve.selected(),
+                        "http"
+                    )),
+                );
             }
             if op == OperationType::Mount {
-                rclone["mountType"] = serde_json::json!(crate::operations::selected_or(
-                    &mount_types,
-                    mount_type.selected(),
-                    "mount"
-                ));
+                flags.insert(
+                    "mountType".into(),
+                    serde_json::json!(crate::operations::selected_or(
+                        &mount_types,
+                        mount_type.selected(),
+                        "mount"
+                    )),
+                );
             }
-            if let Some(obj) = rclone.as_object_mut() {
-                let inline = runtime_json.text().to_string();
-                if !inline.trim().is_empty() {
-                    if let Ok(value) = serde_json::from_str::<serde_json::Value>(inline.trim()) {
-                        obj.insert("runtimeRemote".into(), value);
-                    }
-                }
-                for (field, row, type_name) in flag_rows.borrow().iter() {
-                    let text = row.text().to_string();
-                    if text.is_empty() {
-                        continue;
-                    }
-                    obj.insert(
-                        field.clone(),
-                        crate::flags::parse_flag_value(type_name, &text),
-                    );
-                }
-                let selected_serve =
-                    crate::operations::selected_or(&serve_types, serve.selected(), "http");
-                for (serve_type, field, row, type_name) in serve_flag_rows.borrow().iter() {
-                    if serve_type != selected_serve {
-                        continue;
-                    }
-                    let text = row.text().to_string();
-                    if text.is_empty() {
-                        continue;
-                    }
-                    obj.insert(
-                        field.clone(),
-                        crate::flags::parse_flag_value(type_name, &text),
-                    );
+            let inline = runtime_json.text().to_string();
+            if !inline.trim().is_empty() {
+                if let Ok(value) = serde_json::from_str::<serde_json::Value>(inline.trim()) {
+                    flags.insert("runtimeRemote".into(), value);
                 }
             }
-            qr.config.rclone = rclone;
+            for (field, row, type_name) in flag_rows.borrow().iter() {
+                let text = row.text().to_string();
+                if text.is_empty() {
+                    continue;
+                }
+                flags.insert(
+                    field.clone(),
+                    crate::flags::parse_flag_value(type_name, &text),
+                );
+            }
+            let selected_serve =
+                crate::operations::selected_or(&serve_types, serve.selected(), "http");
+            for (serve_type, field, row, type_name) in serve_flag_rows.borrow().iter() {
+                if serve_type != selected_serve {
+                    continue;
+                }
+                let text = row.text().to_string();
+                if text.is_empty() {
+                    continue;
+                }
+                flags.insert(
+                    field.clone(),
+                    crate::flags::parse_flag_value(type_name, &text),
+                );
+            }
+            if op == OperationType::Copyurl {
+                let mut names = vec![url_filename.text().to_string()];
+                for row in extra_filenames.borrow().iter() {
+                    names.push(row.text().to_string());
+                }
+                if names.iter().any(|s| !s.is_empty()) {
+                    flags.insert("filenames".into(), serde_json::json!(names));
+                }
+            }
+            let dest = if matches!(op, OperationType::Serve | OperationType::Delete) {
+                dst.text().to_string()
+            } else {
+                crate::path_kind::resolve_job_path(&dst.text(), &remote_name)
+            };
+            qr.config.rclone = assemble_rclone(op, &sources, &dest, flags);
             {
                 let mut store = ctx.store.borrow_mut();
                 if let Some(idx) = store.quick_runs.iter().position(|q| q.id == qr.id) {
@@ -4478,6 +4647,13 @@ pub fn restore_preview(
     path: std::path::PathBuf,
     on_done: Rc<dyn Fn()>,
 ) {
+    if try_spawn_standalone(
+        &ctx,
+        "restore-preview",
+        serde_json::json!({ "path": path.to_string_lossy() }),
+    ) {
+        return;
+    }
     let analysis = backup::analyze_backup(&path).ok();
     let dialog = adw::Dialog::new();
     dialog.set_title(&ctx.t_or("backup.restore.title", "Restore Backup"));
@@ -5592,7 +5768,7 @@ fn append_open_job_paths(
         let path = path.clone();
         btn.connect_clicked(move |_| {
             if let Some((remote, folder)) = browse_target(&path) {
-                ctx.request_browse(&remote, &folder);
+                super::window::present_files_at(&dialog, &ctx, &remote, &folder);
                 dialog.close();
             }
         });
@@ -8201,6 +8377,40 @@ pub(crate) fn helper_selected(row: &adw::ComboRow, names: &[String]) -> String {
         .cloned()
         .filter(|s| s != "—")
         .unwrap_or_default()
+}
+
+fn quick_run_filename_row(ctx: &AppCtx, value: &str) -> adw::EntryRow {
+    let row = adw::EntryRow::new();
+    row.set_title(&ctx.t_or(
+        "wizards.appOperation.copyUrlFilename",
+        "Filename (optional)",
+    ));
+    row.set_text(value);
+    row
+}
+
+fn apply_quick_run_path_titles(
+    ctx: &AppCtx,
+    op: OperationType,
+    src: &adw::EntryRow,
+    dst: &adw::EntryRow,
+) {
+    src.set_title(&if op == OperationType::Copyurl {
+        ctx.t_or("remoteConfig.url", "URL")
+    } else {
+        ctx.t_or("fileBrowser.operations.details.source", "Source")
+    });
+    dst.set_title(&match op {
+        OperationType::Mount => ctx.t_or("remoteConfig.mountPoint", "Mount point"),
+        OperationType::Serve => ctx.t_or("remoteConfig.listenAddress", "Listen address"),
+        OperationType::Copyurl => ctx.t_or("remoteConfig.destinationFs", "Destination fs"),
+        OperationType::Delete => ctx.t_or("remoteConfig.unusedDestination", "Unused destination"),
+        _ => ctx.t_or(
+            "fileBrowser.operations.details.destination",
+            "Destination / mount point",
+        ),
+    });
+    dst.set_visible(op != OperationType::Delete);
 }
 
 pub(crate) fn attach_path_kind(

@@ -225,6 +225,145 @@ pub fn start_grouped_transfers(
     Ok((group, ids))
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DeleteItem {
+    pub fs: String,
+    pub path: String,
+    pub is_dir: bool,
+}
+
+impl DeleteItem {
+    pub fn endpoint(&self) -> &'static str {
+        if self.is_dir {
+            "operations/purge"
+        } else {
+            "operations/deletefile"
+        }
+    }
+
+    pub fn file_op(&self, trash: Option<String>) -> FileOp {
+        FileOp::Delete {
+            fs: self.fs.clone(),
+            path: self.path.clone(),
+            trash,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RenameItem {
+    pub fs: String,
+    pub from: String,
+    pub to: String,
+    pub is_dir: bool,
+}
+
+impl RenameItem {
+    pub fn endpoint(&self) -> &'static str {
+        if self.is_dir {
+            "sync/move"
+        } else {
+            "operations/movefile"
+        }
+    }
+
+    pub fn file_op(&self) -> FileOp {
+        FileOp::Rename {
+            fs: self.fs.clone(),
+            from: self.from.clone(),
+            to: self.to.clone(),
+        }
+    }
+}
+
+pub fn join_fs_path(fs: &str, path: &str) -> String {
+    let path = path.trim_start_matches('/');
+    if fs == "/" || fs.is_empty() {
+        if path.is_empty() {
+            "/".into()
+        } else {
+            format!("/{path}")
+        }
+    } else if path.is_empty() {
+        fs.to_string()
+    } else if fs.ends_with(':') {
+        format!("{fs}{path}")
+    } else if fs.ends_with('/') {
+        format!("{fs}{path}")
+    } else {
+        format!("{fs}/{path}")
+    }
+}
+
+pub fn delete_payload(item: &DeleteItem, group: &str) -> Value {
+    json!({
+        "fs": item.fs,
+        "remote": item.path,
+        "_async": true,
+        "_group": group,
+    })
+}
+
+pub fn rename_payload(item: &RenameItem, group: &str) -> Value {
+    if item.is_dir {
+        json!({
+            "srcFs": join_fs_path(&item.fs, &item.from),
+            "dstFs": join_fs_path(&item.fs, &item.to),
+            "createEmptySrcDirs": true,
+            "deleteEmptySrcDirs": true,
+            "_async": true,
+            "_group": group,
+        })
+    } else {
+        json!({
+            "srcFs": item.fs,
+            "srcRemote": item.from,
+            "dstFs": item.fs,
+            "dstRemote": item.to,
+            "_async": true,
+            "_group": group,
+        })
+    }
+}
+
+pub fn start_grouped_deletes(
+    client: &RcClient,
+    items: &[DeleteItem],
+    origin: &str,
+) -> Result<(String, Vec<u64>), String> {
+    if items.is_empty() {
+        return Err("nothing to delete".into());
+    }
+    let group = transfer_group_id(origin);
+    let mut ids = Vec::new();
+    for item in items {
+        let id = client
+            .start_job(item.endpoint(), delete_payload(item, &group))
+            .map_err(|e| e.to_string())?;
+        ids.push(id);
+    }
+    Ok((group, ids))
+}
+
+pub fn start_grouped_renames(
+    client: &RcClient,
+    items: &[RenameItem],
+    origin: &str,
+) -> Result<(String, Vec<u64>), String> {
+    if items.is_empty() {
+        return Err("nothing to rename".into());
+    }
+    let group = transfer_group_id(origin);
+    let mut ids = Vec::new();
+    for item in items {
+        let id = client
+            .start_job(item.endpoint(), rename_payload(item, &group))
+            .map_err(|e| e.to_string())?;
+        ids.push(id);
+    }
+    Ok((group, ids))
+}
+
 pub fn trash_dir() -> std::path::PathBuf {
     crate::settings::AppSettings::cache_dir().join("trash")
 }
@@ -411,5 +550,51 @@ mod tests {
         assert!(!is_local_open_target("drive"));
         assert!(!is_local_open_target("drive:"));
         assert_eq!(ENGINE_OFFLINE, "Rclone engine is offline");
+    }
+
+    #[test]
+    fn delete_and_rename_payloads_match_tauri_batch() {
+        let file = DeleteItem {
+            fs: "drive:".into(),
+            path: "Photos/a.jpg".into(),
+            is_dir: false,
+        };
+        let dir = DeleteItem {
+            fs: "/".into(),
+            path: "tmp/folder".into(),
+            is_dir: true,
+        };
+        assert_eq!(file.endpoint(), "operations/deletefile");
+        assert_eq!(dir.endpoint(), "operations/purge");
+        let payload = delete_payload(&file, "filemanager/del");
+        assert_eq!(payload["remote"], "Photos/a.jpg");
+        assert_eq!(payload["_group"], "filemanager/del");
+        assert_eq!(payload["_async"], true);
+
+        let file_rn = RenameItem {
+            fs: "drive:".into(),
+            from: "old.txt".into(),
+            to: "new.txt".into(),
+            is_dir: false,
+        };
+        let dir_rn = RenameItem {
+            fs: "drive:".into(),
+            from: "Photos".into(),
+            to: "Pictures".into(),
+            is_dir: true,
+        };
+        assert_eq!(file_rn.endpoint(), "operations/movefile");
+        assert_eq!(dir_rn.endpoint(), "sync/move");
+        let file_payload = rename_payload(&file_rn, "filemanager/rn");
+        assert_eq!(file_payload["srcRemote"], "old.txt");
+        assert_eq!(file_payload["dstRemote"], "new.txt");
+        let dir_payload = rename_payload(&dir_rn, "filemanager/rn");
+        assert_eq!(dir_payload["srcFs"], "drive:Photos");
+        assert_eq!(dir_payload["dstFs"], "drive:Pictures");
+        assert_eq!(dir_payload["createEmptySrcDirs"], true);
+        assert_eq!(join_fs_path("/", "home/me"), "/home/me");
+        assert_eq!(join_fs_path("alias:", "docs/a"), "alias:docs/a");
+        assert!(matches!(file.file_op(None), FileOp::Delete { .. }));
+        assert!(matches!(file_rn.file_op(), FileOp::Rename { .. }));
     }
 }

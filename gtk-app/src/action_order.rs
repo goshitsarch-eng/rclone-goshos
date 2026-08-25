@@ -13,6 +13,39 @@ pub fn catalog_ids() -> Vec<&'static str> {
     OperationType::ALL.iter().map(|op| op.as_str()).collect()
 }
 
+/// Sync/copy/move/bisync plus check/delete/copyurl/archive/cryptcheck.
+pub fn sync_catalog_ids() -> Vec<&'static str> {
+    OperationType::PRIMARY_SYNC
+        .iter()
+        .chain(OperationType::MORE_SYNC.iter())
+        .map(|op| op.as_str())
+        .collect()
+}
+
+pub fn can_show_more(items: &[OrderItem], max_visible: Option<usize>) -> bool {
+    match max_visible {
+        Some(max) => items.iter().filter(|item| item.visible).count() < max,
+        None => true,
+    }
+}
+
+/// Hide overflow items so at most `max_visible` stay starred, preserving order.
+pub fn cap_visible(items: &mut [OrderItem], max_visible: Option<usize>) {
+    let Some(max) = max_visible else {
+        return;
+    };
+    let mut seen = 0usize;
+    for item in items.iter_mut() {
+        if !item.visible {
+            continue;
+        }
+        seen += 1;
+        if seen > max {
+            item.visible = false;
+        }
+    }
+}
+
 /// Build an editor list: current visible ids first (preserving order), then
 /// the remaining catalog entries hidden. An empty `current` means “show all
 /// in catalog order”, matching `RemoteMeta::visible_operations`.
@@ -124,5 +157,30 @@ mod tests {
     fn catalog_covers_all_operations() {
         assert_eq!(catalog_ids().len(), OperationType::ALL.len());
         assert!(catalog_ids().contains(&"serve"));
+    }
+
+    #[test]
+    fn sync_catalog_omits_mount_and_serve() {
+        let ids = sync_catalog_ids();
+        assert!(!ids.contains(&"mount"));
+        assert!(!ids.contains(&"serve"));
+        assert!(ids.contains(&"sync"));
+        assert!(ids.contains(&"cryptcheck"));
+        assert_eq!(ids.len(), 9);
+    }
+
+    #[test]
+    fn caps_visible_to_max_and_blocks_more() {
+        let mut items = build_items(
+            &["sync".into(), "copy".into(), "move".into(), "bisync".into()],
+            &["sync", "copy", "move", "bisync"],
+        );
+        assert!(!can_show_more(&items, Some(3)));
+        assert!(can_show_more(&items, None));
+        cap_visible(&mut items, Some(3));
+        assert_eq!(visible_ids(&items), vec!["sync", "copy", "move"]);
+        assert!(can_show_more(&items, Some(4)));
+        cap_visible(&mut items, None);
+        assert_eq!(visible_ids(&items), vec!["sync", "copy", "move"]);
     }
 }

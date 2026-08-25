@@ -2442,7 +2442,8 @@ impl Dashboard {
     fn append_sync_op_picker(&self, name: &str) {
         let selected = self.selected_sync_op(name);
         let row = gtk::Box::new(gtk::Orientation::Horizontal, 6);
-        row.add_css_class("linked");
+        let toggles = gtk::Box::new(gtk::Orientation::Horizontal, 6);
+        toggles.add_css_class("linked");
         for op in OperationType::PRIMARY_SYNC {
             let btn = gtk::ToggleButton::with_label(op.api_label());
             btn.set_active(op == selected);
@@ -2459,8 +2460,55 @@ impl Dashboard {
                 ctx.persist();
                 dash.refresh();
             });
-            row.append(&btn);
+            toggles.append(&btn);
         }
+        let gear = gtk::Button::from_icon_name("emblem-system-symbolic");
+        gear.set_tooltip_text(Some(&self.ctx.t_or(
+            "dashboard.appDetail.configureActions",
+            "Configure sync actions",
+        )));
+        {
+            let ctx = self.ctx.clone();
+            let remote = name.to_string();
+            let dash = self.clone();
+            gear.connect_clicked(move |_| {
+                let current = ctx
+                    .store
+                    .borrow()
+                    .remotes
+                    .get(&remote)
+                    .map(|meta| meta.sync_actions.clone())
+                    .unwrap_or_default();
+                let catalog = crate::action_order::sync_catalog_ids();
+                if let Some(win) = dash.root.root().and_downcast::<gtk::Window>() {
+                    dialogs::action_order(
+                        &win,
+                        &ctx,
+                        &ctx.t_or("remoteConfig.syncActions", "Sync actions"),
+                        &catalog,
+                        &current,
+                        Some(3),
+                        {
+                            let ctx = ctx.clone();
+                            let remote = remote.clone();
+                            let dash = dash.clone();
+                            move |ids| {
+                                ctx.store
+                                    .borrow_mut()
+                                    .remotes
+                                    .entry(remote.clone())
+                                    .or_default()
+                                    .sync_actions = ids;
+                                ctx.persist();
+                                dash.refresh();
+                            }
+                        },
+                    );
+                }
+            });
+        }
+        row.append(&toggles);
+        row.append(&gear);
         self.detail.append(&row);
     }
 
@@ -2586,6 +2634,7 @@ impl Dashboard {
                         ),
                         &catalog,
                         &current,
+                        Some(3),
                         {
                             let ctx = ctx.clone();
                             let remote = remote.clone();

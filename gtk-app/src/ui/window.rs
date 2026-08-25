@@ -1205,11 +1205,28 @@ fn present_standalone_workspace(app: &adw::Application, ctx: &AppCtx, target: &N
     }
 }
 
-fn present_files_window(app: &adw::Application, ctx: &AppCtx, remote: &str, path: &str) {
+pub fn present_files_at(parent: &impl IsA<gtk::Widget>, ctx: &AppCtx, remote: &str, path: &str) {
+    let Some(win) = parent.root().and_downcast::<gtk::Window>() else {
+        return;
+    };
+    let Some(app) = win.application() else {
+        return;
+    };
     let toast = adw::ToastOverlay::new();
     let files = NautilusView::new(ctx.clone(), toast.clone());
     toast.set_child(Some(&files.root));
-    let target = if remote == "local" {
+    let target = files_target(remote, path);
+    files.navigate_to(&target);
+    let detached = adw::ApplicationWindow::new(&app);
+    detached.set_title(Some(&ctx.t_or("nautilus.titles.files", "Files")));
+    detached.set_default_width(960);
+    detached.set_default_height(640);
+    detached.set_content(Some(&toast));
+    detached.present();
+}
+
+fn files_target(remote: &str, path: &str) -> String {
+    if remote == "local" {
         if path.is_empty() {
             "/".into()
         } else {
@@ -1219,8 +1236,14 @@ fn present_files_window(app: &adw::Application, ctx: &AppCtx, remote: &str, path
         format!("{remote}:")
     } else {
         format!("{remote}:{path}")
-    };
-    files.navigate_to(&target);
+    }
+}
+
+fn present_files_window(app: &adw::Application, ctx: &AppCtx, remote: &str, path: &str) {
+    let toast = adw::ToastOverlay::new();
+    let files = NautilusView::new(ctx.clone(), toast.clone());
+    toast.set_child(Some(&files.root));
+    files.navigate_to(&files_target(remote, path));
     let window = present_plain_window(
         app,
         &ctx.t_or("nautilus.titles.files", "Files"),

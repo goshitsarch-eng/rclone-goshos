@@ -396,7 +396,13 @@ This client is the GTK 4 + libadwaita rewrite of the Angular/Tauri desktop UI. I
 - Copyurl profiles persist multiple URLs plus optional per-URL filenames
 - Multi-source profile starts are grouped (`parent_job_id`) like file-manager uploads
 - Bisync static flags include recover/resilient/workdir/backup dirs; copyurl `autoFilename` and delete `rmdirs`
-- Standalone dialogs cover Quick Add, Quick Run, properties, About remote, export, templates, delete, shortcuts, and archive create
+- Standalone dialogs cover Quick Add, Quick Run, properties, About remote, export, templates, delete, shortcuts, archive create, and restore-preview
+- Quick Run editor persists copyurl URL + filename rows via `assemble_rclone`, and standalone edit forwards the existing Quick Run
+- Flow Duplicate opens the Quick Run editor with a clone instead of saving immediately
+- Files delete/rename start tracked rclone jobs (`deletefile`/`purge`/`movefile`/`sync/move`) with local undo stash
+- Action-order editor caps starred actions at 3 and shows i18n operation labels
+- Operations tab gear edits `sync_actions` (same star-mode catalog as Angular)
+- Job detail Open source/destination opens a new Files window
 
 ## Still deepening toward pixel-level Angular parity
 
