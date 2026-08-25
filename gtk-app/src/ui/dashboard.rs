@@ -427,7 +427,6 @@ impl Dashboard {
         editing: bool,
     ) {
         let detailed = self.ctx.settings.borrow().runtime.dashboard_card_variant == "detailed";
-        let detailed = self.ctx.settings.borrow().runtime.dashboard_card_variant == "detailed";
         let list = gtk::ListBox::new();
         list.add_css_class("boxed-list");
         for remote in remotes {
