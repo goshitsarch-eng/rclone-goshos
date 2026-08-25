@@ -49,10 +49,10 @@ pub fn preferences(parent: &impl IsA<gtk::Widget>, ctx: AppCtx) {
     dialog.set_search_enabled(true);
 
     let general = adw::PreferencesPage::new();
-    general.set_title("General");
+    general.set_title(&ctx.t_or("modals.preferences.tabs.general", "General"));
     general.set_icon_name(Some("preferences-system-symbolic"));
     let g1 = adw::PreferencesGroup::new();
-    g1.set_title("Appearance & language");
+    g1.set_title(&ctx.t_or("settings.general.language.label", "Appearance & language"));
 
     let langs = crate::i18n::SUPPORTED_LANGUAGES;
     let lang_labels = [
@@ -96,7 +96,7 @@ pub fn preferences(parent: &impl IsA<gtk::Widget>, ctx: AppCtx) {
     let views = ["main_menu", "nautilus", "flow"];
     let view_model = gtk::StringList::new(&views);
     let view = adw::ComboRow::new();
-    view.set_title("Default view");
+    view.set_title(&ctx.t_or("settings.general.default_view.label", "Default view"));
     view.set_model(Some(&view_model));
     if let Some(idx) = views
         .iter()
@@ -116,7 +116,7 @@ pub fn preferences(parent: &impl IsA<gtk::Widget>, ctx: AppCtx) {
     g1.add(&view);
 
     g1.add(&switch_row(
-        "Enable tray",
+        &ctx.t_or("settings.general.tray_enabled.label", "Enable tray"),
         ctx.settings.borrow().general.tray_enabled,
         {
             let ctx = ctx.clone();
@@ -124,7 +124,10 @@ pub fn preferences(parent: &impl IsA<gtk::Widget>, ctx: AppCtx) {
         },
     ));
     g1.add(&switch_row(
-        "Start on startup",
+        &ctx.t_or(
+            "settings.general.start_on_startup.label",
+            "Start on startup",
+        ),
         ctx.settings.borrow().general.start_on_startup,
         {
             let ctx = ctx.clone();
@@ -135,7 +138,7 @@ pub fn preferences(parent: &impl IsA<gtk::Widget>, ctx: AppCtx) {
         },
     ));
     g1.add(&switch_row(
-        "Notifications",
+        &ctx.t_or("settings.general.notifications.label", "Notifications"),
         ctx.settings.borrow().general.notifications,
         {
             let ctx = ctx.clone();
@@ -143,7 +146,10 @@ pub fn preferences(parent: &impl IsA<gtk::Widget>, ctx: AppCtx) {
         },
     ));
     g1.add(&switch_row(
-        "Restrict sensitive values",
+        &ctx.t_or(
+            "settings.general.restrict.label",
+            "Restrict sensitive values",
+        ),
         ctx.settings.borrow().general.restrict,
         {
             let ctx = ctx.clone();
@@ -151,7 +157,10 @@ pub fn preferences(parent: &impl IsA<gtk::Widget>, ctx: AppCtx) {
         },
     ));
     g1.add(&switch_row(
-        "Prevent sleep during jobs",
+        &ctx.t_or(
+            "settings.general.prevent_sleep.label",
+            "Prevent sleep during jobs",
+        ),
         ctx.settings.borrow().general.prevent_sleep,
         {
             let ctx = ctx.clone();
@@ -159,7 +168,10 @@ pub fn preferences(parent: &impl IsA<gtk::Widget>, ctx: AppCtx) {
         },
     ));
     g1.add(&switch_row(
-        "Standalone dialog windows",
+        &ctx.t_or(
+            "settings.general.standalone_dialogs.label",
+            "Standalone dialog windows",
+        ),
         ctx.settings.borrow().general.standalone_dialogs,
         {
             let ctx = ctx.clone();
@@ -168,7 +180,10 @@ pub fn preferences(parent: &impl IsA<gtk::Widget>, ctx: AppCtx) {
     ));
     let cards = ["compact", "detailed"];
     let card_row = adw::ComboRow::new();
-    card_row.set_title("Dashboard cards");
+    card_row.set_title(&ctx.t_or(
+        "settings.runtime.dashboard_card_variant.label",
+        "Dashboard cards",
+    ));
     card_row.set_model(Some(&gtk::StringList::new(&cards)));
     if let Some(idx) = cards
         .iter()
@@ -188,7 +203,7 @@ pub fn preferences(parent: &impl IsA<gtk::Widget>, ctx: AppCtx) {
     g1.add(&card_row);
     let themes = ["system", "light", "dark"];
     let theme_row = adw::ComboRow::new();
-    theme_row.set_title("Theme");
+    theme_row.set_title(&ctx.t_or("titlebar.menu.theme", "Theme"));
     theme_row.set_model(Some(&gtk::StringList::new(&themes)));
     if let Some(idx) = themes
         .iter()
@@ -235,8 +250,8 @@ pub fn preferences(parent: &impl IsA<gtk::Widget>, ctx: AppCtx) {
     g1.add(&tray_theme);
     let sorts = ["name", "size", "modified"];
     let sort_row = adw::ComboRow::new();
-    sort_row.set_title("Files sort");
-    sort_row.set_subtitle("Default Nautilus listing sort");
+    sort_row.set_title(&ctx.t_or("nautilus.sort.label", "Files sort"));
+    sort_row.set_subtitle(&ctx.t_or("nautilus.sort.defaultHint", "Default Nautilus listing sort"));
     sort_row.set_model(Some(&gtk::StringList::new(&sorts)));
     if let Some(idx) = sorts
         .iter()
@@ -255,7 +270,7 @@ pub fn preferences(parent: &impl IsA<gtk::Widget>, ctx: AppCtx) {
     }
     g1.add(&sort_row);
     g1.add(&switch_row(
-        "Sort files descending",
+        &ctx.t_or("nautilus.sort.descending", "Sort files descending"),
         ctx.settings.borrow().nautilus.sort_desc,
         {
             let ctx = ctx.clone();
@@ -264,7 +279,10 @@ pub fn preferences(parent: &impl IsA<gtk::Widget>, ctx: AppCtx) {
     ));
     let channels = ["stable", "beta"];
     let app_ch = adw::ComboRow::new();
-    app_ch.set_title("App update channel");
+    app_ch.set_title(&ctx.t_or(
+        "settings.runtime.app_update_channel.label",
+        "App update channel",
+    ));
     app_ch.set_model(Some(&gtk::StringList::new(&channels)));
     if let Some(idx) = channels
         .iter()
@@ -283,7 +301,10 @@ pub fn preferences(parent: &impl IsA<gtk::Widget>, ctx: AppCtx) {
     }
     g1.add(&app_ch);
     let rclone_ch = adw::ComboRow::new();
-    rclone_ch.set_title("rclone update channel");
+    rclone_ch.set_title(&ctx.t_or(
+        "settings.runtime.rclone_update_channel.label",
+        "rclone update channel",
+    ));
     rclone_ch.set_model(Some(&gtk::StringList::new(&channels)));
     if let Some(idx) = channels
         .iter()
@@ -324,7 +345,10 @@ pub fn preferences(parent: &impl IsA<gtk::Widget>, ctx: AppCtx) {
         },
     ));
     g1.add(&switch_row(
-        "JSON mode for flag editors",
+        &ctx.t_or(
+            "settings.runtime.show_json_mode.label",
+            "JSON mode for flag editors",
+        ),
         ctx.settings.borrow().runtime.show_json_mode,
         {
             let ctx = ctx.clone();
@@ -334,10 +358,86 @@ pub fn preferences(parent: &impl IsA<gtk::Widget>, ctx: AppCtx) {
             }
         },
     ));
+    let reset =
+        gtk::Button::with_label(&ctx.t_or("modals.preferences.resetAll", "Reset all settings"));
+    reset.add_css_class("destructive-action");
+    {
+        let ctx = ctx.clone();
+        let parent = parent.clone();
+        reset.connect_clicked(move |_| {
+            let alert = adw::AlertDialog::new(
+                Some(&ctx.t_or("settings.resetAll.title", "Reset Settings")),
+                Some(&ctx.t_or(
+                    "settings.resetAll.message",
+                    "Are you sure you want to reset all app settings? This cannot be undone.",
+                )),
+            );
+            alert.add_response("cancel", &ctx.t("common.cancel"));
+            alert.add_response("reset", &ctx.t_or("common.reset", "Reset"));
+            alert.set_response_appearance("reset", adw::ResponseAppearance::Destructive);
+            let ctx = ctx.clone();
+            alert.connect_response(None, move |_, response| {
+                if response != "reset" {
+                    return;
+                }
+                let mut next = crate::settings::AppSettings::default();
+                next.core.completed_onboarding = true;
+                let lang = next.general.language.clone();
+                *ctx.settings.borrow_mut() = next;
+                *ctx.i18n.borrow_mut() = crate::i18n::I18n::load(&lang);
+                ctx.persist();
+                ctx.apply_theme();
+            });
+            alert.present(Some(&parent));
+        });
+    }
+    g1.add(&{
+        let row = adw::ActionRow::new();
+        row.set_title(&ctx.t_or("modals.preferences.resetAll", "Reset all settings"));
+        row.add_suffix(&reset);
+        row
+    });
+    let skip_updates = gtk::Button::with_label(&ctx.t_or(
+        "modals.about.skipVersion",
+        "Skip pending updates",
+    ));
+    {
+        let ctx = ctx.clone();
+        skip_updates.connect_clicked(move |_| {
+            let pending = ctx.updates.borrow().clone();
+            let mut settings = ctx.settings.borrow_mut();
+            if let Some(app) = &pending.app {
+                if !settings.runtime.app_skipped_updates.contains(&app.latest) {
+                    settings.runtime.app_skipped_updates.push(app.latest.clone());
+                }
+            }
+            if let Some(rclone) = &pending.rclone {
+                if !settings
+                    .runtime
+                    .rclone_skipped_updates
+                    .contains(&rclone.latest)
+                {
+                    settings
+                        .runtime
+                        .rclone_skipped_updates
+                        .push(rclone.latest.clone());
+                }
+            }
+            drop(settings);
+            ctx.persist();
+            *ctx.updates.borrow_mut() = crate::updater::PendingUpdates::default();
+        });
+    }
+    g1.add(&{
+        let row = adw::ActionRow::new();
+        row.set_title(&ctx.t_or("modals.about.skipVersion", "Skip pending updates"));
+        row.add_suffix(&skip_updates);
+        row
+    });
     general.add(&g1);
 
     let core = adw::PreferencesPage::new();
-    core.set_title("Core");
+    core.set_title(&ctx.t_or("modals.preferences.tabs.core", "Core"));
     core.set_icon_name(Some("application-x-executable-symbolic"));
     let c1 = adw::PreferencesGroup::new();
     c1.set_title("Rclone");
@@ -733,6 +833,14 @@ pub fn about(parent: &impl IsA<gtk::Widget>, ctx: AppCtx) {
             "GTK 4 + libadwaita desktop client\nrclone {version}\n{app_update}\n{rclone_update}"
         ))
         .build();
+    if let Some(update) = ctx.updates.borrow().app.clone() {
+        if update.available {
+            dialog.add_link(
+                &ctx.t_or("modals.about.whatsNew", "What's New"),
+                &update.url,
+            );
+        }
+    }
     dialog.present(Some(parent));
 }
 
@@ -783,7 +891,7 @@ pub fn shortcuts(parent: &impl IsA<gtk::Widget>, ctx: &AppCtx) {
 
 pub fn logs(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, remote: Option<String>) {
     let dialog = adw::Dialog::new();
-    dialog.set_title("Logs");
+    dialog.set_title(&ctx.t_or("modals.logs.terminalOutput", "Logs"));
     dialog.set_content_width(720);
     dialog.set_content_height(480);
     let view = gtk::TextView::new();
@@ -810,26 +918,35 @@ pub fn logs(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, remote: Option<String>)
             lines.extend(chron);
         }
     }
+    let lines = Rc::new(RefCell::new(lines));
+    let level_filter = Rc::new(RefCell::new(String::new()));
     let search = gtk::Entry::new();
-    search.set_placeholder_text(Some("Filter logs"));
+    search.set_placeholder_text(Some(
+        &ctx.t_or("modals.logs.searchPlaceholder", "Search logs..."),
+    ));
+    let empty_text = ctx.t_or("modals.logs.noLogsFound", "No logs found");
     let apply = {
         let view = view.clone();
         let lines = lines.clone();
+        let level_filter = level_filter.clone();
+        let empty_text = empty_text.clone();
         move |query: &str| {
             let q = query.to_ascii_lowercase();
-            let text = if q.is_empty() {
-                if lines.is_empty() {
-                    "No logs yet.".into()
-                } else {
-                    lines.join("\n")
-                }
+            let level = level_filter.borrow().to_ascii_lowercase();
+            let filtered: Vec<String> = lines
+                .borrow()
+                .iter()
+                .filter(|line| {
+                    let lower = line.to_ascii_lowercase();
+                    (q.is_empty() || lower.contains(&q))
+                        && (level.is_empty() || lower.contains(&level))
+                })
+                .cloned()
+                .collect();
+            let text = if filtered.is_empty() {
+                empty_text.clone()
             } else {
-                lines
-                    .iter()
-                    .filter(|line| line.to_ascii_lowercase().contains(&q))
-                    .cloned()
-                    .collect::<Vec<_>>()
-                    .join("\n")
+                filtered.join("\n")
             };
             view.buffer().set_text(&text);
         }
@@ -839,15 +956,85 @@ pub fn logs(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, remote: Option<String>)
         let apply = apply.clone();
         search.connect_changed(move |entry| apply(&entry.text()));
     }
-    let clear = gtk::Button::with_label("Clear");
+    let levels = gtk::StringList::new(&["", "ERROR", "NOTICE", "INFO", "DEBUG"]);
+    let level = gtk::DropDown::new(Some(levels), gtk::Expression::NONE);
+    level.set_tooltip_text(Some(&ctx.t_or("modals.logs.logLevel", "Log Level")));
+    {
+        let apply = apply.clone();
+        let search = search.clone();
+        let level_filter = level_filter.clone();
+        level.connect_selected_notify(move |drop| {
+            let selected = ["", "ERROR", "NOTICE", "INFO", "DEBUG"]
+                .get(drop.selected() as usize)
+                .copied()
+                .unwrap_or_default();
+            *level_filter.borrow_mut() = selected.to_string();
+            apply(&search.text());
+        });
+    }
+    let clear = gtk::Button::from_icon_name("edit-clear-symbolic");
+    clear.set_tooltip_text(Some(&ctx.t_or("modals.logs.clearAll", "Clear")));
     {
         let ctx = ctx.clone();
         let key = key.clone();
-        let view = view.clone();
+        let lines = lines.clone();
+        let apply = apply.clone();
+        let search = search.clone();
         clear.connect_clicked(move |_| {
             ctx.store.borrow_mut().logs.remove(&key);
             ctx.persist();
-            view.buffer().set_text("No logs yet.");
+            lines.borrow_mut().clear();
+            apply(&search.text());
+        });
+    }
+    let refresh = gtk::Button::from_icon_name("view-refresh-symbolic");
+    refresh.set_tooltip_text(Some(&ctx.t("common.refresh")));
+    {
+        let ctx = ctx.clone();
+        let key = key.clone();
+        let lines = lines.clone();
+        let apply = apply.clone();
+        let search = search.clone();
+        refresh.connect_clicked(move |_| {
+            let mut next = ctx
+                .store
+                .borrow()
+                .logs
+                .get(&key)
+                .cloned()
+                .unwrap_or_default();
+            if let Ok(file) = std::fs::read_to_string(crate::settings::AppSettings::log_path()) {
+                let mut tail: Vec<String> = file
+                    .lines()
+                    .rev()
+                    .take(400)
+                    .map(|s| s.to_string())
+                    .collect();
+                tail.reverse();
+                next.extend(tail);
+            }
+            *lines.borrow_mut() = next;
+            apply(&search.text());
+        });
+    }
+    let scroll = gtk::ScrolledWindow::new();
+    scroll.set_vexpand(true);
+    scroll.set_child(Some(&view));
+    let top = gtk::Button::from_icon_name("go-top-symbolic");
+    top.set_tooltip_text(Some(&ctx.t_or("modals.logs.scrollTop", "Scroll Top")));
+    {
+        let scroll = scroll.clone();
+        top.connect_clicked(move |_| {
+            scroll.vadjustment().set_value(0.0);
+        });
+    }
+    let bottom = gtk::Button::from_icon_name("go-bottom-symbolic");
+    bottom.set_tooltip_text(Some(&ctx.t_or("modals.logs.scrollBottom", "Scroll Bottom")));
+    {
+        let scroll = scroll.clone();
+        bottom.connect_clicked(move |_| {
+            let adj = scroll.vadjustment();
+            adj.set_value(adj.upper() - adj.page_size());
         });
     }
     let toolbar = gtk::Box::new(gtk::Orientation::Horizontal, 8);
@@ -855,11 +1042,12 @@ pub fn logs(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, remote: Option<String>)
     toolbar.set_margin_end(8);
     toolbar.set_margin_top(8);
     search.set_hexpand(true);
+    toolbar.append(&level);
     toolbar.append(&search);
+    toolbar.append(&refresh);
+    toolbar.append(&top);
+    toolbar.append(&bottom);
     toolbar.append(&clear);
-    let scroll = gtk::ScrolledWindow::new();
-    scroll.set_vexpand(true);
-    scroll.set_child(Some(&view));
     let box_ = gtk::Box::new(gtk::Orientation::Vertical, 8);
     box_.append(&toolbar);
     box_.append(&scroll);
@@ -1566,10 +1754,10 @@ pub fn alerts(parent: &impl IsA<gtk::Widget>, ctx: AppCtx) {
     }
     if history.first_child().is_none() {
         let row = adw::ActionRow::new();
-        row.set_title("No alert history");
+        row.set_title(&ctx.t_or("alerts.noHistory", "No alert history"));
         history.append(&row);
     }
-    let ack = gtk::Button::with_label("Acknowledge all");
+    let ack = gtk::Button::with_label(&ctx.t_or("alerts.acknowledgeAll", "Acknowledge all"));
     {
         let ctx = ctx.clone();
         ack.connect_clicked(move |_| {
@@ -1580,7 +1768,8 @@ pub fn alerts(parent: &impl IsA<gtk::Widget>, ctx: AppCtx) {
     let history_box = gtk::Box::new(gtk::Orientation::Vertical, 8);
     history_box.append(&scrolled_list(&history));
     history_box.append(&ack);
-    stack.add_titled(&history_box, Some("history"), "History");
+    let history_title = ctx.t_or("alerts.history", "History");
+    stack.add_titled(&history_box, Some("history"), &history_title);
 
     let rules = gtk::ListBox::new();
     rules.add_css_class("boxed-list");
@@ -1625,7 +1814,7 @@ pub fn alerts(parent: &impl IsA<gtk::Widget>, ctx: AppCtx) {
         }
         rules.append(&row);
     }
-    let add_rule = gtk::Button::with_label("Add rule");
+    let add_rule = gtk::Button::with_label(&ctx.t_or("alerts.addRule", "Add rule"));
     {
         let ctx = ctx.clone();
         let parent = parent.clone();
@@ -1636,7 +1825,8 @@ pub fn alerts(parent: &impl IsA<gtk::Widget>, ctx: AppCtx) {
     let rules_box = gtk::Box::new(gtk::Orientation::Vertical, 8);
     rules_box.append(&scrolled_list(&rules));
     rules_box.append(&add_rule);
-    stack.add_titled(&rules_box, Some("rules"), "Rules");
+    let rules_title = ctx.t_or("alerts.rules", "Rules");
+    stack.add_titled(&rules_box, Some("rules"), &rules_title);
 
     let actions = gtk::ListBox::new();
     actions.add_css_class("boxed-list");
@@ -1654,7 +1844,7 @@ pub fn alerts(parent: &impl IsA<gtk::Widget>, ctx: AppCtx) {
         }
         actions.append(&row);
     }
-    let add_action = gtk::Button::with_label("Add action");
+    let add_action = gtk::Button::with_label(&ctx.t_or("alerts.addAction", "Add action"));
     {
         let ctx = ctx.clone();
         let parent = parent.clone();
@@ -1665,7 +1855,8 @@ pub fn alerts(parent: &impl IsA<gtk::Widget>, ctx: AppCtx) {
     let actions_box = gtk::Box::new(gtk::Orientation::Vertical, 8);
     actions_box.append(&scrolled_list(&actions));
     actions_box.append(&add_action);
-    stack.add_titled(&actions_box, Some("actions"), "Actions");
+    let actions_title = ctx.t_or("alerts.actions", "Actions");
+    stack.add_titled(&actions_box, Some("actions"), &actions_title);
 
     let switcher = adw::ViewSwitcher::new();
     switcher.set_stack(Some(&stack));

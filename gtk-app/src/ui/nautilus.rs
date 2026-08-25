@@ -17,6 +17,7 @@ struct TabState {
     title: String,
     remote: String,
     path: String,
+    starred: bool,
 }
 
 #[derive(Clone)]
@@ -56,6 +57,7 @@ pub struct NautilusView {
     picker_bar: gtk::Box,
     picker_label: gtk::Label,
     filter_bar: gtk::Box,
+    icon_btn: gtk::Button,
 }
 
 impl NautilusView {
@@ -121,10 +123,10 @@ impl NautilusView {
         split_btn.set_tooltip_text(Some(
             &ctx.t_or("nautilus.contextMenu.toggleSplit", "Toggle split view"),
         ));
-        let star = gtk::Button::from_icon_name("starred-symbolic");
-        star.set_tooltip_text(Some(
-            &ctx.t_or("nautilus.titles.bookmarks", "Bookmark this folder"),
-        ));
+        let star = gtk::Button::from_icon_name("non-starred-symbolic");
+        star.set_tooltip_text(Some(&ctx.t_or("nautilus.view.star", "Star this folder")));
+        let icon_btn = gtk::Button::from_icon_name("zoom-in-symbolic");
+        icon_btn.set_tooltip_text(Some(&ctx.t_or("nautilus.view.iconSize", "Icon size")));
 
         toolbar.append(&back);
         toolbar.append(&forward);
@@ -137,6 +139,7 @@ impl NautilusView {
         toolbar.append(&split_btn);
         toolbar.append(&star);
         toolbar.append(&layout);
+        toolbar.append(&icon_btn);
         toolbar.append(&sort_btn);
         toolbar.append(&hidden_btn);
 
@@ -235,6 +238,7 @@ impl NautilusView {
             path: dirs::home_dir()
                 .map(|p| p.to_string_lossy().into_owned())
                 .unwrap_or_else(|| "/".into()),
+            starred: false,
         };
 
         let view = Self {
@@ -273,6 +277,7 @@ impl NautilusView {
             picker_bar,
             picker_label,
             filter_bar,
+            icon_btn: icon_btn.clone(),
         };
         view.refresh_type_filters();
 
@@ -390,7 +395,11 @@ impl NautilusView {
         }
         {
             let view = view.clone();
-            star.connect_clicked(move |_| view.add_bookmark());
+            star.connect_clicked(move |_| view.toggle_star_current());
+        }
+        {
+            let view = view.clone();
+            icon_btn.connect_clicked(move |_| view.cycle_icon_size());
         }
         {
             let view = view.clone();
@@ -440,6 +449,126 @@ impl NautilusView {
             if desc { " (desc)" } else { "" }
         ));
         self.reload();
+    }
+
+    fn cycle_icon_size(&self) {
+        let next = match self.ctx.settings.borrow().nautilus.icon_size {
+            48 => 64,
+            64 => 96,
+            96 => 128,
+            _ => 48,
+        };
+        self.ctx.settings.borrow_mut().nautilus.icon_size = next;
+        self.ctx.persist();
+        self.icon_btn.set_tooltip_text(Some(&format!(
+            "{}: {next}px",
+            self.ctx.t_or("nautilus.view.iconSize", "Icon size")
+        )));
+        self.reload();
+    }
+
+    fn current_location(&self) -> String {
+        let current = self.current.borrow().clone();
+        if current.remote == "local" {
+            current.path
+        } else if current.path.is_empty() {
+            format!("{}:", current.remote)
+        } else {
+            format!("{}:{}", current.remote, current.path)
+        }
+    }
+
+    fn toggle_star_path(&self, path: &str, name: &str) {
+        let now = {
+            let mut settings = self.ctx.settings.borrow_mut();
+            crate::settings::toggle_collection(&mut settings.nautilus.starred, path, name)
+        };
+        self.ctx.persist();
+        self.reload_sidebar();
+        self.toast.add_toast(adw::Toast::new(&if now {
+            self.ctx.t_or("nautilus.view.starred", "Starred")
+        } else {
+            self.ctx
+                .t_or("nautilus.view.unstarred", "Removed from Starred")
+        }));
+        if self.current.borrow().starred {
+            self.reload();
+        }
+    }
+
+    fn toggle_star_current(&self) {
+        let path = self.current_location();
+        let name = self.current.borrow().title.clone();
+        self.toggle_star_path(&path, &name);
+    }
+
+    fn toggle_star_selected(&self) {
+        if let Some(name) = self.selected_name() {
+            if self.current.borrow().starred {
+                if let Some(entry) = self.last_listing.borrow().iter().find(|e| e.name == name) {
+                    self.toggle_star_path(&entry.path, &entry.name);
+                    return;
+                }
+            }
+            let path = self.formatted_path(Some(&name));
+            self.toggle_star_path(&path, &name);
+        } else {
+            self.toggle_star_current();
+        }
+    }
+
+    fn show_starred(&self) {
+        let current = self.current.borrow().clone();
+        if !current.starred {
+            self.history
+                .borrow_mut()
+                .push((current.remote, current.path));
+            self.future.borrow_mut().clear();
+        }
+        self.current.borrow_mut().starred = true;
+        self.current.borrow_mut().title = self.ctx.t_or("nautilus.titles.starred", "Starred");
+        self.sync_current_tab();
+        self.reload();
+    }
+
+    fn populate_starred(&self) {
+        clear_list(&self.list);
+        clear_flow(&self.grid);
+        let items = self.ctx.settings.borrow().nautilus.starred.clone();
+        let mut entries = Vec::new();
+        for item in items {
+            let Some(path) = crate::settings::collection_path(&item) else {
+                continue;
+            };
+            let name = item
+                .get("name")
+                .and_then(|x| x.as_str())
+                .unwrap_or_else(|| path.rsplit(['/', ':']).next().unwrap_or(&path))
+                .to_string();
+            entries.push(DirEntry {
+                name,
+                path,
+                is_dir: true,
+                size: 0,
+                mime: String::new(),
+                mod_time: String::new(),
+            });
+        }
+        if entries.is_empty() {
+            self.status.set_text(
+                &self
+                    .ctx
+                    .t_or("nautilus.empty.noStarred", "No Starred Files"),
+            );
+        } else {
+            self.status.set_text(&format!("{} items", entries.len()));
+        }
+        self.path_entry.set_text("");
+        self.refresh_crumbs();
+        self.sync_current_tab();
+        self.refresh_tabs();
+        self.reload_ops();
+        self.populate_entries(&entries, true);
     }
 
     fn sync_layout(&self) {
@@ -740,6 +869,15 @@ impl NautilusView {
             });
         }
         self.sidebar.append(&configure);
+        let starred_row = adw::ActionRow::new();
+        starred_row.set_title(&self.ctx.t_or("nautilus.titles.starred", "Starred"));
+        starred_row.set_activatable(true);
+        starred_row.add_prefix(&gtk::Image::from_icon_name("starred-symbolic"));
+        {
+            let view = self.clone();
+            starred_row.connect_activated(move |_| view.show_starred());
+        }
+        self.sidebar.append(&starred_row);
         self.add_side_header(&self.ctx.t_or("nautilus.titles.starred", "Starred"));
         for star in &self.ctx.settings.borrow().nautilus.starred {
             if let Some(path) = star.get("path").and_then(|x| x.as_str()) {
@@ -812,6 +950,10 @@ impl NautilusView {
     }
 
     pub fn navigate_to(&self, input: &str) {
+        if input == "starred:" || input == "starred" {
+            self.show_starred();
+            return;
+        }
         if let Some(req) = self.ctx.pending_picker.borrow().as_ref() {
             if !crate::picker::is_location_allowed(input, &req.config) {
                 self.toast.add_toast(adw::Toast::new(
@@ -828,6 +970,7 @@ impl NautilusView {
         let (remote, path) = split_remote_path(input);
         self.current.borrow_mut().remote = remote;
         self.current.borrow_mut().path = path;
+        self.current.borrow_mut().starred = false;
         self.sync_current_tab();
         self.reload();
     }
@@ -849,6 +992,13 @@ impl NautilusView {
     fn refresh_crumbs(&self) {
         while let Some(child) = self.crumbs.first_child() {
             self.crumbs.remove(&child);
+        }
+        if self.current.borrow().starred {
+            self.add_crumb(
+                &self.ctx.t_or("nautilus.titles.starred", "Starred"),
+                "starred:",
+            );
+            return;
         }
         let current = self.current.borrow().clone();
         for (idx, (label, target)) in
@@ -975,6 +1125,7 @@ impl NautilusView {
                 .push((current.remote, current.path));
             self.current.borrow_mut().remote = remote;
             self.current.borrow_mut().path = path;
+            self.current.borrow_mut().starred = false;
             self.reload();
         }
     }
@@ -987,11 +1138,17 @@ impl NautilusView {
                 .push((current.remote, current.path));
             self.current.borrow_mut().remote = remote;
             self.current.borrow_mut().path = path;
+            self.current.borrow_mut().starred = false;
             self.reload();
         }
     }
 
     fn go_up(&self) {
+        if self.current.borrow().starred {
+            self.current.borrow_mut().starred = false;
+            self.reload();
+            return;
+        }
         let path = self.current.borrow().path.clone();
         let parent = parent_remote_path(&path);
         self.current.borrow_mut().path = parent;
@@ -1001,6 +1158,10 @@ impl NautilusView {
     fn reload(&self) {
         clear_list(&self.list);
         clear_flow(&self.grid);
+        if self.current.borrow().starred {
+            self.populate_starred();
+            return;
+        }
         let current = self.current.borrow().clone();
         let display = if current.remote == "local" {
             current.path.clone()
@@ -1198,6 +1359,19 @@ impl NautilusView {
     }
 
     fn open_name(&self, name: &str) {
+        if self.current.borrow().starred {
+            if let Some(entry) = self
+                .last_listing
+                .borrow()
+                .iter()
+                .find(|e| e.name == name)
+                .cloned()
+            {
+                self.current.borrow_mut().starred = false;
+                self.navigate_to(&entry.path);
+                return;
+            }
+        }
         if self.ctx.pending_picker.borrow().is_some() {
             let listing = self.last_listing.borrow().clone();
             if let Some(entry) = listing.iter().find(|e| e.name == name) {
@@ -1829,7 +2003,10 @@ impl NautilusView {
         {
             tab.remote = current.remote.clone();
             tab.path = current.path.clone();
-            tab.title = if current.path.is_empty() {
+            tab.starred = current.starred;
+            tab.title = if current.starred {
+                self.ctx.t_or("nautilus.titles.starred", "Starred")
+            } else if current.path.is_empty() {
                 current.remote.clone()
             } else {
                 current
@@ -1853,8 +2030,123 @@ impl NautilusView {
             let view = self.clone();
             let id = tab.id;
             btn.connect_clicked(move |_| view.activate_tab(id));
+            let gesture = gtk::GestureClick::new();
+            gesture.set_button(3);
+            {
+                let view = self.clone();
+                let id = tab.id;
+                gesture.connect_pressed(move |g, _, _, _| {
+                    view.popup_tab_menu(id);
+                    g.set_state(gtk::EventSequenceState::Claimed);
+                });
+            }
+            btn.add_controller(gesture);
             self.tab_bar.append(&btn);
         }
+    }
+
+    fn popup_tab_menu(&self, id: u32) {
+        let Some(win) = self.root.root().and_downcast::<gtk::Window>() else {
+            return;
+        };
+        self.activate_tab(id);
+        let popover = gtk::Popover::new();
+        let box_ = gtk::Box::new(gtk::Orientation::Vertical, 4);
+        let items = [
+            (
+                self.ctx
+                    .t_or("nautilus.contextMenu.duplicateTab", "Duplicate Tab"),
+                "dup",
+            ),
+            (
+                self.ctx.t_or("nautilus.contextMenu.closeTab", "Close Tab"),
+                "close",
+            ),
+            (
+                self.ctx
+                    .t_or("nautilus.contextMenu.closeOtherTabs", "Close Other Tabs"),
+                "others",
+            ),
+            (
+                self.ctx.t_or(
+                    "nautilus.contextMenu.closeTabsToRight",
+                    "Close Tabs to the Right",
+                ),
+                "right",
+            ),
+            (
+                self.ctx
+                    .t_or("nautilus.contextMenu.detachTab", "Detach Tab"),
+                "detach",
+            ),
+        ];
+        for (label, action) in items {
+            let btn = gtk::Button::with_label(&label);
+            let view = self.clone();
+            let popover = popover.clone();
+            btn.connect_clicked(move |_| {
+                match action {
+                    "dup" => view.duplicate_tab(id),
+                    "close" => {
+                        view.activate_tab(id);
+                        view.close_current_tab();
+                    }
+                    "others" => view.close_other_tabs(id),
+                    "right" => view.close_tabs_to_right(id),
+                    "detach" => {
+                        view.activate_tab(id);
+                        view.detach_current_tab();
+                    }
+                    _ => {}
+                }
+                popover.popdown();
+            });
+            box_.append(&btn);
+        }
+        popover.set_child(Some(&box_));
+        popover.set_parent(&win);
+        popover.popup();
+    }
+
+    fn duplicate_tab(&self, id: u32) {
+        let Some(tab) = self.tabs.borrow().iter().find(|t| t.id == id).cloned() else {
+            return;
+        };
+        let new_id = *self.next_tab_id.borrow();
+        *self.next_tab_id.borrow_mut() = new_id + 1;
+        let mut copy = tab;
+        copy.id = new_id;
+        self.tabs.borrow_mut().push(copy.clone());
+        *self.current.borrow_mut() = copy;
+        self.reload();
+    }
+
+    fn close_other_tabs(&self, keep: u32) {
+        self.tabs.borrow_mut().retain(|t| t.id == keep);
+        if let Some(tab) = self.tabs.borrow().iter().find(|t| t.id == keep).cloned() {
+            *self.current.borrow_mut() = tab;
+        }
+        if self.tabs.borrow().is_empty() {
+            self.open_new_tab();
+            return;
+        }
+        self.reload();
+    }
+
+    fn close_tabs_to_right(&self, id: u32) {
+        let idx = self
+            .tabs
+            .borrow()
+            .iter()
+            .position(|t| t.id == id)
+            .unwrap_or(0);
+        self.tabs.borrow_mut().truncate(idx + 1);
+        if self.current.borrow().id != id {
+            if let Some(tab) = self.tabs.borrow().iter().find(|t| t.id == id).cloned() {
+                *self.current.borrow_mut() = tab;
+            }
+        }
+        self.reload();
     }
 
     fn activate_tab(&self, id: u32) {
@@ -2037,6 +2329,10 @@ impl NautilusView {
                 "uploaddir",
             ),
             (
+                self.ctx.t_or("nautilus.contextMenu.star", "Star / Unstar"),
+                "togglestar",
+            ),
+            (
                 self.ctx.t_or("nautilus.contextMenu.bookmark", "Bookmark"),
                 "star",
             ),
@@ -2124,6 +2420,7 @@ impl NautilusView {
                     }
                 }
                 "uploaddir" => view.upload_folder_prompt(),
+                "togglestar" => view.toggle_star_selected(),
                 "star" => view.add_bookmark(),
                 "extract" => view.extract_selected(),
                 "rmdirs" => view.remove_empty_dirs(),

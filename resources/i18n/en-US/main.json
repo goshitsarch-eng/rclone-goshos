@@ -2515,13 +2515,18 @@
       "switchPane": "Switch Pane",
       "copyPublicLink": "Copy Public Link",
       "createFolderWithItems": "New Folder with Selection...",
-      "renameMultiple": "Rename Multiple..."
+      "renameMultiple": "Rename Multiple...",
+      "star": "Star / Unstar",
+      "bookmark": "Bookmark"
     },
     "view": {
       "iconSize": "Icon Size",
       "showHidden": "Show Hidden Files",
       "toggleLayout": "Toggle Layout",
-      "viewOptions": "View Options"
+      "viewOptions": "View Options",
+      "star": "Star this folder",
+      "starred": "Starred",
+      "unstarred": "Removed from Starred"
     },
     "notifications": {
       "mkdirFailed": "Failed to create directory: {{path}}",

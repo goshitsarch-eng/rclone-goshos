@@ -134,6 +134,10 @@ This client is the GTK 4 + libadwaita rewrite of the Angular/Tauri desktop UI. I
 - Files sidebar configure (hide / reorder local disks and remotes)
 - Files context menu i18n, including Rename Multiple when several items are selected
 - Title-bar Home (when a remote is selected) and update/alert notice button
+- Files starred collection view, star/unstar, tab context menu (duplicate / close others / close to the right)
+- Files icon-size cycle and richer logs (level filter, refresh, scroll)
+- Preferences i18n for remaining setting titles plus Reset all settings
+- About can skip an available app update version
 
 ## Still deepening toward pixel-level Angular parity
 

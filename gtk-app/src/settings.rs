@@ -238,6 +238,39 @@ pub fn sidebar_id_hidden(hidden: &[String], id: &str) -> bool {
     hidden.iter().any(|h| h == id)
 }
 
+pub fn collection_path(item: &serde_json::Value) -> Option<String> {
+    item.get("path")
+        .and_then(|x| x.as_str())
+        .filter(|s| !s.is_empty())
+        .map(|s| s.to_string())
+}
+
+pub fn collection_contains(list: &[serde_json::Value], path: &str) -> bool {
+    list.iter()
+        .any(|item| collection_path(item).as_deref() == Some(path))
+}
+
+/// Toggle `path` in a starred/bookmark collection. Returns true if the path is now present.
+pub fn toggle_collection(list: &mut Vec<serde_json::Value>, path: &str, name: &str) -> bool {
+    if let Some(idx) = list
+        .iter()
+        .position(|item| collection_path(item).as_deref() == Some(path))
+    {
+        list.remove(idx);
+        false
+    } else {
+        list.push(serde_json::json!({
+            "name": if name.is_empty() {
+                path.rsplit(['/', ':']).next().unwrap_or(path)
+            } else {
+                name
+            },
+            "path": path
+        }));
+        true
+    }
+}
+
 impl AppSettings {
     pub fn get_by_path(&self, path: &str) -> Option<serde_json::Value> {
         let value = serde_json::to_value(self).ok()?;
@@ -339,5 +372,15 @@ mod tests {
         assert_eq!(ids, vec!["/home", "a:", "b:"]);
         assert!(sidebar_id_hidden(&["a:".into()], "a:"));
         assert!(!sidebar_id_hidden(&["a:".into()], "b:"));
+    }
+
+    #[test]
+    fn toggles_starred_collection() {
+        let mut list = vec![];
+        assert!(toggle_collection(&mut list, "drive:Photos", "Photos"));
+        assert!(collection_contains(&list, "drive:Photos"));
+        assert_eq!(collection_path(&list[0]).as_deref(), Some("drive:Photos"));
+        assert!(!toggle_collection(&mut list, "drive:Photos", "Photos"));
+        assert!(!collection_contains(&list, "drive:Photos"));
     }
 }
