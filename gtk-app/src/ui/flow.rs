@@ -16,6 +16,7 @@ pub struct FlowView {
     search: gtk::SearchEntry,
     content: gtk::Box,
     editing_layout: Rc<RefCell<bool>>,
+    remote_filter: Rc<RefCell<Option<String>>>,
 }
 
 impl FlowView {
@@ -90,6 +91,7 @@ impl FlowView {
             search,
             content,
             editing_layout: Rc::new(RefCell::new(false)),
+            remote_filter: Rc::new(RefCell::new(None)),
         };
 
         {
@@ -129,10 +131,16 @@ impl FlowView {
         }
 
         let query = self.search.text().to_lowercase();
+        let remote_filter = self.remote_filter.borrow().clone();
         let runs = self.ctx.store.borrow().quick_runs.clone();
         let filtered: Vec<QuickRun> = runs
             .into_iter()
             .filter(|qr| {
+                if let Some(remote) = &remote_filter {
+                    if qr.remote_name != *remote {
+                        return false;
+                    }
+                }
                 if query.is_empty() {
                     return true;
                 }
@@ -142,7 +150,7 @@ impl FlowView {
             })
             .collect();
 
-        if filtered.is_empty() {
+        if filtered.is_empty() && remote_filter.is_none() {
             let empty = adw::StatusPage::new();
             empty.set_icon_name(Some("media-playlist-consecutive-symbolic"));
             empty.set_title(&self.ctx.t_or("flow.quickRun.title", "No quick runs"));
@@ -197,6 +205,52 @@ impl FlowView {
         title.add_css_class("title-1");
         title.set_xalign(0.0);
         self.content.append(&title);
+        let remotes: Vec<String> = {
+            let mut names: Vec<String> = self
+                .ctx
+                .store
+                .borrow()
+                .quick_runs
+                .iter()
+                .map(|qr| qr.remote_name.clone())
+                .filter(|name| !name.is_empty())
+                .collect();
+            names.sort();
+            names.dedup();
+            names
+        };
+        if remotes.len() > 1 {
+            let chips = gtk::Box::new(gtk::Orientation::Horizontal, 6);
+            chips.add_css_class("linked");
+            let selected = self.remote_filter.borrow().clone();
+            let all = gtk::ToggleButton::with_label(&self.ctx.t_or("common.all", "All"));
+            all.set_active(selected.is_none());
+            {
+                let view = self.clone();
+                all.connect_clicked(move |_| {
+                    *view.remote_filter.borrow_mut() = None;
+                    view.refresh();
+                });
+            }
+            chips.append(&all);
+            let mut group_anchor = all.clone();
+            for remote in remotes {
+                let btn = gtk::ToggleButton::with_label(&remote);
+                btn.set_group(Some(&group_anchor));
+                group_anchor = btn.clone();
+                btn.set_active(selected.as_deref() == Some(remote.as_str()));
+                {
+                    let view = self.clone();
+                    let remote = remote.clone();
+                    btn.connect_clicked(move |_| {
+                        *view.remote_filter.borrow_mut() = Some(remote.clone());
+                        view.refresh();
+                    });
+                }
+                chips.append(&btn);
+            }
+            self.content.append(&chips);
+        }
         let layout_bar = gtk::Box::new(gtk::Orientation::Horizontal, 6);
         let edit_label = if editing {
             self.ctx.t_or("common.done", "Done")
