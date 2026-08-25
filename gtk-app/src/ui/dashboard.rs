@@ -187,13 +187,8 @@ impl Dashboard {
             dash.sidebar_list
                 .clone()
                 .connect_row_activated(move |_, row| {
-                    let name = row
-                        .child()
-                        .and_then(|c| c.downcast::<gtk::Box>().ok())
-                        .and_then(|b| b.first_child())
-                        .and_then(|c| c.downcast::<gtk::Label>().ok())
-                        .map(|l| l.label().to_string());
-                    if let Some(name) = name {
+                    let name = row.widget_name().to_string();
+                    if !name.is_empty() && name != "GtkListBoxRow" {
                         *dash.ctx.selected_remote.borrow_mut() = Some(name);
                         dash.refresh();
                     }
@@ -207,7 +202,6 @@ impl Dashboard {
     pub fn navigate(&self, tab: AppTab, remote: Option<&str>) {
         *self.ctx.selected_remote.borrow_mut() =
             remote.filter(|s| !s.is_empty()).map(|s| s.to_string());
-        let already = *self.tab.borrow() == tab;
         *self.tab.borrow_mut() = tab;
         for (candidate, btn) in self.tab_buttons.borrow().iter() {
             if *candidate == tab {
@@ -217,9 +211,7 @@ impl Dashboard {
                 break;
             }
         }
-        if already {
-            self.refresh();
-        }
+        self.refresh();
     }
 
     pub fn refresh(&self) {
@@ -285,6 +277,7 @@ impl Dashboard {
             box_.append(&name);
             box_.append(&badge);
             row.set_child(Some(&box_));
+            row.set_widget_name(&remote.name);
             if self.ctx.selected_remote.borrow().as_deref() == Some(remote.name.as_str()) {
                 row.activate();
             }

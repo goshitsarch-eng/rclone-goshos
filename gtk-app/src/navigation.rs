@@ -186,18 +186,17 @@ pub fn parse_launch_args(args: &[String], standalone_dialogs: bool) -> Option<La
                 if let Some(next) = value.as_deref().filter(|v| !v.starts_with('-')) {
                     tab = AppTab::parse(next).unwrap_or(tab);
                 }
-                if let Some(NavTarget::Dashboard { remote, .. }) = target {
-                    target = Some(NavTarget::Dashboard { tab, remote });
-                }
+                target = Some(NavTarget::Dashboard {
+                    tab,
+                    remote: remote.clone(),
+                });
             }
             "--remote" => {
                 remote = value.filter(|v| !v.is_empty() && !v.starts_with('-'));
-                if let Some(NavTarget::Dashboard { tab, .. }) = target {
-                    target = Some(NavTarget::Dashboard {
-                        tab,
-                        remote: remote.clone(),
-                    });
-                }
+                target = Some(NavTarget::Dashboard {
+                    tab,
+                    remote: remote.clone(),
+                });
             }
             "--flow" => {
                 target = Some(NavTarget::Flow {
@@ -616,6 +615,26 @@ mod tests {
             Some(LaunchRequest {
                 target: NavTarget::Dashboard {
                     tab: AppTab::Mount,
+                    remote: Some("testdrive".into()),
+                },
+                standalone: false,
+            })
+        );
+        let remote_only = parse_launch_args(
+            &[
+                "app".into(),
+                "--tab".into(),
+                "operations".into(),
+                "--remote".into(),
+                "testdrive".into(),
+            ],
+            false,
+        );
+        assert_eq!(
+            remote_only,
+            Some(LaunchRequest {
+                target: NavTarget::Dashboard {
+                    tab: AppTab::Operations,
                     remote: Some("testdrive".into()),
                 },
                 standalone: false,

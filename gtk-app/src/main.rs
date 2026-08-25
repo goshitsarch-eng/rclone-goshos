@@ -75,11 +75,17 @@ fn main() {
         .build();
     register_application_options(&app);
     app.connect_command_line(|app, cmdline| {
-        let args: Vec<String> = cmdline
+        let mut args: Vec<String> = cmdline
             .arguments()
             .iter()
             .map(|s| s.to_str().unwrap_or_default().to_string())
             .collect();
+        let env_args: Vec<String> = std::env::args().collect();
+        if !args.iter().any(|arg| arg.starts_with("--"))
+            && env_args.iter().any(|arg| arg.starts_with("--"))
+        {
+            args = env_args;
+        }
         cli::set_launch_args(args.clone());
         if let Some(files) = platform::parse_share_intake_args(&args) {
             platform::enqueue_share_intake(&files);
@@ -133,14 +139,7 @@ fn register_application_options(app: &adw::Application) {
         "Path for --browse",
         Some("PATH"),
     );
-    app.add_main_option(
-        "dashboard",
-        0.into(),
-        OptionFlags::OPTIONAL_ARG,
-        OptionArg::String,
-        "Open a dashboard tab",
-        Some("TAB"),
-    );
+    add("dashboard", OptionArg::None, "Open the dashboard", None);
     add("tab", OptionArg::String, "Dashboard tab", Some("TAB"));
     add(
         "remote",
