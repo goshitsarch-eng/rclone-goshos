@@ -55,11 +55,16 @@ pub fn present_main(app: &adw::Application, ctx: AppCtx) {
         &ctx.t("sidebar.remotes"),
         "view-grid-symbolic",
     );
-    view_stack.add_titled_with_icon(&nautilus.root, Some("nautilus"), "Files", "folder-symbolic");
+    view_stack.add_titled_with_icon(
+        &nautilus.root,
+        Some("nautilus"),
+        &ctx.t_or("nautilus.titles.files", "Files"),
+        "folder-symbolic",
+    );
     view_stack.add_titled_with_icon(
         &flow.root,
         Some("flow"),
-        "Flow",
+        &ctx.t_or("titlebar.menu.flowWorkspace", "Flow"),
         "media-playlist-consecutive-symbolic",
     );
 
@@ -73,8 +78,14 @@ pub fn present_main(app: &adw::Application, ctx: AppCtx) {
         .tooltip_text("Add remote or quick run")
         .build();
     let add_menu = gio::Menu::new();
-    add_menu.append(Some("Quick Add Remote"), Some("win.quick-add"));
-    add_menu.append(Some("Detailed Remote"), Some("win.remote-config"));
+    add_menu.append(
+        Some(&ctx.t_or("titlebar.menu.quickRemote", "Quick Add Remote")),
+        Some("win.quick-add"),
+    );
+    add_menu.append(
+        Some(&ctx.t_or("titlebar.menu.detailedRemote", "Detailed Remote")),
+        Some("win.remote-config"),
+    );
     add_menu.append(Some("New Quick Run"), Some("win.quick-run-new"));
     add_btn.set_menu_model(Some(&add_menu));
     header.pack_start(&add_btn);
@@ -83,7 +94,7 @@ pub fn present_main(app: &adw::Application, ctx: AppCtx) {
         .icon_name("open-menu-symbolic")
         .tooltip_text("Application menu")
         .build();
-    menu_btn.set_menu_model(Some(&app_menu()));
+    menu_btn.set_menu_model(Some(&app_menu(&ctx)));
     header.pack_end(&menu_btn);
 
     let banner = adw::Banner::new("");
@@ -179,26 +190,50 @@ pub fn present_main(app: &adw::Application, ctx: AppCtx) {
     window.present();
 }
 
-fn app_menu() -> gio::Menu {
+fn app_menu(ctx: &AppCtx) -> gio::Menu {
     let menu = gio::Menu::new();
 
     let theme = gio::Menu::new();
-    theme.append(Some("System theme"), Some("win.theme::system"));
-    theme.append(Some("Light"), Some("win.theme::light"));
-    theme.append(Some("Dark"), Some("win.theme::dark"));
-    menu.append_submenu(Some("Theme"), &theme);
+    theme.append(
+        Some(&ctx.t_or("titlebar.menu.system", "System theme")),
+        Some("win.theme::system"),
+    );
+    theme.append(
+        Some(&ctx.t_or("titlebar.menu.light", "Light")),
+        Some("win.theme::light"),
+    );
+    theme.append(
+        Some(&ctx.t_or("titlebar.menu.dark", "Dark")),
+        Some("win.theme::dark"),
+    );
+    menu.append_submenu(Some(&ctx.t_or("titlebar.menu.theme", "Theme")), &theme);
 
     let file = gio::Menu::new();
-    file.append(Some("Import settings"), Some("win.import"));
-    file.append(Some("Export settings"), Some("win.export"));
+    file.append(
+        Some(&ctx.t_or("titlebar.menu.import", "Import settings")),
+        Some("win.import"),
+    );
+    file.append(
+        Some(&ctx.t_or("titlebar.menu.export", "Export settings")),
+        Some("win.export"),
+    );
     menu.append_section(None, &file);
 
     let prefs = gio::Menu::new();
-    prefs.append(Some("Preferences"), Some("win.preferences"));
-    prefs.append(Some("Rclone Flags"), Some("win.rclone-flags"));
+    prefs.append(
+        Some(&ctx.t_or("titlebar.menu.preferences", "Preferences")),
+        Some("win.preferences"),
+    );
+    prefs.append(
+        Some(&ctx.t_or("titlebar.menu.flags", "Rclone Flags")),
+        Some("win.rclone-flags"),
+    );
     prefs.append(Some("Backends"), Some("win.backends"));
     prefs.append(Some("Alerts"), Some("win.alerts"));
-    prefs.append(Some("Keyboard Shortcuts"), Some("win.shortcuts"));
+    prefs.append(
+        Some(&ctx.t_or("titlebar.menu.shortcuts", "Keyboard Shortcuts")),
+        Some("win.shortcuts"),
+    );
     prefs.append(Some("Templates"), Some("win.templates"));
     prefs.append(Some("Install rclone"), Some("win.install-rclone"));
     prefs.append(Some("Remote order"), Some("win.item-order"));
@@ -216,19 +251,37 @@ fn app_menu() -> gio::Menu {
 
     let views = gio::Menu::new();
     views.append(Some("Main Menu"), Some("win.view::main_menu"));
-    views.append(Some("File Browser"), Some("win.view::nautilus"));
-    views.append(Some("Flow"), Some("win.view::flow"));
+    views.append(
+        Some(&ctx.t_or("titlebar.menu.fileBrowser", "File Browser")),
+        Some("win.view::nautilus"),
+    );
+    views.append(
+        Some(&ctx.t_or("titlebar.menu.flowWorkspace", "Flow")),
+        Some("win.view::flow"),
+    );
     menu.append_section(None, &views);
 
     let tray = gio::Menu::new();
-    tray.append(Some("Unmount All"), Some("win.unmount-all"));
-    tray.append(Some("Stop All Jobs"), Some("win.stop-jobs"));
-    tray.append(Some("Stop All Serves"), Some("win.stop-serves"));
+    tray.append(
+        Some(&ctx.t_or("tray.unmountAll", "Unmount All")),
+        Some("win.unmount-all"),
+    );
+    tray.append(
+        Some(&ctx.t_or("tray.stopAllJobs", "Stop All Jobs")),
+        Some("win.stop-jobs"),
+    );
+    tray.append(
+        Some(&ctx.t_or("tray.stopAllServes", "Stop All Serves")),
+        Some("win.stop-serves"),
+    );
     menu.append_submenu(Some("Tray actions"), &tray);
 
     let about = gio::Menu::new();
-    about.append(Some("About"), Some("win.about"));
-    about.append(Some("Quit"), Some("win.quit"));
+    about.append(
+        Some(&ctx.t_or("titlebar.menu.about", "About")),
+        Some("win.about"),
+    );
+    about.append(Some(&ctx.t_or("tray.quit", "Quit")), Some("win.quit"));
     menu.append_section(None, &about);
     menu
 }

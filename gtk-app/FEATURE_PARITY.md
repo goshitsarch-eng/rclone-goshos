@@ -123,6 +123,9 @@ This client is the GTK 4 + libadwaita rewrite of the Angular/Tauri desktop UI. I
 - Native Share… from Files (stage remote files, then `xdg-email` / `xdg-open`)
 - NetworkManager metered-network detection, optional metered bandwidth limit, and Flatpak/metered title-bar banners
 - Kind-specific alert action fields (webhook, telegram, email, MQTT, script, WhatsApp, OS toast)
+- Files breadcrumbs plus in-listing search (Ctrl+F), path edit (Ctrl+L)
+- Translated menus, Files chrome, tray labels, and key preference titles
+- Tray icon themes (system/color/mono/symbolic) and auto-update preference switches
 
 ## Still deepening toward pixel-level Angular parity
 

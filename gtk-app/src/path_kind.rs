@@ -122,6 +122,42 @@ pub fn kind_from_index(idx: u32) -> PathKind {
     }
 }
 
+pub fn breadcrumb_targets(remote: &str, path: &str) -> Vec<(String, String)> {
+    let mut crumbs = Vec::new();
+    let root_target = if remote == "local" || remote.is_empty() {
+        "/".into()
+    } else {
+        format!("{remote}:")
+    };
+    crumbs.push((
+        if remote == "local" || remote.is_empty() {
+            "Local".into()
+        } else {
+            remote.to_string()
+        },
+        root_target,
+    ));
+    let mut acc = String::new();
+    for segment in path
+        .trim_start_matches('/')
+        .split(['/', '\\'])
+        .filter(|s| !s.is_empty())
+    {
+        acc = if acc.is_empty() {
+            segment.to_string()
+        } else {
+            format!("{acc}/{segment}")
+        };
+        let target = if remote == "local" || remote.is_empty() {
+            format!("/{acc}")
+        } else {
+            format!("{remote}:{acc}")
+        };
+        crumbs.push((segment.to_string(), target));
+    }
+    crumbs
+}
+
 pub fn rewrite_path_for_kind(raw: &str, current_remote: &str, kind: PathKind) -> String {
     let typed = parse_typed_path(raw, current_remote);
     match kind {
@@ -194,5 +230,26 @@ mod tests {
         );
         assert_eq!(kind_index(PathKind::OtherRemote), 2);
         assert_eq!(kind_from_index(0), PathKind::Local);
+    }
+
+    #[test]
+    fn builds_breadcrumb_targets() {
+        assert_eq!(
+            breadcrumb_targets("local", "/home/ada/docs"),
+            vec![
+                ("Local".into(), "/".into()),
+                ("home".into(), "/home".into()),
+                ("ada".into(), "/home/ada".into()),
+                ("docs".into(), "/home/ada/docs".into()),
+            ]
+        );
+        assert_eq!(
+            breadcrumb_targets("drive", "Photos/2024"),
+            vec![
+                ("drive".into(), "drive:".into()),
+                ("Photos".into(), "drive:Photos".into()),
+                ("2024".into(), "drive:Photos/2024".into()),
+            ]
+        );
     }
 }

@@ -34,11 +34,17 @@ struct StatusIcon {
     tx: Sender<TrayCommand>,
     remotes: Vec<String>,
     quick_runs: Vec<(String, String)>,
+    icon_name: String,
+    show_label: String,
+    unmount_all: String,
+    stop_jobs: String,
+    stop_serves: String,
+    mount_prefix: String,
 }
 
 impl ksni::Tray for StatusIcon {
     fn icon_name(&self) -> String {
-        "folder-remote".into()
+        self.icon_name.clone()
     }
 
     fn title(&self) -> String {
@@ -57,7 +63,7 @@ impl ksni::Tray for StatusIcon {
         use ksni::menu::*;
         let mut items = vec![
             StandardItem {
-                label: "Show Window".into(),
+                label: self.show_label.clone(),
                 activate: Box::new(|this: &mut Self| {
                     let _ = this.tx.send(TrayCommand::ShowWindow);
                 }),
@@ -66,7 +72,7 @@ impl ksni::Tray for StatusIcon {
             .into(),
             MenuItem::Separator,
             StandardItem {
-                label: "Unmount All".into(),
+                label: self.unmount_all.clone(),
                 activate: Box::new(|this: &mut Self| {
                     let _ = this.tx.send(TrayCommand::UnmountAll);
                 }),
@@ -74,7 +80,7 @@ impl ksni::Tray for StatusIcon {
             }
             .into(),
             StandardItem {
-                label: "Stop All Jobs".into(),
+                label: self.stop_jobs.clone(),
                 activate: Box::new(|this: &mut Self| {
                     let _ = this.tx.send(TrayCommand::StopJobs);
                 }),
@@ -82,7 +88,7 @@ impl ksni::Tray for StatusIcon {
             }
             .into(),
             StandardItem {
-                label: "Stop All Serves".into(),
+                label: self.stop_serves.clone(),
                 activate: Box::new(|this: &mut Self| {
                     let _ = this.tx.send(TrayCommand::StopServes);
                 }),
@@ -95,7 +101,7 @@ impl ksni::Tray for StatusIcon {
             let name = remote.clone();
             items.push(
                 StandardItem {
-                    label: format!("Mount {name}"),
+                    label: format!("{} {name}", self.mount_prefix),
                     activate: Box::new(move |this: &mut Self| {
                         let _ = this.tx.send(TrayCommand::MountRemote(name.clone()));
                     }),
@@ -121,6 +127,13 @@ impl ksni::Tray for StatusIcon {
             );
         }
         items
+    }
+}
+
+fn tray_icon_name(theme: &str) -> &'static str {
+    match theme {
+        "symbolic" | "monochrome_light" | "monochrome_dark" => "folder-remote-symbolic",
+        _ => "folder-remote",
     }
 }
 
@@ -161,6 +174,12 @@ pub fn start(ctx: &AppCtx) -> Option<TrayBus> {
         tx: tx.clone(),
         remotes: remotes.clone(),
         quick_runs: quick_runs.clone(),
+        icon_name: tray_icon_name(&ctx.settings.borrow().general.tray_icon_theme).into(),
+        show_label: ctx.t_or("tray.showApp", "Show Window"),
+        unmount_all: ctx.t_or("tray.unmountAll", "Unmount All"),
+        stop_jobs: ctx.t_or("tray.stopAllJobs", "Stop All Jobs"),
+        stop_serves: ctx.t_or("tray.stopAllServes", "Stop All Serves"),
+        mount_prefix: ctx.t_or("tray.mount", "Mount"),
     };
     std::thread::Builder::new()
         .name("rclone-manager-sni".into())

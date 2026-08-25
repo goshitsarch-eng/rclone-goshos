@@ -55,10 +55,24 @@ pub fn preferences(parent: &impl IsA<gtk::Widget>, ctx: AppCtx) {
     g1.set_title("Appearance & language");
 
     let langs = crate::i18n::SUPPORTED_LANGUAGES;
-    let lang_model = gtk::StringList::new(langs);
+    let lang_labels = [
+        "English (US)",
+        "Türkçe (Türkiye)",
+        "Español (España)",
+        "中文 (简体)",
+        "Français (France)",
+        "Українська (Україна)",
+        "Русский (Россия)",
+        "Português (Brasil)",
+        "日本語 (日本)",
+    ];
+    let lang_model = gtk::StringList::new(&lang_labels);
     let lang = adw::ComboRow::new();
-    lang.set_title("Language");
-    lang.set_subtitle("Application language");
+    lang.set_title(&ctx.t_or("settings.general.language.label", "Language"));
+    lang.set_subtitle(&ctx.t_or(
+        "settings.general.language.description",
+        "Application language",
+    ));
     lang.set_model(Some(&lang_model));
     if let Some(idx) = langs
         .iter()
@@ -193,9 +207,15 @@ pub fn preferences(parent: &impl IsA<gtk::Widget>, ctx: AppCtx) {
         });
     }
     g1.add(&theme_row);
-    let tray_themes = ["color", "symbolic"];
+    let tray_themes = [
+        "system",
+        "color",
+        "monochrome_light",
+        "monochrome_dark",
+        "symbolic",
+    ];
     let tray_theme = adw::ComboRow::new();
-    tray_theme.set_title("Tray icon theme");
+    tray_theme.set_title(&ctx.t_or("settings.general.tray_icon_theme.label", "Tray icon theme"));
     tray_theme.set_model(Some(&gtk::StringList::new(&tray_themes)));
     if let Some(idx) = tray_themes
         .iter()
@@ -281,6 +301,28 @@ pub fn preferences(parent: &impl IsA<gtk::Widget>, ctx: AppCtx) {
         });
     }
     g1.add(&rclone_ch);
+    g1.add(&switch_row(
+        &ctx.t_or(
+            "settings.runtime.app_auto_check_updates.label",
+            "Check for app updates",
+        ),
+        ctx.settings.borrow().runtime.app_auto_check_updates,
+        {
+            let ctx = ctx.clone();
+            move |v| ctx.settings.borrow_mut().runtime.app_auto_check_updates = v
+        },
+    ));
+    g1.add(&switch_row(
+        &ctx.t_or(
+            "settings.runtime.rclone_auto_check_updates.label",
+            "Check for rclone updates",
+        ),
+        ctx.settings.borrow().runtime.rclone_auto_check_updates,
+        {
+            let ctx = ctx.clone();
+            move |v| ctx.settings.borrow_mut().runtime.rclone_auto_check_updates = v
+        },
+    ));
     g1.add(&switch_row(
         "JSON mode for flag editors",
         ctx.settings.borrow().runtime.show_json_mode,

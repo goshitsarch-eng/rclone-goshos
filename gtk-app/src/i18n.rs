@@ -79,6 +79,14 @@ impl I18n {
             .unwrap_or_else(|| key.to_string())
     }
 
+    pub fn t_or(&self, key: &str, fallback: &str) -> String {
+        if self.has(key) {
+            self.t(key)
+        } else {
+            fallback.to_string()
+        }
+    }
+
     pub fn tf(&self, key: &str, params: &[(&str, &str)]) -> String {
         let mut out = self.t(key);
         for (name, value) in params {
@@ -292,5 +300,14 @@ mod tests {
             "Mount {name} is already in use"
         );
         assert_eq!(i18n.translate_backend("legacy English"), "legacy English");
+    }
+
+    #[test]
+    fn t_or_falls_back_when_missing() {
+        let i18n = I18n {
+            lang: "en-US".into(),
+            strings: HashMap::new(),
+        };
+        assert_eq!(i18n.t_or("missing.key", "Fallback"), "Fallback");
     }
 }

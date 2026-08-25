@@ -33,6 +33,10 @@ pub struct NautilusView {
     right_stack: gtk::Stack,
     layout_btn: gtk::Button,
     path_entry: gtk::Entry,
+    path_stack: gtk::Stack,
+    crumbs: gtk::Box,
+    search_entry: gtk::SearchEntry,
+    search_filter: Rc<RefCell<String>>,
     status: gtk::Label,
     tabs: Rc<RefCell<Vec<TabState>>>,
     current: Rc<RefCell<TabState>>,
@@ -63,16 +67,33 @@ impl NautilusView {
         toolbar.set_margin_end(8);
 
         let back = gtk::Button::from_icon_name("go-previous-symbolic");
-        back.set_tooltip_text(Some("Back"));
+        back.set_tooltip_text(Some(&ctx.t_or("common.back", "Back")));
         let forward = gtk::Button::from_icon_name("go-next-symbolic");
-        forward.set_tooltip_text(Some("Forward"));
+        forward.set_tooltip_text(Some(&ctx.t_or("common.continue", "Forward")));
         let up = gtk::Button::from_icon_name("go-up-symbolic");
         up.set_tooltip_text(Some("Parent folder"));
         let reload = gtk::Button::from_icon_name("view-refresh-symbolic");
-        reload.set_tooltip_text(Some("Reload"));
+        reload.set_tooltip_text(Some(&ctx.t_or("common.refresh", "Reload")));
         let path_entry = gtk::Entry::new();
         path_entry.set_hexpand(true);
         path_entry.set_placeholder_text(Some("remote:path or /local/path"));
+        let crumbs = gtk::Box::new(gtk::Orientation::Horizontal, 2);
+        crumbs.add_css_class("linked");
+        let crumbs_scroll = gtk::ScrolledWindow::new();
+        crumbs_scroll.set_policy(gtk::PolicyType::Automatic, gtk::PolicyType::Never);
+        crumbs_scroll.set_child(Some(&crumbs));
+        crumbs_scroll.set_hexpand(true);
+        let search_entry = gtk::SearchEntry::new();
+        search_entry.set_hexpand(true);
+        search_entry.set_placeholder_text(Some(
+            &ctx.t_or("nautilus.titles.searchPlaceholder", "Search files..."),
+        ));
+        let path_stack = gtk::Stack::new();
+        path_stack.set_hexpand(true);
+        path_stack.add_named(&crumbs_scroll, Some("crumbs"));
+        path_stack.add_named(&path_entry, Some("entry"));
+        path_stack.add_named(&search_entry, Some("search"));
+        path_stack.set_visible_child_name("crumbs");
         let new_folder = gtk::Button::from_icon_name("folder-new-symbolic");
         new_folder.set_tooltip_text(Some("New folder"));
         let upload = gtk::Button::from_icon_name("document-send-symbolic");
@@ -94,7 +115,7 @@ impl NautilusView {
         toolbar.append(&forward);
         toolbar.append(&up);
         toolbar.append(&reload);
-        toolbar.append(&path_entry);
+        toolbar.append(&path_stack);
         toolbar.append(&new_folder);
         toolbar.append(&upload);
         toolbar.append(&new_tab);
@@ -204,6 +225,10 @@ impl NautilusView {
             right_stack,
             layout_btn: layout.clone(),
             path_entry,
+            path_stack,
+            crumbs,
+            search_entry,
+            search_filter: Rc::new(RefCell::new(String::new())),
             status,
             tabs: Rc::new(RefCell::new(vec![initial.clone()])),
             current: Rc::new(RefCell::new(initial.clone())),
@@ -244,6 +269,25 @@ impl NautilusView {
             let view = view.clone();
             view.path_entry.clone().connect_activate(move |entry| {
                 view.navigate_to(&entry.text());
+                view.show_crumbs();
+            });
+        }
+        {
+            let view = view.clone();
+            view.search_entry
+                .clone()
+                .connect_search_changed(move |entry| {
+                    *view.search_filter.borrow_mut() = entry.text().to_string();
+                    view.reload();
+                });
+        }
+        {
+            let view = view.clone();
+            view.search_entry.clone().connect_stop_search(move |_| {
+                view.search_entry.set_text("");
+                view.search_filter.borrow_mut().clear();
+                view.show_crumbs();
+                view.reload();
             });
         }
         {
@@ -461,11 +505,18 @@ impl NautilusView {
             let ctrl = modifier.contains(gtk::gdk::ModifierType::CONTROL_MASK);
             let shift = modifier.contains(gtk::gdk::ModifierType::SHIFT_MASK);
             if ctrl && key == gtk::gdk::Key::l {
-                view.path_entry.grab_focus();
+                view.show_path_entry();
                 return glib::Propagation::Stop;
             }
             if ctrl && key == gtk::gdk::Key::f {
-                view.path_entry.grab_focus();
+                view.show_search();
+                return glib::Propagation::Stop;
+            }
+            if key == gtk::gdk::Key::Escape {
+                view.search_entry.set_text("");
+                view.search_filter.borrow_mut().clear();
+                view.show_crumbs();
+                view.reload();
                 return glib::Propagation::Stop;
             }
             if key == gtk::gdk::Key::F5 {
@@ -575,7 +626,7 @@ impl NautilusView {
                 .as_ref()
                 .is_none_or(|cfg| crate::picker::is_location_allowed(loc, cfg))
         };
-        self.add_side_header("Starred");
+        self.add_side_header(&self.ctx.t_or("nautilus.titles.starred", "Starred"));
         for star in &self.ctx.settings.borrow().nautilus.starred {
             if let Some(path) = star.get("path").and_then(|x| x.as_str()) {
                 if allowed(path) {
@@ -583,7 +634,7 @@ impl NautilusView {
                 }
             }
         }
-        self.add_side_header("Bookmarks");
+        self.add_side_header(&self.ctx.t_or("nautilus.titles.bookmarks", "Bookmarks"));
         for mark in &self.ctx.settings.borrow().nautilus.bookmarks {
             if let (Some(name), Some(path)) = (
                 mark.get("name").and_then(|x| x.as_str()),
@@ -594,13 +645,13 @@ impl NautilusView {
                 }
             }
         }
-        self.add_side_header("Local");
+        self.add_side_header(&self.ctx.t_or("nautilus.titles.local", "Local"));
         for disk in &self.ctx.snapshot.borrow().local_disks {
             if allowed(disk) {
                 self.add_side_row(disk, disk);
             }
         }
-        self.add_side_header("Cloud remotes");
+        self.add_side_header(&self.ctx.t_or("nautilus.titles.cloud", "Cloud remotes"));
         for remote in &self.ctx.snapshot.borrow().remotes {
             let loc = format!("{}:", remote.name);
             if allowed(&loc) {
@@ -645,6 +696,60 @@ impl NautilusView {
         self.current.borrow_mut().path = path;
         self.sync_current_tab();
         self.reload();
+    }
+
+    fn show_path_entry(&self) {
+        self.path_stack.set_visible_child_name("entry");
+        self.path_entry.grab_focus();
+    }
+
+    fn show_search(&self) {
+        self.path_stack.set_visible_child_name("search");
+        self.search_entry.grab_focus();
+    }
+
+    fn show_crumbs(&self) {
+        self.path_stack.set_visible_child_name("crumbs");
+    }
+
+    fn refresh_crumbs(&self) {
+        while let Some(child) = self.crumbs.first_child() {
+            self.crumbs.remove(&child);
+        }
+        let current = self.current.borrow().clone();
+        for (idx, (label, target)) in
+            crate::path_kind::breadcrumb_targets(&current.remote, &current.path)
+                .into_iter()
+                .enumerate()
+        {
+            if idx > 0 {
+                let sep = gtk::Label::new(Some("›"));
+                sep.add_css_class("dim-label");
+                self.crumbs.append(&sep);
+            }
+            let label = if idx == 0 && current.remote == "local" {
+                self.ctx.t_or("nautilus.titles.local", "Local")
+            } else {
+                label
+            };
+            self.add_crumb(&label, &target);
+        }
+        let edit = gtk::Button::from_icon_name("document-edit-symbolic");
+        edit.set_tooltip_text(Some("Edit path"));
+        edit.set_has_frame(false);
+        let view = self.clone();
+        edit.connect_clicked(move |_| view.show_path_entry());
+        self.crumbs.append(&edit);
+    }
+
+    fn add_crumb(&self, label: &str, target: &str) {
+        let btn = gtk::Button::with_label(label);
+        btn.set_has_frame(false);
+        btn.set_tooltip_text(Some(target));
+        let view = self.clone();
+        let target = target.to_string();
+        btn.connect_clicked(move |_| view.navigate_to(&target));
+        self.crumbs.append(&btn);
     }
 
     pub fn apply_pending_picker(&self) {
@@ -763,6 +868,7 @@ impl NautilusView {
             format!("{}:{}", current.remote, current.path)
         };
         self.path_entry.set_text(&display);
+        self.refresh_crumbs();
         self.sync_current_tab();
         self.refresh_tabs();
         self.reload_ops();
@@ -795,6 +901,10 @@ impl NautilusView {
                     if req.config.selection == crate::picker::PickerSelection::Folders {
                         entries.retain(|e| e.is_dir);
                     }
+                }
+                let query = self.search_filter.borrow().to_lowercase();
+                if !query.is_empty() {
+                    entries.retain(|e| e.name.to_lowercase().contains(&query));
                 }
                 sort_entries(
                     &mut entries,

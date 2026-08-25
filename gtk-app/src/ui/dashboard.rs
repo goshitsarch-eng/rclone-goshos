@@ -36,7 +36,9 @@ impl Dashboard {
         sidebar.add_css_class("sidebar");
 
         let search = gtk::SearchEntry::new();
-        search.set_placeholder_text(Some("Search remotes"));
+        search.set_placeholder_text(Some(
+            &ctx.t_or("sidebar.searchPlaceholder", "Search remotes..."),
+        ));
         let sidebar_list = gtk::ListBox::new();
         sidebar_list.add_css_class("navigation-sidebar");
         sidebar_list.set_selection_mode(gtk::SelectionMode::Single);

@@ -93,6 +93,10 @@ impl AppCtx {
         self.i18n.borrow().t(key)
     }
 
+    pub fn t_or(&self, key: &str, fallback: &str) -> String {
+        self.i18n.borrow().t_or(key, fallback)
+    }
+
     pub fn translate_error(&self, message: &str) -> String {
         self.i18n.borrow().translate_backend(message)
     }
