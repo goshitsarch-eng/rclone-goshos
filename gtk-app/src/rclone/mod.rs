@@ -1,5 +1,6 @@
 pub mod client;
 pub mod engine;
+pub mod serve;
 
 pub use client::{
     apply_backend_rc_config, archive_create_cli_args, archive_create_opts_from_payload,

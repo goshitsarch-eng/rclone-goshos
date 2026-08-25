@@ -2,7 +2,7 @@
 //! `start_profile_batch` / `parse_common_config`.
 
 use crate::operations::OperationType;
-use crate::rclone::{remote_fs, MountedRemote, RcClient, RcError, ServeItem};
+use crate::rclone::{format_bytes, remote_fs, MountedRemote, RcClient, RcError, ServeItem};
 use crate::store::{quick_run_paths, JobInfo, JobMeta, ProfileConfig, QuickRun, RemoteMeta};
 use chrono::{DateTime, Utc};
 use serde_json::{json, Map, Value};
@@ -346,19 +346,26 @@ pub fn build_job_params(
             })
         }
         OperationType::Serve => {
-            let serve_type = obj
-                .get("type")
-                .and_then(|v| v.as_str())
-                .unwrap_or("webdav")
+            let flat = flatten_rclone(rclone);
+            let serve_type = ["type", "serveType"]
+                .iter()
+                .find_map(|key| flat.get(*key).and_then(|v| v.as_str()))
+                .filter(|s| !s.is_empty())
+                .unwrap_or("http")
                 .to_string();
-            let addr = if dest.is_empty() {
-                obj.get("addr")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("127.0.0.1:0")
-                    .to_string()
-            } else {
-                dest.to_string()
-            };
+            let addr = flat
+                .get("addr")
+                .and_then(|v| v.as_str())
+                .filter(|s| !s.is_empty())
+                .map(ToString::to_string)
+                .or_else(|| {
+                    if dest.is_empty() {
+                        None
+                    } else {
+                        Some(dest.to_string())
+                    }
+                })
+                .unwrap_or_else(|| "127.0.0.1:0".into());
             Ok(JobRequest::Serve {
                 serve_type,
                 fs: if source.is_empty() {
@@ -367,6 +374,7 @@ pub fn build_job_params(
                     source.to_string()
                 },
                 addr,
+                extra: body.clone(),
             })
         }
         OperationType::Delete => {
@@ -536,6 +544,7 @@ pub enum JobRequest {
         serve_type: String,
         fs: String,
         addr: String,
+        extra: Value,
     },
 }
 
@@ -566,9 +575,11 @@ pub fn start_request(client: &RcClient, request: &JobRequest) -> Result<String, 
             serve_type,
             fs,
             addr,
-        } => client.serve_start(serve_type, fs, addr).map(|v| {
-            v.get("addr")
+            extra,
+        } => client.serve_start_ex(serve_type, fs, addr, extra).map(|v| {
+            v.get("id")
                 .and_then(|x| x.as_str())
+                .or_else(|| v.get("addr").and_then(|x| x.as_str()))
                 .unwrap_or(addr)
                 .to_string()
         }),
@@ -1650,6 +1661,83 @@ pub fn apply_cryptcheck_outcome(job: &mut JobInfo) {
     }
 }
 
+#[derive(Debug, Clone, PartialEq)]
+pub struct OverviewJobStats {
+    pub bytes: i64,
+    pub total_bytes: i64,
+    pub speed: f64,
+    pub eta: f64,
+    pub errors: i64,
+    pub transfers: i64,
+    pub total_transfers: i64,
+    pub checks: i64,
+    pub total_checks: i64,
+    pub deletes: i64,
+    pub renames: i64,
+    pub server_side_copies: i64,
+    pub server_side_moves: i64,
+    pub last_error: String,
+    pub active: usize,
+}
+
+impl OverviewJobStats {
+    pub fn completion_pct(&self) -> f64 {
+        if self.total_bytes > 0 {
+            ((self.bytes as f64 / self.total_bytes as f64) * 100.0).clamp(0.0, 100.0)
+        } else {
+            0.0
+        }
+    }
+}
+
+pub fn overview_job_stats(jobs: &[JobInfo], core_stats: &Value) -> OverviewJobStats {
+    OverviewJobStats {
+        bytes: stats_i64(core_stats, &["bytes"]),
+        total_bytes: stats_i64(core_stats, &["totalBytes"]),
+        speed: stats_f64(core_stats, &["speed"]),
+        eta: stats_f64(core_stats, &["eta"]),
+        errors: stats_i64(core_stats, &["errors"]),
+        transfers: stats_i64(core_stats, &["transfers"]),
+        total_transfers: stats_i64(core_stats, &["totalTransfers"]),
+        checks: stats_i64(core_stats, &["checks"]),
+        total_checks: stats_i64(core_stats, &["totalChecks"]),
+        deletes: stats_i64(core_stats, &["deletes"]),
+        renames: stats_i64(core_stats, &["renames"]),
+        server_side_copies: stats_i64(core_stats, &["serverSideCopies"]),
+        server_side_moves: stats_i64(core_stats, &["serverSideMoves"]),
+        last_error: core_stats
+            .get("lastError")
+            .and_then(|v| v.as_str())
+            .unwrap_or_default()
+            .to_string(),
+        active: jobs
+            .iter()
+            .filter(|job| job_is_running(job) || job_is_pending(job))
+            .count(),
+    }
+}
+
+pub fn job_transfer_caption(job: &JobInfo) -> String {
+    let bytes = stats_i64(&job.stats, &["bytes"]);
+    let total = stats_i64(&job.stats, &["totalBytes"]);
+    let speed = stats_f64(&job.stats, &["speed"]);
+    let eta = stats_f64(&job.stats, &["eta"]);
+    let size = if total > 0 {
+        format!("{} / {}", format_bytes(bytes), format_bytes(total))
+    } else {
+        format_bytes(bytes)
+    };
+    let mut parts = vec![size];
+    if speed > 0.0 {
+        parts.push(format!("{}/s", format_bytes(speed.round() as i64)));
+    }
+    let eta_s = format_seconds(eta);
+    if eta_s != "—" {
+        parts.push(eta_s);
+    }
+    parts.join(" · ")
+}
+
 pub fn progress_from_stats(stats: &Value) -> f64 {
     let bytes = stats.get("bytes").and_then(|x| x.as_f64()).unwrap_or(0.0);
     let total = stats
@@ -2712,5 +2800,91 @@ mod tests {
         );
         assert_eq!(jobs[0].profile, "weekly");
         assert_eq!(jobs[1].profile, "nightly");
+    }
+
+    #[test]
+    fn builds_serve_from_profile_type_and_addr() {
+        let req = build_job_params(
+            OperationType::Serve,
+            "testdrive",
+            "testdrive:pub",
+            "127.0.0.1:0",
+            &json!({
+                "type": "http",
+                "addr": "127.0.0.1:18080",
+                "readOnly": true,
+                "origin": "dashboard"
+            }),
+        )
+        .unwrap();
+        match req {
+            JobRequest::Serve {
+                serve_type,
+                fs,
+                addr,
+                extra,
+            } => {
+                assert_eq!(serve_type, "http");
+                assert_eq!(fs, "testdrive:pub");
+                assert_eq!(addr, "127.0.0.1:18080");
+                assert_eq!(extra["readOnly"], true);
+                assert_eq!(extra["origin"], "dashboard");
+            }
+            other => panic!("expected serve, got {other:?}"),
+        }
+        let fallback =
+            build_job_params(OperationType::Serve, "box", "", "10.0.0.2:9000", &json!({})).unwrap();
+        match fallback {
+            JobRequest::Serve {
+                serve_type,
+                fs,
+                addr,
+                ..
+            } => {
+                assert_eq!(serve_type, "http");
+                assert_eq!(fs, "box:");
+                assert_eq!(addr, "10.0.0.2:9000");
+            }
+            other => panic!("expected serve, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn overview_job_stats_read_core_stats() {
+        let jobs = vec![
+            running_job(1, "drive", "sync", "default"),
+            JobInfo {
+                status: "completed".into(),
+                ..running_job(2, "drive", "copy", "default")
+            },
+        ];
+        let stats = overview_job_stats(
+            &jobs,
+            &json!({
+                "bytes": 50,
+                "totalBytes": 200,
+                "speed": 1024.0,
+                "eta": 12,
+                "errors": 1,
+                "transfers": 2,
+                "totalTransfers": 4,
+                "checks": 1,
+                "totalChecks": 3,
+                "deletes": 0,
+                "renames": 1,
+                "serverSideCopies": 2,
+                "serverSideMoves": 0,
+                "lastError": "boom"
+            }),
+        );
+        assert_eq!(stats.active, 1);
+        assert_eq!(stats.completion_pct(), 25.0);
+        assert_eq!(stats.last_error, "boom");
+        assert_eq!(stats.server_side_copies, 2);
+        let mut job = running_job(3, "drive", "sync", "default");
+        job.stats = json!({ "bytes": 1024, "totalBytes": 2048, "speed": 512.0, "eta": 8 });
+        let caption = job_transfer_caption(&job);
+        assert!(caption.contains("KiB"));
+        assert!(caption.contains("/s"));
     }
 }

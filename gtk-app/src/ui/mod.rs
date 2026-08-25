@@ -452,6 +452,20 @@ impl AppCtx {
         let settings = self.settings.borrow().clone();
         if !settings.core.active_backend.is_empty() && settings.core.active_backend != "local" {
             *self.engine.borrow_mut() = None;
+            let binary = crate::rclone::engine::resolve_rclone_binary(&settings.core.rclone_binary);
+            let password = crate::keyring::resolve_config_password(&settings.core.config_password);
+            let config_path =
+                crate::repair::config_path_from_flags(&settings.core.rclone_additional_flags)
+                    .map(std::path::PathBuf::from);
+            crate::rclone::serve::install_spawn_context(
+                crate::rclone::serve::spawn_context_from_settings(
+                    binary,
+                    config_path,
+                    &settings.core.rclone_additional_flags,
+                    &settings.core.rclone_env_vars,
+                    &password,
+                ),
+            );
         } else {
             *self.engine.borrow_mut() = Some(crate::rclone::RcloneEngine::start(&settings));
         }

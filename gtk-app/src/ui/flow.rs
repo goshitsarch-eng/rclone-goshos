@@ -396,39 +396,25 @@ impl FlowView {
                     );
                 }
                 "jobs" => {
-                    let jobs = gtk::ListBox::new();
-                    jobs.add_css_class("boxed-list");
-                    if snap.jobs.is_empty() {
-                        let row = adw::ActionRow::new();
-                        row.set_title(
-                            &self
-                                .ctx
-                                .t_or("generalOverview.jobs.noActive", "No active jobs"),
-                        );
-                        jobs.append(&row);
-                    } else {
-                        for job in &snap.jobs {
-                            let row = adw::ActionRow::new();
-                            row.set_title(&format!("{} · {}", job.operation, job.remote));
-                            row.set_subtitle(&format!(
-                                "{} · {:.0}%",
-                                job.status,
-                                job.progress * 100.0
-                            ));
-                            let ctx = self.ctx.clone();
-                            let job = job.clone();
-                            row.connect_activated(move |_| {
-                                ctx.request_nav(NavTarget::for_job(&job));
-                            });
-                            jobs.append(&row);
-                        }
-                    }
+                    let filtered: Vec<_> = snap
+                        .jobs
+                        .iter()
+                        .filter(|job| crate::jobs::is_overview_job(job))
+                        .cloned()
+                        .collect();
+                    let view = self.clone();
+                    let panel = super::job_panels::overview_jobs_panel(
+                        &self.ctx,
+                        &filtered,
+                        &snap.stats,
+                        move || view.refresh(),
+                    );
                     self.append_expandable(
                         "jobs",
                         &self
                             .ctx
                             .t_or("generalOverview.panels.jobs", "Job Information"),
-                        &jobs,
+                        &panel,
                     );
                 }
                 "serves" => {

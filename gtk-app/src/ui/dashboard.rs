@@ -1205,8 +1205,6 @@ impl Dashboard {
     }
 
     fn render_jobs_panel(&self, snap: &crate::store::RuntimeSnapshot) {
-        let jobs = gtk::ListBox::new();
-        jobs.add_css_class("boxed-list");
         let filter = self.origin_filter();
         let filtered: Vec<_> = snap
             .jobs
@@ -1217,54 +1215,13 @@ impl Dashboard {
             })
             .cloned()
             .collect();
-        if filtered.is_empty() {
-            let row = adw::ActionRow::new();
-            row.set_title(
-                &self
-                    .ctx
-                    .t_or("generalOverview.jobs.noActive", "No active jobs"),
-            );
-            jobs.append(&row);
-        } else {
-            for job in &filtered {
-                let row = adw::ActionRow::new();
-                row.set_title(&format!("{} · {}", job.operation, job.remote));
-                row.set_subtitle(&format!(
-                    "{} · {} · {}",
-                    job.status,
-                    job.profile,
-                    if job.origin.is_empty() {
-                        "dashboard"
-                    } else {
-                        job.origin.as_str()
-                    }
-                ));
-                let stop = gtk::Button::from_icon_name("media-playback-stop-symbolic");
-                stop.set_valign(gtk::Align::Center);
-                {
-                    let ctx = self.ctx.clone();
-                    let id = job.id;
-                    let dash = self.clone();
-                    stop.connect_clicked(move |_| {
-                        if let Some(c) = ctx.client() {
-                            let _ = c.job_stop(id);
-                            ctx.refresh_runtime();
-                            dash.refresh();
-                        }
-                    });
-                }
-                row.add_suffix(&stop);
-                {
-                    let job = job.clone();
-                    let ctx = self.ctx.clone();
-                    row.connect_activated(move |_| {
-                        ctx.request_nav(NavTarget::for_job(&job));
-                    });
-                }
-                jobs.append(&row);
-            }
-        }
-        self.host().append(&jobs);
+        let dash = self.clone();
+        self.host().append(&job_panels::overview_jobs_panel(
+            &self.ctx,
+            &filtered,
+            &snap.stats,
+            move || dash.refresh(),
+        ));
     }
 
     fn render_serves_panel(&self, snap: &crate::store::RuntimeSnapshot) {

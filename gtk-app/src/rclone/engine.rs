@@ -91,6 +91,15 @@ impl RcloneEngine {
             }
             Err(err) => log::error!("failed to spawn rclone: {err}"),
         }
+        crate::rclone::serve::install_spawn_context(
+            crate::rclone::serve::spawn_context_from_settings(
+                binary,
+                engine.config_path.clone(),
+                &settings.core.rclone_additional_flags,
+                &settings.core.rclone_env_vars,
+                &password,
+            ),
+        );
         engine
     }
 
@@ -100,6 +109,8 @@ impl RcloneEngine {
     }
 
     pub fn shutdown(&mut self) {
+        crate::rclone::serve::shutdown_legacy(Some(&self.client));
+        crate::rclone::serve::clear_spawn_context();
         if self.available {
             let _ = self.client.quit();
         }

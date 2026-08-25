@@ -700,35 +700,80 @@ impl RcClient {
     }
 
     pub fn serve_start(&self, serve_type: &str, fs: &str, addr: &str) -> Result<Value, RcError> {
-        self.call(
-            "serve/start",
-            json!({
-                "type": serve_type,
-                "fs": fs,
-                "addr": addr
-            }),
-        )
+        self.serve_start_ex(serve_type, fs, addr, &json!({}))
+    }
+
+    pub fn serve_start_ex(
+        &self,
+        serve_type: &str,
+        fs: &str,
+        addr: &str,
+        extra: &Value,
+    ) -> Result<Value, RcError> {
+        let addr = super::serve::resolve_listen_addr(addr);
+        let payload = super::serve::merge_serve_payload(serve_type, fs, &addr, extra);
+        match self.call("serve/start", payload) {
+            Ok(value) => {
+                let id = value.get("id").and_then(|v| v.as_str()).unwrap_or_default();
+                let listen = value.get("addr").and_then(|v| v.as_str()).unwrap_or(&addr);
+                Ok(super::serve::serve_start_response(id, listen))
+            }
+            Err(err) if looks_missing_endpoint(&err) => {
+                super::serve::start_serve_fallback(self, serve_type, fs, &addr, extra, err)
+            }
+            Err(err) => Err(err),
+        }
     }
 
     pub fn serve_stop(&self, id: &str) -> Result<Value, RcError> {
-        self.call("serve/stop", json!({ "id": id }))
+        if super::serve::stop_legacy_serve(Some(self), id) {
+            return Ok(json!({ "id": id }));
+        }
+        match self.call("serve/stop", json!({ "id": id })) {
+            Ok(value) => Ok(value),
+            Err(err) if looks_missing_endpoint(&err) => {
+                if let Some(jobid) = super::serve::parse_fallback_job_id(id) {
+                    self.job_stop(jobid)
+                } else {
+                    Err(err)
+                }
+            }
+            Err(err) => Err(err),
+        }
     }
 
     pub fn serve_stop_all(&self) -> Result<Value, RcError> {
-        self.call("serve/stopall", json!({}))
+        super::serve::shutdown_legacy(Some(self));
+        match self.call("serve/stopall", json!({})) {
+            Ok(value) => Ok(value),
+            Err(err) if looks_missing_endpoint(&err) => Ok(json!({ "ok": true })),
+            Err(err) => Err(err),
+        }
     }
 
     pub fn serve_list(&self) -> Result<Vec<ServeItem>, RcError> {
-        let v = self.call("serve/list", json!({}))?;
-        let list = v
-            .get("list")
-            .and_then(|x| x.as_array())
-            .cloned()
-            .unwrap_or_default();
-        Ok(list
-            .iter()
-            .filter_map(|item| ServeItem::from_rc(item))
-            .collect())
+        let legacy = super::serve::reap_legacy_serves(Some(self));
+        match self.call("serve/list", json!({})) {
+            Ok(value) => {
+                let list = value
+                    .get("list")
+                    .and_then(|x| x.as_array())
+                    .cloned()
+                    .unwrap_or_default();
+                let mut items: Vec<ServeItem> = list
+                    .iter()
+                    .filter_map(|item| ServeItem::from_rc(item))
+                    .collect();
+                for item in legacy {
+                    if !items.iter().any(|existing| existing.id == item.id) {
+                        items.push(item);
+                    }
+                }
+                Ok(items)
+            }
+            Err(err) if looks_missing_endpoint(&err) || !legacy.is_empty() => Ok(legacy),
+            Err(err) => Err(err),
+        }
     }
 
     pub fn vfs_list(&self) -> Result<Value, RcError> {
