@@ -104,6 +104,42 @@ pub fn active_open_paths(
     paths
 }
 
+/// Operations currently running for a remote (mount / serve / jobs).
+pub fn active_remote_ops(
+    name: &str,
+    mounted: bool,
+    serving: bool,
+    jobs: &[JobInfo],
+) -> Vec<OperationType> {
+    let mut ops = Vec::new();
+    for op in OperationType::ALL {
+        let active = match op {
+            OperationType::Mount => mounted,
+            OperationType::Serve => serving,
+            other => jobs.iter().any(|job| {
+                job_belongs_to_remote(job, name)
+                    && job_operation_matches(&job.operation, other)
+                    && job_is_running(job)
+            }),
+        };
+        if active {
+            ops.push(op);
+        }
+    }
+    ops
+}
+
+pub fn overflow_active_ops(
+    displayed: &[OperationType],
+    active: &[OperationType],
+) -> Vec<OperationType> {
+    active
+        .iter()
+        .copied()
+        .filter(|op| !displayed.contains(op))
+        .collect()
+}
+
 pub fn is_dry_run(rclone: &Value) -> bool {
     for key in ["DryRun", "dry_run", "dryRun"] {
         if rclone.get(key).and_then(|v| v.as_bool()).unwrap_or(false) {
@@ -2352,6 +2388,20 @@ mod tests {
             vec!["drive:".to_string()]
         );
         assert!(active_open_paths(OperationType::Sync, "", "—", None).is_empty());
+        let overflow = overflow_active_ops(
+            &[OperationType::Mount, OperationType::Sync],
+            &[
+                OperationType::Mount,
+                OperationType::Sync,
+                OperationType::Serve,
+            ],
+        );
+        assert_eq!(overflow, vec![OperationType::Serve]);
+        assert!(active_remote_ops("drive", false, false, &[]).is_empty());
+        assert_eq!(
+            active_remote_ops("drive", true, true, &[]),
+            vec![OperationType::Mount, OperationType::Serve]
+        );
     }
 
     #[test]

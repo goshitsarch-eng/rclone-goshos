@@ -43,6 +43,7 @@ pub mod settings;
 pub mod smtp;
 pub mod store;
 pub mod syntax;
+pub mod textfix;
 pub mod transfers;
 pub mod tray_menu;
 pub mod updater;

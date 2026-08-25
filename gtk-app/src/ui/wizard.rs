@@ -753,12 +753,22 @@ pub fn present(
     {
         let ctx = ctx.clone();
         let oauth_status = oauth_status.clone();
+        let name = name.clone();
+        let editing = existing.clone();
         cancel_oauth.connect_clicked(move |_| {
             if let Some(client) = ctx.client() {
                 match client.oauth_stop() {
-                    Ok(_) => oauth_status.set_text(
-                        &ctx.t_or("modals.remoteConfig.oauthCancelled", "OAuth cancelled"),
-                    ),
+                    Ok(_) => {
+                        if editing.is_none() {
+                            let created = name.text().to_string();
+                            if !created.is_empty() {
+                                let _ = client.delete_remote(&created);
+                            }
+                        }
+                        oauth_status.set_text(
+                            &ctx.t_or("modals.remoteConfig.oauthCancelled", "OAuth cancelled"),
+                        );
+                    }
                     Err(e) => oauth_status.set_text(&e.to_string()),
                 }
             }

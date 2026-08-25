@@ -5834,6 +5834,28 @@ fn attach_text_preview(
     }
 }
 
+fn attach_lnk_preview(parent: &gtk::Box, ctx: &AppCtx, content: &str) -> bool {
+    let targets = crate::textfix::extract_lnk_targets(content);
+    if targets.is_empty() {
+        return false;
+    }
+    let title = gtk::Label::new(Some(
+        &ctx.t_or("fileBrowser.fileViewer.shortcutTargets", "Shortcut Targets"),
+    ));
+    title.set_xalign(0.0);
+    title.add_css_class("heading");
+    parent.append(&title);
+    let list = gtk::ListBox::new();
+    list.add_css_class("boxed-list");
+    for target in targets {
+        let row = adw::ActionRow::new();
+        row.set_title(&target);
+        list.append(&row);
+    }
+    parent.append(&list);
+    true
+}
+
 fn append_markdown_targets(
     host: &gtk::Box,
     name: &str,
@@ -6359,24 +6381,45 @@ pub fn file_viewer(
     } else {
         None
     };
+    let mut shortcut_shown = false;
+    if !is_dir && crate::textfix::is_lnk_name(name) {
+        let raw = if remote == "local" {
+            std::fs::read(path)
+                .ok()
+                .map(|bytes| String::from_utf8_lossy(&bytes).into_owned())
+        } else {
+            ctx.client()
+                .and_then(|c| c.cat(&remote_fs(remote, ""), path, Some(65_536)).ok())
+        };
+        if let Some(raw) = raw {
+            shortcut_shown = attach_lnk_preview(&box_, &ctx, &raw);
+        }
+    }
     if !is_dir && remote != "local" {
         if let Some(client) = ctx.client() {
             let fs = remote_fs(remote, "");
             if matches!(category, crate::operations::FileTypeCategory::Text) {
                 if let Ok(text) = client.cat(&fs, path, Some(crate::rclone::CAT_PREVIEW_BYTES)) {
-                    info.set_text(&ctx.t_or(
-                        "fileBrowser.fileViewer.remotePreview",
-                        "Remote preview via operations/cat",
-                    ));
-                    attach_text_preview(
-                        &box_,
-                        name,
-                        &text,
-                        true,
-                        None,
-                        Some((ctx.clone(), fs, path.to_string())),
-                    );
-                    append_markdown_targets(&box_, name, &text, remote, path, &ctx, parent);
+                    let text = crate::textfix::repair_text(&text);
+                    if crate::textfix::looks_like_binary(&text) {
+                        info.set_text(
+                            &ctx.t_or("fileBrowser.fileViewer.binaryFile", "This is a binary file"),
+                        );
+                    } else {
+                        info.set_text(&ctx.t_or(
+                            "fileBrowser.fileViewer.remotePreview",
+                            "Remote preview via operations/cat",
+                        ));
+                        attach_text_preview(
+                            &box_,
+                            name,
+                            &text,
+                            true,
+                            None,
+                            Some((ctx.clone(), fs, path.to_string())),
+                        );
+                        append_markdown_targets(&box_, name, &text, remote, path, &ctx, parent);
+                    }
                 }
             } else if category.can_stream_preview()
                 && client.probe_rc_serve(&client.rc_serve_url(remote, path))
@@ -6428,16 +6471,25 @@ pub fn file_viewer(
     if let Some(local) = preview_path.as_ref() {
         attach_local_media_preview(&box_, local, category, name);
         if remote == "local" && matches!(category, crate::operations::FileTypeCategory::Text) {
-            let text = std::fs::read_to_string(local).unwrap_or_default();
-            attach_text_preview(
-                &box_,
-                name,
-                &text,
-                true,
-                Some(&local.to_string_lossy()),
-                None,
-            );
-            append_markdown_targets(&box_, name, &text, remote, path, &ctx, parent);
+            let text = std::fs::read(local)
+                .ok()
+                .map(|bytes| crate::textfix::decode_preview_bytes(&bytes))
+                .unwrap_or_default();
+            if crate::textfix::looks_like_binary(&text) {
+                info.set_text(
+                    &ctx.t_or("fileBrowser.fileViewer.binaryFile", "This is a binary file"),
+                );
+            } else {
+                attach_text_preview(
+                    &box_,
+                    name,
+                    &text,
+                    true,
+                    Some(&local.to_string_lossy()),
+                    None,
+                );
+                append_markdown_targets(&box_, name, &text, remote, path, &ctx, parent);
+            }
         }
     } else if remote == "local" && matches!(category, crate::operations::FileTypeCategory::Audio) {
         attach_audio_cover(&box_, Some(std::path::Path::new(path)), None);
@@ -6452,7 +6504,7 @@ pub fn file_viewer(
                 | crate::operations::FileTypeCategory::Pdf
                 | crate::operations::FileTypeCategory::Text
         );
-    if !previewed {
+    if !previewed && !shortcut_shown {
         let page = adw::StatusPage::new();
         page.set_icon_name(Some(
             if matches!(category, crate::operations::FileTypeCategory::Binary) {
@@ -9237,6 +9289,70 @@ fn selected_or_all(rows: &[(String, adw::SwitchRow)]) -> Vec<String> {
     }
 }
 
+pub fn password_prompt(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, toast: adw::ToastOverlay) {
+    let dialog = adw::AlertDialog::new(
+        Some(&ctx.t_or(
+            "modals.backend.security.configPassword",
+            "rclone.conf password",
+        )),
+        Some(&ctx.t_or(
+            "repair.passwordPrompt",
+            "Enter the rclone.conf password to unlock the engine.",
+        )),
+    );
+    let box_ = gtk::Box::new(gtk::Orientation::Vertical, 8);
+    let entry = gtk::PasswordEntry::new();
+    entry.set_show_peek_icon(true);
+    let remember_label = ctx.t_or(
+        "modals.backend.security.systemKeychain",
+        "Remember in the system keyring",
+    );
+    let remember = gtk::CheckButton::with_label(&remember_label);
+    remember.set_active(true);
+    box_.append(&entry);
+    box_.append(&remember);
+    dialog.set_extra_child(Some(&box_));
+    dialog.add_response("cancel", &ctx.t("common.cancel"));
+    let unlock = ctx.t_or("repair.unlock", "Unlock");
+    dialog.add_response("unlock", &unlock);
+    dialog.set_response_appearance("unlock", adw::ResponseAppearance::Suggested);
+    {
+        let ctx = ctx.clone();
+        let toast = toast.clone();
+        let entry = entry.clone();
+        let remember = remember.clone();
+        dialog.connect_response(None, move |_, response| {
+            if response != "unlock" {
+                return;
+            }
+            let password = entry.text().to_string();
+            if password.is_empty() {
+                toast.add_toast(adw::Toast::new(
+                    &ctx.t_or("repair.passwordEmpty", "Password is empty"),
+                ));
+                return;
+            }
+            if remember.is_active() {
+                crate::keyring::persist_password_setting(
+                    &mut ctx.settings.borrow_mut().core.config_password,
+                    &password,
+                );
+                ctx.persist();
+            }
+            if let Some(client) = ctx.client() {
+                match client.config_unlock(&password) {
+                    Ok(_) => toast.add_toast(adw::Toast::new(
+                        &ctx.t_or("repair.passwordUnlocked", "Config unlocked"),
+                    )),
+                    Err(e) => toast.add_toast(adw::Toast::new(&e.to_string())),
+                }
+            }
+            ctx.restart_engine();
+        });
+    }
+    dialog.present(Some(parent));
+}
+
 pub fn repair(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, toast: adw::ToastOverlay) {
     let dialog = adw::Dialog::new();
     dialog.set_title(&ctx.t_or("repair.title", "Repair rclone"));
@@ -9293,7 +9409,7 @@ pub fn repair(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, toast: adw::ToastOver
                     }
                 },
                 crate::repair::RepairKind::PasswordRequired => {
-                    preferences(&parent, ctx.clone());
+                    password_prompt(&parent, ctx.clone(), toast.clone());
                 }
                 crate::repair::RepairKind::AuthFailed => {
                     backends(&parent, ctx.clone());

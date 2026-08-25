@@ -344,6 +344,12 @@ This client is the GTK 4 + libadwaita rewrite of the Angular/Tauri desktop UI. I
 - Compact cards with multiple profiles open a Start/Stop picker popover (Angular profile blossom)
 - Active mount/sync jobs expose folder-open shortcuts for src/dst / mount point
 - Markdown preview lists relative link/image targets and opens them (Angular `resolveRelativePath`)
+- File viewer repairs mangled UTF-16 text and lists Windows `.lnk` shortcut targets
+- Detailed dashboard cards group profiles by operation, show an empty state, and add folder-open buttons for active src/dst/mount paths
+- Compact cards show overflow status icons for active ops beyond the three primary actions
+- General remote detail can edit `primary_actions` from a header gear (Angular configure-actions)
+- Cancel OAuth in the create wizard deletes the half-created remote
+- Repair PasswordRequired opens an inline unlock sheet (optional keyring remember) instead of full Preferences
 
 ## Still deepening toward pixel-level Angular parity
 

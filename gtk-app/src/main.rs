@@ -41,6 +41,7 @@ mod settings;
 mod smtp;
 mod store;
 mod syntax;
+mod textfix;
 mod transfers;
 mod tray_menu;
 mod ui;

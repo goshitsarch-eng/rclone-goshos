@@ -679,7 +679,7 @@ impl Dashboard {
                     .unwrap_or_else(|| tab.compact_primary_ops(&[], &[], 3));
                 let snap = self.ctx.snapshot.borrow().clone();
                 let mut open_paths: Vec<String> = Vec::new();
-                for op in compact_ops {
+                for op in compact_ops.iter().copied() {
                     let names = self
                         .ctx
                         .store
@@ -822,6 +822,25 @@ impl Dashboard {
                 open_paths.sort();
                 open_paths.dedup();
                 append_open_folder_suffix(&row, &self.ctx, &remote.name, &open_paths);
+                let overflow = crate::jobs::overflow_active_ops(
+                    &compact_ops,
+                    &crate::jobs::active_remote_ops(
+                        &remote.name,
+                        remote.mounted,
+                        remote.serving,
+                        &snap.jobs,
+                    ),
+                );
+                for op in overflow {
+                    let pill = gtk::Image::from_icon_name(op.icon_name());
+                    pill.set_tooltip_text(Some(
+                        &self
+                            .ctx
+                            .t_or(&format!("actions.{}", op.as_str()), op.api_label()),
+                    ));
+                    pill.add_css_class("accent");
+                    row.add_suffix(&pill);
+                }
             }
             if editing {
                 let hide = gtk::Button::from_icon_name(if remote.hidden {
@@ -880,15 +899,30 @@ impl Dashboard {
                 card.set_margin_start(8);
                 card.set_margin_end(8);
                 card.append(&row);
-                let chips = gtk::Box::new(gtk::Orientation::Horizontal, 6);
-                chips.add_css_class("linked");
-                chips.set_hexpand(true);
+                let mut groups = 0usize;
                 if let Some(meta) = self.ctx.store.borrow().remotes.get(&remote.name) {
                     for op in meta.visible_operations() {
                         if !tab.includes_operation(op) {
                             continue;
                         }
-                        for pname in meta.profile_names(op) {
+                        let names = meta.profile_names(op);
+                        if names.is_empty() {
+                            continue;
+                        }
+                        let group = gtk::Box::new(gtk::Orientation::Vertical, 4);
+                        let header = gtk::Label::new(Some(
+                            &self
+                                .ctx
+                                .t_or(&format!("actions.{}", op.as_str()), op.api_label()),
+                        ));
+                        header.set_xalign(0.0);
+                        header.add_css_class("heading");
+                        group.append(&header);
+                        let chips = gtk::Box::new(gtk::Orientation::Horizontal, 6);
+                        chips.add_css_class("linked");
+                        chips.set_hexpand(true);
+                        let mut group_paths = Vec::new();
+                        for pname in names {
                             let snap = self.ctx.snapshot.borrow();
                             let active = crate::jobs::profile_is_active(
                                 &remote.name,
@@ -898,6 +932,28 @@ impl Dashboard {
                                 &snap.mounts,
                                 &snap.serves,
                             );
+                            let job = snap.jobs.iter().find(|job| {
+                                crate::jobs::job_belongs_to_remote(job, &remote.name)
+                                    && crate::jobs::job_operation_matches(&job.operation, op)
+                                    && crate::jobs::job_is_running(job)
+                                    && job.profile == pname
+                            });
+                            let mount_point = snap
+                                .mounts
+                                .iter()
+                                .find(|m| {
+                                    m.fs.trim_end_matches(':') == remote.name
+                                        || m.fs == format!("{}:", remote.name)
+                                })
+                                .map(|m| m.mount_point.clone());
+                            if active {
+                                group_paths.extend(crate::jobs::active_open_paths(
+                                    op,
+                                    job.map(|j| j.src.as_str()).unwrap_or(""),
+                                    job.map(|j| j.dst.as_str()).unwrap_or(""),
+                                    mount_point.as_deref(),
+                                ));
+                            }
                             drop(snap);
                             let chip = gtk::Button::with_label(&if active {
                                 format!("Stop {} · {pname}", op.api_label())
@@ -933,9 +989,32 @@ impl Dashboard {
                             });
                             chips.append(&chip);
                         }
+                        group_paths.sort();
+                        group_paths.dedup();
+                        for path in group_paths {
+                            let open = gtk::Button::from_icon_name("folder-open-symbolic");
+                            open.set_tooltip_text(Some(&path));
+                            let ctx = self.ctx.clone();
+                            let name = remote.name.clone();
+                            open.connect_clicked(move |_| {
+                                open_overview_path(&ctx, &name, &path);
+                            });
+                            chips.append(&open);
+                        }
+                        group.append(&chips);
+                        card.append(&group);
+                        groups += 1;
                     }
                 }
-                card.append(&chips);
+                if groups == 0 {
+                    let empty = gtk::Label::new(Some(&self.ctx.t_or(
+                        "overviews.remoteCard.emptyState.message",
+                        "This remote has no operation profiles to show.",
+                    )));
+                    empty.add_css_class("dim-label");
+                    empty.set_wrap(true);
+                    card.append(&empty);
+                }
                 let wrap = gtk::ListBoxRow::new();
                 wrap.set_activatable(false);
                 wrap.set_child(Some(&card));
@@ -2334,6 +2413,54 @@ impl Dashboard {
             });
             chips.append(&btn);
         }
+        let gear = gtk::Button::from_icon_name("emblem-system-symbolic");
+        gear.set_tooltip_text(Some(&self.ctx.t_or(
+            "dashboard.appDetail.configureActions",
+            "Configure primary actions",
+        )));
+        {
+            let ctx = self.ctx.clone();
+            let remote = name.to_string();
+            let dash = self.clone();
+            gear.connect_clicked(move |_| {
+                let current = ctx
+                    .store
+                    .borrow()
+                    .remotes
+                    .get(&remote)
+                    .map(|meta| meta.primary_actions.clone())
+                    .unwrap_or_default();
+                let catalog = crate::action_order::catalog_ids();
+                if let Some(win) = dash.root.root().and_downcast::<gtk::Window>() {
+                    dialogs::action_order(
+                        &win,
+                        &ctx,
+                        &ctx.t_or(
+                            "dashboard.appDetail.configureActions",
+                            "Configure primary actions",
+                        ),
+                        &catalog,
+                        &current,
+                        {
+                            let ctx = ctx.clone();
+                            let remote = remote.clone();
+                            let dash = dash.clone();
+                            move |ids| {
+                                ctx.store
+                                    .borrow_mut()
+                                    .remotes
+                                    .entry(remote.clone())
+                                    .or_default()
+                                    .primary_actions = ids;
+                                ctx.persist();
+                                dash.refresh();
+                            }
+                        },
+                    );
+                }
+            });
+        }
+        chips.append(&gear);
         self.detail.append(&chips);
     }
 
