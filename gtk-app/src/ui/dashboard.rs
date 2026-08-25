@@ -2593,7 +2593,12 @@ impl Dashboard {
             });
             list.append(&item);
         }
-        popover.set_child(Some(&list));
+        let scroll = gtk::ScrolledWindow::new();
+        scroll.set_policy(gtk::PolicyType::Never, gtk::PolicyType::Automatic);
+        scroll.set_min_content_height(280);
+        scroll.set_max_content_height(360);
+        scroll.set_child(Some(&list));
+        popover.set_child(Some(&scroll));
         btn.set_popover(Some(&popover));
         btn
     }
