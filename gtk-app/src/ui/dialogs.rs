@@ -5972,7 +5972,10 @@ pub fn job_detail(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, job_id: u64) {
                 .map(|s| s.to_string())
                 .unwrap_or_else(|| format!("job/{job_id}"));
             let stats = client.stats(Some(&group)).ok();
-            let job = job_from_status(job_id, &status, stats.as_ref());
+            let mut job = job_from_status(job_id, &status, stats.as_ref());
+            let registry = ctx.store.borrow().job_meta.clone();
+            let siblings = ctx.snapshot.borrow().jobs.clone();
+            crate::jobs::decorate_job_transfers(&mut job, &registry, &siblings);
             populate_opens(&job.src, &job.dst);
             progress.set_fraction(job.progress);
             progress.set_text(Some(&format!(

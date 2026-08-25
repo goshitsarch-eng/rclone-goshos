@@ -1011,6 +1011,26 @@ pub fn hydrate_grouped_transfers(jobs: &mut [JobInfo], meta: &HashMap<u64, JobMe
     }
 }
 
+/// Apply registry metadata and hydrate transfer rows for a single job
+/// (Job detail re-fetches RC status and would otherwise drop the snapshot).
+pub fn decorate_job_transfers(
+    job: &mut JobInfo,
+    meta: &HashMap<u64, JobMeta>,
+    siblings: &[JobInfo],
+) {
+    apply_job_meta(job, meta.get(&job.id));
+    let mut jobs: Vec<JobInfo> = siblings
+        .iter()
+        .filter(|item| item.id != job.id)
+        .cloned()
+        .collect();
+    jobs.insert(0, job.clone());
+    hydrate_grouped_transfers(&mut jobs, meta);
+    if let Some(updated) = jobs.into_iter().find(|item| item.id == job.id) {
+        *job = updated;
+    }
+}
+
 fn apply_hydrated_rows(
     job: &mut JobInfo,
     empty_active: bool,
@@ -2851,6 +2871,13 @@ mod tests {
         assert_eq!(jobs[0].completed[0]["name"], "b.txt");
         assert_eq!(jobs[0].transferring[0]["name"], "a.txt");
         assert_eq!(jobs[0].group, "filemanager-upload/abc");
+        let mut finished = preparing_job(20, "testdrive", "/tmp/a.txt", "Inbox", 2, 8);
+        finished.status = "completed".into();
+        finished.transferring = json!([]);
+        finished.completed = json!([]);
+        decorate_job_transfers(&mut finished, &map, &[]);
+        assert_eq!(finished.completed.as_array().unwrap().len(), 2);
+        assert!(finished.transferring.as_array().unwrap().is_empty());
     }
 
     #[test]
