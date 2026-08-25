@@ -284,14 +284,13 @@ fn step_label(ctx: &AppCtx, step: EditorStep) -> String {
         EditorStep::Op(op) => {
             ctx.t_or(&format!("operations.{}.label", op.as_str()), op.api_label())
         }
-        EditorStep::Helper(kind) => ctx.t_or(
-            &format!("modals.remoteConfig.helpers.{kind}"),
-            HELPERS
-                .iter()
-                .find(|(k, _, _)| *k == kind)
-                .map(|(_, label, _)| *label)
-                .unwrap_or(kind),
-        ),
+        EditorStep::Helper(kind) => {
+            let key = match kind {
+                "runtime" => "modals.remoteConfig.steps.runtimeRemote",
+                other => return ctx.t_or(&format!("modals.remoteConfig.steps.{other}"), other),
+            };
+            ctx.t_or(key, "Runtime Remote")
+        }
     }
 }
 
@@ -336,8 +335,14 @@ fn preset_bar(
             ctx.persist();
             rebuild();
             let toast = adw::AlertDialog::new(
-                Some(&ctx.t_or("templates.applySuccess", "Presets applied")),
-                Some("Default provider / OS presets were merged into this remote."),
+                Some(&ctx.t_or(
+                    "wizards.presets.applied",
+                    "Default presets applied successfully",
+                )),
+                Some(&ctx.t_or(
+                    "templates.applySuccess",
+                    "Default provider / OS presets were merged into this remote.",
+                )),
             );
             toast.add_response("ok", &ctx.t_or("common.ok", "OK"));
             toast.present(Some(&parent));
@@ -513,7 +518,7 @@ fn remote_page(
     let sync_ids = Rc::new(RefCell::new(meta.sync_actions.clone()));
     let primary_row = adw::ActionRow::new();
     primary_row.set_title(&ctx.t_or("remoteConfig.primaryActions", "Primary actions"));
-    primary_row.set_subtitle(&action_summary(&primary_ids.borrow()));
+    primary_row.set_subtitle(&action_summary(&ctx, &primary_ids.borrow()));
     let edit_primary = gtk::Button::with_label(&ctx.t_or("common.edit", "Edit"));
     edit_primary.set_valign(gtk::Align::Center);
     {
@@ -534,8 +539,9 @@ fn remote_page(
                 {
                     let primary_ids = primary_ids.clone();
                     let primary_row = primary_row.clone();
+                    let ctx = ctx.clone();
                     move |ids| {
-                        primary_row.set_subtitle(&action_summary(&ids));
+                        primary_row.set_subtitle(&action_summary(&ctx, &ids));
                         *primary_ids.borrow_mut() = ids;
                     }
                 },
@@ -545,7 +551,7 @@ fn remote_page(
     primary_row.add_suffix(&edit_primary);
     let sync_row = adw::ActionRow::new();
     sync_row.set_title(&ctx.t_or("remoteConfig.syncActions", "Sync actions"));
-    sync_row.set_subtitle(&action_summary(&sync_ids.borrow()));
+    sync_row.set_subtitle(&action_summary(&ctx, &sync_ids.borrow()));
     let edit_sync = gtk::Button::with_label(&ctx.t_or("common.edit", "Edit"));
     edit_sync.set_valign(gtk::Align::Center);
     {
@@ -570,8 +576,9 @@ fn remote_page(
                 {
                     let sync_ids = sync_ids.clone();
                     let sync_row = sync_row.clone();
+                    let ctx = ctx.clone();
                     move |ids| {
-                        sync_row.set_subtitle(&action_summary(&ids));
+                        sync_row.set_subtitle(&action_summary(&ctx, &ids));
                         *sync_ids.borrow_mut() = ids;
                     }
                 },
@@ -1083,7 +1090,10 @@ fn operation_page(
     }
     let json_toggle = adw::SwitchRow::new();
     json_toggle.set_title(&ctx.t_or("remoteConfig.jsonMode", "JSON mode"));
-    json_toggle.set_subtitle("Edit this profile's rclone flags as a JSON object");
+    json_toggle.set_subtitle(&ctx.t_or(
+        "remoteConfig.jsonPayloadHelp",
+        "Edit this profile's rclone flags as a JSON object",
+    ));
     json_toggle.set_active(ctx.settings.borrow().runtime.show_json_mode);
     let json_view = gtk::TextView::new();
     json_view.set_monospace(true);
@@ -1855,7 +1865,10 @@ fn wire_profile_actions(
                     drop(snap);
                     if usage.blocked() {
                         let alert = adw::AlertDialog::new(
-                            Some("Profile is in use"),
+                            Some(&ctx.t_or(
+                                "modals.remoteConfig.profile.inUseWarning",
+                                "Profile is in use",
+                            )),
                             Some(&usage.summary()),
                         );
                         alert.add_response("ok", &ctx.t_or("common.ok", "OK"));
@@ -1994,9 +2007,12 @@ fn value_to_text(value: &Value) -> String {
     }
 }
 
-fn action_summary(ids: &[String]) -> String {
+fn action_summary(ctx: &AppCtx, ids: &[String]) -> String {
     if ids.is_empty() {
-        "All actions (default order)".into()
+        ctx.t_or(
+            "remoteConfig.defaultActionOrder",
+            "All actions (default order)",
+        )
     } else {
         ids.join(" · ")
     }

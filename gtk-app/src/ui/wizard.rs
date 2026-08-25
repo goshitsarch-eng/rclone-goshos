@@ -1196,6 +1196,7 @@ fn present_ex(
                         nav.set_visible_child_name("profiles");
                     } else {
                         apply_question_widgets(
+                            &ctx,
                             &next,
                             &question_title,
                             &question_help,
@@ -1399,8 +1400,10 @@ fn present_ex(
                     }
                     Err(e) => {
                         let err = adw::AlertDialog::new(
-                            Some(&ctx.t_or("common.error", "Could not save remote")),
-                            Some(&e.to_string()),
+                            Some(&ctx.t_or("common.error", "Error")),
+                            Some(
+                                &ctx.tf("settings.remoteSaveFailed", &[("error", &e.to_string())]),
+                            ),
                         );
                         err.add_response("ok", &ctx.t_or("common.ok", "OK"));
                         err.present(Some(&dialog));
@@ -1919,6 +1922,7 @@ fn current_answer(
 }
 
 fn apply_question_widgets(
+    ctx: &AppCtx,
     flow: &InteractiveFlowState,
     title: &gtk::Label,
     help: &gtk::Label,
@@ -1959,8 +1963,16 @@ fn apply_question_widgets(
             }
         }
     } else {
-        title.set_text("Continue authorization");
-        help.set_text(step.error.as_deref().unwrap_or("Complete the next step."));
+        title.set_text(&ctx.t_or(
+            "wizards.remoteConfig.authenticationMethod",
+            "Continue authorization",
+        ));
+        help.set_text(&step.error.clone().unwrap_or_else(|| {
+            ctx.t_or(
+                "modals.oauth.openLink",
+                "Complete the next step in the browser.",
+            )
+        }));
     }
 }
 

@@ -8467,10 +8467,20 @@ pub fn configure_sidebar(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, on_done: R
     let hidden = Rc::new(RefCell::new(
         ctx.settings.borrow().nautilus.sidebar_hidden_drives.clone(),
     ));
+    let disk_labels: std::collections::HashMap<String, String> =
+        crate::fileops::collect_local_drives(&ctx.snapshot.borrow().local_disks)
+            .into_iter()
+            .map(|drive| {
+                let title = drive.title(|key, fallback| ctx.t_or(key, fallback));
+                (drive.path, title)
+            })
+            .collect();
+    let labels = Rc::new(disk_labels);
     fn refill(
         list: &gtk::ListBox,
         names: &Rc<RefCell<Vec<String>>>,
         hidden: &Rc<RefCell<Vec<String>>>,
+        labels: &Rc<std::collections::HashMap<String, String>>,
     ) {
         while let Some(child) = list.first_child() {
             list.remove(&child);
@@ -8478,7 +8488,12 @@ pub fn configure_sidebar(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, on_done: R
         let current = names.borrow().clone();
         for (idx, name) in current.iter().enumerate() {
             let row = adw::SwitchRow::new();
-            row.set_title(name);
+            if let Some(title) = labels.get(name) {
+                row.set_title(title);
+                row.set_subtitle(name);
+            } else {
+                row.set_title(name);
+            }
             row.set_active(!hidden.borrow().iter().any(|n| n == name));
             {
                 let hidden = hidden.clone();
@@ -8501,6 +8516,7 @@ pub fn configure_sidebar(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, on_done: R
                 let names = names.clone();
                 let hidden = hidden.clone();
                 let list = list.clone();
+                let labels = labels.clone();
                 up.connect_clicked(move |_| {
                     {
                         let mut names = names.borrow_mut();
@@ -8508,13 +8524,14 @@ pub fn configure_sidebar(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, on_done: R
                             names.swap(idx, idx - 1);
                         }
                     }
-                    refill(&list, &names, &hidden);
+                    refill(&list, &names, &hidden, &labels);
                 });
             }
             {
                 let names = names.clone();
                 let hidden = hidden.clone();
                 let list = list.clone();
+                let labels = labels.clone();
                 down.connect_clicked(move |_| {
                     {
                         let mut names = names.borrow_mut();
@@ -8522,7 +8539,7 @@ pub fn configure_sidebar(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, on_done: R
                             names.swap(idx, idx + 1);
                         }
                     }
-                    refill(&list, &names, &hidden);
+                    refill(&list, &names, &hidden, &labels);
                 });
             }
             row.add_suffix(&up);
@@ -8530,7 +8547,7 @@ pub fn configure_sidebar(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, on_done: R
             list.append(&row);
         }
     }
-    refill(&list, &names, &hidden);
+    refill(&list, &names, &hidden, &labels);
     let save = gtk::Button::with_label(&ctx.t("common.save"));
     save.add_css_class("suggested-action");
     {
