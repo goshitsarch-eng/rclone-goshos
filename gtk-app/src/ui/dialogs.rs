@@ -9949,21 +9949,11 @@ fn populate_template_key_rows(
     update_template_key_count(ctx, rows, count);
 }
 
-fn persist_user_template(ctx: &AppCtx, existing_id: Option<&str>, template: UserTemplate) {
-    if let Some(id) = existing_id {
-        if let Some(slot) = ctx
-            .store
-            .borrow_mut()
-            .templates
-            .iter_mut()
-            .find(|item| item.id == id)
-        {
-            *slot = template;
-            ctx.persist();
-            return;
-        }
+fn persist_user_template(ctx: &AppCtx, template: UserTemplate) {
+    {
+        let mut store = ctx.store.borrow_mut();
+        crate::user_templates::upsert_template(&mut store.templates, template);
     }
-    ctx.store.borrow_mut().templates.push(template);
     ctx.persist();
 }
 
@@ -10050,7 +10040,6 @@ fn edit_template(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, existing: Option<U
             };
             persist_user_template(
                 &ctx,
-                existing_id.as_deref(),
                 UserTemplate {
                     id: existing_id
                         .clone()
@@ -10242,7 +10231,6 @@ fn capture_template(parent: &impl IsA<gtk::Widget>, ctx: AppCtx) {
             let values = crate::user_templates::filter_by_paths(&source.borrow(), &paths);
             persist_user_template(
                 &ctx,
-                None,
                 UserTemplate {
                     id: uuid::Uuid::new_v4().to_string(),
                     name: title,

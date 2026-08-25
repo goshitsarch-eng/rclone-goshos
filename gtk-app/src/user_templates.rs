@@ -1,7 +1,7 @@
 //! User preset templates — Angular `UserPresetTemplate` / `TEMPLATE_CATEGORIES`.
 
 use crate::operations::OperationType;
-use crate::store::{ProfileConfig, RemoteMeta};
+use crate::store::{ProfileConfig, RemoteMeta, UserTemplate};
 use serde_json::{json, Map, Value};
 
 /// Flag-type keys plus `remote`, matching Angular `TEMPLATE_CATEGORIES`.
@@ -264,6 +264,15 @@ pub fn leaf_count(value: &Value) -> usize {
     flatten_leaf_paths(value).len()
 }
 
+/// Insert or replace a template by `id` without holding other borrows.
+pub fn upsert_template(templates: &mut Vec<UserTemplate>, template: UserTemplate) {
+    if let Some(slot) = templates.iter_mut().find(|item| item.id == template.id) {
+        *slot = template;
+    } else {
+        templates.push(template);
+    }
+}
+
 /// Apply categorized values when `meta` is present. Returns 0 for flat `options/set` JSON.
 pub fn apply_if_categorized(
     meta: Option<&mut RemoteMeta>,
@@ -424,5 +433,47 @@ mod tests {
         assert!(filtered["main"].get("checkers").is_none());
         assert!(flatten_leaf_paths(&json!({})).is_empty());
         assert!(flatten_leaf_paths(&json!(null)).is_empty());
+    }
+
+    #[test]
+    fn upsert_replaces_matching_id_and_appends_new() {
+        let mut templates = vec![UserTemplate {
+            id: "keep".into(),
+            name: "Old".into(),
+            description: "a".into(),
+            icon: "emblem-ok-symbolic".into(),
+            created_at: "t0".into(),
+            updated_at: "t0".into(),
+            values: json!({ "main": { "transfers": 4 } }),
+        }];
+        upsert_template(
+            &mut templates,
+            UserTemplate {
+                id: "keep".into(),
+                name: "Renamed".into(),
+                description: "b".into(),
+                icon: "emblem-ok-symbolic".into(),
+                created_at: "t0".into(),
+                updated_at: "t1".into(),
+                values: json!({ "main": { "transfers": 8 } }),
+            },
+        );
+        assert_eq!(templates.len(), 1);
+        assert_eq!(templates[0].name, "Renamed");
+        assert_eq!(templates[0].values["main"]["transfers"], 8);
+        upsert_template(
+            &mut templates,
+            UserTemplate {
+                id: "other".into(),
+                name: "Second".into(),
+                description: String::new(),
+                icon: "emblem-ok-symbolic".into(),
+                created_at: "t2".into(),
+                updated_at: "t2".into(),
+                values: json!({}),
+            },
+        );
+        assert_eq!(templates.len(), 2);
+        assert_eq!(templates[1].name, "Second");
     }
 }
