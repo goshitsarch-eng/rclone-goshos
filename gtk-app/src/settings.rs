@@ -88,6 +88,10 @@ pub struct BackendEntry {
     pub port: u16,
     pub user: String,
     pub pass: String,
+    #[serde(default)]
+    pub config_path: String,
+    #[serde(default)]
+    pub config_password: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

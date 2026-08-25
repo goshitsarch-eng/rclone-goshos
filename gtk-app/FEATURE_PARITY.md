@@ -277,6 +277,11 @@ This client is the GTK 4 + libadwaita rewrite of the Angular/Tauri desktop UI. I
 - Shortcuts catalog lists Files pane/tab/search/path/select-all accelerators
 - Flow Quick Run detail: dry-run, tray, last-job stats, logs, and job-detail navigation
 - Dashboard operations: inline dry-run/resync plus live job stats; start dialog resync for bisync
+- Alert rule editor uses Angular-style multi-select switches for remotes, backends, profiles, and origins
+- Extra RC backends store config path and config password; Backends dialog picks the local rclone.conf
+- Cron descriptions: Quartz `L-n` offset and last weekday of month (`LW`)
+- Logs extract nested rclone/bisync `status.output.output` and pretty-print JSON context
+- Alert email subject template plus MQTT QoS 0/1 and retain
 
 ## Still deepening toward pixel-level Angular parity
 

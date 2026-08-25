@@ -76,9 +76,13 @@ impl LogEntry {
         if let Some(op) = &self.operation {
             text.push_str(&format!("\nOperation: {op}"));
         }
+        if let Some(output) = self.context.as_deref().and_then(extract_command_output) {
+            text.push_str("\n\nOutput:\n");
+            text.push_str(&crate::ansi::strip_ansi(&output));
+        }
         if let Some(ctx) = &self.context {
             text.push_str("\n\nDetails:\n");
-            text.push_str(ctx);
+            text.push_str(&format_log_context(ctx));
         }
         text
     }
@@ -191,6 +195,41 @@ fn parse_json_line(line: &str) -> Option<LogEntry> {
         operation,
         raw: line.to_string(),
     })
+}
+
+pub fn extract_command_output(context: &str) -> Option<String> {
+    let value: Value = serde_json::from_str(context).ok()?;
+    if let Some(nested) = value
+        .pointer("/status/output/output")
+        .or_else(|| value.pointer("/output/output"))
+    {
+        if let Some(text) = nested.as_str() {
+            if !text.is_empty() {
+                return Some(text.to_string());
+            }
+        }
+    }
+    match value.get("output") {
+        Some(Value::String(text)) if !text.is_empty() => Some(text.clone()),
+        Some(obj) if obj.is_object() || obj.is_array() => serde_json::to_string_pretty(obj).ok(),
+        _ => None,
+    }
+}
+
+pub fn format_log_context(context: &str) -> String {
+    let Ok(mut value) = serde_json::from_str::<Value>(context) else {
+        return context.to_string();
+    };
+    if let Some(response) = value.get("response").cloned() {
+        if let Some(text) = response.as_str() {
+            if let Ok(parsed) = serde_json::from_str::<Value>(text) {
+                if let Some(obj) = value.as_object_mut() {
+                    obj.insert("response".into(), parsed);
+                }
+            }
+        }
+    }
+    serde_json::to_string_pretty(&value).unwrap_or_else(|_| context.to_string())
 }
 
 fn leftover_context(obj: &Map<String, Value>, skip: &[&str]) -> Option<String> {
@@ -544,6 +583,21 @@ mod tests {
         assert!(text.contains("copy failed"));
         assert!(text.contains("Details:"));
         assert!(text.contains("boom"));
+    }
+
+    #[test]
+    fn extracts_nested_bisync_output() {
+        let nested = r#"{
+            "status": {"output": {"output": "\u001b[32mBisync OK\u001b[0m"}},
+            "response": "{\"ok\":true}"
+        }"#;
+        assert_eq!(
+            extract_command_output(nested).as_deref(),
+            Some("\u{1b}[32mBisync OK\u{1b}[0m")
+        );
+        let pretty = format_log_context(nested);
+        assert!(pretty.contains("\"ok\": true"));
+        assert_eq!(extract_command_output("not-json"), None);
     }
 
     #[test]

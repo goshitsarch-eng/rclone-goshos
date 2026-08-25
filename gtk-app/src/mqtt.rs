@@ -31,7 +31,16 @@ pub fn publish_alert(config: &Value, body: &str) -> Result<(), String> {
         .get("password")
         .and_then(|x| x.as_str())
         .unwrap_or("");
-    publish(&host, port, use_tls, user, pass, topic, body)
+    let qos = config
+        .get("qos")
+        .and_then(|x| x.as_u64())
+        .unwrap_or(0)
+        .min(1) as u8;
+    let retain = config
+        .get("retain")
+        .and_then(|x| x.as_bool())
+        .unwrap_or(false);
+    publish(&host, port, use_tls, user, pass, topic, body, qos, retain)
 }
 
 pub fn parse_broker(url: &str) -> Result<(String, u16, bool), String> {
@@ -71,6 +80,8 @@ pub fn publish(
     pass: &str,
     topic: &str,
     payload: &str,
+    qos: u8,
+    retain: bool,
 ) -> Result<(), String> {
     let stream = TcpStream::connect((host, port)).map_err(|e| e.to_string())?;
     stream.set_read_timeout(Some(Duration::from_secs(8))).ok();
@@ -78,10 +89,10 @@ pub fn publish(
     if use_tls {
         let connector = native_tls::TlsConnector::new().map_err(|e| e.to_string())?;
         let mut tls = connector.connect(host, stream).map_err(|e| e.to_string())?;
-        mqtt_session(&mut tls, user, pass, topic, payload)
+        mqtt_session(&mut tls, user, pass, topic, payload, qos, retain)
     } else {
         let mut plain = stream;
-        mqtt_session(&mut plain, user, pass, topic, payload)
+        mqtt_session(&mut plain, user, pass, topic, payload, qos, retain)
     }
 }
 
@@ -91,6 +102,8 @@ fn mqtt_session<S: Read + Write>(
     pass: &str,
     topic: &str,
     payload: &str,
+    qos: u8,
+    retain: bool,
 ) -> Result<(), String> {
     stream
         .write_all(&connect_packet(user, pass))
@@ -101,7 +114,7 @@ fn mqtt_session<S: Read + Write>(
         return Err(format!("mqtt connack rejected: {ack:?}"));
     }
     stream
-        .write_all(&publish_packet(topic, payload.as_bytes()))
+        .write_all(&publish_packet(topic, payload.as_bytes(), qos, retain))
         .map_err(|e| e.to_string())?;
     stream.write_all(&[0xe0, 0x00]).map_err(|e| e.to_string())?;
     Ok(())
@@ -130,11 +143,21 @@ fn connect_packet(user: &str, pass: &str) -> Vec<u8> {
     packet(0x10, &vh)
 }
 
-fn publish_packet(topic: &str, payload: &[u8]) -> Vec<u8> {
+fn publish_packet(topic: &str, payload: &[u8], qos: u8, retain: bool) -> Vec<u8> {
+    let mut header = 0x30;
+    if qos >= 1 {
+        header |= 0x02;
+    }
+    if retain {
+        header |= 0x01;
+    }
     let mut vh = Vec::new();
     encode_string(&mut vh, topic);
+    if qos >= 1 {
+        vh.extend_from_slice(&1u16.to_be_bytes());
+    }
     vh.extend_from_slice(payload);
-    packet(0x30, &vh)
+    packet(header, &vh)
 }
 
 fn encode_string(out: &mut Vec<u8>, value: &str) {
@@ -200,5 +223,13 @@ mod tests {
         let pkt = connect_packet("", "");
         assert_eq!(pkt[0], 0x10);
         assert!(pkt.windows(4).any(|w| w == b"MQTT"));
+    }
+
+    #[test]
+    fn publish_packet_sets_qos_and_retain() {
+        let qos0 = publish_packet("t", b"hi", 0, false);
+        assert_eq!(qos0[0], 0x30);
+        let qos1 = publish_packet("t", b"hi", 1, true);
+        assert_eq!(qos1[0], 0x33);
     }
 }

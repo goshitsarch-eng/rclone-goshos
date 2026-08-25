@@ -495,6 +495,9 @@ pub struct AlertActionDraft {
     pub timeout_secs: u32,
     pub tls_verify: bool,
     pub telegram_mode: String,
+    pub subject: String,
+    pub qos: u32,
+    pub retain: bool,
 }
 
 impl Default for AlertActionDraft {
@@ -512,6 +515,9 @@ impl Default for AlertActionDraft {
             timeout_secs: 8,
             tls_verify: true,
             telegram_mode: "bot".into(),
+            subject: String::new(),
+            qos: 0,
+            retain: false,
         }
     }
 }
@@ -621,6 +627,7 @@ pub fn alert_action_config(kind: &str, draft: &AlertActionDraft) -> Value {
             "password": draft.token,
             "from": if draft.extra2.is_empty() { draft.extra.clone() } else { draft.extra2.clone() },
             "to": draft.extra,
+            "subject_template": if draft.subject.is_empty() { "{{title}}".into() } else { draft.subject.clone() },
             "body_template": body,
             "retry_count": retry,
             "timeout_secs": timeout,
@@ -632,6 +639,8 @@ pub fn alert_action_config(kind: &str, draft: &AlertActionDraft) -> Value {
             "body_template": body,
             "retry_count": retry,
             "timeout_secs": timeout,
+            "qos": draft.qos.min(1),
+            "retain": draft.retain,
         }),
         _ => json!({ "body_template": body, "retry_count": retry }),
     }
@@ -1968,6 +1977,19 @@ mod tests {
         assert_eq!(email["smtp_port"], 465);
         assert_eq!(email["to"], "ops@example.com");
         assert_eq!(email["from"], "alerts@example.com");
+        assert_eq!(email["subject_template"], "{{title}}");
+        let mqtt = alert_action_config(
+            "mqtt",
+            &AlertActionDraft {
+                url: "mqtt://broker:1883".into(),
+                method: "rclone/alerts".into(),
+                qos: 1,
+                retain: true,
+                ..Default::default()
+            },
+        );
+        assert_eq!(mqtt["qos"], 1);
+        assert_eq!(mqtt["retain"], true);
         let script = alert_action_config(
             "script",
             &AlertActionDraft {

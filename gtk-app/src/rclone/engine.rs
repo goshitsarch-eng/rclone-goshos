@@ -401,6 +401,33 @@ pub fn describe_cron_i18n(expression: &str, i18n: &crate::i18n::I18n) -> String 
             format!("Last day of the month at {time}")
         };
     }
+    if cron_is_int(min)
+        && cron_is_int(hour)
+        && dom.to_ascii_uppercase().starts_with("L-")
+        && mon == "*"
+        && dow == "*"
+    {
+        let offset = dom.trim_start_matches(['L', 'l', '-']);
+        let time = cron_time(hour, min);
+        return if i18n.has("cron.lastDayMinusAt") {
+            i18n.tf("cron.lastDayMinusAt", &[("n", offset), ("time", &time)])
+        } else {
+            format!("Last day of the month minus {offset} at {time}")
+        };
+    }
+    if cron_is_int(min)
+        && cron_is_int(hour)
+        && dom.eq_ignore_ascii_case("LW")
+        && mon == "*"
+        && dow == "*"
+    {
+        let time = cron_time(hour, min);
+        return if i18n.has("cron.lastWeekdayOfMonthAt") {
+            i18n.tf("cron.lastWeekdayOfMonthAt", &[("time", &time)])
+        } else {
+            format!("Last weekday of the month at {time}")
+        };
+    }
     if cron_is_int(min) && cron_is_int(hour) && dom == "*" && mon == "*" {
         if let Some((day, nth)) = dow.split_once('#') {
             if cron_is_int(day) && cron_is_int(nth) {
@@ -589,6 +616,14 @@ mod tests {
         assert_eq!(describe_cron("0 0 9 * * *"), "Daily at 9:00");
         assert_eq!(describe_cron("0 9 * * * UTC"), "Daily at 9:00");
         assert_eq!(describe_cron("0 0 L * *"), "Last day of the month at 0:00");
+        assert_eq!(
+            describe_cron("0 0 L-1 * *"),
+            "Last day of the month minus 1 at 0:00"
+        );
+        assert_eq!(
+            describe_cron("0 9 LW * *"),
+            "Last weekday of the month at 9:00"
+        );
         assert_eq!(describe_cron("0 9 * * 5L"), "Last Friday at 9:00");
         assert_eq!(describe_cron("0 9 * * 1#2"), "2nd Monday at 9:00");
         assert_eq!(describe_cron("0 9 * * MON#2"), "2nd Monday at 9:00");

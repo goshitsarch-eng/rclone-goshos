@@ -2157,6 +2157,51 @@ pub fn backends(parent: &impl IsA<gtk::Widget>, ctx: AppCtx) {
     }
     local.add_suffix(&use_local);
     list.append(&local);
+    let config_path = adw::EntryRow::new();
+    config_path.set_title(&ctx.t_or(
+        "modals.backend.fields.configPath.label",
+        "Local rclone.conf",
+    ));
+    let current_config =
+        crate::repair::config_path_from_flags(&ctx.settings.borrow().core.rclone_additional_flags)
+            .unwrap_or_else(|| {
+                crate::repair::default_rclone_config_path()
+                    .display()
+                    .to_string()
+            });
+    config_path.set_text(&current_config);
+    let browse_config = gtk::Button::with_label(&ctx.t_or("common.browse", "Browse"));
+    browse_config.set_valign(gtk::Align::Center);
+    {
+        let config_path = config_path.clone();
+        browse_config.connect_clicked(move |_| {
+            let dialog = gtk::FileDialog::new();
+            let config_path = config_path.clone();
+            dialog.open(
+                None::<&gtk::Window>,
+                None::<gio::Cancellable>.as_ref(),
+                move |result| {
+                    if let Ok(file) = result {
+                        if let Some(picked) = file.path() {
+                            config_path.set_text(&picked.display().to_string());
+                        }
+                    }
+                },
+            );
+        });
+    }
+    config_path.add_suffix(&browse_config);
+    {
+        let ctx = ctx.clone();
+        config_path.connect_changed(move |row| {
+            crate::repair::set_config_path_flag(
+                &mut ctx.settings.borrow_mut().core.rclone_additional_flags,
+                &row.text(),
+            );
+            ctx.persist();
+        });
+    }
+    list.append(&config_path);
     for backend in ctx.settings.borrow().core.extra_backends.clone() {
         let row = adw::ActionRow::new();
         row.set_title(&backend.name);
@@ -2407,12 +2452,21 @@ fn backend_editor(
     user.set_title(&ctx.t_or("modals.backend.fields.username.label", "Username"));
     let pass = adw::PasswordEntryRow::new();
     pass.set_title(&ctx.t_or("modals.backend.fields.password.label", "Password"));
+    let config_path = adw::EntryRow::new();
+    config_path.set_title(&ctx.t_or("modals.backend.fields.configPath.label", "rclone.conf path"));
+    let config_pass = adw::PasswordEntryRow::new();
+    config_pass.set_title(&ctx.t_or(
+        "modals.backend.fields.configPassword.label",
+        "Config password",
+    ));
     if let Some(entry) = &existing {
         name.set_text(&entry.name);
         host.set_text(&entry.host);
         port.set_text(&entry.port.to_string());
         user.set_text(&entry.user);
         pass.set_text(&entry.pass);
+        config_path.set_text(&entry.config_path);
+        config_pass.set_text(&entry.config_password);
     }
     let mut copy_labels = vec![
         ctx.t_or("modals.backend.copyOptions.fromZero", "Don't copy remotes"),
@@ -2454,6 +2508,8 @@ fn backend_editor(
         let port = port.clone();
         let user = user.clone();
         let pass = pass.clone();
+        let config_path = config_path.clone();
+        let config_pass = config_pass.clone();
         let copy_from = copy_from.clone();
         save.connect_clicked(move |_| {
             let port_n = port.text().parse::<u16>().unwrap_or(5573);
@@ -2463,6 +2519,8 @@ fn backend_editor(
                 port: port_n,
                 user: user.text().to_string(),
                 pass: pass.text().to_string(),
+                config_path: config_path.text().to_string(),
+                config_password: config_pass.text().to_string(),
             };
             if entry.name.is_empty() || entry.host.is_empty() {
                 return;
@@ -2525,6 +2583,8 @@ fn backend_editor(
     group.add(&port);
     group.add(&user);
     group.add(&pass);
+    group.add(&config_path);
+    group.add(&config_pass);
     group.add(&copy_row);
     let box_ = gtk::Box::new(gtk::Orientation::Vertical, 8);
     box_.set_margin_top(12);
@@ -7655,6 +7715,16 @@ const EVENT_KINDS: &[AlertEventKind] = &[
     AlertEventKind::System,
 ];
 const SEVERITIES: &[&str] = &["info", "warning", "average", "high", "critical"];
+const ORIGINS: &[&str] = &[
+    "dashboard",
+    "automation",
+    "filemanager",
+    "startup",
+    "update",
+    "internal",
+    "flow",
+    "quickrun",
+];
 
 fn alert_rule_editor(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, existing_id: Option<String>) {
     let dialog = adw::Dialog::new();
@@ -7708,37 +7778,65 @@ fn alert_rule_editor(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, existing_id: O
             .map(|r| r.cooldown_secs.to_string())
             .unwrap_or_else(|| "0".into()),
     );
-    let remotes = adw::EntryRow::new();
-    remotes.set_title(&ctx.t_or("alerts.rule.remoteFilter", "Remote filter"));
-    remotes.set_text(
-        &existing
-            .as_ref()
-            .map(|r| r.remote_filter.join(", "))
-            .unwrap_or_default(),
+    let remote_names = {
+        let mut names: Vec<String> = ctx
+            .snapshot
+            .borrow()
+            .remotes
+            .iter()
+            .map(|r| r.name.clone())
+            .collect();
+        names.sort();
+        names.dedup();
+        names
+    };
+    let backend_names = {
+        let mut names = vec!["local".to_string()];
+        names.extend(
+            ctx.settings
+                .borrow()
+                .core
+                .extra_backends
+                .iter()
+                .map(|b| b.name.clone()),
+        );
+        names
+    };
+    let profile_names = {
+        let mut names: Vec<String> = ctx
+            .store
+            .borrow()
+            .remotes
+            .values()
+            .flat_map(|meta| {
+                meta.profiles
+                    .values()
+                    .flat_map(|map| map.keys().cloned())
+                    .collect::<Vec<_>>()
+            })
+            .collect();
+        if !names.iter().any(|n| n == "default") {
+            names.push("default".into());
+        }
+        names.sort();
+        names.dedup();
+        names
+    };
+    let remote_switches = filter_switch_rows(
+        &remote_names,
+        existing.as_ref().map(|r| r.remote_filter.as_slice()),
     );
-    let backends = adw::EntryRow::new();
-    backends.set_title(&ctx.t_or("alerts.rule.backendFilter", "Backend filter"));
-    backends.set_text(
-        &existing
-            .as_ref()
-            .map(|r| r.backend_filter.join(", "))
-            .unwrap_or_default(),
+    let backend_switches = filter_switch_rows(
+        &backend_names,
+        existing.as_ref().map(|r| r.backend_filter.as_slice()),
     );
-    let profiles = adw::EntryRow::new();
-    profiles.set_title(&ctx.t_or("alerts.rule.profileFilter", "Profile filter"));
-    profiles.set_text(
-        &existing
-            .as_ref()
-            .map(|r| r.profile_filter.join(", "))
-            .unwrap_or_default(),
+    let profile_switches = filter_switch_rows(
+        &profile_names,
+        existing.as_ref().map(|r| r.profile_filter.as_slice()),
     );
-    let origins = adw::EntryRow::new();
-    origins.set_title(&ctx.t_or("alerts.rule.originFilter", "Origin filter"));
-    origins.set_text(
-        &existing
-            .as_ref()
-            .map(|r| r.origin_filter.join(", "))
-            .unwrap_or_default(),
+    let origin_switches = filter_switch_rows(
+        &ORIGINS.iter().map(|s| (*s).to_string()).collect::<Vec<_>>(),
+        existing.as_ref().map(|r| r.origin_filter.as_slice()),
     );
     let event_switches: Vec<(AlertEventKind, adw::SwitchRow)> = EVENT_KINDS
         .iter()
@@ -7790,10 +7888,10 @@ fn alert_rule_editor(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, existing_id: O
         let auto_ack = auto_ack.clone();
         let severity = severity.clone();
         let cooldown = cooldown.clone();
-        let remotes = remotes.clone();
-        let backends = backends.clone();
-        let profiles = profiles.clone();
-        let origins = origins.clone();
+        let remote_switches = remote_switches.clone();
+        let backend_switches = backend_switches.clone();
+        let profile_switches = profile_switches.clone();
+        let origin_switches = origin_switches.clone();
         save.connect_clicked(move |_| {
             let mut rule = existing_id
                 .as_ref()
@@ -7816,10 +7914,10 @@ fn alert_rule_editor(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, existing_id: O
                     .unwrap_or("info"),
             );
             rule.cooldown_secs = cooldown.text().parse().unwrap_or(0);
-            rule.remote_filter = split_csv(&remotes.text());
-            rule.backend_filter = split_csv(&backends.text());
-            rule.profile_filter = split_csv(&profiles.text());
-            rule.origin_filter = split_csv(&origins.text());
+            rule.remote_filter = selected_or_all(&remote_switches);
+            rule.backend_filter = selected_or_all(&backend_switches);
+            rule.profile_filter = selected_or_all(&profile_switches);
+            rule.origin_filter = selected_or_all(&origin_switches);
             rule.event_filter = event_switches
                 .iter()
                 .filter(|(_, row)| row.is_active())
@@ -7865,11 +7963,35 @@ fn alert_rule_editor(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, existing_id: O
     general.add(&auto_ack);
     general.add(&severity);
     general.add(&cooldown);
-    general.add(&remotes);
-    general.add(&backends);
-    general.add(&profiles);
-    general.add(&origins);
     page.add(&general);
+    let remotes_group = adw::PreferencesGroup::new();
+    remotes_group.set_title(&ctx.t_or("alerts.rule.remoteFilter", "Remotes"));
+    remotes_group.set_description(Some(&ctx.t_or(
+        "alerts.rule.filtersEmptyHint",
+        "Leave every switch on to match all remotes.",
+    )));
+    for (_, row) in &remote_switches {
+        remotes_group.add(row);
+    }
+    page.add(&remotes_group);
+    let backends_group = adw::PreferencesGroup::new();
+    backends_group.set_title(&ctx.t_or("alerts.rule.backendFilter", "Backends"));
+    for (_, row) in &backend_switches {
+        backends_group.add(row);
+    }
+    page.add(&backends_group);
+    let profiles_group = adw::PreferencesGroup::new();
+    profiles_group.set_title(&ctx.t_or("alerts.rule.profileFilter", "Profiles"));
+    for (_, row) in &profile_switches {
+        profiles_group.add(row);
+    }
+    page.add(&profiles_group);
+    let origins_group = adw::PreferencesGroup::new();
+    origins_group.set_title(&ctx.t_or("alerts.origins.title", "Origins"));
+    for (_, row) in &origin_switches {
+        origins_group.add(row);
+    }
+    page.add(&origins_group);
     let events = adw::PreferencesGroup::new();
     events.set_title(&ctx.t_or("alerts.rule.eventFilter", "Events"));
     for (_, row) in &event_switches {
@@ -7974,6 +8096,33 @@ fn alert_action_editor(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, existing_id:
             .and_then(|x| x.as_bool())
             .unwrap_or(true),
     );
+    let subject = adw::EntryRow::new();
+    subject.set_title(&ctx.t_or("alerts.action.subjectTemplate", "Subject template"));
+    subject.set_text(
+        &existing
+            .as_ref()
+            .and_then(|a| a.config.get("subject_template"))
+            .and_then(|x| x.as_str())
+            .unwrap_or("{{title}}"),
+    );
+    let qos = adw::SpinRow::with_range(0.0, 1.0, 1.0);
+    qos.set_title(&ctx.t_or("alerts.action.qos", "MQTT QoS"));
+    qos.set_value(
+        existing
+            .as_ref()
+            .and_then(|a| a.config.get("qos"))
+            .and_then(|x| x.as_f64())
+            .unwrap_or(0.0),
+    );
+    let retain = adw::SwitchRow::new();
+    retain.set_title(&ctx.t_or("alerts.action.retain", "MQTT retain"));
+    retain.set_active(
+        existing
+            .as_ref()
+            .and_then(|a| a.config.get("retain"))
+            .and_then(|x| x.as_bool())
+            .unwrap_or(false),
+    );
     let wa_provider = adw::ComboRow::new();
     wa_provider.set_title(&ctx.t_or("alerts.action.whatsappProvider", "WhatsApp provider"));
     wa_provider.set_model(Some(&gtk::StringList::new(&[
@@ -8077,6 +8226,9 @@ fn alert_action_editor(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, existing_id:
         let retries = retries.clone();
         let timeout = timeout.clone();
         let tls_verify = tls_verify.clone();
+        let subject = subject.clone();
+        let qos = qos.clone();
+        let retain = retain.clone();
         let telegram_mode = telegram_mode.clone();
         let wa_provider = wa_provider.clone();
         let existing_id = existing_id.clone();
@@ -8113,6 +8265,9 @@ fn alert_action_editor(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, existing_id:
                     retry_count: retries.value() as u32,
                     timeout_secs: timeout.value() as u32,
                     tls_verify: tls_verify.is_active(),
+                    subject: subject.text().to_string(),
+                    qos: qos.value() as u32,
+                    retain: retain.is_active(),
                     telegram_mode: if telegram_mode.selected() == 1 {
                         "botless".into()
                     } else {
@@ -8198,129 +8353,139 @@ fn alert_action_editor(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, existing_id:
         let headers = headers.clone();
         let timeout = timeout.clone();
         let tls_verify = tls_verify.clone();
+        let subject = subject.clone();
+        let qos = qos.clone();
+        let retain = retain.clone();
         let telegram_mode = telegram_mode.clone();
         let body = body.clone();
         let wa_provider = wa_provider.clone();
         let ctx = ctx.clone();
-        move |selected: &str| match selected {
-            "os_toast" => {
-                wa_provider.set_visible(false);
-                telegram_mode.set_visible(false);
-                url.set_visible(false);
-                method.set_visible(false);
-                token.set_visible(false);
-                extra.set_visible(false);
-                extra2.set_visible(false);
-                headers.set_visible(false);
-                timeout.set_visible(false);
-                tls_verify.set_visible(false);
-                body.set_visible(true);
-                body.set_title(&ctx.t_or("alerts.action.messageTemplate", "Toast body template"));
+        move |selected: &str| {
+            subject.set_visible(selected == "email");
+            qos.set_visible(selected == "mqtt");
+            retain.set_visible(selected == "mqtt");
+            match selected {
+                "os_toast" => {
+                    wa_provider.set_visible(false);
+                    telegram_mode.set_visible(false);
+                    url.set_visible(false);
+                    method.set_visible(false);
+                    token.set_visible(false);
+                    extra.set_visible(false);
+                    extra2.set_visible(false);
+                    headers.set_visible(false);
+                    timeout.set_visible(false);
+                    tls_verify.set_visible(false);
+                    body.set_visible(true);
+                    body.set_title(
+                        &ctx.t_or("alerts.action.messageTemplate", "Toast body template"),
+                    );
+                }
+                "webhook" => {
+                    wa_provider.set_visible(false);
+                    telegram_mode.set_visible(false);
+                    url.set_visible(true);
+                    url.set_title(&ctx.t_or("alerts.action.url", "Webhook URL"));
+                    method.set_visible(true);
+                    method.set_title(&ctx.t_or("alerts.action.method", "HTTP method"));
+                    token.set_visible(false);
+                    extra.set_visible(false);
+                    extra2.set_visible(false);
+                    headers.set_visible(true);
+                    timeout.set_visible(true);
+                    tls_verify.set_visible(true);
+                    body.set_visible(true);
+                    body.set_title(&ctx.t_or("alerts.action.bodyTemplate", "JSON / body template"));
+                }
+                "telegram" => {
+                    wa_provider.set_visible(false);
+                    telegram_mode.set_visible(true);
+                    url.set_visible(false);
+                    method.set_visible(false);
+                    let botless = telegram_mode.selected() == 1;
+                    token.set_visible(!botless);
+                    token.set_title(&ctx.t_or("alerts.action.botToken", "Bot token"));
+                    extra.set_visible(true);
+                    extra.set_title(&ctx.t_or("alerts.action.chatId", "Chat ID"));
+                    extra2.set_visible(false);
+                    headers.set_visible(false);
+                    timeout.set_visible(true);
+                    tls_verify.set_visible(false);
+                    body.set_visible(true);
+                    body.set_title(&ctx.t_or("alerts.action.messageTemplate", "Message template"));
+                }
+                "whatsapp" => {
+                    wa_provider.set_visible(true);
+                    telegram_mode.set_visible(false);
+                    let custom = wa_provider.selected() == 1;
+                    url.set_visible(custom);
+                    url.set_title(&ctx.t_or("alerts.action.gatewayUrl", "Gateway URL"));
+                    method.set_visible(false);
+                    token.set_visible(!custom);
+                    token.set_title(&ctx.t_or("alerts.action.apiKey", "API key"));
+                    extra.set_visible(true);
+                    extra.set_title(&ctx.t_or("alerts.action.phone", "Phone number"));
+                    extra2.set_visible(false);
+                    headers.set_visible(false);
+                    timeout.set_visible(true);
+                    tls_verify.set_visible(false);
+                    body.set_visible(true);
+                    body.set_title(&ctx.t_or("alerts.action.messageTemplate", "Message template"));
+                }
+                "script" => {
+                    wa_provider.set_visible(false);
+                    telegram_mode.set_visible(false);
+                    url.set_visible(false);
+                    method.set_visible(false);
+                    token.set_visible(false);
+                    extra.set_visible(true);
+                    extra.set_title(&ctx.t_or("alerts.action.command", "Command"));
+                    extra2.set_visible(true);
+                    extra2.set_title(&ctx.t_or("alerts.action.args", "Arguments"));
+                    headers.set_visible(false);
+                    timeout.set_visible(true);
+                    tls_verify.set_visible(false);
+                    body.set_visible(true);
+                    body.set_title(&ctx.t_or("alerts.action.bodyTemplate", "Stdin template"));
+                }
+                "email" => {
+                    wa_provider.set_visible(false);
+                    telegram_mode.set_visible(false);
+                    url.set_visible(true);
+                    url.set_title(&ctx.t_or("alerts.action.smtpHost", "SMTP host"));
+                    method.set_visible(true);
+                    method.set_title(&ctx.t_or("alerts.action.smtpPort", "SMTP port"));
+                    token.set_visible(true);
+                    token.set_title(&ctx.t("common.password"));
+                    extra.set_visible(true);
+                    extra.set_title(&ctx.t_or("alerts.action.to", "To"));
+                    extra2.set_visible(true);
+                    extra2.set_title(&ctx.t_or("alerts.action.from", "From"));
+                    headers.set_visible(false);
+                    timeout.set_visible(true);
+                    tls_verify.set_visible(false);
+                    body.set_visible(true);
+                    body.set_title(&ctx.t_or("alerts.action.bodyTemplate", "Body template"));
+                }
+                "mqtt" => {
+                    wa_provider.set_visible(false);
+                    telegram_mode.set_visible(false);
+                    url.set_visible(true);
+                    url.set_title(&ctx.t_or("alerts.action.brokerUrl", "Broker URL"));
+                    method.set_visible(true);
+                    method.set_title(&ctx.t_or("alerts.action.topic", "Topic"));
+                    token.set_visible(true);
+                    token.set_title(&ctx.t("common.password"));
+                    extra.set_visible(false);
+                    extra2.set_visible(false);
+                    headers.set_visible(false);
+                    timeout.set_visible(true);
+                    tls_verify.set_visible(false);
+                    body.set_visible(true);
+                    body.set_title(&ctx.t_or("alerts.action.bodyTemplate", "Payload template"));
+                }
+                _ => {}
             }
-            "webhook" => {
-                wa_provider.set_visible(false);
-                telegram_mode.set_visible(false);
-                url.set_visible(true);
-                url.set_title(&ctx.t_or("alerts.action.url", "Webhook URL"));
-                method.set_visible(true);
-                method.set_title(&ctx.t_or("alerts.action.method", "HTTP method"));
-                token.set_visible(false);
-                extra.set_visible(false);
-                extra2.set_visible(false);
-                headers.set_visible(true);
-                timeout.set_visible(true);
-                tls_verify.set_visible(true);
-                body.set_visible(true);
-                body.set_title(&ctx.t_or("alerts.action.bodyTemplate", "JSON / body template"));
-            }
-            "telegram" => {
-                wa_provider.set_visible(false);
-                telegram_mode.set_visible(true);
-                url.set_visible(false);
-                method.set_visible(false);
-                let botless = telegram_mode.selected() == 1;
-                token.set_visible(!botless);
-                token.set_title(&ctx.t_or("alerts.action.botToken", "Bot token"));
-                extra.set_visible(true);
-                extra.set_title(&ctx.t_or("alerts.action.chatId", "Chat ID"));
-                extra2.set_visible(false);
-                headers.set_visible(false);
-                timeout.set_visible(true);
-                tls_verify.set_visible(false);
-                body.set_visible(true);
-                body.set_title(&ctx.t_or("alerts.action.messageTemplate", "Message template"));
-            }
-            "whatsapp" => {
-                wa_provider.set_visible(true);
-                telegram_mode.set_visible(false);
-                let custom = wa_provider.selected() == 1;
-                url.set_visible(custom);
-                url.set_title(&ctx.t_or("alerts.action.gatewayUrl", "Gateway URL"));
-                method.set_visible(false);
-                token.set_visible(!custom);
-                token.set_title(&ctx.t_or("alerts.action.apiKey", "API key"));
-                extra.set_visible(true);
-                extra.set_title(&ctx.t_or("alerts.action.phone", "Phone number"));
-                extra2.set_visible(false);
-                headers.set_visible(false);
-                timeout.set_visible(true);
-                tls_verify.set_visible(false);
-                body.set_visible(true);
-                body.set_title(&ctx.t_or("alerts.action.messageTemplate", "Message template"));
-            }
-            "script" => {
-                wa_provider.set_visible(false);
-                telegram_mode.set_visible(false);
-                url.set_visible(false);
-                method.set_visible(false);
-                token.set_visible(false);
-                extra.set_visible(true);
-                extra.set_title(&ctx.t_or("alerts.action.command", "Command"));
-                extra2.set_visible(true);
-                extra2.set_title(&ctx.t_or("alerts.action.args", "Arguments"));
-                headers.set_visible(false);
-                timeout.set_visible(true);
-                tls_verify.set_visible(false);
-                body.set_visible(true);
-                body.set_title(&ctx.t_or("alerts.action.bodyTemplate", "Stdin template"));
-            }
-            "email" => {
-                wa_provider.set_visible(false);
-                telegram_mode.set_visible(false);
-                url.set_visible(true);
-                url.set_title(&ctx.t_or("alerts.action.smtpHost", "SMTP host"));
-                method.set_visible(true);
-                method.set_title(&ctx.t_or("alerts.action.smtpPort", "SMTP port"));
-                token.set_visible(true);
-                token.set_title(&ctx.t("common.password"));
-                extra.set_visible(true);
-                extra.set_title(&ctx.t_or("alerts.action.to", "To"));
-                extra2.set_visible(true);
-                extra2.set_title(&ctx.t_or("alerts.action.from", "From"));
-                headers.set_visible(false);
-                timeout.set_visible(true);
-                tls_verify.set_visible(false);
-                body.set_visible(true);
-                body.set_title(&ctx.t_or("alerts.action.bodyTemplate", "Body template"));
-            }
-            "mqtt" => {
-                wa_provider.set_visible(false);
-                telegram_mode.set_visible(false);
-                url.set_visible(true);
-                url.set_title(&ctx.t_or("alerts.action.brokerUrl", "Broker URL"));
-                method.set_visible(true);
-                method.set_title(&ctx.t_or("alerts.action.topic", "Topic"));
-                token.set_visible(true);
-                token.set_title(&ctx.t("common.password"));
-                extra.set_visible(false);
-                extra2.set_visible(false);
-                headers.set_visible(false);
-                timeout.set_visible(true);
-                tls_verify.set_visible(false);
-                body.set_visible(true);
-                body.set_title(&ctx.t_or("alerts.action.bodyTemplate", "Payload template"));
-            }
-            _ => {}
         }
     };
     {
@@ -8374,6 +8539,9 @@ fn alert_action_editor(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, existing_id:
     group.add(&headers);
     group.add(&timeout);
     group.add(&tls_verify);
+    group.add(&subject);
+    group.add(&qos);
+    group.add(&retain);
     group.add(&body);
     group.add(&retries);
     group.add(&keys);
@@ -8404,11 +8572,35 @@ fn action_cfg(action: &AlertAction, keys: &[&str]) -> String {
     String::new()
 }
 
-fn split_csv(text: &str) -> Vec<String> {
-    text.split(',')
-        .map(|s| s.trim().to_string())
-        .filter(|s| !s.is_empty())
+fn filter_switch_rows(
+    options: &[String],
+    selected: Option<&[String]>,
+) -> Vec<(String, adw::SwitchRow)> {
+    options
+        .iter()
+        .map(|option| {
+            let row = adw::SwitchRow::new();
+            row.set_title(option);
+            row.set_active(match selected {
+                Some(list) if !list.is_empty() => list.iter().any(|s| s == option),
+                _ => true,
+            });
+            (option.clone(), row)
+        })
         .collect()
+}
+
+fn selected_or_all(rows: &[(String, adw::SwitchRow)]) -> Vec<String> {
+    let selected: Vec<String> = rows
+        .iter()
+        .filter(|(_, row)| row.is_active())
+        .map(|(id, _)| id.clone())
+        .collect();
+    if selected.len() == rows.len() {
+        Vec::new()
+    } else {
+        selected
+    }
 }
 
 pub fn repair(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, toast: adw::ToastOverlay) {

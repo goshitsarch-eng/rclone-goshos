@@ -225,6 +225,8 @@ pub fn parse_backend_entry(name: &str, value: &Value) -> Option<BackendEntry> {
         port: value.get("port").and_then(|v| v.as_u64()).unwrap_or(5572) as u16,
         user: string_field(value, &["user", "username"]),
         pass: string_field(value, &["pass", "password"]),
+        config_path: string_field(value, &["config_path", "configPath"]),
+        config_password: string_field(value, &["config_password", "configPassword"]),
     })
 }
 
