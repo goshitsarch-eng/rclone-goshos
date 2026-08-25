@@ -15,8 +15,10 @@ pub mod jobs;
 pub mod keyring;
 pub mod layout;
 pub mod logs;
+pub mod markdown;
 pub mod media;
 pub mod migrate;
+pub mod mount_plugin;
 pub mod mqtt;
 pub mod navigation;
 pub mod operations;
@@ -38,6 +40,7 @@ pub mod store;
 pub mod syntax;
 pub mod transfers;
 pub mod updater;
+pub mod vfs;
 pub mod watch;
 
 pub const APP_ID: &str = "io.github.zarestia_dev.rclone-manager";

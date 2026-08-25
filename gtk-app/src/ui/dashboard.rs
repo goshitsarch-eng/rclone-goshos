@@ -1149,12 +1149,21 @@ impl Dashboard {
 
         self.detail.append(&section_label("VFS"));
         let vfs = gtk::Box::new(gtk::Orientation::Horizontal, 8);
-        for (label, action) in [
-            ("Stats", "stats"),
-            ("Refresh", "refresh"),
-            ("Forget cache", "forget"),
-            ("Queue", "queue"),
-        ] {
+        let open_vfs = gtk::Button::with_label("VFS panel");
+        open_vfs.add_css_class("suggested-action");
+        {
+            let ctx = self.ctx.clone();
+            let name = name.clone();
+            let toast = self.toast.clone();
+            let root = self.root.clone();
+            open_vfs.connect_clicked(move |_| {
+                if let Some(win) = root.root().and_downcast::<gtk::Window>() {
+                    dialogs::vfs_control(&win, ctx.clone(), &name, toast.clone());
+                }
+            });
+        }
+        vfs.append(&open_vfs);
+        for (label, action) in [("Refresh", "refresh"), ("Forget cache", "forget")] {
             let btn = gtk::Button::with_label(label);
             let ctx = self.ctx.clone();
             let name = name.clone();
@@ -1166,71 +1175,17 @@ impl Dashboard {
                 };
                 let fs = remote_fs(&name, "");
                 let result = match action {
-                    "stats" => client.vfs_stats(&fs),
-                    "refresh" => client.vfs_refresh(&fs),
-                    "forget" => client.vfs_forget(&fs),
-                    _ => client.vfs_queue(&fs),
+                    "refresh" => client.vfs_refresh_ex(&fs, None, true),
+                    _ => client.vfs_forget(&fs),
                 };
                 match result {
-                    Ok(v) => toast.add_toast(adw::Toast::new(&format!("{action}: {v}"))),
+                    Ok(_) => toast.add_toast(adw::Toast::new(&format!("{action} finished"))),
                     Err(e) => toast.add_toast(adw::Toast::new(&e.to_string())),
                 }
             });
             vfs.append(&btn);
         }
         self.detail.append(&vfs);
-        let vfs_tune = gtk::Box::new(gtk::Orientation::Horizontal, 8);
-        let poll = adw::EntryRow::new();
-        poll.set_title("VFS poll interval");
-        poll.set_text("1m");
-        let apply_poll = gtk::Button::with_label("Set interval");
-        {
-            let ctx = self.ctx.clone();
-            let name = name.clone();
-            let toast = self.toast.clone();
-            let poll = poll.clone();
-            apply_poll.connect_clicked(move |_| {
-                if let Some(client) = ctx.client() {
-                    match client.vfs_poll_interval(&remote_fs(&name, ""), Some(&poll.text())) {
-                        Ok(v) => toast.add_toast(adw::Toast::new(&v.to_string())),
-                        Err(e) => toast.add_toast(adw::Toast::new(&e.to_string())),
-                    }
-                }
-            });
-        }
-        let expiry = adw::EntryRow::new();
-        expiry.set_title("Queue item id / expiry");
-        expiry.set_text("id=1 expiry=1m");
-        let apply_exp = gtk::Button::with_label("Set expiry");
-        {
-            let ctx = self.ctx.clone();
-            let name = name.clone();
-            let toast = self.toast.clone();
-            let expiry = expiry.clone();
-            apply_exp.connect_clicked(move |_| {
-                let text = expiry.text().to_string();
-                let mut id = String::new();
-                let mut exp = String::new();
-                for part in text.split_whitespace() {
-                    if let Some(v) = part.strip_prefix("id=") {
-                        id = v.to_string();
-                    } else if let Some(v) = part.strip_prefix("expiry=") {
-                        exp = v.to_string();
-                    }
-                }
-                if let Some(client) = ctx.client() {
-                    match client.vfs_queue_set_expiry(&remote_fs(&name, ""), &id, &exp) {
-                        Ok(v) => toast.add_toast(adw::Toast::new(&v.to_string())),
-                        Err(e) => toast.add_toast(adw::Toast::new(&e.to_string())),
-                    }
-                }
-            });
-        }
-        vfs_tune.append(&poll);
-        vfs_tune.append(&apply_poll);
-        vfs_tune.append(&expiry);
-        vfs_tune.append(&apply_exp);
-        self.detail.append(&vfs_tune);
 
         self.detail.append(&section_label("Profiles"));
         let plist = gtk::ListBox::new();

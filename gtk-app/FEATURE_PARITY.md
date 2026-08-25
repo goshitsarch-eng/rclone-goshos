@@ -167,12 +167,17 @@ This client is the GTK 4 + libadwaita rewrite of the Angular/Tauri desktop UI. I
 - Adaptive runtime poll (400ms while jobs/mounts/serves are active, ~3s idle)
 - In-app What's New for app and rclone release notes
 - Windows SendTo + Explorer context-menu writers and macOS Finder Services workflow
+- RC `operations/stat` and `operations/hashsumfile`; properties use both
+- Close-to-tray when `destroy_window_on_close` is off
+- About Credits and Legal pages
+- Markdown preview toggle and dedicated PDF open panel in the file viewer
+- Structured VFS panel (stats, queue, forget file, recursive refresh, relative expiry)
+- Mount-plugin module (FUSE / WinFsp / FUSE-T) in repair and onboarding
 
 ## Still deepening toward pixel-level Angular parity
 
-- In-app PDF renderer
+- Embedded PDF page renderer (system viewer is used today)
 - Workflow builder (stub in both apps)
 - Live GUI session against rclone rcd (no display in this environment)
 - Native share portal / Android share intake
-- Windows/macOS mount-plugin installer (Linux uses FUSE)
 - Full UI string translation (most GTK labels still English)

@@ -323,6 +323,17 @@ pub fn present_main(app: &adw::Application, ctx: AppCtx) {
     });
 
     ctx.start_autostarts();
+    {
+        let ctx = ctx.clone();
+        window.connect_close_request(move |win| {
+            if ctx.settings.borrow().developer.destroy_window_on_close {
+                glib::Propagation::Proceed
+            } else {
+                win.set_visible(false);
+                glib::Propagation::Stop
+            }
+        });
+    }
     window.present();
 }
 

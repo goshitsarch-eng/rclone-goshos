@@ -116,12 +116,12 @@ pub fn diagnose(
             });
         }
     }
-    if !fuse_available() {
+    if !crate::mount_plugin::is_installed() {
         issues.push(RepairIssue {
             kind: RepairKind::FuseMissing,
-            title: "FUSE is not available".into(),
-            detail: "Mounts need /dev/fuse or fusermount3 (install fuse3).".into(),
-            action: "How to install FUSE".into(),
+            title: crate::mount_plugin::missing_title(),
+            detail: crate::mount_plugin::missing_detail(),
+            action: format!("Install {}", crate::mount_plugin::plugin_label()),
         });
     }
     if let Some(path) = config_path_from_flags(&settings.core.rclone_additional_flags) {

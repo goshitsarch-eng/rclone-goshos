@@ -13,8 +13,10 @@ mod jobs;
 mod keyring;
 mod layout;
 mod logs;
+mod markdown;
 mod media;
 mod migrate;
+mod mount_plugin;
 mod mqtt;
 mod navigation;
 mod operations;
@@ -37,6 +39,7 @@ mod syntax;
 mod transfers;
 mod ui;
 mod updater;
+mod vfs;
 mod watch;
 
 use gtk::prelude::*;

@@ -861,37 +861,134 @@ pub fn about(parent: &impl IsA<gtk::Widget>, ctx: AppCtx) {
         .ok()
         .filter(|u| u.available)
         .map(|u| format!("App update {} available", u.latest))
-        .unwrap_or_else(|| "App is up to date (or update check failed)".into());
+        .unwrap_or_else(|| ctx.t_or("modals.about.upToDate", "App is up to date"));
     let rclone_update = crate::updater::fetch_rclone_update(&version)
         .ok()
         .filter(|u| u.available)
         .map(|u| format!("rclone update {} available", u.latest))
-        .unwrap_or_else(|| "rclone update check finished".into());
-    let dialog = adw::AboutDialog::builder()
-        .application_name("Rclone Manager")
-        .application_icon("folder-remote-symbolic")
-        .developer_name("Zarestia Dev")
-        .version(env!("CARGO_PKG_VERSION"))
-        .website("https://github.com/Zarestia-Dev/rclone-manager")
-        .issue_url("https://github.com/Zarestia-Dev/rclone-manager/issues")
-        .license_type(gtk::License::Gpl30)
-        .comments(format!(
-            "GTK 4 + libadwaita desktop client\nrclone {version}\n{app_update}\n{rclone_update}"
-        ))
-        .build();
-    if let Some(update) = ctx.updates.borrow().app.clone() {
-        if update.available {
-            dialog.add_link(
-                &ctx.t_or("modals.about.whatsNew", "What's New"),
-                &update.url,
-            );
-        }
-    }
-    dialog.add_link(
-        &ctx.t_or("modals.about.whatsNewRclone", "rclone changelog"),
-        "https://rclone.org/changelog/",
+        .unwrap_or_else(|| ctx.t_or("modals.about.rcloneUpToDate", "rclone is up to date"));
+    let dialog = adw::Dialog::new();
+    dialog.set_title(&ctx.t_or("modals.about.title", "About"));
+    dialog.set_content_width(560);
+    dialog.set_content_height(560);
+    let stack = adw::ViewStack::new();
+
+    let details = gtk::Box::new(gtk::Orientation::Vertical, 12);
+    details.set_margin_top(16);
+    details.set_margin_start(16);
+    details.set_margin_end(16);
+    let title = gtk::Label::new(Some("Rclone Manager"));
+    title.add_css_class("title-1");
+    let comments = gtk::Label::new(Some(&format!(
+        "GTK 4 + libadwaita · {} · rclone {version}\n{app_update}\n{rclone_update}",
+        env!("CARGO_PKG_VERSION")
+    )));
+    comments.set_wrap(true);
+    comments.set_justify(gtk::Justification::Center);
+    details.append(&title);
+    details.append(&comments);
+    let site = gtk::LinkButton::with_label(
+        "https://github.com/Zarestia-Dev/rclone-manager",
+        &ctx.t_or("modals.about.website", "Website"),
     );
-    dialog.present(Some(parent));
+    let issues = gtk::LinkButton::with_label(
+        "https://github.com/Zarestia-Dev/rclone-manager/issues",
+        &ctx.t_or("modals.about.reportIssues", "Report Issues"),
+    );
+    details.append(&site);
+    details.append(&issues);
+    {
+        let parent = parent.clone();
+        let ctx = ctx.clone();
+        let notes = gtk::Button::with_label(&ctx.t_or("modals.about.whatsNew", "What's New"));
+        notes.connect_clicked(move |_| whats_new(&parent, ctx.clone(), "app"));
+        details.append(&notes);
+    }
+    stack.add_titled(
+        &details,
+        Some("details"),
+        &ctx.t_or("modals.about.details", "Details"),
+    );
+
+    let credits = gtk::Box::new(gtk::Orientation::Vertical, 8);
+    credits.set_margin_top(16);
+    credits.set_margin_start(16);
+    credits.set_margin_end(16);
+    let team = adw::PreferencesGroup::new();
+    team.set_title(&ctx.t_or("modals.about.devTeam", "Development Team"));
+    let lead = adw::ActionRow::new();
+    lead.set_title(&ctx.t_or("modals.about.leadDeveloper", "Lead Developer"));
+    lead.set_subtitle("Zarestia Dev");
+    team.add(&lead);
+    let ack = adw::PreferencesGroup::new();
+    ack.set_title(&ctx.t_or("modals.about.acknowledgments", "Acknowledgments"));
+    let ack_row = adw::ActionRow::new();
+    ack_row.set_title(&ctx.t_or(
+        "modals.about.ackText",
+        "This application relies on the excellent Rclone project for cloud storage management.",
+    ));
+    ack_row.set_subtitle_lines(4);
+    ack.add(&ack_row);
+    credits.append(&team);
+    credits.append(&ack);
+    stack.add_titled(
+        &credits,
+        Some("credits"),
+        &ctx.t_or("modals.about.credits", "Credits"),
+    );
+
+    let legal = gtk::Box::new(gtk::Orientation::Vertical, 8);
+    legal.set_margin_top(16);
+    legal.set_margin_start(16);
+    legal.set_margin_end(16);
+    let license = adw::PreferencesGroup::new();
+    license.set_title(&ctx.t_or("modals.about.license", "License"));
+    let license_row = adw::ActionRow::new();
+    license_row.set_title("GPL-3.0-or-later");
+    license_row.set_subtitle(&format!(
+        "{} GNU GPL v3 {} {}",
+        ctx.t_or(
+            "modals.about.licenseText1",
+            "This application is free and open source software distributed under the"
+        ),
+        ctx.t_or("modals.about.orLater", "or later."),
+        ctx.t_or(
+            "modals.about.licenseText2",
+            "This program comes with no warranty."
+        )
+    ));
+    license_row.set_subtitle_lines(6);
+    license.add(&license_row);
+    let third = adw::PreferencesGroup::new();
+    third.set_title(&ctx.t_or("modals.about.thirdParty", "Third-Party Software"));
+    let third_row = adw::ActionRow::new();
+    third_row.set_title(&ctx.t_or(
+        "modals.about.thirdPartyText",
+        "This application includes third-party libraries. See the project repository for a complete list.",
+    ));
+    third_row.set_subtitle_lines(4);
+    third.add(&third_row);
+    let gpl =
+        gtk::LinkButton::with_label("https://www.gnu.org/licenses/gpl-3.0.html", "GNU GPL v3");
+    legal.append(&license);
+    legal.append(&third);
+    legal.append(&gpl);
+    stack.add_titled(
+        &legal,
+        Some("legal"),
+        &ctx.t_or("modals.about.legal", "Legal"),
+    );
+
+    let switcher = adw::ViewSwitcher::new();
+    switcher.set_stack(Some(&stack));
+    switcher.set_policy(adw::ViewSwitcherPolicy::Wide);
+    let toolbar = adw::ToolbarView::new();
+    let header = adw::HeaderBar::new();
+    header.set_title_widget(Some(&switcher));
+    toolbar.add_top_bar(&header);
+    toolbar.set_content(Some(&stack));
+    dialog.set_child(Some(&toolbar));
+    present_window_or_dialog(parent, &ctx, &dialog);
 }
 
 pub fn whats_new(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, kind: &str) {
@@ -1405,6 +1502,217 @@ pub fn debug_info(parent: &impl IsA<gtk::Widget>, ctx: AppCtx) {
     box_.append(&actions);
     dialog.set_child(Some(&box_));
     dialog.present(Some(parent));
+}
+
+pub fn vfs_control(
+    parent: &impl IsA<gtk::Widget>,
+    ctx: AppCtx,
+    remote: &str,
+    toast: adw::ToastOverlay,
+) {
+    let dialog = adw::Dialog::new();
+    dialog.set_title(&format!("VFS · {remote}"));
+    dialog.set_content_width(560);
+    dialog.set_content_height(520);
+    let fs = remote_fs(remote, "");
+    let list = gtk::ListBox::new();
+    list.add_css_class("boxed-list");
+    let queue_list = gtk::ListBox::new();
+    queue_list.add_css_class("boxed-list");
+    let refresh_ui = {
+        let ctx = ctx.clone();
+        let fs = fs.clone();
+        let list = list.clone();
+        let queue_list = queue_list.clone();
+        move || {
+            while let Some(child) = list.first_child() {
+                list.remove(&child);
+            }
+            while let Some(child) = queue_list.first_child() {
+                queue_list.remove(&child);
+            }
+            let Some(client) = ctx.client() else {
+                let row = adw::ActionRow::new();
+                row.set_title("Engine offline");
+                list.append(&row);
+                return;
+            };
+            match client.vfs_stats(&fs) {
+                Ok(value) => {
+                    let stats = crate::vfs::parse_vfs_stats(&value);
+                    for (title, value) in [
+                        ("Metadata dirs", stats.metadata_dirs.to_string()),
+                        ("Metadata files", stats.metadata_files.to_string()),
+                        ("Uploads", stats.uploads_in_progress.to_string()),
+                        ("Errors", stats.errored.to_string()),
+                        ("Disk cache", stats.disk_path),
+                    ] {
+                        let row = adw::ActionRow::new();
+                        row.set_title(title);
+                        row.set_subtitle(&value);
+                        list.append(&row);
+                    }
+                }
+                Err(e) => {
+                    let row = adw::ActionRow::new();
+                    row.set_title("VFS stats unavailable");
+                    row.set_subtitle(&e.to_string());
+                    list.append(&row);
+                }
+            }
+            match client.vfs_queue(&fs) {
+                Ok(value) => {
+                    let items = crate::vfs::parse_vfs_queue(&value);
+                    if items.is_empty() {
+                        let row = adw::ActionRow::new();
+                        row.set_title("Queue is empty");
+                        queue_list.append(&row);
+                    }
+                    for item in items {
+                        let row = adw::ActionRow::new();
+                        row.set_title(&if item.name.is_empty() {
+                            format!("#{}", item.id)
+                        } else {
+                            item.name.clone()
+                        });
+                        row.set_subtitle(&format!(
+                            "id {} · {} · expiry {}",
+                            item.id,
+                            crate::rclone::format_bytes(item.size),
+                            item.expiry
+                        ));
+                        queue_list.append(&row);
+                    }
+                }
+                Err(e) => {
+                    let row = adw::ActionRow::new();
+                    row.set_title("Queue unavailable");
+                    row.set_subtitle(&e.to_string());
+                    queue_list.append(&row);
+                }
+            }
+        }
+    };
+    refresh_ui();
+    let file = adw::EntryRow::new();
+    file.set_title("Forget file / refresh dir");
+    let forget = gtk::Button::with_label("Forget file");
+    {
+        let ctx = ctx.clone();
+        let fs = fs.clone();
+        let file = file.clone();
+        let toast = toast.clone();
+        let refresh_ui = refresh_ui.clone();
+        forget.connect_clicked(move |_| {
+            if let Some(client) = ctx.client() {
+                match client.vfs_forget_ex(&fs, Some(&file.text())) {
+                    Ok(_) => {
+                        toast.add_toast(adw::Toast::new("Forgot cached file"));
+                        refresh_ui();
+                    }
+                    Err(e) => toast.add_toast(adw::Toast::new(&e.to_string())),
+                }
+            }
+        });
+    }
+    let refresh_dir = gtk::Button::with_label("Refresh dir");
+    {
+        let ctx = ctx.clone();
+        let fs = fs.clone();
+        let file = file.clone();
+        let toast = toast.clone();
+        let refresh_ui = refresh_ui.clone();
+        refresh_dir.connect_clicked(move |_| {
+            if let Some(client) = ctx.client() {
+                let dir = file.text();
+                match client.vfs_refresh_ex(&fs, Some(&dir), true) {
+                    Ok(_) => {
+                        toast.add_toast(adw::Toast::new("Refreshed directory"));
+                        refresh_ui();
+                    }
+                    Err(e) => toast.add_toast(adw::Toast::new(&e.to_string())),
+                }
+            }
+        });
+    }
+    let poll = adw::EntryRow::new();
+    poll.set_title("Poll interval");
+    poll.set_text("1m");
+    let apply_poll = gtk::Button::with_label("Set interval");
+    {
+        let ctx = ctx.clone();
+        let fs = fs.clone();
+        let poll = poll.clone();
+        let toast = toast.clone();
+        apply_poll.connect_clicked(move |_| {
+            if let Some(client) = ctx.client() {
+                match client.vfs_poll_interval(&fs, Some(&poll.text())) {
+                    Ok(_) => toast.add_toast(adw::Toast::new("Poll interval updated")),
+                    Err(e) => toast.add_toast(adw::Toast::new(&e.to_string())),
+                }
+            }
+        });
+    }
+    let expiry = adw::EntryRow::new();
+    expiry.set_title("Queue id / expiry");
+    expiry.set_text("id=1 expiry=1m");
+    let apply_exp = gtk::Button::with_label("Set expiry");
+    {
+        let ctx = ctx.clone();
+        let fs = fs.clone();
+        let expiry = expiry.clone();
+        let toast = toast.clone();
+        let refresh_ui = refresh_ui.clone();
+        apply_exp.connect_clicked(move |_| {
+            let (id, exp) = crate::vfs::parse_expiry_pair(&expiry.text());
+            if let Some(client) = ctx.client() {
+                match client.vfs_queue_set_expiry_ex(&fs, &id, &exp, true) {
+                    Ok(_) => {
+                        toast.add_toast(adw::Toast::new("Queue expiry updated"));
+                        refresh_ui();
+                    }
+                    Err(e) => toast.add_toast(adw::Toast::new(&e.to_string())),
+                }
+            }
+        });
+    }
+    let reload = gtk::Button::with_label(&ctx.t("common.refresh"));
+    {
+        let refresh_ui = refresh_ui.clone();
+        reload.connect_clicked(move |_| refresh_ui());
+    }
+    let actions = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+    actions.append(&forget);
+    actions.append(&refresh_dir);
+    actions.append(&apply_poll);
+    actions.append(&apply_exp);
+    actions.append(&reload);
+    let box_ = gtk::Box::new(gtk::Orientation::Vertical, 8);
+    box_.set_margin_top(12);
+    box_.set_margin_start(12);
+    box_.set_margin_end(12);
+    box_.set_margin_bottom(12);
+    let stats_label = gtk::Label::new(Some("Stats"));
+    stats_label.add_css_class("heading");
+    stats_label.set_xalign(0.0);
+    let queue_label = gtk::Label::new(Some("Queue"));
+    queue_label.add_css_class("heading");
+    queue_label.set_xalign(0.0);
+    let scroll = gtk::ScrolledWindow::new();
+    scroll.set_vexpand(true);
+    let inner = gtk::Box::new(gtk::Orientation::Vertical, 8);
+    inner.append(&stats_label);
+    inner.append(&list);
+    inner.append(&queue_label);
+    inner.append(&queue_list);
+    scroll.set_child(Some(&inner));
+    box_.append(&scroll);
+    box_.append(&file);
+    box_.append(&poll);
+    box_.append(&expiry);
+    box_.append(&actions);
+    dialog.set_child(Some(&box_));
+    present_window_or_dialog(parent, &ctx, &dialog);
 }
 
 pub fn logs(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, remote: Option<String>) {
@@ -3771,6 +4079,21 @@ pub fn properties(
     };
     let info = ctx.fs_info(remote);
     if let Some(client) = ctx.client() {
+        if let Ok(Some(stat)) = client.stat(&fs, path) {
+            let row = adw::ActionRow::new();
+            row.set_title(&ctx.t_or("fileBrowser.properties.kind", "Kind"));
+            row.set_subtitle(&format!(
+                "{} · {}{}",
+                if stat.is_dir { "Directory" } else { "File" },
+                crate::rclone::format_bytes(stat.size),
+                if stat.mime.is_empty() {
+                    String::new()
+                } else {
+                    format!(" · {}", stat.mime)
+                }
+            ));
+            list.append(&row);
+        }
         if let Ok(about) = client.about(&fs) {
             let used = about.get("used").and_then(|x| x.as_i64()).unwrap_or(-1);
             let total = about.get("total").and_then(|x| x.as_i64()).unwrap_or(-1);
@@ -3827,7 +4150,10 @@ pub fn properties(
                     let hash_type = hash_type.clone();
                     calc.connect_clicked(move |_| {
                         if let Some(client) = ctx.client() {
-                            match client.hashsum(&fs, &path, &hash_type) {
+                            let value = client
+                                .hashsum_file(&fs, &path, &hash_type)
+                                .or_else(|_| client.hashsum(&fs, &path, &hash_type));
+                            match value {
                                 Ok(value) => {
                                     row.set_subtitle(
                                         &parse_hashsum(&value).unwrap_or_else(|| value.to_string()),
@@ -4414,6 +4740,109 @@ fn confirm_delete_path(parent: &adw::Dialog, ctx: AppCtx, path: &str, title: &st
     alert.present(Some(parent));
 }
 
+fn pdf_panel(path: Option<std::path::PathBuf>, name: &str) -> gtk::Box {
+    let box_ = gtk::Box::new(gtk::Orientation::Vertical, 8);
+    box_.set_margin_start(16);
+    box_.set_margin_end(16);
+    let size = path
+        .as_ref()
+        .and_then(|p| std::fs::metadata(p).ok())
+        .map(|m| crate::rclone::format_bytes(m.len() as i64))
+        .unwrap_or_else(|| "—".into());
+    let magic = path.as_ref().and_then(|p| {
+        let mut buf = [0u8; 5];
+        std::fs::File::open(p)
+            .ok()
+            .and_then(|mut f| {
+                use std::io::Read;
+                f.read_exact(&mut buf).ok().map(|_| buf)
+            })
+            .map(|b| String::from_utf8_lossy(&b).into_owned())
+    });
+    let label = gtk::Label::new(Some(&format!(
+        "{name}\nSize: {size}\n{}",
+        if magic.as_deref() == Some("%PDF-") {
+            "PDF document — open with the system viewer for pages and search."
+        } else {
+            "PDF preview uses the system viewer. Open native to display pages."
+        }
+    )));
+    label.set_wrap(true);
+    label.set_xalign(0.0);
+    box_.append(&label);
+    if let Some(path) = path {
+        let open = gtk::Button::with_label("Open native");
+        open.add_css_class("suggested-action");
+        let p = path.clone();
+        open.connect_clicked(move |_| {
+            let _ = open::that(&p);
+        });
+        box_.append(&open);
+    }
+    box_
+}
+
+fn attach_text_preview(
+    parent: &gtk::Box,
+    name: &str,
+    text: &str,
+    editable: bool,
+    save_path: Option<&str>,
+) {
+    let shown = if text.len() > 200_000 {
+        format!("{}\n\n… truncated …", &text[..200_000])
+    } else {
+        text.to_string()
+    };
+    let view = gtk::TextView::new();
+    view.set_monospace(true);
+    view.set_editable(editable);
+    apply_syntax_highlight(&view, name, &shown);
+    attach_live_syntax(&view, name);
+    let source_scroll = gtk::ScrolledWindow::new();
+    source_scroll.set_vexpand(true);
+    source_scroll.set_child(Some(&view));
+    if crate::markdown::is_markdown(name) {
+        let preview = gtk::TextView::new();
+        preview.set_editable(false);
+        preview.set_wrap_mode(gtk::WrapMode::WordChar);
+        preview
+            .buffer()
+            .set_text(&crate::markdown::to_preview(&shown));
+        let preview_scroll = gtk::ScrolledWindow::new();
+        preview_scroll.set_vexpand(true);
+        preview_scroll.set_child(Some(&preview));
+        let stack = gtk::Stack::new();
+        stack.add_named(&source_scroll, Some("source"));
+        stack.add_named(&preview_scroll, Some("preview"));
+        let toggle = gtk::ToggleButton::with_label("Preview");
+        {
+            let stack = stack.clone();
+            toggle.connect_toggled(move |btn| {
+                stack.set_visible_child_name(if btn.is_active() { "preview" } else { "source" });
+            });
+        }
+        parent.append(&toggle);
+        parent.append(&stack);
+    } else {
+        parent.append(&source_scroll);
+    }
+    if let Some(path) = save_path.filter(|_| editable) {
+        let save = gtk::Button::with_label("Save");
+        save.add_css_class("suggested-action");
+        let view = view.clone();
+        let path = path.to_string();
+        save.connect_clicked(move |_| {
+            let buffer = view.buffer();
+            let text = buffer.text(&buffer.start_iter(), &buffer.end_iter(), false);
+            if let Err(e) = std::fs::write(&path, text.as_str()) {
+                log::warn!("failed to save {path}: {e}");
+            }
+        });
+        parent.append(&save);
+    }
+}
+
 pub fn file_viewer(
     parent: &impl IsA<gtk::Widget>,
     ctx: AppCtx,
@@ -4611,44 +5040,19 @@ pub fn file_viewer(
             }
         }
     }
-    if remote == "local" && matches!(category, crate::operations::FileTypeCategory::Pdf) {
-        let note = gtk::Label::new(Some(
-            "PDF preview uses the system viewer. Click Open native to display it.",
+    if matches!(category, crate::operations::FileTypeCategory::Pdf) {
+        box_.append(&pdf_panel(
+            if remote == "local" {
+                Some(std::path::PathBuf::from(path))
+            } else {
+                None
+            },
+            name,
         ));
-        note.set_wrap(true);
-        box_.append(&note);
     }
     if remote == "local" && matches!(category, crate::operations::FileTypeCategory::Text) {
-        let view = gtk::TextView::new();
-        view.set_monospace(true);
-        view.set_editable(true);
-        if let Ok(text) = std::fs::read_to_string(path) {
-            let shown = if text.len() > 200_000 {
-                format!("{}\n\n… truncated …", &text[..200_000])
-            } else {
-                text
-            };
-            apply_syntax_highlight(&view, name, &shown);
-        }
-        attach_live_syntax(&view, name);
-        let save = gtk::Button::with_label("Save");
-        save.add_css_class("suggested-action");
-        {
-            let view = view.clone();
-            let path = path.to_string();
-            save.connect_clicked(move |_| {
-                let buffer = view.buffer();
-                let text = buffer.text(&buffer.start_iter(), &buffer.end_iter(), false);
-                if let Err(e) = std::fs::write(&path, text.as_str()) {
-                    log::warn!("failed to save {path}: {e}");
-                }
-            });
-        }
-        let scroll = gtk::ScrolledWindow::new();
-        scroll.set_vexpand(true);
-        scroll.set_child(Some(&view));
-        box_.append(&scroll);
-        box_.append(&save);
+        let text = std::fs::read_to_string(path).unwrap_or_default();
+        attach_text_preview(&box_, name, &text, true, Some(path));
     }
     if remote != "local" {
         if let Some(client) = ctx.client() {
@@ -4661,21 +5065,11 @@ pub fn file_viewer(
                 info.set_text(&format!("Downloaded preview to {}", dest.display()));
                 if matches!(category, crate::operations::FileTypeCategory::Text) {
                     if let Ok(text) = std::fs::read_to_string(&dest) {
-                        let view = gtk::TextView::new();
-                        view.set_monospace(true);
-                        view.set_editable(false);
-                        let shown = if text.len() > 200_000 {
-                            format!("{}\n\n… truncated …", &text[..200_000])
-                        } else {
-                            text
-                        };
-                        apply_syntax_highlight(&view, name, &shown);
-                        attach_live_syntax(&view, name);
-                        let scroll = gtk::ScrolledWindow::new();
-                        scroll.set_vexpand(true);
-                        scroll.set_child(Some(&view));
-                        box_.append(&scroll);
+                        attach_text_preview(&box_, name, &text, false, None);
                     }
+                }
+                if matches!(category, crate::operations::FileTypeCategory::Pdf) {
+                    box_.append(&pdf_panel(Some(dest.clone()), name));
                 }
             }
         }
@@ -6491,10 +6885,13 @@ pub fn repair(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, toast: adw::ToastOver
                     install_rclone_update(&parent, ctx.clone(), toast.clone());
                     ctx.restart_engine();
                 }
-                crate::repair::RepairKind::FuseMissing => match crate::repair::try_install_fuse() {
+                crate::repair::RepairKind::FuseMissing => match crate::mount_plugin::install() {
                     Ok(msg) => toast.add_toast(adw::Toast::new(&msg)),
                     Err(e) => {
-                        let help = adw::AlertDialog::new(Some("Install FUSE"), Some(&e));
+                        let help = adw::AlertDialog::new(
+                            Some(&format!("Install {}", crate::mount_plugin::plugin_label())),
+                            Some(&e),
+                        );
                         help.add_response("ok", "OK");
                         help.present(Some(&parent));
                     }

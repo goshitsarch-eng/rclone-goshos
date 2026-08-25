@@ -13,9 +13,10 @@ pub fn present(app: &adw::Application, ctx: AppCtx) {
 
     let nav = adw::NavigationView::new();
     nav.add(&page_welcome(&ctx, &nav));
-    nav.add(&page_features());
-    nav.add(&page_install(&ctx));
-    nav.add(&page_view(&ctx));
+    nav.add(&page_features(&nav));
+    nav.add(&page_install(&ctx, &nav));
+    nav.add(&page_mount(&nav));
+    nav.add(&page_view(&ctx, &nav));
     nav.add(&page_ready(app, &ctx, &window));
     window.set_content(Some(&nav));
     window.present();
@@ -44,7 +45,7 @@ fn page_welcome(ctx: &AppCtx, nav: &adw::NavigationView) -> adw::NavigationPage 
         .build()
 }
 
-fn page_features() -> adw::NavigationPage {
+fn page_features(nav: &adw::NavigationView) -> adw::NavigationPage {
     let box_ = gtk::Box::new(gtk::Orientation::Vertical, 12);
     box_.set_margin_top(24);
     box_.set_margin_start(24);
@@ -80,6 +81,13 @@ fn page_features() -> adw::NavigationPage {
         row.add_prefix(&gtk::Image::from_icon_name(icon));
         box_.append(&row);
     }
+    let next = gtk::Button::with_label("Continue");
+    next.add_css_class("suggested-action");
+    let nav = nav.clone();
+    next.connect_clicked(move |_| {
+        nav.push_by_tag("install");
+    });
+    box_.append(&next);
     adw::NavigationPage::builder()
         .tag("features")
         .title("Features")
@@ -87,7 +95,7 @@ fn page_features() -> adw::NavigationPage {
         .build()
 }
 
-fn page_install(ctx: &AppCtx) -> adw::NavigationPage {
+fn page_install(ctx: &AppCtx, nav: &adw::NavigationView) -> adw::NavigationPage {
     let box_ = gtk::Box::new(gtk::Orientation::Vertical, 12);
     box_.set_margin_top(24);
     box_.set_margin_start(24);
@@ -157,6 +165,13 @@ fn page_install(ctx: &AppCtx) -> adw::NavigationPage {
     group.set_title("Config password");
     group.add(&password);
     box_.append(&group);
+    let next = gtk::Button::with_label("Continue");
+    next.add_css_class("suggested-action");
+    let nav = nav.clone();
+    next.connect_clicked(move |_| {
+        nav.push_by_tag("mount");
+    });
+    box_.append(&next);
     adw::NavigationPage::builder()
         .tag("install")
         .title("Install rclone")
@@ -164,7 +179,50 @@ fn page_install(ctx: &AppCtx) -> adw::NavigationPage {
         .build()
 }
 
-fn page_view(ctx: &AppCtx) -> adw::NavigationPage {
+fn page_mount(nav: &adw::NavigationView) -> adw::NavigationPage {
+    let box_ = gtk::Box::new(gtk::Orientation::Vertical, 12);
+    box_.set_margin_top(24);
+    box_.set_margin_start(24);
+    box_.set_margin_end(24);
+    let status = adw::StatusPage::new();
+    let label = crate::mount_plugin::plugin_label();
+    if crate::mount_plugin::is_installed() {
+        status.set_icon_name(Some("emblem-ok-symbolic"));
+        status.set_title(&format!("{label} is ready"));
+        status.set_description(Some("Mounts can use the local filesystem helper."));
+    } else {
+        status.set_icon_name(Some("dialog-warning-symbolic"));
+        status.set_title(&crate::mount_plugin::missing_title());
+        status.set_description(Some(&crate::mount_plugin::missing_detail()));
+        let install = gtk::Button::with_label(&format!("Install {label}"));
+        install.add_css_class("suggested-action");
+        let status_btn = status.clone();
+        install.connect_clicked(move |_| match crate::mount_plugin::install() {
+            Ok(msg) => {
+                status_btn.set_icon_name(Some("emblem-ok-symbolic"));
+                status_btn.set_title(&msg);
+                status_btn.set_description(Some("You can continue."));
+            }
+            Err(e) => status_btn.set_description(Some(&e)),
+        });
+        status.set_child(Some(&install));
+    }
+    box_.append(&status);
+    let next = gtk::Button::with_label("Continue");
+    next.add_css_class("suggested-action");
+    let nav = nav.clone();
+    next.connect_clicked(move |_| {
+        nav.push_by_tag("view");
+    });
+    box_.append(&next);
+    adw::NavigationPage::builder()
+        .tag("mount")
+        .title(label)
+        .child(&box_)
+        .build()
+}
+
+fn page_view(ctx: &AppCtx, nav: &adw::NavigationView) -> adw::NavigationPage {
     let box_ = gtk::Box::new(gtk::Orientation::Vertical, 12);
     box_.set_margin_top(24);
     box_.set_margin_start(24);
@@ -191,6 +249,13 @@ fn page_view(ctx: &AppCtx) -> adw::NavigationPage {
         });
         box_.append(&btn);
     }
+    let next = gtk::Button::with_label("Continue");
+    next.add_css_class("suggested-action");
+    let nav = nav.clone();
+    next.connect_clicked(move |_| {
+        nav.push_by_tag("ready");
+    });
+    box_.append(&next);
     adw::NavigationPage::builder()
         .tag("view")
         .title("Default view")

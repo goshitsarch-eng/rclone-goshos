@@ -406,6 +406,18 @@ impl RcClient {
         )
     }
 
+    pub fn hashsum_file(&self, fs: &str, remote: &str, hash_type: &str) -> Result<Value, RcError> {
+        self.call(
+            "operations/hashsumfile",
+            json!({ "fs": fs, "remote": remote, "hashType": hash_type }),
+        )
+    }
+
+    pub fn stat(&self, fs: &str, remote: &str) -> Result<Option<StatItem>, RcError> {
+        let value = self.call("operations/stat", json!({ "fs": fs, "remote": remote }))?;
+        Ok(parse_stat(&value))
+    }
+
     pub fn start_job(&self, endpoint: &str, mut params: Value) -> Result<u64, RcError> {
         if let Some(obj) = params.as_object_mut() {
             obj.insert("_async".into(), json!(true));
@@ -551,11 +563,24 @@ impl RcClient {
     }
 
     pub fn vfs_forget(&self, fs: &str) -> Result<Value, RcError> {
-        self.call("vfs/forget", json!({ "fs": fs }))
+        self.vfs_forget_ex(fs, None)
+    }
+
+    pub fn vfs_forget_ex(&self, fs: &str, file: Option<&str>) -> Result<Value, RcError> {
+        self.call("vfs/forget", vfs_forget_payload(fs, file))
     }
 
     pub fn vfs_refresh(&self, fs: &str) -> Result<Value, RcError> {
-        self.call("vfs/refresh", json!({ "fs": fs }))
+        self.vfs_refresh_ex(fs, None, false)
+    }
+
+    pub fn vfs_refresh_ex(
+        &self,
+        fs: &str,
+        dir: Option<&str>,
+        recursive: bool,
+    ) -> Result<Value, RcError> {
+        self.call("vfs/refresh", vfs_refresh_payload(fs, dir, recursive))
     }
 
     pub fn vfs_queue(&self, fs: &str) -> Result<Value, RcError> {
@@ -571,9 +596,19 @@ impl RcClient {
     }
 
     pub fn vfs_queue_set_expiry(&self, fs: &str, id: &str, expiry: &str) -> Result<Value, RcError> {
+        self.vfs_queue_set_expiry_ex(fs, id, expiry, false)
+    }
+
+    pub fn vfs_queue_set_expiry_ex(
+        &self,
+        fs: &str,
+        id: &str,
+        expiry: &str,
+        relative: bool,
+    ) -> Result<Value, RcError> {
         self.call(
             "vfs/queue-set-expiry",
-            json!({ "fs": fs, "id": id, "expiry": expiry }),
+            vfs_queue_expiry_payload(fs, id, expiry, relative),
         )
     }
 
@@ -870,6 +905,65 @@ pub fn public_link_payload(fs: &str, remote: &str, expire: Option<&str>, unlink:
         }
     }
     body
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StatItem {
+    pub name: String,
+    pub is_dir: bool,
+    pub size: i64,
+    pub mime: String,
+}
+
+pub fn parse_stat(value: &Value) -> Option<StatItem> {
+    let item = value.get("item")?;
+    if item.is_null() {
+        return None;
+    }
+    Some(StatItem {
+        name: item
+            .get("Name")
+            .or_else(|| item.get("name"))
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string(),
+        is_dir: item
+            .get("IsDir")
+            .or_else(|| item.get("isDir"))
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false),
+        size: item
+            .get("Size")
+            .or_else(|| item.get("size"))
+            .and_then(|v| v.as_i64())
+            .unwrap_or(0),
+        mime: item
+            .get("MimeType")
+            .or_else(|| item.get("mimeType"))
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string(),
+    })
+}
+
+pub fn vfs_forget_payload(fs: &str, file: Option<&str>) -> Value {
+    let mut body = json!({ "fs": fs });
+    if let Some(file) = file.filter(|s| !s.is_empty()) {
+        body["file"] = json!(file);
+    }
+    body
+}
+
+pub fn vfs_refresh_payload(fs: &str, dir: Option<&str>, recursive: bool) -> Value {
+    let mut body = json!({ "fs": fs, "recursive": recursive });
+    if let Some(dir) = dir.filter(|s| !s.is_empty()) {
+        body["dir"] = json!(dir);
+    }
+    body
+}
+
+pub fn vfs_queue_expiry_payload(fs: &str, id: &str, expiry: &str, relative: bool) -> Value {
+    json!({ "fs": fs, "id": id, "expiry": expiry, "relative": relative })
 }
 
 pub fn parse_hashsum(value: &Value) -> Option<String> {
@@ -1177,6 +1271,38 @@ mod tests {
         assert_eq!(
             browse_target("/tmp/out"),
             Some(("local".into(), "/tmp/out".into()))
+        );
+    }
+
+    #[test]
+    fn parses_stat_item_and_null() {
+        let item = parse_stat(&json!({
+            "item": { "Name": "Photos", "IsDir": true, "Size": 0, "MimeType": "inode/directory" }
+        }))
+        .unwrap();
+        assert!(item.is_dir);
+        assert_eq!(item.name, "Photos");
+        assert_eq!(item.mime, "inode/directory");
+        assert!(parse_stat(&json!({ "item": null })).is_none());
+    }
+
+    #[test]
+    fn vfs_payloads_include_optional_fields() {
+        assert_eq!(
+            vfs_forget_payload("drive:", None),
+            json!({ "fs": "drive:" })
+        );
+        assert_eq!(
+            vfs_forget_payload("drive:", Some("cache.bin")),
+            json!({ "fs": "drive:", "file": "cache.bin" })
+        );
+        assert_eq!(
+            vfs_refresh_payload("drive:", Some("Photos"), true),
+            json!({ "fs": "drive:", "recursive": true, "dir": "Photos" })
+        );
+        assert_eq!(
+            vfs_queue_expiry_payload("drive:", "3", "1m", true),
+            json!({ "fs": "drive:", "id": "3", "expiry": "1m", "relative": true })
         );
     }
 }
