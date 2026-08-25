@@ -68,6 +68,10 @@
     "inMonthsOnDayAt": "In {{months}} on day {{dom}} at {{time}}",
     "atTimes": "At {{times}}",
     "hourlyAtMinutes": "Hourly at minutes {{mins}}",
+    "everyHoursBetween": "Every {{n}} hours between {{start}} and {{end}}",
+    "everyMinutesAt": "Every {{n}} minutes at {{times}}",
+    "atMinutesBetween": "At minutes {{mins}} between {{start}} and {{end}}",
+    "atHours": "At {{hours}}",
     "days": {
       "0": "Sunday",
       "1": "Monday",

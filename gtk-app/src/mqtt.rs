@@ -35,7 +35,7 @@ pub fn publish_alert(config: &Value, body: &str) -> Result<(), String> {
         .get("qos")
         .and_then(|x| x.as_u64())
         .unwrap_or(0)
-        .min(1) as u8;
+        .min(2) as u8;
     let retain = config
         .get("retain")
         .and_then(|x| x.as_bool())
@@ -116,8 +116,37 @@ fn mqtt_session<S: Read + Write>(
     stream
         .write_all(&publish_packet(topic, payload.as_bytes(), qos, retain))
         .map_err(|e| e.to_string())?;
+    if qos == 1 {
+        expect_packet(stream, 0x40)?;
+    } else if qos >= 2 {
+        expect_packet(stream, 0x50)?;
+        stream
+            .write_all(&pubrel_packet(1))
+            .map_err(|e| e.to_string())?;
+        expect_packet(stream, 0x70)?;
+    }
     stream.write_all(&[0xe0, 0x00]).map_err(|e| e.to_string())?;
     Ok(())
+}
+
+fn expect_packet<S: Read>(stream: &mut S, header: u8) -> Result<(), String> {
+    let mut first = [0u8; 2];
+    stream.read_exact(&mut first).map_err(|e| e.to_string())?;
+    if first[0] & 0xf0 != header {
+        return Err(format!("mqtt expected {:#x}, got {:#x}", header, first[0]));
+    }
+    let extra = (first[1] as usize).saturating_sub(0);
+    if extra > 0 {
+        let mut rest = vec![0u8; extra.min(16)];
+        stream.read_exact(&mut rest).map_err(|e| e.to_string())?;
+    }
+    Ok(())
+}
+
+fn pubrel_packet(id: u16) -> Vec<u8> {
+    let mut vh = Vec::new();
+    vh.extend_from_slice(&id.to_be_bytes());
+    packet(0x62, &vh)
 }
 
 fn connect_packet(user: &str, pass: &str) -> Vec<u8> {
@@ -145,7 +174,9 @@ fn connect_packet(user: &str, pass: &str) -> Vec<u8> {
 
 fn publish_packet(topic: &str, payload: &[u8], qos: u8, retain: bool) -> Vec<u8> {
     let mut header = 0x30;
-    if qos >= 1 {
+    if qos >= 2 {
+        header |= 0x04;
+    } else if qos >= 1 {
         header |= 0x02;
     }
     if retain {
@@ -231,5 +262,8 @@ mod tests {
         assert_eq!(qos0[0], 0x30);
         let qos1 = publish_packet("t", b"hi", 1, true);
         assert_eq!(qos1[0], 0x33);
+        let qos2 = publish_packet("t", b"hi", 2, false);
+        assert_eq!(qos2[0], 0x34);
+        assert_eq!(pubrel_packet(1)[0], 0x62);
     }
 }

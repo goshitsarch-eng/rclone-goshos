@@ -207,6 +207,28 @@ fn cron_join_and(items: &[String]) -> String {
     }
 }
 
+fn cron_range_step(value: &str) -> Option<(&str, &str, &str)> {
+    let (range, step) = value.split_once('/')?;
+    let (start, end) = range.split_once('-')?;
+    if cron_is_int(start) && cron_is_int(end) && cron_is_int(step) {
+        Some((start, end, step))
+    } else {
+        None
+    }
+}
+
+fn cron_describe_hour_part(part: &str, min: &str) -> String {
+    if let Some((start, end)) = part.split_once('-') {
+        if cron_is_int(start) && cron_is_int(end) {
+            return format!("{}-{}", cron_time(start, min), cron_time(end, min));
+        }
+    }
+    if cron_is_int(part) {
+        return cron_time(part, min);
+    }
+    part.to_string()
+}
+
 fn cron_is_weekend(dow: &str) -> bool {
     matches!(dow, "0,6" | "6,0" | "0,6,7" | "6,0,7")
 }
@@ -406,6 +428,81 @@ pub fn describe_cron_i18n(expression: &str, i18n: &crate::i18n::I18n) -> String 
             i18n.tf("cron.atTimes", &[("times", &times)])
         } else {
             format!("At {times}")
+        };
+    }
+    if let Some((start, end, step)) = cron_range_step(hour) {
+        if cron_is_int(min) && dom == "*" && mon == "*" && dow == "*" {
+            let start_t = cron_time(start, min);
+            let end_t = cron_time(end, min);
+            return if i18n.has("cron.everyHoursBetween") {
+                i18n.tf(
+                    "cron.everyHoursBetween",
+                    &[("n", step), ("start", &start_t), ("end", &end_t)],
+                )
+            } else {
+                format!("Every {step} hours between {start_t} and {end_t}")
+            };
+        }
+    }
+    if min.starts_with("*/")
+        && cron_is_int_list(hour)
+        && !hour.contains('-')
+        && dom == "*"
+        && mon == "*"
+        && dow == "*"
+    {
+        let n = min.trim_start_matches("*/");
+        let times = cron_join_and(
+            &hour
+                .split(',')
+                .map(|h| cron_time(h.trim(), "0"))
+                .collect::<Vec<_>>(),
+        );
+        return if i18n.has("cron.everyMinutesAt") {
+            i18n.tf("cron.everyMinutesAt", &[("n", n), ("times", &times)])
+        } else {
+            format!("Every {n} minutes at {times}")
+        };
+    }
+    if min.contains(',')
+        && cron_is_int_list(min)
+        && hour.contains('-')
+        && !hour.contains(',')
+        && !hour.contains('/')
+        && cron_is_int(hour.split('-').next().unwrap_or(""))
+        && cron_is_int(hour.split('-').nth(1).unwrap_or(""))
+        && dom == "*"
+        && mon == "*"
+        && dow == "*"
+    {
+        let start = cron_time(hour.split('-').next().unwrap_or(hour), "0");
+        let end = cron_time(hour.split('-').nth(1).unwrap_or(hour), "0");
+        return if i18n.has("cron.atMinutesBetween") {
+            i18n.tf(
+                "cron.atMinutesBetween",
+                &[("mins", min), ("start", &start), ("end", &end)],
+            )
+        } else {
+            format!("At minutes {min} between {start} and {end}")
+        };
+    }
+    if cron_is_int(min)
+        && hour.contains(',')
+        && hour.contains('-')
+        && dom == "*"
+        && mon == "*"
+        && dow == "*"
+    {
+        let hours = cron_join_and(
+            &hour
+                .split(',')
+                .map(|part| cron_describe_hour_part(part.trim(), min))
+                .collect::<Vec<_>>(),
+        );
+        return if i18n.has("cron.atHours") {
+            i18n.tf("cron.atHours", &[("hours", &hours)])
+        } else {
+            format!("At {hours}")
         };
     }
     if cron_is_int(min) && cron_is_int(hour) && dom == "*" && mon == "*" && dow == "1-5" {
@@ -624,6 +721,19 @@ mod tests {
         assert_eq!(describe_cron("0,30 * * * *"), "Hourly at minutes 0,30");
         assert_eq!(describe_cron("0 9,17 * * *"), "At 9:00 and 17:00");
         assert_eq!(describe_cron("0 9,12,17 * * *"), "At 9:00, 12:00 and 17:00");
+        assert_eq!(
+            describe_cron("0 9-17/2 * * *"),
+            "Every 2 hours between 9:00 and 17:00"
+        );
+        assert_eq!(
+            describe_cron("*/30 9,12 * * *"),
+            "Every 30 minutes at 9:00 and 12:00"
+        );
+        assert_eq!(
+            describe_cron("15,45 9-17 * * *"),
+            "At minutes 15,45 between 9:00 and 17:00"
+        );
+        assert_eq!(describe_cron("0 9-17,20 * * *"), "At 9:00-17:00 and 20:00");
         assert_eq!(
             describe_cron("0 9 * * 1,3,5"),
             "Weekly on Monday, Wednesday, Friday at 9:00"

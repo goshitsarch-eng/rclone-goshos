@@ -500,6 +500,8 @@ pub struct AlertActionDraft {
     pub retain: bool,
     pub encryption: String,
     pub env_vars: String,
+    pub username: String,
+    pub use_tls: bool,
 }
 
 impl Default for AlertActionDraft {
@@ -522,6 +524,8 @@ impl Default for AlertActionDraft {
             retain: false,
             encryption: "starttls".into(),
             env_vars: String::new(),
+            username: String::new(),
+            use_tls: false,
         }
     }
 }
@@ -612,6 +616,36 @@ pub fn webhook_preset_body(preset: &str) -> String {
     }
 }
 
+pub fn webhook_http_method(method: &str) -> &'static str {
+    match method.trim().to_ascii_uppercase().as_str() {
+        "GET" => "GET",
+        "PUT" => "PUT",
+        "PATCH" => "PATCH",
+        "DELETE" => "DELETE",
+        _ => "POST",
+    }
+}
+
+pub fn wait_script(mut process: std::process::Command, timeout_secs: u64) -> bool {
+    let mut child = match process.spawn() {
+        Ok(child) => child,
+        Err(_) => return false,
+    };
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(timeout_secs.max(1));
+    loop {
+        match child.try_wait() {
+            Ok(Some(status)) => return status.success(),
+            Ok(None) if std::time::Instant::now() >= deadline => {
+                let _ = child.kill();
+                let _ = child.wait();
+                return false;
+            }
+            Ok(None) => std::thread::sleep(std::time::Duration::from_millis(50)),
+            Err(_) => return false,
+        }
+    }
+}
+
 pub fn ensure_content_type_json(headers: &str) -> String {
     let existing = parse_header_lines(headers);
     if existing
@@ -696,6 +730,7 @@ pub fn alert_action_config(kind: &str, draft: &AlertActionDraft) -> Value {
         "email" => json!({
             "smtp_server": draft.url,
             "smtp_port": draft.method.parse::<u16>().unwrap_or(587),
+            "username": draft.username,
             "password": draft.token,
             "from": if draft.extra2.is_empty() { draft.extra.clone() } else { draft.extra2.clone() },
             "to": draft.extra,
@@ -711,11 +746,13 @@ pub fn alert_action_config(kind: &str, draft: &AlertActionDraft) -> Value {
         "mqtt" => json!({
             "broker_url": draft.url,
             "topic": if draft.method.is_empty() { "rclone/alerts".into() } else { draft.method.clone() },
+            "username": draft.username,
             "password": draft.token,
+            "use_tls": draft.use_tls,
             "body_template": body,
             "retry_count": retry,
             "timeout_secs": timeout,
-            "qos": draft.qos.min(1),
+            "qos": draft.qos.min(2),
             "retain": draft.retain,
         }),
         _ => json!({ "body_template": body, "retry_count": retry }),
@@ -1313,22 +1350,20 @@ fn dispatch_action_once(action: &AlertAction, event: &AlertEvent) -> bool {
             let Some(url) = action.config.get("url").and_then(|x| x.as_str()) else {
                 return false;
             };
-            let method = action
-                .config
-                .get("method")
-                .and_then(|x| x.as_str())
-                .unwrap_or("POST");
+            let method = webhook_http_method(
+                action
+                    .config
+                    .get("method")
+                    .and_then(|x| x.as_str())
+                    .unwrap_or("POST"),
+            );
             let timeout = action
                 .config
                 .get("timeout_secs")
                 .and_then(|x| x.as_u64())
                 .unwrap_or(8)
                 .max(1);
-            let mut req = if method.eq_ignore_ascii_case("GET") {
-                ureq::get(url)
-            } else {
-                ureq::post(url)
-            };
+            let mut req = ureq::request(method, url);
             req = req.timeout(std::time::Duration::from_secs(timeout));
             if let Some(headers) = action.config.get("headers").and_then(|x| x.as_object()) {
                 for (key, value) in headers {
@@ -1407,8 +1442,16 @@ fn dispatch_action_once(action: &AlertAction, event: &AlertEvent) -> bool {
                 .env("ALERT_ORIGIN", &event.origin)
                 .env("ALERT_TIMESTAMP", event.created_at.to_rfc3339())
                 .env("ALERT_RULE_ID", &event.rule_id)
-                .spawn()
-                .is_ok()
+                .stdin(std::process::Stdio::null())
+                .stdout(std::process::Stdio::null())
+                .stderr(std::process::Stdio::null());
+            let timeout = action
+                .config
+                .get("timeout_secs")
+                .and_then(|x| x.as_u64())
+                .unwrap_or(8)
+                .max(1);
+            wait_script(process, timeout)
         }
         "email" => {
             let title = event.title.clone();
@@ -2154,6 +2197,16 @@ mod tests {
         assert_eq!(email["from"], "alerts@example.com");
         assert_eq!(email["subject_template"], "{{title}}");
         assert_eq!(email["encryption"], "starttls");
+        assert_eq!(email["username"], "");
+        let email_user = alert_action_config(
+            "email",
+            &AlertActionDraft {
+                username: "alerts".into(),
+                extra: "ops@example.com".into(),
+                ..Default::default()
+            },
+        );
+        assert_eq!(email_user["username"], "alerts");
         let email_tls = alert_action_config(
             "email",
             &AlertActionDraft {
@@ -2168,13 +2221,17 @@ mod tests {
             &AlertActionDraft {
                 url: "mqtt://broker:1883".into(),
                 method: "rclone/alerts".into(),
-                qos: 1,
+                qos: 2,
                 retain: true,
+                username: "mqtt".into(),
+                use_tls: true,
                 ..Default::default()
             },
         );
-        assert_eq!(mqtt["qos"], 1);
+        assert_eq!(mqtt["qos"], 2);
         assert_eq!(mqtt["retain"], true);
+        assert_eq!(mqtt["username"], "mqtt");
+        assert_eq!(mqtt["use_tls"], true);
         let script = alert_action_config(
             "script",
             &AlertActionDraft {
@@ -2217,6 +2274,18 @@ mod tests {
             ensure_content_type_json("Content-Type: text/plain"),
             "Content-Type: text/plain"
         );
+        assert_eq!(webhook_http_method("put"), "PUT");
+        assert_eq!(webhook_http_method("GET"), "GET");
+        assert_eq!(webhook_http_method(""), "POST");
+        assert!(!wait_script(
+            {
+                let mut cmd = std::process::Command::new("sleep");
+                cmd.arg("2");
+                cmd
+            },
+            1
+        ));
+        assert!(wait_script(std::process::Command::new("true"), 2));
         let wa = alert_action_config(
             "whatsapp",
             &AlertActionDraft {

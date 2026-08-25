@@ -8150,7 +8150,7 @@ fn alert_action_editor(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, existing_id:
             .and_then(|x| x.as_str())
             .unwrap_or("{{title}}"),
     );
-    let qos = adw::SpinRow::with_range(0.0, 1.0, 1.0);
+    let qos = adw::SpinRow::with_range(0.0, 2.0, 1.0);
     qos.set_title(&ctx.t_or("alerts.action.qos", "MQTT QoS"));
     qos.set_value(
         existing
@@ -8188,6 +8188,43 @@ fn alert_action_editor(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, existing_id:
     );
     let env_vars = adw::EntryRow::new();
     env_vars.set_title(&ctx.t_or("alerts.action.envVars", "Environment variables (KEY=value)"));
+    let username = adw::EntryRow::new();
+    username.set_title(&ctx.t_or("common.username", "Username"));
+    let mqtt_tls = adw::SwitchRow::new();
+    mqtt_tls.set_title(&ctx.t_or("alerts.action.useTls", "Use TLS"));
+    mqtt_tls.set_active(
+        existing
+            .as_ref()
+            .and_then(|a| a.config.get("use_tls"))
+            .and_then(|x| x.as_bool())
+            .unwrap_or(false),
+    );
+    let browse_lbl = ctx.t_or("common.browse", "Browse");
+    let browse = gtk::Button::from_icon_name("folder-open-symbolic");
+    browse.set_tooltip_text(Some(&browse_lbl));
+    browse.set_valign(gtk::Align::Center);
+    extra.add_suffix(&browse);
+    {
+        let extra = extra.clone();
+        browse.connect_clicked(move |btn| {
+            let Some(win) = btn.root().and_downcast::<gtk::Window>() else {
+                return;
+            };
+            let dialog = gtk::FileDialog::new();
+            let extra = extra.clone();
+            dialog.open(
+                Some(&win),
+                None::<gio::Cancellable>.as_ref(),
+                move |result| {
+                    if let Ok(file) = result {
+                        if let Some(path) = file.path() {
+                            extra.set_text(&path.to_string_lossy());
+                        }
+                    }
+                },
+            );
+        });
+    }
     let discord_lbl = ctx.t_or("alerts.action.discord", "Discord");
     let slack_lbl = ctx.t_or("alerts.action.slack", "Slack");
     let discord_btn = gtk::Button::with_label(&discord_lbl);
@@ -8218,10 +8255,8 @@ fn alert_action_editor(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, existing_id:
     if let Some(action) = &existing {
         url.set_text(&action_cfg(action, &["url", "broker_url", "smtp_server"]));
         method.set_text(&action_cfg(action, &["method", "topic", "smtp_port"]));
-        token.set_text(&action_cfg(
-            action,
-            &["bot_token", "password", "apikey", "username"],
-        ));
+        token.set_text(&action_cfg(action, &["bot_token", "password", "apikey"]));
+        username.set_text(&action_cfg(action, &["username"]));
         extra.set_text(&action_cfg(action, &["chat_id", "phone", "to", "command"]));
         extra2.set_text(&action_cfg(action, &["from"]));
         if extra2.text().is_empty() {
@@ -8308,6 +8343,8 @@ fn alert_action_editor(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, existing_id:
         let retain = retain.clone();
         let encryption = encryption.clone();
         let env_vars = env_vars.clone();
+        let username = username.clone();
+        let mqtt_tls = mqtt_tls.clone();
         let telegram_mode = telegram_mode.clone();
         let wa_provider = wa_provider.clone();
         let existing_id = existing_id.clone();
@@ -8353,6 +8390,8 @@ fn alert_action_editor(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, existing_id:
                         _ => "starttls".into(),
                     },
                     env_vars: env_vars.text().to_string(),
+                    username: username.text().to_string(),
+                    use_tls: mqtt_tls.is_active(),
                     telegram_mode: if telegram_mode.selected() == 1 {
                         "botless".into()
                     } else {
@@ -8463,6 +8502,9 @@ fn alert_action_editor(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, existing_id:
         let retain = retain.clone();
         let encryption = encryption.clone();
         let env_vars = env_vars.clone();
+        let username = username.clone();
+        let mqtt_tls = mqtt_tls.clone();
+        let browse = browse.clone();
         let presets = presets.clone();
         let telegram_mode = telegram_mode.clone();
         let body = body.clone();
@@ -8474,6 +8516,9 @@ fn alert_action_editor(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, existing_id:
             retain.set_visible(selected == "mqtt");
             encryption.set_visible(selected == "email");
             env_vars.set_visible(selected == "script");
+            username.set_visible(selected == "email" || selected == "mqtt");
+            mqtt_tls.set_visible(selected == "mqtt");
+            browse.set_visible(selected == "script");
             presets.set_visible(selected == "webhook");
             match selected {
                 "os_toast" => {
@@ -8645,6 +8690,7 @@ fn alert_action_editor(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, existing_id:
     group.add(&url);
     group.add(&method);
     group.add(&token);
+    group.add(&username);
     group.add(&extra);
     group.add(&extra2);
     group.add(&headers);
@@ -8653,6 +8699,7 @@ fn alert_action_editor(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, existing_id:
     group.add(&subject);
     group.add(&encryption);
     group.add(&qos);
+    group.add(&mqtt_tls);
     group.add(&retain);
     group.add(&env_vars);
     group.add(&body);
