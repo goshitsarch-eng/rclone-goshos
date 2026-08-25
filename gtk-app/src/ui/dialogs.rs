@@ -250,6 +250,58 @@ pub fn present_standalone(
     });
 }
 
+pub fn pick_destination(
+    parent: &impl IsA<gtk::Widget>,
+    ctx: &AppCtx,
+    title: &str,
+    initial: &str,
+    on_ok: impl Fn(String) + 'static,
+) {
+    let dialog = adw::Dialog::new();
+    dialog.set_title(title);
+    dialog.set_content_width(480);
+    let dest = adw::EntryRow::new();
+    dest.set_title(&ctx.t_or(
+        "fileBrowser.operations.details.destination",
+        "Destination path",
+    ));
+    dest.set_text(initial);
+    attach_path_picker(ctx, &dest, crate::picker::FilePickerConfig::folders());
+    let ok = gtk::Button::with_label(&ctx.t_or("common.ok", "OK"));
+    ok.add_css_class("suggested-action");
+    let cancel = gtk::Button::with_label(&ctx.t("common.cancel"));
+    {
+        let dialog = dialog.clone();
+        cancel.connect_clicked(move |_| {
+            dialog.close();
+        });
+    }
+    {
+        let dialog = dialog.clone();
+        let dest = dest.clone();
+        ok.connect_clicked(move |_| {
+            on_ok(dest.text().to_string());
+            dialog.close();
+        });
+    }
+    let buttons = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+    buttons.set_halign(gtk::Align::End);
+    buttons.set_margin_top(8);
+    buttons.append(&cancel);
+    buttons.append(&ok);
+    let group = adw::PreferencesGroup::new();
+    group.add(&dest);
+    let box_ = gtk::Box::new(gtk::Orientation::Vertical, 12);
+    box_.set_margin_top(12);
+    box_.set_margin_bottom(12);
+    box_.set_margin_start(12);
+    box_.set_margin_end(12);
+    box_.append(&group);
+    box_.append(&buttons);
+    dialog.set_child(Some(&box_));
+    dialog.present(Some(parent));
+}
+
 pub fn prompt(
     parent: &impl IsA<gtk::Widget>,
     ctx: &AppCtx,
@@ -2659,8 +2711,47 @@ fn backend_editor(
         "Optional: clone remotes from another RC backend after saving",
     ));
     copy_row.add_suffix(&copy_from);
+    let test =
+        gtk::Button::with_label(&ctx.t_or("modals.backend.testConnection", "Test connection"));
     let save = gtk::Button::with_label(&ctx.t_or("modals.backend.save", "Save"));
     save.add_css_class("suggested-action");
+    {
+        let ctx = ctx.clone();
+        let dialog = dialog.clone();
+        let host = host.clone();
+        let port = port.clone();
+        let user = user.clone();
+        let pass = pass.clone();
+        test.connect_clicked(move |_| {
+            let port_n = port.text().parse::<u16>().unwrap_or(5573);
+            let entry = crate::settings::BackendEntry {
+                name: "test".into(),
+                host: host.text().to_string(),
+                port: port_n,
+                user: user.text().to_string(),
+                pass: pass.text().to_string(),
+                ..Default::default()
+            };
+            let client = rc_client_for_entry(&entry);
+            let msg = if client.ping() {
+                format!(
+                    "{} — {}",
+                    ctx.t_or("modals.backend.status.connected", "Connected"),
+                    client
+                        .version()
+                        .unwrap_or_else(|_| ctx.t_or("backup.restore.unknown", "unknown"))
+                )
+            } else {
+                ctx.t_or("modals.backend.status.failed", "Connection failed")
+            };
+            let alert = adw::AlertDialog::new(
+                Some(&ctx.t_or("modals.backend.testConnection", "Test connection")),
+                Some(&msg),
+            );
+            alert.add_response("ok", &ctx.t("common.ok"));
+            alert.present(Some(&dialog));
+        });
+    }
     {
         let ctx = ctx.clone();
         let dialog = dialog.clone();
@@ -2756,7 +2847,11 @@ fn backend_editor(
     let box_ = gtk::Box::new(gtk::Orientation::Vertical, 8);
     box_.set_margin_top(12);
     box_.append(&group);
-    box_.append(&save);
+    let buttons = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+    buttons.set_halign(gtk::Align::End);
+    buttons.append(&test);
+    buttons.append(&save);
+    box_.append(&buttons);
     dialog.set_child(Some(&box_));
     dialog.present(Some(parent));
 }
@@ -6787,30 +6882,54 @@ pub fn file_viewer(
                 format!("{remote}:{dest}")
             };
             extract.connect_clicked(move |_| {
-                let Some(client) = ctx.client() else {
-                    return;
-                };
-                match client.archive_extract(&src, &dest) {
-                    Ok(_) => {
-                        let toast = adw::AlertDialog::new(
-                            Some(&ctx.t_or("fileBrowser.fileViewer.extract", "Extract")),
-                            Some(&ctx.t_or("common.ok", "Extract started")),
-                        );
-                        toast.add_response("ok", &ctx.t("common.ok"));
-                        toast.present(Some(&parent));
-                    }
-                    Err(e) => {
-                        let toast = adw::AlertDialog::new(
-                            Some(&ctx.t_or(
-                                "fileBrowser.fileViewer.errorExtract",
-                                "Failed to extract archive",
-                            )),
-                            Some(&e.to_string()),
-                        );
-                        toast.add_response("ok", &ctx.t("common.ok"));
-                        toast.present(Some(&parent));
-                    }
-                }
+                let ctx = ctx.clone();
+                let parent = parent.clone();
+                let src = src.clone();
+                let fallback = dest.clone();
+                let initial = fallback.clone();
+                pick_destination(
+                    &parent,
+                    &ctx,
+                    &ctx.t_or("fileBrowser.fileViewer.extract", "Extract archive"),
+                    &initial,
+                    {
+                        let ctx = ctx.clone();
+                        let parent = parent.clone();
+                        move |chosen| {
+                            let Some(client) = ctx.client() else {
+                                return;
+                            };
+                            let dest = if chosen.is_empty() {
+                                fallback.clone()
+                            } else {
+                                chosen
+                            };
+                            match client.archive_extract(&src, &dest) {
+                                Ok(_) => {
+                                    let toast = adw::AlertDialog::new(
+                                        Some(
+                                            &ctx.t_or("fileBrowser.fileViewer.extract", "Extract"),
+                                        ),
+                                        Some(&ctx.t_or("common.ok", "Extract started")),
+                                    );
+                                    toast.add_response("ok", &ctx.t("common.ok"));
+                                    toast.present(Some(&parent));
+                                }
+                                Err(e) => {
+                                    let toast = adw::AlertDialog::new(
+                                        Some(&ctx.t_or(
+                                            "fileBrowser.fileViewer.errorExtract",
+                                            "Failed to extract archive",
+                                        )),
+                                        Some(&e.to_string()),
+                                    );
+                                    toast.add_response("ok", &ctx.t("common.ok"));
+                                    toast.present(Some(&parent));
+                                }
+                            }
+                        }
+                    },
+                );
             });
         }
         actions.append(&extract);
@@ -7242,8 +7361,33 @@ pub(crate) fn download_file(
             } else {
                 path
             };
-            if let Err(e) = client.copy_file(&fs, &src_remote, "/", &dest.to_string_lossy()) {
-                log::warn!("download failed: {e}");
+            let dest_path = dest.to_string_lossy().into_owned();
+            match client.start_job(
+                "operations/copyfile",
+                serde_json::json!({
+                    "srcFs": fs,
+                    "srcRemote": src_remote,
+                    "dstFs": "/",
+                    "dstRemote": dest_path,
+                }),
+            ) {
+                Ok(id) => {
+                    crate::jobs::remember_grouped(
+                        &mut ctx.store.borrow_mut().job_meta,
+                        &[id],
+                        crate::store::JobMeta {
+                            origin: "filemanager".into(),
+                            profile: "default".into(),
+                            remote: remote.clone(),
+                            backend: ctx.backend_key(),
+                            target: dest_path,
+                            ..Default::default()
+                        },
+                    );
+                    ctx.persist();
+                    ctx.refresh_runtime();
+                }
+                Err(e) => log::warn!("download failed: {e}"),
             }
         },
     );

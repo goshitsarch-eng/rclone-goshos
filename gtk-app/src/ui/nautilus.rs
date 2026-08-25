@@ -1531,11 +1531,23 @@ impl NautilusView {
                     return glib::Propagation::Stop;
                 }
             }
-            if modifier.contains(gtk::gdk::ModifierType::ALT_MASK)
-                && (key == gtk::gdk::Key::Return || key == gtk::gdk::Key::KP_Enter)
-            {
-                view.properties_selected();
-                return glib::Propagation::Stop;
+            if key == gtk::gdk::Key::Return || key == gtk::gdk::Key::KP_Enter {
+                if modifier.contains(gtk::gdk::ModifierType::ALT_MASK) {
+                    view.properties_selected();
+                    return glib::Propagation::Stop;
+                }
+                if ctrl {
+                    view.open_selected_in_new_tab();
+                    return glib::Propagation::Stop;
+                }
+                if shift {
+                    view.open_selected_in_new_window();
+                    return glib::Propagation::Stop;
+                }
+                if let Some(name) = view.selected_name() {
+                    view.open_name(&name);
+                    return glib::Propagation::Stop;
+                }
             }
             if key == gtk::gdk::Key::Delete {
                 view.delete_selected();
@@ -4191,16 +4203,12 @@ impl NautilusView {
         let src = self.formatted_path(Some(&name));
         let default_dst = current.path.clone();
         let view = self.clone();
-        dialogs::prompt(
+        dialogs::pick_destination(
             &win,
             &self.ctx,
             &self
                 .ctx
                 .t_or("fileBrowser.fileViewer.extract", "Extract archive"),
-            &self.ctx.t_or(
-                "fileBrowser.operations.details.destination",
-                "Destination path",
-            ),
             &default_dst,
             move |dst| {
                 let Some(client) = view.ctx.client() else {
@@ -4413,7 +4421,7 @@ impl NautilusView {
                 }
             });
         }
-        if live && job.status == "running" {
+        if live && matches!(job.status.as_str(), "running" | "preparing" | "starting") {
             let stop = gtk::Button::from_icon_name("media-playback-stop-symbolic");
             stop.set_valign(gtk::Align::Center);
             stop.set_tooltip_text(Some(&self.ctx.t_or("flow.quickRun.actions.stop", "Stop")));

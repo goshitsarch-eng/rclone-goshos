@@ -403,6 +403,13 @@ This client is the GTK 4 + libadwaita rewrite of the Angular/Tauri desktop UI. I
 - Action-order editor caps starred actions at 3 and shows i18n operation labels
 - Operations tab gear edits `sync_actions` (same star-mode catalog as Angular)
 - Job detail Open source/destination opens a new Files window
+- Files Enter / Ctrl+Enter / Shift+Enter open in place, new tab, or new window
+- Files operations panel can stop preparing/starting uploads
+- Downloads start as tracked `copyfile` jobs
+- Extract archive (Files + viewer) uses the embedded folder picker
+- Backends editor can Test connection before Save
+- General remote activity has Stop / Delete; General can create a Quick Run for that remote
+- Operations dry-run / resync toggles persist on the selected profile
 
 ## Still deepening toward pixel-level Angular parity
 

@@ -1687,6 +1687,19 @@ impl Dashboard {
         self.detail.append(&chips);
 
         if tab == AppTab::Operations {
+            let op = self.selected_sync_op(&name);
+            let profile = self.selected_profile_name(&name, op);
+            if let Some(cfg) = self
+                .ctx
+                .store
+                .borrow()
+                .remotes
+                .get(&name)
+                .and_then(|meta| meta.get_profile(op, &profile))
+            {
+                self.dry_run.set(crate::jobs::is_dry_run(&cfg.rclone));
+                self.resync.set(crate::jobs::is_resync(&cfg.rclone));
+            }
             let dry = adw::SwitchRow::new();
             dry.set_title(&self.ctx.t_or("dashboard.appDetail.dryRun", "Dry run"));
             dry.set_subtitle(&self.ctx.t_or(
@@ -1696,7 +1709,13 @@ impl Dashboard {
             dry.set_active(self.dry_run.get());
             {
                 let flag = self.dry_run.clone();
-                dry.connect_active_notify(move |row| flag.set(row.is_active()));
+                let ctx = self.ctx.clone();
+                let remote = name.clone();
+                let profile = profile.clone();
+                dry.connect_active_notify(move |row| {
+                    flag.set(row.is_active());
+                    persist_profile_flag(&ctx, &remote, op, &profile, Some(row.is_active()), None);
+                });
             }
             self.detail.append(&dry);
             let resync = adw::SwitchRow::new();
@@ -1708,7 +1727,12 @@ impl Dashboard {
             resync.set_active(self.resync.get());
             {
                 let flag = self.resync.clone();
-                resync.connect_active_notify(move |row| flag.set(row.is_active()));
+                let ctx = self.ctx.clone();
+                let remote = name.clone();
+                resync.connect_active_notify(move |row| {
+                    flag.set(row.is_active());
+                    persist_profile_flag(&ctx, &remote, op, &profile, None, Some(row.is_active()));
+                });
             }
             self.detail.append(&resync);
         }
@@ -1938,6 +1962,39 @@ impl Dashboard {
                 row.connect_activated(move |_| {
                     ctx.request_nav(NavTarget::Job { id });
                 });
+                if crate::jobs::job_is_running(&job) || crate::jobs::job_is_pending(&job) {
+                    let stop = gtk::Button::from_icon_name("media-playback-stop-symbolic");
+                    stop.set_valign(gtk::Align::Center);
+                    stop.set_tooltip_text(Some(
+                        &self.ctx.t_or("flow.quickRun.actions.stop", "Stop"),
+                    ));
+                    let ctx = self.ctx.clone();
+                    let dash = self.clone();
+                    stop.connect_clicked(move |_| {
+                        if let Some(c) = ctx.client() {
+                            let _ = c.job_stop(id);
+                            ctx.refresh_runtime();
+                            dash.refresh();
+                        }
+                    });
+                    row.add_suffix(&stop);
+                } else {
+                    let delete = gtk::Button::from_icon_name("user-trash-symbolic");
+                    delete.set_valign(gtk::Align::Center);
+                    delete.set_tooltip_text(Some(
+                        &self
+                            .ctx
+                            .t_or("fileBrowser.operations.removeJob", "Remove from history"),
+                    ));
+                    let ctx = self.ctx.clone();
+                    let dash = self.clone();
+                    delete.connect_clicked(move |_| {
+                        ctx.store.borrow_mut().dismiss_job(id);
+                        ctx.persist();
+                        dash.refresh();
+                    });
+                    row.add_suffix(&delete);
+                }
                 activity.append(&row);
             }
         }
@@ -2320,6 +2377,29 @@ impl Dashboard {
             qlist.append(&row);
         }
         self.detail.append(&qlist);
+        let add_qr = gtk::Button::with_label(&self.ctx.t_or(
+            "dashboard.quickRuns.createForRemote",
+            "Create quick run for this remote",
+        ));
+        {
+            let ctx = self.ctx.clone();
+            let remote = name.clone();
+            let dash = self.clone();
+            add_qr.connect_clicked(move |_| {
+                if let Some(win) = dash.root.root().and_downcast::<gtk::Window>() {
+                    let draft = crate::store::QuickRun::new(
+                        String::new(),
+                        OperationType::Sync,
+                        remote.clone(),
+                    );
+                    dialogs::quick_run_editor(&win, ctx.clone(), Some(draft), {
+                        let dash = dash.clone();
+                        Rc::new(move || dash.refresh())
+                    });
+                }
+            });
+        }
+        self.detail.append(&add_qr);
 
         self.detail.append(&section_label(
             &self.ctx.t_or("dashboard.appDetail.settings", "Settings"),
@@ -3420,6 +3500,47 @@ fn toggle_profile(
         Err(e) => toast.add_toast(adw::Toast::new(&e)),
     }
     ctx.refresh_runtime();
+}
+
+fn persist_profile_flag(
+    ctx: &AppCtx,
+    remote: &str,
+    op: OperationType,
+    profile: &str,
+    dry_run: Option<bool>,
+    resync: Option<bool>,
+) {
+    let mut store = ctx.store.borrow_mut();
+    let Some(meta) = store.remotes.get_mut(remote) else {
+        return;
+    };
+    let Some(mut cfg) = meta.get_profile(op, profile) else {
+        return;
+    };
+    if !cfg.rclone.is_object() {
+        cfg.rclone = serde_json::json!({});
+    }
+    if let Some(obj) = cfg.rclone.as_object_mut() {
+        if let Some(on) = dry_run {
+            if on {
+                obj.insert("DryRun".into(), serde_json::json!(true));
+            } else {
+                obj.remove("DryRun");
+                obj.remove("dryRun");
+            }
+        }
+        if let Some(on) = resync {
+            if on {
+                obj.insert("Resync".into(), serde_json::json!(true));
+            } else {
+                obj.remove("Resync");
+                obj.remove("resync");
+            }
+        }
+    }
+    meta.upsert_profile(op, cfg);
+    drop(store);
+    ctx.persist();
 }
 
 fn start_quick_run(ctx: &AppCtx, qr: &crate::store::QuickRun, toast: &adw::ToastOverlay) {
