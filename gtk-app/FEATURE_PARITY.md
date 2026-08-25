@@ -499,11 +499,11 @@ This client is the GTK 4 + libadwaita desktop UI. It talks to a local `rclone rc
 - Alert action body templates use a multi-line editor so Discord/Slack JSON presets can be viewed and edited
 - Template capture lists every flattened flag key with select/deselect all, optional remote source, and a description field
 - Template manager rows show key counts and open an edit/rename/JSON dialog
+- Remote-config sidenav can filter pages by label or alias (mount, vfs, …)
 
 ## Still deepening
 
 - Workflow builder (stub in both apps)
-- Remote-config global sidebar search
 - Alerts Rules/Actions list search + test/toggle/delete chrome
 - Files ops panel inline job drill-down
 - Remaining dialogs/Files English labels (core chrome now localized)

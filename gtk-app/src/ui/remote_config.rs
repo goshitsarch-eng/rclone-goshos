@@ -78,6 +78,11 @@ pub fn present_with(
     side_scroll.set_vexpand(true);
     side_scroll.set_child(Some(&sidebar));
     let side_col = gtk::Box::new(gtk::Orientation::Vertical, 8);
+    let search = gtk::SearchEntry::new();
+    search.set_placeholder_text(Some(
+        &ctx.t_or("modals.remoteConfig.search", "Search pages"),
+    ));
+    side_col.append(&search);
     side_col.append(&side_scroll);
     let obscure_in = adw::EntryRow::new();
     obscure_in.set_title(&ctx.t_or("wizards.obscure.clearPlaceholder", "Obscure a secret"));
@@ -160,6 +165,28 @@ pub fn present_with(
         }
     } else if let Some(first) = sidebar.row_at_index(0) {
         sidebar.select_row(Some(&first));
+    }
+    {
+        let sidebar = sidebar.clone();
+        let ctx = ctx.clone();
+        search.connect_search_changed(move |entry| {
+            let query = entry.text().to_string();
+            for (idx, step) in editor_steps().into_iter().enumerate() {
+                let Some(row) = sidebar.row_at_index(idx as i32) else {
+                    continue;
+                };
+                let label = step_label(&ctx, step);
+                let alias = match step {
+                    EditorStep::Remote => "remote",
+                    EditorStep::Op(op) => op.as_str(),
+                    EditorStep::Helper(kind) => kind,
+                };
+                row.set_visible(crate::pref_search::any_field_matches(
+                    &[&label, alias],
+                    &query,
+                ));
+            }
+        });
     }
 
     let rebuild = {

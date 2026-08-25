@@ -147,6 +147,17 @@ pub fn item_haystack(item: &PrefSearchItem, i18n: &crate::i18n::I18n) -> String 
     format!("{title} {help} {extra}").to_lowercase()
 }
 
+/// True when `query` is empty or any field contains it (case-insensitive).
+pub fn any_field_matches(fields: &[&str], query: &str) -> bool {
+    let query = query.trim().to_ascii_lowercase();
+    if query.is_empty() {
+        return true;
+    }
+    fields
+        .iter()
+        .any(|field| field.to_ascii_lowercase().contains(&query))
+}
+
 pub fn item_matches(item: &PrefSearchItem, query: &str, i18n: &crate::i18n::I18n) -> bool {
     let query = query.trim().to_lowercase();
     if query.is_empty() {
@@ -188,5 +199,9 @@ mod tests {
             Some("settings.core.bandwidth_limit.description")
         );
         assert_eq!(SUGGESTIONS.len(), 4);
+        assert!(any_field_matches(&["Mount", "mount"], ""));
+        assert!(any_field_matches(&["Mount", "mount"], "mou"));
+        assert!(any_field_matches(&["VFS", "vfs"], "vfs"));
+        assert!(!any_field_matches(&["Remote", "remote"], "sync"));
     }
 }
