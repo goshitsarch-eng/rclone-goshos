@@ -158,6 +158,215 @@ fn nonempty(value: &str) -> Option<String> {
     }
 }
 
+/// Startup navigation from CLI flags or Angular-style hash/path URLs.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LaunchRequest {
+    pub target: NavTarget,
+    pub standalone: bool,
+}
+
+pub fn parse_launch_args(args: &[String], standalone_dialogs: bool) -> Option<LaunchRequest> {
+    let kind = standalone_kind(args);
+    let mut tab = AppTab::General;
+    let mut remote = None;
+    let mut target = None;
+    for (idx, arg) in args.iter().enumerate() {
+        let value = args.get(idx + 1).cloned();
+        match arg.as_str() {
+            "--dashboard" => {
+                if let Some(next) = value.as_deref().filter(|v| !v.starts_with('-')) {
+                    tab = AppTab::parse(next).unwrap_or(AppTab::General);
+                }
+                target = Some(NavTarget::Dashboard {
+                    tab,
+                    remote: remote.clone(),
+                });
+            }
+            "--tab" => {
+                if let Some(next) = value.as_deref().filter(|v| !v.starts_with('-')) {
+                    tab = AppTab::parse(next).unwrap_or(tab);
+                }
+                if let Some(NavTarget::Dashboard { remote, .. }) = target {
+                    target = Some(NavTarget::Dashboard { tab, remote });
+                }
+            }
+            "--remote" => {
+                remote = value.filter(|v| !v.is_empty() && !v.starts_with('-'));
+                if let Some(NavTarget::Dashboard { tab, .. }) = target {
+                    target = Some(NavTarget::Dashboard {
+                        tab,
+                        remote: remote.clone(),
+                    });
+                }
+            }
+            "--flow" => {
+                target = Some(NavTarget::Flow {
+                    quick_run: value.filter(|v| !v.starts_with('-')),
+                });
+            }
+            "--quick-run" => {
+                target = Some(NavTarget::Flow {
+                    quick_run: value.filter(|v| !v.starts_with('-')),
+                });
+            }
+            "--job" => {
+                if let Some(id) = value.and_then(|v| v.parse().ok()) {
+                    target = Some(NavTarget::Job { id });
+                }
+            }
+            "--serve" => {
+                if let Some(id) = value.filter(|v| !v.is_empty() && !v.starts_with('-')) {
+                    target = Some(NavTarget::Serve { id });
+                }
+            }
+            "--automation" => {
+                if let Some(id) = value.filter(|v| !v.is_empty() && !v.starts_with('-')) {
+                    target = Some(NavTarget::Automation { id });
+                }
+            }
+            "--updates" => target = Some(NavTarget::Updates),
+            "--alerts" => target = Some(NavTarget::Alerts),
+            other if idx > 0 && !other.starts_with("--") => {
+                if let Some(parsed) = parse_route_url(other) {
+                    return Some(LaunchRequest {
+                        standalone: is_standalone_target(
+                            &parsed,
+                            other,
+                            kind.as_deref(),
+                            standalone_dialogs,
+                        ),
+                        target: parsed,
+                    });
+                }
+            }
+            _ => {}
+        }
+    }
+    if target.is_none() {
+        if let Some((remote, path)) = parse_browse_args(args) {
+            target = Some(NavTarget::Files { remote, path });
+        }
+    }
+    if target.is_none() {
+        target = match kind.as_deref() {
+            Some("flow") => Some(NavTarget::Flow { quick_run: None }),
+            Some("main") => Some(NavTarget::Dashboard {
+                tab,
+                remote: remote.clone(),
+            }),
+            Some("nautilus") | Some("true") | Some("") => Some(NavTarget::Files {
+                remote: "local".into(),
+                path: String::new(),
+            }),
+            _ => None,
+        };
+    }
+    let target = target?;
+    let standalone = is_standalone_target(&target, "", kind.as_deref(), standalone_dialogs);
+    Some(LaunchRequest { target, standalone })
+}
+
+pub fn parse_route_url(input: &str) -> Option<NavTarget> {
+    if let Some((remote, path)) = parse_browse_url(input) {
+        return Some(NavTarget::Files { remote, path });
+    }
+    let path = route_path(input)?;
+    let mut parts = path.split('/');
+    match parts.next()? {
+        "dashboard" => {
+            let tab = parts
+                .next()
+                .and_then(AppTab::parse)
+                .unwrap_or(AppTab::General);
+            let remote = parts.next().map(decode_segment).and_then(|s| nonempty(&s));
+            Some(NavTarget::Dashboard { tab, remote })
+        }
+        "flow" => Some(NavTarget::Flow {
+            quick_run: parts.next().map(decode_segment).and_then(|s| nonempty(&s)),
+        }),
+        "job" => parts
+            .next()
+            .and_then(|id| id.parse().ok())
+            .map(|id| NavTarget::Job { id }),
+        "serve" => parts
+            .next()
+            .map(decode_segment)
+            .and_then(|id| nonempty(&id))
+            .map(|id| NavTarget::Serve { id }),
+        "automation" => parts
+            .next()
+            .map(decode_segment)
+            .and_then(|id| nonempty(&id))
+            .map(|id| NavTarget::Automation { id }),
+        "updates" => Some(NavTarget::Updates),
+        "alerts" => Some(NavTarget::Alerts),
+        _ => None,
+    }
+}
+
+fn route_path(input: &str) -> Option<String> {
+    let trimmed = input.trim();
+    if let Some((_, hash)) = trimmed.split_once('#') {
+        let raw = hash
+            .split('?')
+            .next()
+            .unwrap_or(hash)
+            .trim_start_matches('/');
+        if !raw.is_empty() {
+            return Some(raw.to_string());
+        }
+    }
+    let without_query = trimmed.split('?').next().unwrap_or(trimmed);
+    let path = if let Some(rest) = without_query
+        .strip_prefix("https://")
+        .or_else(|| without_query.strip_prefix("http://"))
+    {
+        rest.split_once('/')?.1
+    } else {
+        without_query.trim_start_matches('/')
+    };
+    let path = path.trim_start_matches('/');
+    if path.is_empty() {
+        return None;
+    }
+    Some(path.to_string())
+}
+
+fn standalone_kind(args: &[String]) -> Option<String> {
+    for arg in args {
+        if arg == "--standalone" {
+            return Some("nautilus".into());
+        }
+        if let Some(value) = arg.strip_prefix("--standalone=") {
+            return Some(value.to_string());
+        }
+    }
+    None
+}
+
+fn standalone_query(input: &str) -> Option<String> {
+    query_string(input).and_then(|q| query_param(&q, "standalone"))
+}
+
+fn is_standalone_target(
+    target: &NavTarget,
+    url: &str,
+    kind: Option<&str>,
+    standalone_dialogs: bool,
+) -> bool {
+    let query = standalone_query(url);
+    match target {
+        NavTarget::Files { .. } => true,
+        NavTarget::Flow { .. } => {
+            kind == Some("flow")
+                || query.as_deref() == Some("flow")
+                || standalone_dialogs && url.contains("#/flow")
+        }
+        NavTarget::Dashboard { .. } => kind == Some("main") || query.as_deref() == Some("main"),
+        _ => false,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -301,5 +510,160 @@ mod tests {
             Some(("local".into(), "home/ada".into()))
         );
         assert_eq!(parse_browse_url("https://app.local/dashboard"), None);
+    }
+
+    #[test]
+    fn parses_dashboard_flow_and_job_urls() {
+        assert_eq!(
+            parse_route_url("#/dashboard/mount/testdrive"),
+            Some(NavTarget::Dashboard {
+                tab: AppTab::Mount,
+                remote: Some("testdrive".into()),
+            })
+        );
+        assert_eq!(
+            parse_route_url("https://app.local/#/flow/nightly"),
+            Some(NavTarget::Flow {
+                quick_run: Some("nightly".into()),
+            })
+        );
+        assert_eq!(
+            parse_route_url("https://app.local/dashboard/operations/drive"),
+            Some(NavTarget::Dashboard {
+                tab: AppTab::Operations,
+                remote: Some("drive".into()),
+            })
+        );
+        assert_eq!(parse_route_url("#/job/42"), Some(NavTarget::Job { id: 42 }));
+        assert_eq!(
+            parse_route_url("#/serve/http-1"),
+            Some(NavTarget::Serve {
+                id: "http-1".into()
+            })
+        );
+        assert_eq!(
+            parse_route_url("/automation/quick%3Anightly"),
+            Some(NavTarget::Automation {
+                id: "quick:nightly".into(),
+            })
+        );
+        assert_eq!(parse_route_url("#/updates"), Some(NavTarget::Updates));
+        assert_eq!(parse_route_url("#/alerts"), Some(NavTarget::Alerts));
+        assert_eq!(
+            parse_route_url("#/nautilus/gdrive/Photos"),
+            Some(NavTarget::Files {
+                remote: "gdrive".into(),
+                path: "Photos".into(),
+            })
+        );
+    }
+
+    #[test]
+    fn launch_args_open_standalone_files() {
+        let browse = parse_launch_args(
+            &["app".into(), "--browse".into(), "drive:Photos".into()],
+            false,
+        );
+        assert_eq!(
+            browse,
+            Some(LaunchRequest {
+                target: NavTarget::Files {
+                    remote: "drive".into(),
+                    path: "Photos".into(),
+                },
+                standalone: true,
+            })
+        );
+        let nautilus =
+            parse_launch_args(&["app".into(), "#/nautilus/local/home/ada".into()], false);
+        assert_eq!(
+            nautilus,
+            Some(LaunchRequest {
+                target: NavTarget::Files {
+                    remote: "local".into(),
+                    path: "home/ada".into(),
+                },
+                standalone: true,
+            })
+        );
+        let flag = parse_launch_args(&["app".into(), "--standalone".into()], false);
+        assert_eq!(
+            flag,
+            Some(LaunchRequest {
+                target: NavTarget::Files {
+                    remote: "local".into(),
+                    path: String::new(),
+                },
+                standalone: true,
+            })
+        );
+    }
+
+    #[test]
+    fn launch_args_deep_link_main_window() {
+        let dash = parse_launch_args(
+            &[
+                "app".into(),
+                "--dashboard".into(),
+                "mount".into(),
+                "--remote".into(),
+                "testdrive".into(),
+            ],
+            false,
+        );
+        assert_eq!(
+            dash,
+            Some(LaunchRequest {
+                target: NavTarget::Dashboard {
+                    tab: AppTab::Mount,
+                    remote: Some("testdrive".into()),
+                },
+                standalone: false,
+            })
+        );
+        let flow = parse_launch_args(&["app".into(), "--flow".into(), "nightly".into()], false);
+        assert_eq!(
+            flow,
+            Some(LaunchRequest {
+                target: NavTarget::Flow {
+                    quick_run: Some("nightly".into()),
+                },
+                standalone: false,
+            })
+        );
+        let standalone_flow = parse_launch_args(
+            &[
+                "app".into(),
+                "--standalone=flow".into(),
+                "--quick-run".into(),
+                "abc".into(),
+            ],
+            false,
+        );
+        assert_eq!(
+            standalone_flow,
+            Some(LaunchRequest {
+                target: NavTarget::Flow {
+                    quick_run: Some("abc".into()),
+                },
+                standalone: true,
+            })
+        );
+        let job = parse_launch_args(&["app".into(), "--job".into(), "9".into()], false);
+        assert_eq!(
+            job,
+            Some(LaunchRequest {
+                target: NavTarget::Job { id: 9 },
+                standalone: false,
+            })
+        );
+        let updates = parse_launch_args(&["app".into(), "--updates".into()], false);
+        assert_eq!(
+            updates,
+            Some(LaunchRequest {
+                target: NavTarget::Updates,
+                standalone: false,
+            })
+        );
     }
 }

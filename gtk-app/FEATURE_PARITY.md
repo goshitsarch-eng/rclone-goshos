@@ -388,6 +388,10 @@ This client is the GTK 4 + libadwaita rewrite of the Angular/Tauri desktop UI. I
 - Tray remotes nest per-operation profile submenus with `tray.jobsCount` / `tray.*Count`
 - Tray order matches Tauri: Show App, Files, Quick Runs, remotes, Stop-all, Quit last
 - Files split pane restores the secondary remote/path across restarts
+- CLI/URL deep links: `--dashboard`/`--tab`/`--remote`, `--flow`/`--quick-run`, `--job`, `--serve`, `--automation`, `--updates`, `--alerts`, plus `#/dashboard`, `#/flow`, `#/job`, `#/serve`, `#/automation`, `#/updates`, `#/alerts`
+- Standalone Files window from `--browse`, `#/nautilus/`, `/nautilus/`, and `--standalone` (also `--standalone=flow` / `=main`)
+- Operation guidance banners on remote-config and Quick Run (watch/local, copyurl, core command, mixed sources)
+- Quick Add uses a dedicated Operations step (mount/sync/copy/bisync/move/serve) with folder pickers before authorize
 
 ## Still deepening toward pixel-level Angular parity
 

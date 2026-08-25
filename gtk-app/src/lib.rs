@@ -14,6 +14,7 @@ pub mod cron;
 pub mod dnd;
 pub mod fileops;
 pub mod flags;
+pub mod guidance;
 pub mod i18n;
 pub mod interactive;
 pub mod jobs;

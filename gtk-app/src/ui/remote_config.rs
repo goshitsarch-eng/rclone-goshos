@@ -852,6 +852,15 @@ fn operation_page(
     ));
     watch_changed.set_active(initial.app.watch_changed_only);
     watch_changed.set_visible(op.is_automatable());
+    let (guidance, refresh_guidance) = dialogs::attach_operation_guidance(
+        &ctx,
+        false,
+        &watch_enabled,
+        &src,
+        &extra_sources,
+        &dst,
+        Rc::new(move || op),
+    );
 
     let helper_names = |kind: &str| -> Vec<String> {
         let mut names = vec!["—".into()];
@@ -908,10 +917,16 @@ fn operation_page(
         let extra_sources = extra_sources.clone();
         let identity_for_add = identity.clone();
         let ctx_add = ctx.clone();
+        let refresh_guidance = refresh_guidance.clone();
         add_src.connect_clicked(move |_| {
             let row = extra_source_row(&ctx_add, "");
+            {
+                let refresh_guidance = refresh_guidance.clone();
+                row.connect_changed(move |_| refresh_guidance());
+            }
             identity_for_add.add(&row);
             extra_sources.borrow_mut().push(row);
+            refresh_guidance();
         });
         let add_row = adw::ActionRow::new();
         add_row.set_title(&ctx.t_or("remoteConfig.multipleSources", "Multiple sources"));
@@ -1096,6 +1111,7 @@ fn operation_page(
     let page = adw::PreferencesPage::new();
     page.add(&switcher.group);
     page.add(&identity);
+    page.add(&guidance);
     page.add(&automation);
     page.add(&helpers);
     page.add(&flags_group);

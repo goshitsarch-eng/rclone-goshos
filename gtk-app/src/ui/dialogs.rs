@@ -1,5 +1,6 @@
 use super::AppCtx;
 use crate::backup;
+use crate::guidance::{operation_banners, BannerKind};
 use crate::jobs::{
     build_job_params, default_dest, default_source, flatten_rclone, job_from_status,
     merge_template_into, start_request,
@@ -19,6 +20,84 @@ use gtk::glib;
 use gtk::prelude::*;
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
+
+pub(super) fn attach_operation_guidance(
+    ctx: &AppCtx,
+    is_new_remote: bool,
+    watch: &adw::SwitchRow,
+    src: &adw::EntryRow,
+    extra_sources: &Rc<RefCell<Vec<adw::EntryRow>>>,
+    dst: &adw::EntryRow,
+    current_op: Rc<dyn Fn() -> OperationType>,
+) -> (adw::PreferencesGroup, Rc<dyn Fn()>) {
+    let group = adw::PreferencesGroup::new();
+    group.set_title(&ctx.t_or("remoteConfig.guidance", "Guidance"));
+    let refresh = {
+        let ctx = ctx.clone();
+        let group = group.clone();
+        let watch = watch.clone();
+        let src = src.clone();
+        let extra_sources = extra_sources.clone();
+        let dst = dst.clone();
+        let current_op = current_op.clone();
+        Rc::new(move || {
+            let mut sources = vec![src.text().to_string()];
+            sources.extend(
+                extra_sources
+                    .borrow()
+                    .iter()
+                    .map(|row| row.text().to_string()),
+            );
+            let banners = operation_banners(
+                current_op(),
+                is_new_remote,
+                watch.is_active(),
+                &sources,
+                &dst.text(),
+            );
+            while let Some(child) = group.first_child() {
+                group.remove(&child);
+            }
+            for banner in &banners {
+                let row = adw::ActionRow::new();
+                row.set_title(&ctx.t_or(banner.key, banner.key));
+                row.set_subtitle(&ctx.t_or(
+                    match banner.kind {
+                        BannerKind::Warning => "common.warning",
+                        BannerKind::Info => "common.info",
+                    },
+                    match banner.kind {
+                        BannerKind::Warning => "Warning",
+                        BannerKind::Info => "Note",
+                    },
+                ));
+                if banner.kind == BannerKind::Warning {
+                    row.add_css_class("warning");
+                }
+                group.add(&row);
+            }
+            group.set_visible(!banners.is_empty());
+        }) as Rc<dyn Fn()>
+    };
+    refresh();
+    {
+        let refresh = refresh.clone();
+        watch.connect_active_notify(move |_| refresh());
+    }
+    {
+        let refresh = refresh.clone();
+        src.connect_changed(move |_| refresh());
+    }
+    {
+        let refresh = refresh.clone();
+        dst.connect_changed(move |_| refresh());
+    }
+    for row in extra_sources.borrow().iter() {
+        let refresh = refresh.clone();
+        row.connect_changed(move |_| refresh());
+    }
+    (group, refresh)
+}
 
 fn try_spawn_standalone(ctx: &AppCtx, kind: &str, data: serde_json::Value) -> bool {
     if crate::platform::is_standalone_dialog() {
@@ -3824,6 +3903,17 @@ pub fn quick_run_editor(
         .as_ref()
         .map(|qr| qr.operation_type)
         .unwrap_or(OperationType::Sync);
+    let current_op = {
+        let op_row = op_row.clone();
+        Rc::new(move || {
+            OperationType::ALL
+                .get(op_row.selected() as usize)
+                .copied()
+                .unwrap_or(OperationType::Sync)
+        }) as Rc<dyn Fn() -> OperationType>
+    };
+    let (guidance, refresh_guidance) =
+        attach_operation_guidance(&ctx, false, &watch, &src, &extra_sources, &dst, current_op);
     group.add(&op_row);
     group.add(&src);
     for row in extra_sources.borrow().iter() {
@@ -3834,12 +3924,18 @@ pub fn quick_run_editor(
         let extra_sources = extra_sources.clone();
         let group = group.clone();
         let ctx = ctx.clone();
+        let refresh_guidance = refresh_guidance.clone();
         add_src.connect_clicked(move |_| {
             let row = adw::EntryRow::new();
             row.set_title(&ctx.t_or("wizards.appOperation.addSource", "Additional source"));
             attach_path_picker(&ctx, &row, crate::picker::FilePickerConfig::folders());
+            {
+                let refresh_guidance = refresh_guidance.clone();
+                row.connect_changed(move |_| refresh_guidance());
+            }
             group.add(&row);
             extra_sources.borrow_mut().push(row);
+            refresh_guidance();
         });
     }
     let add_src_row = adw::ActionRow::new();
@@ -3950,6 +4046,7 @@ pub fn quick_run_editor(
         let rclone = initial_rclone.clone();
         let blocks = live_blocks.clone();
         let add_src_row = add_src_row.clone();
+        let refresh_guidance = refresh_guidance.clone();
         op_row.connect_selected_notify(move |row| {
             let op = OperationType::ALL
                 .get(row.selected() as usize)
@@ -3972,6 +4069,7 @@ pub fn quick_run_editor(
                     &serve_types,
                 );
             }
+            refresh_guidance();
         });
     }
     let save = gtk::Button::with_label(&ctx.t_or("common.save", "Save"));
@@ -4129,6 +4227,7 @@ pub fn quick_run_editor(
     box_.set_margin_top(12);
     box_.set_margin_bottom(12);
     box_.append(&group);
+    box_.append(&guidance);
     box_.append(&cron_hint);
     box_.append(&flags_group);
     box_.append(&save);

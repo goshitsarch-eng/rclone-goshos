@@ -12,6 +12,7 @@ mod cron;
 mod dnd;
 mod fileops;
 mod flags;
+mod guidance;
 mod i18n;
 mod interactive;
 mod jobs;

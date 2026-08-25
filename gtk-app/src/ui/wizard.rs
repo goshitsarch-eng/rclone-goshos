@@ -363,17 +363,89 @@ fn present_ex(
     let op_flags: Rc<RefCell<Vec<(OperationType, adw::SwitchRow, adw::EntryRow, adw::EntryRow)>>> =
         Rc::new(RefCell::new(Vec::new()));
     let ops_group = adw::PreferencesGroup::new();
+    const QUICK_ADD_OPS: [OperationType; 6] = [
+        OperationType::Mount,
+        OperationType::Sync,
+        OperationType::Copy,
+        OperationType::Bisync,
+        OperationType::Move,
+        OperationType::Serve,
+    ];
+    let ops_for_page: &[OperationType] = if oauth_only {
+        &QUICK_ADD_OPS
+    } else {
+        &OperationType::ALL
+    };
     ops_group.set_title(&ctx.t_or(
-        "modals.remoteConfig.steps.profiles",
-        "Per-operation profiles",
+        if oauth_only {
+            "modals.quickAdd.operations.title"
+        } else {
+            "modals.remoteConfig.steps.profiles"
+        },
+        if oauth_only {
+            "Operation Options (Optional)"
+        } else {
+            "Per-operation profiles"
+        },
     ));
-    for op in OperationType::ALL {
+    if oauth_only {
+        ops_group.set_description(Some(&ctx.t_or(
+            "modals.quickAdd.operations.description",
+            "Configure operations to run automatically after the remote is created.",
+        )));
+    }
+    for op in ops_for_page {
+        let op = *op;
+        let (label_key, desc_key, fallback_label, fallback_desc) = match op {
+            OperationType::Mount => (
+                "modals.quickAdd.operations.mount.label",
+                "modals.quickAdd.operations.mount.description",
+                "Mount",
+                "Automatically mount this remote as a drive.",
+            ),
+            OperationType::Sync => (
+                "modals.quickAdd.operations.sync.label",
+                "modals.quickAdd.operations.sync.description",
+                "Sync",
+                "Sync this remote to a local folder.",
+            ),
+            OperationType::Copy => (
+                "modals.quickAdd.operations.copy.label",
+                "modals.quickAdd.operations.copy.description",
+                "Copy",
+                "Copy contents to a local folder.",
+            ),
+            OperationType::Bisync => (
+                "modals.quickAdd.operations.bisync.label",
+                "modals.quickAdd.operations.bisync.description",
+                "Bisync",
+                "Bidirectional sync with a local folder.",
+            ),
+            OperationType::Move => (
+                "modals.quickAdd.operations.move.label",
+                "modals.quickAdd.operations.move.description",
+                "Move",
+                "Move contents to a local folder.",
+            ),
+            OperationType::Serve => (
+                "modals.quickAdd.operations.serve.label",
+                "modals.quickAdd.operations.serve.description",
+                "Serve",
+                "Run a background server to share files.",
+            ),
+            _ => ("", "", op.api_label(), ""),
+        };
         let enable = adw::SwitchRow::new();
-        enable.set_title(&format!(
-            "{} {}",
-            ctx.t_or("common.configure", "Configure"),
-            op.api_label()
-        ));
+        if oauth_only && !label_key.is_empty() {
+            enable.set_title(&ctx.t_or(label_key, fallback_label));
+            enable.set_subtitle(&ctx.t_or(desc_key, fallback_desc));
+        } else {
+            enable.set_title(&format!(
+                "{} {}",
+                ctx.t_or("common.configure", "Configure"),
+                op.api_label()
+            ));
+        }
         enable.set_active(matches!(
             op,
             OperationType::Mount | OperationType::Sync | OperationType::Serve
@@ -384,12 +456,32 @@ fn present_ex(
             op.as_str(),
             ctx.t_or("remoteConfig.source", "source")
         ));
+        if op != OperationType::Copyurl {
+            super::dialogs::attach_path_picker(
+                &ctx,
+                &osrc,
+                crate::picker::FilePickerConfig::folders(),
+            );
+        }
         let odst = adw::EntryRow::new();
         odst.set_title(&format!(
             "{} {}",
             op.as_str(),
             ctx.t_or("remoteConfig.dest", "destination / mount / addr")
         ));
+        if op == OperationType::Mount {
+            super::dialogs::attach_path_picker(
+                &ctx,
+                &odst,
+                crate::picker::FilePickerConfig::local_folders(),
+            );
+        } else if op != OperationType::Serve && op != OperationType::Delete {
+            super::dialogs::attach_path_picker(
+                &ctx,
+                &odst,
+                crate::picker::FilePickerConfig::folders(),
+            );
+        }
         ops_group.add(&enable);
         ops_group.add(&osrc);
         ops_group.add(&odst);
@@ -751,6 +843,15 @@ fn present_ex(
         Some("setup"),
         &ctx.t_or("wizards.remoteConfig.remoteType", "Provider"),
     );
+    if oauth_only {
+        let operations = adw::PreferencesPage::new();
+        operations.add(&ops_group);
+        nav.add_titled(
+            &operations,
+            Some("operations"),
+            &ctx.t_or("modals.quickAdd.operations.title", "Operations"),
+        );
+    }
 
     let interactive_box = gtk::Box::new(gtk::Orientation::Vertical, 10);
     interactive_box.set_margin_top(16);
@@ -814,7 +915,9 @@ fn present_ex(
     pgroup.add(&cli);
     pgroup.add(&obscure_in);
     profiles.add(&pgroup);
-    profiles.add(&ops_group);
+    if !oauth_only {
+        profiles.add(&ops_group);
+    }
     nav.add_titled(
         &profiles,
         Some("profiles"),
@@ -934,7 +1037,12 @@ fn present_ex(
         let custom_options = custom_options.clone();
         let json_mode = json_mode.clone();
         let json_view = json_view.clone();
+        let oauth_only = oauth_only;
         continue_btn.connect_clicked(move |_| {
+            if oauth_only && nav.visible_child_name().as_deref() == Some("setup") {
+                nav.set_visible_child_name("operations");
+                return;
+            }
             let remote_name = name.text().to_string();
             if remote_name.is_empty() {
                 return;
