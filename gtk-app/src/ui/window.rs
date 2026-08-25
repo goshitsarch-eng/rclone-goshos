@@ -208,7 +208,7 @@ pub fn present_main(app: &adw::Application, ctx: AppCtx) {
                 update_banner(&ctx, &banner_ref, &banner_kind);
             }
             BannerKind::Update => ctx.request_nav(NavTarget::Updates),
-            BannerKind::Metered | BannerKind::None => {}
+            BannerKind::Metered | BannerKind::Development | BannerKind::None => {}
         });
     }
     update_banner(&ctx, &banner, &banner_kind);
@@ -824,6 +824,33 @@ fn install_actions(
     window.add_action(&view_action);
 
     {
+        let stack = view_stack.clone();
+        let view_action = view_action.clone();
+        let last = Rc::new(std::cell::RefCell::new(
+            ctx.settings.borrow().general.default_view.clone(),
+        ));
+        add_action(
+            "toggle-flow",
+            Box::new(move || {
+                let current = stack.visible_child_name().unwrap_or_default().to_string();
+                let next = if current == "flow" {
+                    let prev = last.borrow().clone();
+                    if prev.is_empty() || prev == "flow" {
+                        "main_menu".into()
+                    } else {
+                        prev
+                    }
+                } else {
+                    *last.borrow_mut() = current;
+                    "flow".into()
+                };
+                stack.set_visible_child_name(&next);
+                view_action.set_state(&glib::Variant::from(next.as_str()));
+            }),
+        );
+    }
+
+    {
         let ctx = ctx.clone();
         let toast = toast.clone();
         let dash = dashboard.clone();
@@ -1000,7 +1027,7 @@ fn install_shortcuts(window: &adw::ApplicationWindow) {
     add("<Control>comma", "win.preferences");
     add("<Control>period", "win.rclone-flags");
     add("<Control><Alt>a", "win.alerts");
-    add("<Control><Alt>f", "win.view::flow");
+    add("<Control><Alt>f", "win.toggle-flow");
     add("<Control><Shift>question", "win.shortcuts");
     add("<Control><Shift>m", "win.refresh-mounts");
     add("<Control><Shift>s", "win.refresh-serves");
@@ -1153,6 +1180,7 @@ enum BannerKind {
     Flatpak,
     Metered,
     Update,
+    Development,
 }
 
 fn update_banner(ctx: &AppCtx, banner: &adw::Banner, kind: &Rc<std::cell::RefCell<BannerKind>>) {
@@ -1165,24 +1193,49 @@ fn update_banner(ctx: &AppCtx, banner: &adw::Banner, kind: &Rc<std::cell::RefCel
         version.as_deref(),
     );
     if let Some(issue) = crate::repair::banner_from_issues(&issues) {
-        banner.set_title(&format!("{} — {}", issue.title, issue.detail));
+        let title =
+            if let Some((title_key, detail_key)) = crate::repair::engine_banner_keys(issue.kind) {
+                let title = ctx.t_or(title_key, &issue.title);
+                let detail = if issue.kind == crate::repair::RepairKind::VersionTooOld {
+                    let required = crate::repair::MIN_RCLONE_VERSION;
+                    let text = ctx.tf(detail_key, &[("required", required)]);
+                    if text.contains("{{") {
+                        issue.detail.clone()
+                    } else {
+                        text
+                    }
+                } else {
+                    ctx.t_or(detail_key, &issue.detail)
+                };
+                format!("{title} — {detail}")
+            } else {
+                format!("{} — {}", issue.title, issue.detail)
+            };
+        banner.set_title(&title);
         banner.set_button_label(Some(&issue.action));
         banner.set_revealed(true);
         *kind.borrow_mut() = BannerKind::Repair;
         return;
     }
     if crate::platform::is_flatpak() && settings.runtime.flatpak_warn {
-        banner.set_title(
-            "Flatpak sandbox is active — some mounts and local paths need extra permissions.",
-        );
-        banner.set_button_label(Some("Dismiss"));
+        banner.set_title(&format!(
+            "{} — {}",
+            ctx.t_or("banners.flatpak.title", "Flatpak Note"),
+            ctx.t_or(
+                "banners.flatpak.subtitle",
+                "Some features may require manual permission adjustments.",
+            )
+        ));
+        banner.set_button_label(Some(&ctx.t_or("banners.flatpak.dismissTooltip", "Dismiss")));
         banner.set_revealed(true);
         *kind.borrow_mut() = BannerKind::Flatpak;
         return;
     }
     if crate::platform::is_network_metered() {
-        banner
-            .set_title("You are on a metered network. Transfers may use a lower bandwidth limit.");
+        banner.set_title(&ctx.t_or(
+            "banners.metered.message",
+            "You are on a metered connection. Some features may use extra data.",
+        ));
         banner.set_button_label(None::<&str>);
         banner.set_revealed(true);
         *kind.borrow_mut() = BannerKind::Metered;
@@ -1202,6 +1255,20 @@ fn update_banner(ctx: &AppCtx, banner: &adw::Banner, kind: &Rc<std::cell::RefCel
         banner.set_button_label(Some(&ctx.t_or("modals.updates.title", "Updates")));
         banner.set_revealed(true);
         *kind.borrow_mut() = BannerKind::Update;
+        return;
+    }
+    if cfg!(debug_assertions) {
+        banner.set_title(&format!(
+            "{} — {}",
+            ctx.t_or("banners.development.title", "Development Build"),
+            ctx.t_or(
+                "banners.development.subtitle",
+                "Features may be unstable • Data loss possible • Not for production use",
+            )
+        ));
+        banner.set_button_label(None::<&str>);
+        banner.set_revealed(true);
+        *kind.borrow_mut() = BannerKind::Development;
         return;
     }
     banner.set_revealed(false);

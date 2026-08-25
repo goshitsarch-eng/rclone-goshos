@@ -760,6 +760,17 @@ impl Dashboard {
                             if profile_active {
                                 item.add_css_class("destructive-action");
                             }
+                            mark_action_busy(
+                                &item,
+                                crate::jobs::action_in_progress(
+                                    &remote.name,
+                                    op,
+                                    &pname,
+                                    &snap.jobs,
+                                    self.ctx.is_busy(&remote.name, op.as_str(), &pname),
+                                ),
+                                &self.ctx,
+                            );
                             let ctx = self.ctx.clone();
                             let name = remote.name.clone();
                             let toast = self.toast.clone();
@@ -800,6 +811,17 @@ impl Dashboard {
                         let dry = self.dry_run.clone();
                         let resync = self.resync.clone();
                         let pname = names.into_iter().next().unwrap_or_else(|| "default".into());
+                        mark_action_busy(
+                            &btn,
+                            crate::jobs::action_in_progress(
+                                &remote.name,
+                                op,
+                                &pname,
+                                &snap.jobs,
+                                self.ctx.is_busy(&remote.name, op.as_str(), &pname),
+                            ),
+                            &self.ctx,
+                        );
                         btn.connect_clicked(move |_| {
                             if op == OperationType::Mount {
                                 toggle_mount(&ctx, &name, mounted, &toast);
@@ -968,6 +990,17 @@ impl Dashboard {
                             if active {
                                 chip.add_css_class("destructive-action");
                             }
+                            mark_action_busy(
+                                &chip,
+                                crate::jobs::action_in_progress(
+                                    &remote.name,
+                                    op,
+                                    &pname,
+                                    &self.ctx.snapshot.borrow().jobs,
+                                    self.ctx.is_busy(&remote.name, op.as_str(), &pname),
+                                ),
+                                &self.ctx,
+                            );
                             let ctx = self.ctx.clone();
                             let name = remote.name.clone();
                             let toast = self.toast.clone();
@@ -1991,6 +2024,17 @@ impl Dashboard {
                     } else {
                         self.ctx.t_or("remote.startProfile", "Start profile")
                     }));
+                    mark_action_busy(
+                        &start,
+                        crate::jobs::action_in_progress(
+                            &name,
+                            op_ty,
+                            pname,
+                            &self.ctx.snapshot.borrow().jobs,
+                            self.ctx.is_busy(&name, op_ty.as_str(), pname),
+                        ),
+                        &self.ctx,
+                    );
                     {
                         let ctx = self.ctx.clone();
                         let toast = self.toast.clone();
@@ -2394,6 +2438,17 @@ impl Dashboard {
             if active {
                 btn.add_css_class("destructive-action");
             }
+            mark_action_busy(
+                &btn,
+                crate::jobs::action_in_progress(
+                    name,
+                    op,
+                    "",
+                    &snap.jobs,
+                    self.ctx.is_busy(name, op.as_str(), "default"),
+                ),
+                &self.ctx,
+            );
             let ctx = self.ctx.clone();
             let remote = name.to_string();
             let toast = self.toast.clone();
@@ -3045,15 +3100,25 @@ fn append_open_folder_suffix(row: &adw::ActionRow, ctx: &AppCtx, remote: &str, p
 }
 
 fn open_overview_path(ctx: &AppCtx, current_remote: &str, raw: &str) {
-    let typed = crate::path_kind::parse_typed_path(raw, current_remote);
-    if typed.kind == crate::path_kind::PathKind::Local {
-        let _ = open::that(&typed.path);
-        return;
+    ctx.open_typed_path(current_remote, raw);
+}
+
+fn mark_action_busy(widget: &impl gtk::prelude::WidgetExt, busy: bool, ctx: &AppCtx) {
+    widget.set_sensitive(!busy);
+    if busy {
+        widget.set_tooltip_text(Some(
+            &ctx.t_or("remote.actionInProgress", "Action already in progress"),
+        ));
     }
-    ctx.request_browse(&typed.remote, &typed.path);
 }
 
 fn toggle_mount(ctx: &AppCtx, name: &str, mounted: bool, toast: &adw::ToastOverlay) {
+    let Some(_guard) = ctx.busy_guard(name, OperationType::Mount.as_str(), "default") else {
+        toast.add_toast(adw::Toast::new(
+            &ctx.t_or("remote.actionInProgress", "Action already in progress"),
+        ));
+        return;
+    };
     let Some(client) = ctx.client() else {
         toast.add_toast(adw::Toast::new(
             &ctx.t_or("remote.engineOffline", "Rclone engine is offline"),
@@ -3130,6 +3195,12 @@ fn toggle_profile(
     dry_run: bool,
     resync: bool,
 ) {
+    let Some(_guard) = ctx.busy_guard(name, op.as_str(), profile_name) else {
+        toast.add_toast(adw::Toast::new(
+            &ctx.t_or("remote.actionInProgress", "Action already in progress"),
+        ));
+        return;
+    };
     let Some(client) = ctx.client() else {
         toast.add_toast(adw::Toast::new("Rclone engine is offline"));
         return;
@@ -3185,6 +3256,12 @@ fn toggle_profile(
 }
 
 fn start_quick_run(ctx: &AppCtx, qr: &crate::store::QuickRun, toast: &adw::ToastOverlay) {
+    let Some(_guard) = ctx.busy_guard(&qr.remote_name, qr.operation_type.as_str(), &qr.id) else {
+        toast.add_toast(adw::Toast::new(
+            &ctx.t_or("remote.actionInProgress", "Action already in progress"),
+        ));
+        return;
+    };
     let Some(client) = ctx.client() else {
         toast.add_toast(adw::Toast::new(
             &ctx.t_or("remote.engineOffline", "Rclone engine is offline"),

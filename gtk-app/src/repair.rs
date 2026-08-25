@@ -185,6 +185,26 @@ pub fn diagnose(
     issues
 }
 
+pub fn engine_banner_keys(kind: RepairKind) -> Option<(&'static str, &'static str)> {
+    Some(match kind {
+        RepairKind::MissingBinary => ("banners.engine.path.title", "banners.engine.path.subtitle"),
+        RepairKind::PasswordRequired => (
+            "banners.engine.password.title",
+            "banners.engine.password.subtitle",
+        ),
+        RepairKind::AuthFailed => ("banners.engine.auth.title", "banners.engine.auth.subtitle"),
+        RepairKind::VersionTooOld => (
+            "banners.engine.version.title",
+            "banners.engine.version.subtitle",
+        ),
+        RepairKind::EngineUnreachable | RepairKind::ConfigUnreadable => (
+            "banners.engine.generic.title",
+            "banners.engine.generic.subtitle",
+        ),
+        RepairKind::FuseMissing => return None,
+    })
+}
+
 pub fn banner_from_issues(issues: &[RepairIssue]) -> Option<&RepairIssue> {
     const ORDER: &[RepairKind] = &[
         RepairKind::MissingBinary,
@@ -278,5 +298,17 @@ mod tests {
             Some(RepairKind::MissingBinary)
         );
         assert!(banner_from_issues(&[]).is_none());
+        assert_eq!(
+            engine_banner_keys(RepairKind::MissingBinary),
+            Some(("banners.engine.path.title", "banners.engine.path.subtitle"))
+        );
+        assert_eq!(
+            engine_banner_keys(RepairKind::PasswordRequired),
+            Some((
+                "banners.engine.password.title",
+                "banners.engine.password.subtitle"
+            ))
+        );
+        assert!(engine_banner_keys(RepairKind::FuseMissing).is_none());
     }
 }

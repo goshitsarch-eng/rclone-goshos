@@ -205,18 +205,74 @@ impl FlowView {
             for qr in runs {
                 let row = adw::ActionRow::new();
                 row.set_title(&qr.name);
-                row.set_subtitle(&format!(
-                    "{} · {} · {}",
-                    qr.operation_type, qr.remote_name, qr.status
-                ));
+                let mut badges = vec![qr.operation_type.as_str().to_string(), qr.status.clone()];
+                if qr.config.app.cron_enabled {
+                    badges.push(self.ctx.t_or("flow.quickRun.badges.cron", "cron"));
+                }
+                if qr.config.app.watch_enabled {
+                    badges.push(self.ctx.t_or("flow.quickRun.badges.watcher", "watch"));
+                }
+                if qr.config.app.auto_start {
+                    badges.push(self.ctx.t_or("flow.quickRun.badges.autostart", "autostart"));
+                }
+                row.set_subtitle(&format!("{} · {}", qr.remote_name, badges.join(" · ")));
                 let start = gtk::Button::from_icon_name("media-playback-start-symbolic");
                 start.set_valign(gtk::Align::Center);
+                start
+                    .set_tooltip_text(Some(&self.ctx.t_or("flow.quickRun.actions.start", "Start")));
+                let stop = gtk::Button::from_icon_name("media-playback-stop-symbolic");
+                stop.set_valign(gtk::Align::Center);
+                stop.set_tooltip_text(Some(&self.ctx.t_or("flow.quickRun.actions.stop", "Stop")));
+                let edit = gtk::Button::from_icon_name("document-edit-symbolic");
+                edit.set_valign(gtk::Align::Center);
+                edit.set_tooltip_text(Some(&self.ctx.t_or("common.edit", "Edit")));
+                let busy = self
+                    .ctx
+                    .is_busy(&qr.remote_name, qr.operation_type.as_str(), &qr.id);
+                start.set_sensitive(!busy);
+                stop.set_sensitive(!busy);
                 {
                     let view = self.clone();
                     let qr = qr.clone();
                     start.connect_clicked(move |_| view.start_run(&qr));
                 }
+                {
+                    let view = self.clone();
+                    let qr = qr.clone();
+                    stop.connect_clicked(move |_| view.stop_run(&qr));
+                }
+                {
+                    let view = self.clone();
+                    let qr = qr.clone();
+                    edit.connect_clicked(move |_| {
+                        if let Some(win) = view.root.root().and_downcast::<gtk::Window>() {
+                            dialogs::quick_run_editor(&win, view.ctx.clone(), Some(qr.clone()), {
+                                let view = view.clone();
+                                Rc::new(move || view.refresh())
+                            });
+                        }
+                    });
+                }
                 row.add_suffix(&start);
+                row.add_suffix(&stop);
+                row.add_suffix(&edit);
+                let (src, dst) = qr.paths();
+                let mut open_paths = Vec::new();
+                if let Some(src) = src {
+                    open_paths.extend(crate::jobs::split_job_paths(&src));
+                }
+                if let Some(dst) = dst {
+                    open_paths.extend(crate::jobs::split_job_paths(&dst));
+                }
+                for path in open_paths {
+                    let folder = gtk::Button::from_icon_name("folder-open-symbolic");
+                    folder.set_valign(gtk::Align::Center);
+                    folder.set_tooltip_text(Some(&path));
+                    let ctx = self.ctx.clone();
+                    let remote = qr.remote_name.clone();
+                    folder.connect_clicked(move |_| ctx.open_typed_path(&remote, &path));
+                    row.add_suffix(&folder);
+                }
                 list.append(&row);
             }
             self.append_expandable(
@@ -741,6 +797,17 @@ impl FlowView {
     }
 
     fn start_run(&self, qr: &QuickRun) {
+        let Some(_guard) = self
+            .ctx
+            .busy_guard(&qr.remote_name, qr.operation_type.as_str(), &qr.id)
+        else {
+            self.toast.add_toast(adw::Toast::new(
+                &self
+                    .ctx
+                    .t_or("remote.actionInProgress", "Action already in progress"),
+            ));
+            return;
+        };
         let Some(client) = self.ctx.client() else {
             self.toast.add_toast(adw::Toast::new(
                 &self.ctx.t_or("home.errors.engineOffline", "Engine offline"),
@@ -804,6 +871,27 @@ impl FlowView {
     }
 
     fn stop_run(&self, qr: &QuickRun) {
+        let Some(_guard) = self
+            .ctx
+            .busy_guard(&qr.remote_name, qr.operation_type.as_str(), &qr.id)
+        else {
+            self.toast.add_toast(adw::Toast::new(
+                &self
+                    .ctx
+                    .t_or("remote.actionInProgress", "Action already in progress"),
+            ));
+            return;
+        };
+        if let Some(run) = self
+            .ctx
+            .store
+            .borrow_mut()
+            .quick_runs
+            .iter_mut()
+            .find(|q| q.id == qr.id)
+        {
+            run.status = "stopping".into();
+        }
         if let (Some(client), Some(jobid)) = (self.ctx.client(), qr.last_job_id) {
             let _ = client.job_stop(jobid);
         }

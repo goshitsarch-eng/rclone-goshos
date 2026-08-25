@@ -3673,6 +3673,7 @@ pub fn quick_run_editor(
     let src = adw::EntryRow::new();
     src.set_title(&ctx.t_or("fileBrowser.operations.details.source", "Source"));
     attach_path_picker(&ctx, &src, crate::picker::FilePickerConfig::folders());
+    let extra_sources: Rc<RefCell<Vec<adw::EntryRow>>> = Rc::new(RefCell::new(Vec::new()));
     let dst = adw::EntryRow::new();
     dst.set_title(&ctx.t_or(
         "fileBrowser.operations.details.destination",
@@ -3738,8 +3739,20 @@ pub fn quick_run_editor(
         description.set_text(&qr.description);
         remote.set_text(&qr.remote_name);
         let (s, d) = qr.paths();
-        src.set_text(&s.unwrap_or_default());
+        let sources = crate::jobs::path_list(&qr.config.rclone, crate::jobs::SOURCE_KEYS);
+        if let Some(first) = sources.first() {
+            src.set_text(first);
+        } else if let Some(s) = s {
+            src.set_text(&s);
+        }
         dst.set_text(&d.unwrap_or_default());
+        for extra in sources.iter().skip(1) {
+            let row = adw::EntryRow::new();
+            row.set_title(&ctx.t_or("wizards.appOperation.addSource", "Additional source"));
+            attach_path_picker(&ctx, &row, crate::picker::FilePickerConfig::folders());
+            row.set_text(extra);
+            extra_sources.borrow_mut().push(row);
+        }
         cron.set_text(&qr.config.app.cron_expression);
         auto.set_active(qr.config.app.auto_start);
         watch.set_active(qr.config.app.watch_enabled);
@@ -3765,8 +3778,33 @@ pub fn quick_run_editor(
     group.add(&name);
     group.add(&description);
     group.add(&remote);
+    let initial_op = existing
+        .as_ref()
+        .map(|qr| qr.operation_type)
+        .unwrap_or(OperationType::Sync);
     group.add(&op_row);
     group.add(&src);
+    for row in extra_sources.borrow().iter() {
+        group.add(row);
+    }
+    let add_src = gtk::Button::with_label(&ctx.t_or("remoteConfig.addSource", "Add source"));
+    {
+        let extra_sources = extra_sources.clone();
+        let group = group.clone();
+        let ctx = ctx.clone();
+        add_src.connect_clicked(move |_| {
+            let row = adw::EntryRow::new();
+            row.set_title(&ctx.t_or("wizards.appOperation.addSource", "Additional source"));
+            attach_path_picker(&ctx, &row, crate::picker::FilePickerConfig::folders());
+            group.add(&row);
+            extra_sources.borrow_mut().push(row);
+        });
+    }
+    let add_src_row = adw::ActionRow::new();
+    add_src_row.set_title(&ctx.t_or("remoteConfig.multipleSources", "Multiple sources"));
+    add_src_row.add_suffix(&add_src);
+    add_src_row.set_visible(initial_op.supports_multi_source());
+    group.add(&add_src_row);
     group.add(&dst);
     group.add(&cron);
     let cron_preset_row = adw::ActionRow::new();
@@ -3791,10 +3829,6 @@ pub fn quick_run_editor(
             .is_some_and(|qr| crate::jobs::is_dry_run(&qr.config.rclone)),
     );
     group.add(&dry);
-    let initial_op = existing
-        .as_ref()
-        .map(|qr| qr.operation_type)
-        .unwrap_or(OperationType::Sync);
     let resync = adw::SwitchRow::new();
     resync.set_title(&ctx.t_or("dashboard.appDetail.resync", "Resync"));
     resync.set_subtitle(&ctx.t_or(
@@ -3873,6 +3907,7 @@ pub fn quick_run_editor(
         let resync = resync.clone();
         let rclone = initial_rclone.clone();
         let blocks = live_blocks.clone();
+        let add_src_row = add_src_row.clone();
         op_row.connect_selected_notify(move |row| {
             let op = OperationType::ALL
                 .get(row.selected() as usize)
@@ -3881,6 +3916,7 @@ pub fn quick_run_editor(
             serve.set_visible(op == OperationType::Serve);
             mount_type.set_visible(op == OperationType::Mount);
             resync.set_visible(op == OperationType::Bisync);
+            add_src_row.set_visible(op.supports_multi_source());
             clear_flag_rows(&flags_group, &flag_rows);
             clear_serve_flag_rows(&flags_group, &serve_flag_rows);
             populate_flag_rows(&flags_group, &flag_rows, op, &rclone, &blocks);
@@ -3918,6 +3954,7 @@ pub fn quick_run_editor(
         let description = description.clone();
         let watch_delay = watch_delay.clone();
         let watch_changed = watch_changed.clone();
+        let extra_sources = extra_sources.clone();
         save.connect_clicked(move |_| {
             let expr = cron.text().to_string();
             if !expr.is_empty() {
@@ -3960,11 +3997,24 @@ pub fn quick_run_editor(
             qr.config.app.backend_profile = backend_profile.text().to_string();
             qr.config.app.runtime_remote_profile = runtime_profile.text().to_string();
             qr.show_on_tray = tray.is_active();
+            let mut sources = vec![src.text().to_string()];
+            for row in extra_sources.borrow().iter() {
+                let text = row.text().to_string();
+                if !text.is_empty() {
+                    sources.push(text);
+                }
+            }
+            sources.retain(|s| !s.is_empty());
+            let src_value = if sources.len() > 1 {
+                serde_json::json!(sources)
+            } else {
+                serde_json::json!(sources.first().cloned().unwrap_or_default())
+            };
             let mut rclone = serde_json::json!({
-                "srcFs": src.text().to_string(),
+                "srcFs": src_value,
                 "dstFs": dst.text().to_string(),
                 "mountPoint": dst.text().to_string(),
-                "fs": src.text().to_string(),
+                "fs": src_value,
             });
             if dry.is_active() {
                 rclone["dryRun"] = serde_json::json!(true);
@@ -5001,69 +5051,59 @@ pub fn job_detail(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, job_id: u64) {
     done_label.set_xalign(0.0);
     box_.append(&done_label);
     box_.append(&scrolled_list(&completed));
-    let open_src =
-        gtk::Button::with_label(&ctx.t_or("modals.jobDetail.openSource", "Open source in Files"));
-    let open_dst = gtk::Button::with_label(&ctx.t_or(
-        "modals.jobDetail.openDestination",
-        "Open destination in Files",
-    ));
-    {
+    let open_box = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+    let populate_opens: Rc<dyn Fn(&str, &str)> = Rc::new({
+        let open_box = open_box.clone();
         let ctx = ctx.clone();
         let dialog = dialog.clone();
-        open_src.connect_clicked(move |_| {
-            if let Some(job) = ctx.snapshot.borrow().jobs.iter().find(|j| j.id == job_id) {
-                if let Some((remote, path)) = browse_target(&job.src) {
-                    ctx.request_browse(&remote, &path);
-                    dialog.close();
-                    return;
-                }
+        move |src: &str, dst: &str| {
+            while let Some(child) = open_box.first_child() {
+                open_box.remove(&child);
             }
-            if let Some(job) = ctx
-                .store
-                .borrow()
-                .job_history
-                .iter()
-                .find(|j| j.id == job_id)
-            {
-                if let Some((remote, path)) = browse_target(&job.src) {
-                    ctx.request_browse(&remote, &path);
-                    dialog.close();
-                }
-            }
-        });
-    }
+            append_open_job_paths(
+                &open_box,
+                &ctx,
+                &dialog,
+                &ctx.t_or("modals.jobDetail.openSource", "Open source in Files"),
+                src,
+            );
+            append_open_job_paths(
+                &open_box,
+                &ctx,
+                &dialog,
+                &ctx.t_or(
+                    "modals.jobDetail.openDestination",
+                    "Open destination in Files",
+                ),
+                dst,
+            );
+        }
+    });
     {
-        let ctx = ctx.clone();
-        let dialog = dialog.clone();
-        open_dst.connect_clicked(move |_| {
-            if let Some(job) = ctx.snapshot.borrow().jobs.iter().find(|j| j.id == job_id) {
-                if let Some((remote, path)) = browse_target(&job.dst) {
-                    ctx.request_browse(&remote, &path);
-                    dialog.close();
-                    return;
-                }
-            }
-            if let Some(job) = ctx
-                .store
-                .borrow()
-                .job_history
-                .iter()
-                .find(|j| j.id == job_id)
-            {
-                if let Some((remote, path)) = browse_target(&job.dst) {
-                    ctx.request_browse(&remote, &path);
-                    dialog.close();
-                }
-            }
-        });
+        let (src, dst) = ctx
+            .snapshot
+            .borrow()
+            .jobs
+            .iter()
+            .find(|j| j.id == job_id)
+            .map(|j| (j.src.clone(), j.dst.clone()))
+            .or_else(|| {
+                ctx.store
+                    .borrow()
+                    .job_history
+                    .iter()
+                    .find(|j| j.id == job_id)
+                    .map(|j| (j.src.clone(), j.dst.clone()))
+            })
+            .unwrap_or_default();
+        populate_opens(&src, &dst);
     }
     let actions = gtk::Box::new(gtk::Orientation::Horizontal, 8);
     actions.append(&stop);
     actions.append(&stop_group);
     actions.append(&reset);
     actions.append(&delete);
-    actions.append(&open_src);
-    actions.append(&open_dst);
+    actions.append(&open_box);
     box_.append(&actions);
     dialog.set_child(Some(&box_));
 
@@ -5075,6 +5115,7 @@ pub fn job_detail(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, job_id: u64) {
         let progress = progress.clone();
         let filter = filter.clone();
         let dialog = dialog.clone();
+        let populate_opens = populate_opens.clone();
         move || {
             while let Some(child) = meta.first_child() {
                 meta.remove(&child);
@@ -5098,6 +5139,7 @@ pub fn job_detail(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, job_id: u64) {
                 .unwrap_or_else(|| format!("job/{job_id}"));
             let stats = client.stats(Some(&group)).ok();
             let job = job_from_status(job_id, &status, stats.as_ref());
+            populate_opens(&job.src, &job.dst);
             progress.set_fraction(job.progress);
             progress.set_text(Some(&format!(
                 "{}{} · {:.0}% · {:.1}s",
@@ -5360,6 +5402,35 @@ pub fn job_detail(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, job_id: u64) {
         alive.set(false);
     });
     present_window_or_dialog(parent, &ctx, &dialog);
+}
+
+fn append_open_job_paths(
+    box_: &gtk::Box,
+    ctx: &AppCtx,
+    dialog: &adw::Dialog,
+    label: &str,
+    raw: &str,
+) {
+    let paths = crate::jobs::split_job_paths(raw);
+    for (index, path) in paths.iter().enumerate() {
+        let text = if paths.len() == 1 {
+            label.to_string()
+        } else {
+            format!("{label} {}", index + 1)
+        };
+        let btn = gtk::Button::with_label(&text);
+        btn.set_tooltip_text(Some(path));
+        let ctx = ctx.clone();
+        let dialog = dialog.clone();
+        let path = path.clone();
+        btn.connect_clicked(move |_| {
+            if let Some((remote, folder)) = browse_target(&path) {
+                ctx.request_browse(&remote, &folder);
+                dialog.close();
+            }
+        });
+        box_.append(&btn);
+    }
 }
 
 fn append_transfer_rows(
@@ -6209,13 +6280,23 @@ pub fn file_viewer(
         &ctx.t_or("fileBrowser.fileViewer.openNative", "Open in External App"),
     );
     {
-        let path = if remote == "local" {
-            path.to_string()
-        } else {
-            remote_fs(remote, path)
-        };
+        let parent = parent.clone();
+        let ctx = ctx.clone();
+        let remote = remote.to_string();
+        let path = path.to_string();
+        let name = name.to_string();
         open.connect_clicked(move |_| {
-            let _ = open::that(&path);
+            let client = ctx.client();
+            if let Err(err) =
+                crate::fileops::open_file_natively(client.as_ref(), &remote, &path, &name)
+            {
+                let alert = adw::AlertDialog::new(
+                    Some(&ctx.t_or("fileBrowser.fileViewer.openFailed", "Could not open file")),
+                    Some(&err),
+                );
+                alert.add_response("ok", &ctx.t_or("common.ok", "OK"));
+                alert.present(Some(&parent));
+            }
         });
     }
     let download =

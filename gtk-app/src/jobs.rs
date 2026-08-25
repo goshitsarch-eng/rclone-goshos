@@ -70,6 +70,35 @@ pub fn first_path(value: &Value, keys: &[&str]) -> Option<String> {
     path_list(value, keys).into_iter().next()
 }
 
+/// Split a job src/dst field that may list multiple rclone paths.
+pub fn split_job_paths(raw: &str) -> Vec<String> {
+    let trimmed = raw.trim();
+    if trimmed.is_empty() || trimmed == "—" {
+        return Vec::new();
+    }
+    if trimmed.starts_with('[') {
+        if let Ok(Value::Array(items)) = serde_json::from_str::<Value>(trimmed) {
+            return items
+                .iter()
+                .filter_map(|v| v.as_str())
+                .map(|s| s.trim().to_string())
+                .filter(|s| !s.is_empty())
+                .collect();
+        }
+    }
+    if trimmed.contains(',') {
+        let parts: Vec<String> = trimmed
+            .split(',')
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty() && s != "—")
+            .collect();
+        if parts.len() > 1 {
+            return parts;
+        }
+    }
+    vec![trimmed.to_string()]
+}
+
 /// Paths the Angular remote card can open while an operation is active.
 /// Serve has no folder blossom. Mount uses the live mount point; sync ops use src/dst.
 pub fn active_open_paths(
@@ -897,6 +926,35 @@ pub fn apply_session_flags(rclone: &mut Value, dry_run: bool, resync: bool) {
 
 pub fn job_is_running(job: &JobInfo) -> bool {
     matches!(job.status.as_str(), "running" | "starting")
+}
+
+pub fn action_busy_key(remote: &str, op: &str, profile: &str) -> String {
+    format!("{remote}|{op}|{profile}")
+}
+
+pub fn job_is_pending(job: &JobInfo) -> bool {
+    matches!(job.status.as_str(), "starting" | "preparing" | "stopping")
+}
+
+pub fn action_in_progress(
+    remote: &str,
+    op: OperationType,
+    profile: &str,
+    jobs: &[JobInfo],
+    busy: bool,
+) -> bool {
+    if busy {
+        return true;
+    }
+    jobs.iter().any(|job| {
+        job_belongs_to_remote(job, remote)
+            && job_operation_matches(&job.operation, op)
+            && (profile.is_empty()
+                || job.profile.is_empty()
+                || job.profile == "default"
+                || job.profile == profile)
+            && job_is_pending(job)
+    })
 }
 
 pub fn job_operation_matches(job_op: &str, op: OperationType) -> bool {
@@ -2041,6 +2099,35 @@ mod tests {
         assert!(job_operation_matches("rc/copy", OperationType::Copy));
         assert!(!job_operation_matches("job/1", OperationType::Sync));
         assert_eq!(
+            action_busy_key("drive", "sync", "nightly"),
+            "drive|sync|nightly"
+        );
+        let mut preparing = running_job(3, "drive", "sync", "nightly");
+        preparing.status = "preparing".into();
+        assert!(job_is_pending(&preparing));
+        assert!(!job_is_pending(&jobs[0]));
+        assert!(action_in_progress(
+            "drive",
+            OperationType::Sync,
+            "nightly",
+            &[preparing],
+            false
+        ));
+        assert!(action_in_progress(
+            "drive",
+            OperationType::Sync,
+            "nightly",
+            &[],
+            true
+        ));
+        assert!(!action_in_progress(
+            "drive",
+            OperationType::Sync,
+            "nightly",
+            &jobs,
+            false
+        ));
+        assert_eq!(
             find_active_job(&jobs, "drive", OperationType::Sync, "nightly").map(|j| j.id),
             Some(1)
         );
@@ -2388,6 +2475,16 @@ mod tests {
             vec!["drive:".to_string()]
         );
         assert!(active_open_paths(OperationType::Sync, "", "—", None).is_empty());
+        assert_eq!(
+            split_job_paths("drive:a, drive:b, /tmp/out"),
+            vec!["drive:a", "drive:b", "/tmp/out"]
+        );
+        assert_eq!(split_job_paths("drive:Photos"), vec!["drive:Photos"]);
+        assert!(split_job_paths("—").is_empty());
+        assert_eq!(
+            split_job_paths(r#"["drive:a","drive:b"]"#),
+            vec!["drive:a", "drive:b"]
+        );
         let overflow = overflow_active_ops(
             &[OperationType::Mount, OperationType::Sync],
             &[

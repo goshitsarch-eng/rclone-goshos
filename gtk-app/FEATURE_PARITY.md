@@ -350,9 +350,18 @@ This client is the GTK 4 + libadwaita rewrite of the Angular/Tauri desktop UI. I
 - General remote detail can edit `primary_actions` from a header gear (Angular configure-actions)
 - Cancel OAuth in the create wizard deletes the half-created remote
 - Repair PasswordRequired opens an inline unlock sheet (optional keyring remember) instead of full Preferences
+- File viewer and Files “Open in External App” download remote files to `$TMP` before opening
+- Dashboard / Flow start-stop chips disable while an action is in progress (`starting` / `preparing` / busy guard)
+- Ctrl+Alt+F toggles Flow and restores the previous workspace (Angular flow overlay)
+- Flow Quick Run cards include Start / Stop / Edit, cron/watch/autostart badges, and folder-open shortcuts
+- Job detail adds one Open button per source/destination when a job lists multiple paths
+- Title-bar banners use `banners.engine.*` / Flatpak / metered / development i18n
+- Quick Run editor can add multiple sources (saved as `srcFs` arrays) for sync/copy/move/check
 
 ## Still deepening toward pixel-level Angular parity
 
 - Workflow builder (stub in both apps)
 - Live GUI session against rclone rcd (no display in this environment)
 - Remaining dialogs/Files English labels (core chrome now localized)
+- Onboarding illustrated view cards and live mount-plugin progress
+- Pixel-level Angular layouts and leftover English `t_or` fallbacks

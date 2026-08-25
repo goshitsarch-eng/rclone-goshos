@@ -15,7 +15,7 @@ use crate::rclone::RcloneEngine;
 use crate::settings::AppSettings;
 use crate::store::{AppStore, RuntimeSnapshot};
 use std::cell::{Cell, RefCell};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
 
 pub use window::activate;
@@ -44,6 +44,7 @@ pub struct AppCtx {
     pub last_connection_check: Rc<RefCell<Option<std::time::Instant>>>,
     pub updates: Rc<RefCell<crate::updater::PendingUpdates>>,
     pub last_update_check: Rc<RefCell<Option<std::time::Instant>>>,
+    pub action_busy: Rc<RefCell<HashSet<String>>>,
 }
 
 impl AppCtx {
@@ -82,6 +83,7 @@ impl AppCtx {
             last_connection_check: Rc::new(RefCell::new(Some(std::time::Instant::now()))),
             updates: Rc::new(RefCell::new(crate::updater::PendingUpdates::default())),
             last_update_check: Rc::new(RefCell::new(Some(std::time::Instant::now()))),
+            action_busy: Rc::new(RefCell::new(HashSet::new())),
         };
         ctx.apply_remote_layout();
         {
@@ -109,6 +111,43 @@ impl AppCtx {
             snap.mounts.len(),
             snap.serves.len(),
         )
+    }
+
+    pub fn set_busy(&self, remote: &str, op: &str, profile: &str, busy: bool) {
+        let key = crate::jobs::action_busy_key(remote, op, profile);
+        if busy {
+            self.action_busy.borrow_mut().insert(key);
+        } else {
+            self.action_busy.borrow_mut().remove(&key);
+        }
+    }
+
+    pub fn is_busy(&self, remote: &str, op: &str, profile: &str) -> bool {
+        self.action_busy
+            .borrow()
+            .contains(&crate::jobs::action_busy_key(remote, op, profile))
+    }
+
+    pub fn busy_guard(&self, remote: &str, op: &str, profile: &str) -> Option<ActionBusyGuard> {
+        if self.is_busy(remote, op, profile) {
+            return None;
+        }
+        self.set_busy(remote, op, profile, true);
+        Some(ActionBusyGuard {
+            ctx: self.clone(),
+            remote: remote.to_string(),
+            op: op.to_string(),
+            profile: profile.to_string(),
+        })
+    }
+
+    pub fn open_typed_path(&self, current_remote: &str, raw: &str) {
+        let typed = crate::path_kind::parse_typed_path(raw, current_remote);
+        if typed.kind == crate::path_kind::PathKind::Local {
+            let _ = open::that(&typed.path);
+            return;
+        }
+        self.request_browse(&typed.remote, &typed.path);
     }
 
     pub fn fs_info(&self, remote: &str) -> Option<crate::rclone::FsInfo> {
@@ -620,6 +659,20 @@ impl AppCtx {
             "dark" => style.set_color_scheme(adw::ColorScheme::ForceDark),
             _ => style.set_color_scheme(adw::ColorScheme::Default),
         }
+    }
+}
+
+pub struct ActionBusyGuard {
+    ctx: AppCtx,
+    remote: String,
+    op: String,
+    profile: String,
+}
+
+impl Drop for ActionBusyGuard {
+    fn drop(&mut self) {
+        self.ctx
+            .set_busy(&self.remote, &self.op, &self.profile, false);
     }
 }
 

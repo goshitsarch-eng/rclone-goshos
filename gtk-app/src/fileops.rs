@@ -1,8 +1,9 @@
 //! Encoded file-browser undo/redo operations and grouped transfers.
 
-use crate::rclone::RcClient;
+use crate::rclone::{remote_fs, RcClient};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
+use std::path::PathBuf;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "op", rename_all = "snake_case")]
@@ -263,6 +264,36 @@ fn copy_dir(src: &std::path::Path, dst: &std::path::Path) -> std::io::Result<()>
     Ok(())
 }
 
+pub fn is_local_open_target(remote: &str) -> bool {
+    remote.is_empty() || remote == "local"
+}
+
+/// Open a local path in the OS handler, or download a remote file to `$TMP` first.
+pub fn open_file_natively(
+    client: Option<&RcClient>,
+    remote: &str,
+    path: &str,
+    name: &str,
+) -> Result<PathBuf, String> {
+    if is_local_open_target(remote) {
+        open::that(path).map_err(|e| e.to_string())?;
+        return Ok(PathBuf::from(path));
+    }
+    let client = client.ok_or_else(|| "Rclone engine is offline".to_string())?;
+    let file_name = if name.is_empty() {
+        "rclone-open.bin"
+    } else {
+        name
+    };
+    let dest = std::env::temp_dir().join(file_name);
+    let fs = remote_fs(remote, "");
+    client
+        .copy_file(&fs, path, "/", &dest.to_string_lossy())
+        .map_err(|e| e.to_string())?;
+    open::that(&dest).map_err(|e| e.to_string())?;
+    Ok(dest)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -369,5 +400,13 @@ mod tests {
         assert_eq!(cut.endpoint(), "operations/movefile");
         assert!(matches!(cut.file_op(), FileOp::Move { .. }));
         assert!(transfer_group_id("filemanager").starts_with("filemanager/"));
+    }
+
+    #[test]
+    fn local_open_targets() {
+        assert!(is_local_open_target("local"));
+        assert!(is_local_open_target(""));
+        assert!(!is_local_open_target("drive"));
+        assert!(!is_local_open_target("drive:"));
     }
 }

@@ -4129,20 +4129,11 @@ impl NautilusView {
         };
         let current = self.current.borrow().clone();
         let path = join_remote_path(&current.path, &name);
-        if current.remote == "local" {
-            let _ = open::that(&path);
-            return;
-        }
-        let Some(client) = self.ctx.client() else {
-            return;
-        };
-        let (fs, remote) = fs_remote(&current.remote, &path);
-        let dest = std::env::temp_dir().join(&name);
-        match client.copy_file(&fs, &remote, "/", &dest.to_string_lossy()) {
-            Ok(_) => {
-                let _ = open::that(&dest);
-            }
-            Err(e) => self.toast.add_toast(adw::Toast::new(&e.to_string())),
+        let client = self.ctx.client();
+        if let Err(e) =
+            crate::fileops::open_file_natively(client.as_ref(), &current.remote, &path, &name)
+        {
+            self.toast.add_toast(adw::Toast::new(&e));
         }
     }
 
