@@ -443,7 +443,7 @@ This client is the GTK 4 + libadwaita rewrite of the Angular/Tauri desktop UI. I
 - Preferences: Files layout, hidden files, list/grid icon sizes, and Flatpak warning toggle
 - Tray Quick Run labels use translated Start/Stop verbs plus the run name (no English prefix parsing)
 - Files toasts, clone-failed alerts, file-viewer Open native / Preview, and helper Save profile use i18n keys
-- Serve start falls back to `core/command` (async) or a local `rclone serve` process when `serve/start` is missing (rclone < 1.64); list/stop merge the fallback registry
+- Serve start falls back to a local `rclone serve` process when `serve/start` is missing (rclone < 1.64). `core/command serve` is not used — it can panic rcd on 1.60. List/stop merge the process registry. Serve can start without a saved profile (same as Mount).
 - Serve profiles honor `type` / `serveType` / `addr` (default HTTP) and pass extra flags through RC or CLI
 - Overview Job Information matches Angular: aggregate progress/ETA, speed/transfers/checks/errors, and per-job captions with stop
 

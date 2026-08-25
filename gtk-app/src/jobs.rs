@@ -665,7 +665,7 @@ pub fn merge_options_block(obj: &mut Map<String, Value>, block: &str, opts: &Val
 /// Angular remote-card `hasNoProfiles`: start is disabled unless a profile exists.
 /// Mount still offers the default mount-point fallback used by `toggle_mount`.
 pub fn allows_unconfigured_start(op: OperationType) -> bool {
-    matches!(op, OperationType::Mount)
+    matches!(op, OperationType::Mount | OperationType::Serve)
 }
 
 pub fn preferred_mount_profile(meta: Option<&RemoteMeta>) -> Option<ProfileConfig> {
@@ -2349,8 +2349,8 @@ mod tests {
             false
         ));
         assert!(allows_unconfigured_start(OperationType::Mount));
+        assert!(allows_unconfigured_start(OperationType::Serve));
         assert!(!allows_unconfigured_start(OperationType::Sync));
-        assert!(!allows_unconfigured_start(OperationType::Serve));
         assert!(!allows_unconfigured_start(OperationType::Copy));
         assert_eq!(
             find_active_job(&jobs, "drive", OperationType::Sync, "nightly").map(|j| j.id),

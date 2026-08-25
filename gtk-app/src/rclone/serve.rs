@@ -1,7 +1,7 @@
 //! Serve start/list/stop helpers, including a fallback for rclone < 1.64
 //! where `serve/start`, `serve/list`, and `serve/stop` do not exist.
 
-use super::client::{looks_missing_endpoint, RcClient, RcError, ServeItem};
+use super::client::{RcClient, RcError, ServeItem};
 use super::engine::is_reserved_flag;
 use serde_json::{json, Value};
 use std::collections::HashMap;
@@ -328,60 +328,22 @@ pub fn shutdown_legacy(client: Option<&RcClient>) {
     }
 }
 
+/// rclone &lt; 1.64 has no `serve/start`. Using `core/command serve` on those
+/// builds can panic the remote-control server (observed on 1.60), so fallback
+/// always runs a separate `rclone serve` process.
 pub fn start_serve_fallback(
-    client: &RcClient,
+    _client: &RcClient,
     serve_type: &str,
     fs: &str,
     addr: &str,
     extra: &Value,
     original: RcError,
 ) -> Result<Value, RcError> {
-    let mut args = serve_cli_args(serve_type, fs, addr);
-    args.extend(serve_extra_cli_args(extra));
-    match client.core_command("serve", args, true) {
-        Ok(value) => {
-            let jobid = parse_serve_job_id(&value).ok_or(original)?;
-            if let Some(err) = immediate_job_error(client, jobid) {
-                return Err(err);
-            }
-            let id = fallback_job_id(jobid);
-            register_legacy(
-                serve_item_from_start(&id, addr, fs, serve_type, extra),
-                Some(jobid),
-                None,
-            );
-            Ok(serve_start_response(&id, addr))
-        }
-        Err(err) if looks_missing_endpoint(&err) => {
-            spawn_legacy_serve(serve_type, fs, addr, extra).map_err(|_| original)
-        }
-        Err(err) => Err(err),
-    }
-}
-
-fn immediate_job_error(client: &RcClient, jobid: u64) -> Option<RcError> {
-    std::thread::sleep(Duration::from_millis(200));
-    let status = client.job_status(jobid).ok()?;
-    let finished = status
-        .get("finished")
-        .and_then(|v| v.as_bool())
-        .unwrap_or(false);
-    if !finished {
-        return None;
-    }
-    let success = status
-        .get("success")
-        .and_then(|v| v.as_bool())
-        .unwrap_or(true);
-    if success {
-        return None;
-    }
-    let message = status
-        .get("error")
-        .and_then(|v| v.as_str())
-        .unwrap_or("serve failed")
-        .to_string();
-    Some(RcError::message(message))
+    spawn_legacy_serve(serve_type, fs, addr, extra).map_err(|spawn_err| {
+        RcError::message(format!(
+            "{original}; fallback rclone serve failed: {spawn_err}"
+        ))
+    })
 }
 
 fn spawn_legacy_serve(
@@ -503,5 +465,29 @@ mod tests {
             json!({ "id": "cmd-3", "addr": "127.0.0.1:8080" })
         );
         assert_eq!(parse_serve_job_id(&json!({ "jobid": 9 })), Some(9));
+    }
+
+    #[test]
+    fn spawn_legacy_http_serve_list_and_stop() {
+        let binary = which::which("rclone").unwrap_or_else(|_| PathBuf::from("rclone"));
+        if which::which("rclone").is_err() {
+            return;
+        }
+        install_spawn_context(ServeSpawnContext {
+            binary,
+            config_path: None,
+            extra_flags: vec![],
+            extra_env: vec![],
+            password: String::new(),
+        });
+        let addr = resolve_listen_addr("127.0.0.1:0");
+        let started = spawn_legacy_serve("http", "/tmp", &addr, &json!({})).expect("spawn serve");
+        let id = started["id"].as_str().unwrap().to_string();
+        assert!(id.starts_with("proc-"));
+        let listed = list_legacy_serves();
+        assert!(listed.iter().any(|item| item.id == id && item.addr == addr));
+        assert!(stop_legacy_serve(None, &id));
+        assert!(!list_legacy_serves().iter().any(|item| item.id == id));
+        clear_spawn_context();
     }
 }
