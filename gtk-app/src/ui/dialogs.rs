@@ -203,7 +203,11 @@ pub fn present_standalone(
     let jobid = req.data.get("jobid").and_then(|v| v.as_u64()).unwrap_or(0);
     let noop = Rc::new(|| ());
     match req.kind.as_str() {
-        "preferences" => preferences(&window, ctx.clone()),
+        "preferences" => preferences_page(
+            &window,
+            ctx.clone(),
+            req.data.get("page").and_then(|v| v.as_str()),
+        ),
         "about" => about(&window, ctx.clone()),
         "logs" => logs(
             &window,
@@ -456,10 +460,18 @@ pub fn perform_shutdown(ctx: &AppCtx) {
 }
 
 pub fn preferences(parent: &impl IsA<gtk::Widget>, ctx: AppCtx) {
-    if try_spawn_standalone(&ctx, "preferences", serde_json::json!({})) {
+    preferences_page(parent, ctx, None);
+}
+
+pub fn preferences_page(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, page: Option<&str>) {
+    if try_spawn_standalone(
+        &ctx,
+        "preferences",
+        serde_json::json!({ "page": page.unwrap_or("") }),
+    ) {
         return;
     }
-    super::preferences::present(parent, ctx);
+    super::preferences::present_page(parent, ctx, page);
 }
 
 pub fn about(parent: &impl IsA<gtk::Widget>, ctx: AppCtx) {

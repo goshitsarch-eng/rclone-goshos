@@ -166,6 +166,54 @@ fn register_application_options(app: &adw::Application) {
     add("updates", OptionArg::None, "Open the Updates dialog", None);
     add("alerts", OptionArg::None, "Open the Alerts dialog", None);
     app.add_main_option(
+        "preferences",
+        0.into(),
+        OptionFlags::OPTIONAL_ARG,
+        OptionArg::String,
+        "Open Preferences, optionally a page",
+        Some("PAGE"),
+    );
+    app.add_main_option(
+        "settings",
+        0.into(),
+        OptionFlags::OPTIONAL_ARG,
+        OptionArg::String,
+        "Alias for --preferences",
+        Some("PAGE"),
+    );
+    add(
+        "onboarding",
+        OptionArg::None,
+        "Re-open the first-run onboarding window",
+        None,
+    );
+    add("about", OptionArg::None, "Open the About dialog", None);
+    add("logs", OptionArg::None, "Open the Logs dialog", None);
+    add(
+        "shortcuts",
+        OptionArg::None,
+        "Open the keyboard shortcuts dialog",
+        None,
+    );
+    add(
+        "remote-config",
+        OptionArg::String,
+        "Open remote configuration",
+        Some("REMOTE"),
+    );
+    add(
+        "step",
+        OptionArg::String,
+        "Remote-config step (with --remote-config)",
+        Some("STEP"),
+    );
+    add(
+        "profile",
+        OptionArg::String,
+        "Remote-config profile (with --remote-config)",
+        Some("NAME"),
+    );
+    app.add_main_option(
         "standalone",
         0.into(),
         OptionFlags::OPTIONAL_ARG,

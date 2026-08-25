@@ -161,6 +161,10 @@ impl PrefsSession {
 }
 
 pub fn present(parent: &impl IsA<gtk::Widget>, ctx: AppCtx) {
+    present_page(parent, ctx, None);
+}
+
+pub fn present_page(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, page: Option<&str>) {
     let session = PrefsSession::new(ctx.clone());
     let dialog = adw::PreferencesDialog::new();
     dialog.set_title(&ctx.t_or("titlebar.menu.preferences", "Preferences"));
@@ -184,6 +188,7 @@ pub fn present(parent: &impl IsA<gtk::Widget>, ctx: AppCtx) {
     session.banner_row.add_suffix(&save);
 
     let general = adw::PreferencesPage::new();
+    general.set_name(Some("general"));
     general.set_title(&ctx.t_or("modals.preferences.tabs.general", "General"));
     general.set_icon_name(Some("preferences-system-symbolic"));
     let g1 = adw::PreferencesGroup::new();
@@ -401,6 +406,7 @@ pub fn present(parent: &impl IsA<gtk::Widget>, ctx: AppCtx) {
     general.add(&g1);
 
     let core = adw::PreferencesPage::new();
+    core.set_name(Some("core"));
     core.set_title(&ctx.t_or("modals.preferences.tabs.core", "Core"));
     core.set_icon_name(Some("application-x-executable-symbolic"));
     let c1 = adw::PreferencesGroup::new();
@@ -547,11 +553,13 @@ pub fn present(parent: &impl IsA<gtk::Widget>, ctx: AppCtx) {
     core.add(&c1);
 
     let security = adw::PreferencesPage::new();
+    security.set_name(Some("security"));
     security.set_title(&ctx.t_or("modals.backend.security.encrypted", "Security"));
     security.set_icon_name(Some("security-high-symbolic"));
     add_security_page(&session, &security, parent);
 
     let dev = adw::PreferencesPage::new();
+    dev.set_name(Some("developer"));
     dev.set_title(&ctx.t_or("modals.preferences.tabs.developer", "Developer"));
     dev.set_icon_name(Some("applications-engineering-symbolic"));
     add_developer_page(&session, &dev, parent);
@@ -560,6 +568,9 @@ pub fn present(parent: &impl IsA<gtk::Widget>, ctx: AppCtx) {
     dialog.add(&core);
     dialog.add(&security);
     dialog.add(&dev);
+    if let Some(name) = page.filter(|name| !name.is_empty()) {
+        dialog.set_visible_page_name(name);
+    }
     dialog.present(Some(parent));
 }
 

@@ -1456,6 +1456,38 @@ fn apply_nav(
         }
         NavTarget::Updates => dialogs::updates(window, ctx.clone(), toast.clone()),
         NavTarget::Alerts => dialogs::alerts(window, ctx.clone()),
+        NavTarget::Preferences { page } => {
+            dialogs::preferences_page(window, ctx.clone(), page.as_deref());
+        }
+        NavTarget::RemoteConfig {
+            remote,
+            step,
+            profile,
+        } => {
+            dialogs::remote_config_open(
+                window,
+                ctx.clone(),
+                if remote.is_empty() {
+                    None
+                } else {
+                    Some(remote)
+                },
+                super::remote_config::RemoteConfigOpen {
+                    initial: step,
+                    profile,
+                    auto_add: false,
+                },
+                Rc::new(|| ()),
+            );
+        }
+        NavTarget::Onboarding => {
+            if let Some(app) = window.application().and_downcast::<adw::Application>() {
+                onboarding::present(&app, ctx.clone());
+            }
+        }
+        NavTarget::About => dialogs::about(window, ctx.clone()),
+        NavTarget::Logs => dialogs::logs(window, ctx.clone(), None),
+        NavTarget::Shortcuts => dialogs::shortcuts(window, ctx),
     }
 }
 
