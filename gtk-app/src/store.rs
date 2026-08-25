@@ -122,6 +122,16 @@ pub struct JobInfo {
     pub src: String,
     pub dst: String,
     pub group: String,
+    #[serde(default)]
+    pub stats: Value,
+    #[serde(default)]
+    pub transferring: Value,
+    #[serde(default)]
+    pub duration: f64,
+    #[serde(default)]
+    pub progress: f64,
+    #[serde(default)]
+    pub output: Value,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]

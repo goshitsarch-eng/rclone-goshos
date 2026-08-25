@@ -31,11 +31,38 @@ pub struct BackupAnalysis {
 
 pub fn export_categories() -> Vec<(&'static str, &'static str)> {
     vec![
+        ("FullBackup", "Full backup"),
         ("settings", "App settings"),
         ("store", "Quick runs, alerts, templates"),
         ("rclone", "Rclone remotes"),
         ("nautilus", "Bookmarks and starred items"),
     ]
+}
+
+pub fn includes_file(export_type: &str, file: &str) -> bool {
+    if file == "manifest.json" {
+        return true;
+    }
+    match export_type {
+        "" | "FullBackup" | "All" | "full" => true,
+        "settings" | "Settings" => file == "settings.json",
+        "store" | "alerts" | "connections" | "nautilus" => file == "store.json",
+        "rclone" | "remotes" => file == "rclone.json",
+        other if other.starts_with("remote:") => file == "rclone.json",
+        _ => true,
+    }
+}
+
+pub fn filter_rclone_dump(dump: &Value, export_type: &str) -> Value {
+    if let Some(name) = export_type.strip_prefix("remote:") {
+        if let Some(obj) = dump.as_object() {
+            if let Some(cfg) = obj.get(name) {
+                return serde_json::json!({ name: cfg });
+            }
+        }
+        return serde_json::json!({});
+    }
+    dump.clone()
 }
 
 pub fn create_backup(
@@ -71,24 +98,32 @@ pub fn create_backup(
     zip.write_all(serde_json::to_string_pretty(&manifest).unwrap().as_bytes())
         .map_err(|e| e.to_string())?;
 
-    zip.start_file("settings.json", options)
-        .map_err(|e| e.to_string())?;
-    zip.write_all(serde_json::to_string_pretty(settings).unwrap().as_bytes())
-        .map_err(|e| e.to_string())?;
+    let rclone_dump = filter_rclone_dump(rclone_dump, export_type);
 
-    zip.start_file("store.json", options)
-        .map_err(|e| e.to_string())?;
-    zip.write_all(serde_json::to_string_pretty(store).unwrap().as_bytes())
-        .map_err(|e| e.to_string())?;
+    if includes_file(export_type, "settings.json") {
+        zip.start_file("settings.json", options)
+            .map_err(|e| e.to_string())?;
+        zip.write_all(serde_json::to_string_pretty(settings).unwrap().as_bytes())
+            .map_err(|e| e.to_string())?;
+    }
 
-    zip.start_file("rclone.json", options)
+    if includes_file(export_type, "store.json") {
+        zip.start_file("store.json", options)
+            .map_err(|e| e.to_string())?;
+        zip.write_all(serde_json::to_string_pretty(store).unwrap().as_bytes())
+            .map_err(|e| e.to_string())?;
+    }
+
+    if includes_file(export_type, "rclone.json") {
+        zip.start_file("rclone.json", options)
+            .map_err(|e| e.to_string())?;
+        zip.write_all(
+            serde_json::to_string_pretty(&rclone_dump)
+                .unwrap()
+                .as_bytes(),
+        )
         .map_err(|e| e.to_string())?;
-    zip.write_all(
-        serde_json::to_string_pretty(rclone_dump)
-            .unwrap()
-            .as_bytes(),
-    )
-    .map_err(|e| e.to_string())?;
+    }
 
     zip.finish().map_err(|e| e.to_string())?;
     Ok(dest.to_path_buf())
@@ -180,5 +215,39 @@ mod tests {
         assert!(s.is_some());
         assert!(st.is_some());
         assert_eq!(r.unwrap()["demo"]["type"], "local");
+    }
+
+    #[test]
+    fn category_filter_omits_unselected_files() {
+        assert!(includes_file("settings", "settings.json"));
+        assert!(!includes_file("settings", "store.json"));
+        assert!(includes_file("store", "store.json"));
+        assert!(!includes_file("rclone", "settings.json"));
+        assert!(includes_file("remote:demo", "rclone.json"));
+        let dump = serde_json::json!({ "demo": { "type": "local" }, "other": { "type": "drive" } });
+        let filtered = filter_rclone_dump(&dump, "remote:demo");
+        assert!(filtered.get("demo").is_some());
+        assert!(filtered.get("other").is_none());
+    }
+
+    #[test]
+    fn settings_only_backup_skips_store() {
+        let dir = tempfile::tempdir().unwrap();
+        let dest = dir.path().join("settings.zip");
+        create_backup(
+            &dest,
+            &AppSettings::default(),
+            &AppStore::default(),
+            &serde_json::json!({}),
+            "settings",
+            "",
+            None,
+        )
+        .unwrap();
+        let analysis = analyze_backup(&dest).unwrap();
+        assert!(analysis.has_settings);
+        assert!(!analysis.has_store);
+        assert!(!analysis.has_rclone_config);
+        assert_eq!(analysis.manifest.export_type, "settings");
     }
 }

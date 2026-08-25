@@ -551,6 +551,22 @@ impl NautilusView {
         self.list.selected_row().and_then(|row| row_name(&row))
     }
 
+    fn selected_names(&self) -> Vec<String> {
+        let mut names = Vec::new();
+        let mut child = self.list.first_child();
+        while let Some(widget) = child {
+            if let Ok(row) = widget.clone().downcast::<gtk::ListBoxRow>() {
+                if row.is_selected() {
+                    if let Some(name) = row_name(&row) {
+                        names.push(name);
+                    }
+                }
+            }
+            child = widget.next_sibling();
+        }
+        names
+    }
+
     fn open_name(&self, name: &str) {
         let current = self.current.borrow().clone();
         let next = join_remote_path(&current.path, name);
@@ -756,12 +772,27 @@ impl NautilusView {
     }
 
     fn rename_selected(&self) {
-        let Some(old) = self.selected_name() else {
+        let names = self.selected_names();
+        if names.is_empty() {
             return;
-        };
+        }
         let Some(win) = self.root.root().and_downcast::<gtk::Window>() else {
             return;
         };
+        if names.len() > 1 {
+            let current = self.current.borrow().clone();
+            let view = self.clone();
+            dialogs::multi_rename(
+                &win,
+                self.ctx.clone(),
+                &current.remote,
+                &current.path,
+                names,
+                Rc::new(move || view.reload()),
+            );
+            return;
+        }
+        let old = names[0].clone();
         let view = self.clone();
         dialogs::prompt(&win, "Rename", "New name", &old.clone(), move |new_name| {
             if new_name.is_empty() || new_name == old {

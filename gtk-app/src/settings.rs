@@ -44,6 +44,8 @@ pub struct CoreSettings {
     pub completed_onboarding: bool,
     #[serde(default)]
     pub extra_backends: Vec<BackendEntry>,
+    #[serde(default)]
+    pub active_backend: String,
 }
 
 impl Default for CoreSettings {
@@ -61,6 +63,7 @@ impl Default for CoreSettings {
             bandwidth_limit: String::new(),
             completed_onboarding: false,
             extra_backends: vec![],
+            active_backend: String::new(),
         }
     }
 }

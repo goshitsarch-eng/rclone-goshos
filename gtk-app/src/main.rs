@@ -7,8 +7,10 @@ mod operations;
 mod platform;
 mod providers;
 mod rclone;
+mod rename;
 mod settings;
 mod store;
+mod syntax;
 mod ui;
 mod updater;
 

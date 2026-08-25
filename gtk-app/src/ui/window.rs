@@ -85,6 +85,15 @@ pub fn present_main(app: &adw::Application, ctx: AppCtx) {
     header.pack_end(&menu_btn);
 
     let banner = adw::Banner::new("");
+    banner.set_button_label(Some("Repair"));
+    {
+        let ctx = ctx.clone();
+        let window = window.clone();
+        let toast = toast.clone();
+        banner.connect_button_clicked(move |_| {
+            dialogs::repair(&window, ctx.clone(), toast.clone());
+        });
+    }
     update_banner(&ctx, &banner);
 
     toolbar.add_top_bar(&header);

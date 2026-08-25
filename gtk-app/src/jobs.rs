@@ -3,7 +3,8 @@
 
 use crate::operations::OperationType;
 use crate::rclone::{remote_fs, RcClient, RcError};
-use crate::store::{quick_run_paths, ProfileConfig};
+use crate::store::{quick_run_paths, JobInfo, ProfileConfig};
+use chrono::{DateTime, Utc};
 use serde_json::{json, Map, Value};
 
 pub const SOURCE_KEYS: &[&str] = &["source", "srcFs", "path1", "fs"];
@@ -360,6 +361,159 @@ pub fn parse_cli_flags(cli: &str) -> Map<String, Value> {
     map
 }
 
+pub fn job_from_status(jobid: u64, status: &Value, stats: Option<&Value>) -> JobInfo {
+    let finished = status
+        .get("finished")
+        .and_then(|x| x.as_bool())
+        .unwrap_or(false);
+    let success = status
+        .get("success")
+        .and_then(|x| x.as_bool())
+        .unwrap_or(false);
+    let error = status
+        .get("error")
+        .and_then(|x| x.as_str())
+        .filter(|s| !s.is_empty())
+        .map(|s| s.to_string());
+    let output = status.get("output").cloned().unwrap_or(json!({}));
+    let src = first_path(&output, SOURCE_KEYS)
+        .or_else(|| first_path(&output, &["srcRemote", "src"]))
+        .unwrap_or_default();
+    let dst = first_path(&output, DEST_KEYS)
+        .or_else(|| first_path(&output, &["dstRemote", "dst"]))
+        .unwrap_or_default();
+    let operation = output
+        .get("operation")
+        .and_then(|x| x.as_str())
+        .or_else(|| status.get("group").and_then(|x| x.as_str()))
+        .unwrap_or("job")
+        .to_string();
+    let remote = infer_remote(&src)
+        .or_else(|| infer_remote(&dst))
+        .unwrap_or_default();
+    let group = status
+        .get("group")
+        .and_then(|x| x.as_str())
+        .map(|s| s.to_string())
+        .unwrap_or_else(|| format!("job/{jobid}"));
+    let start_time = status
+        .get("startTime")
+        .and_then(|x| x.as_str())
+        .and_then(|s| DateTime::parse_from_rfc3339(s).ok())
+        .map(|d| d.with_timezone(&Utc))
+        .unwrap_or_else(Utc::now);
+    let stats_value = stats.cloned().unwrap_or(json!({}));
+    let transferring = stats_value
+        .get("transferring")
+        .cloned()
+        .unwrap_or(json!([]));
+    let duration = status
+        .get("duration")
+        .and_then(|x| x.as_f64())
+        .unwrap_or(0.0);
+    let progress = progress_from_stats(&stats_value);
+    JobInfo {
+        id: jobid,
+        operation,
+        remote,
+        profile: status
+            .get("output")
+            .and_then(|o| o.get("profile"))
+            .and_then(|x| x.as_str())
+            .unwrap_or("default")
+            .to_string(),
+        status: if !finished {
+            "running".into()
+        } else if success {
+            "completed".into()
+        } else {
+            "failed".into()
+        },
+        origin: "dashboard".into(),
+        start_time,
+        error,
+        dry_run: output
+            .get("dryRun")
+            .or_else(|| output.get("dry_run"))
+            .and_then(|x| x.as_bool())
+            .unwrap_or(false),
+        src,
+        dst,
+        group,
+        stats: stats_value,
+        transferring,
+        duration,
+        progress,
+        output,
+    }
+}
+
+pub fn progress_from_stats(stats: &Value) -> f64 {
+    let bytes = stats.get("bytes").and_then(|x| x.as_f64()).unwrap_or(0.0);
+    let total = stats
+        .get("totalBytes")
+        .and_then(|x| x.as_f64())
+        .unwrap_or(0.0);
+    if total > 0.0 {
+        (bytes / total).clamp(0.0, 1.0)
+    } else {
+        stats
+            .get("transferring")
+            .and_then(|x| x.as_array())
+            .and_then(|arr| arr.first())
+            .and_then(|item| {
+                item.get("percentage")
+                    .or_else(|| item.get("percentageComplete"))
+            })
+            .and_then(|x| x.as_f64())
+            .map(|p| {
+                if p > 1.0 {
+                    (p / 100.0).clamp(0.0, 1.0)
+                } else {
+                    p.clamp(0.0, 1.0)
+                }
+            })
+            .unwrap_or(0.0)
+    }
+}
+
+fn infer_remote(path: &str) -> Option<String> {
+    if path.is_empty() || path.starts_with('/') {
+        return None;
+    }
+    path.split_once(':').map(|(name, _)| name.to_string())
+}
+
+pub const BANDWIDTH_PRESETS: &[(&str, &str)] = &[
+    ("off", "Unlimited"),
+    ("512K", "512 KB/s"),
+    ("1M", "1 MB/s"),
+    ("5M", "5 MB/s"),
+    ("10M", "10 MB/s"),
+    ("50M", "50 MB/s"),
+    ("10M:50M", "10M : 50M"),
+];
+
+pub fn normalize_bandwidth(value: &str) -> String {
+    let trimmed = value.trim();
+    if trimmed.is_empty() || trimmed.eq_ignore_ascii_case("off") || trimmed == "0" {
+        "off".into()
+    } else {
+        trimmed.to_string()
+    }
+}
+
+pub fn merge_template_into(dest: &mut Value, values: &Value) {
+    match (dest, values) {
+        (Value::Object(d), Value::Object(s)) => {
+            for (k, v) in s {
+                merge_template_into(d.entry(k.clone()).or_insert(json!({})), v);
+            }
+        }
+        (dest, src) => *dest = src.clone(),
+    }
+}
+
 pub fn profile_summary(op: OperationType, profile: &ProfileConfig) -> String {
     let (src, dst) = quick_run_paths(&profile.rclone, op);
     format!(
@@ -461,5 +615,68 @@ mod tests {
         assert!(!is_dry_run(&json!({})));
         let nested = json!({ "sync": { "srcFs": "a:", "dstFs": "b:" } });
         assert_eq!(flatten_rclone(&nested)["srcFs"], "a:");
+    }
+
+    #[test]
+    fn job_from_status_parses_stats() {
+        let status = json!({
+            "finished": false,
+            "success": false,
+            "duration": 12.5,
+            "startTime": "2026-08-25T00:00:00Z",
+            "group": "job/9",
+            "output": {
+                "operation": "sync",
+                "srcFs": "drive:Photos",
+                "dstFs": "/tmp/out",
+                "dryRun": true
+            }
+        });
+        let stats = json!({
+            "bytes": 50,
+            "totalBytes": 100,
+            "speed": 1024,
+            "transferring": [{ "name": "a.bin", "percentage": 50 }]
+        });
+        let job = job_from_status(9, &status, Some(&stats));
+        assert_eq!(job.id, 9);
+        assert_eq!(job.status, "running");
+        assert_eq!(job.operation, "sync");
+        assert_eq!(job.remote, "drive");
+        assert_eq!(job.src, "drive:Photos");
+        assert_eq!(job.dst, "/tmp/out");
+        assert!(job.dry_run);
+        assert!((job.progress - 0.5).abs() < f64::EPSILON);
+        assert_eq!(job.transferring[0]["name"], "a.bin");
+    }
+
+    #[test]
+    fn failed_job_status() {
+        let job = job_from_status(
+            1,
+            &json!({ "finished": true, "success": false, "error": "boom" }),
+            None,
+        );
+        assert_eq!(job.status, "failed");
+        assert_eq!(job.error.as_deref(), Some("boom"));
+    }
+
+    #[test]
+    fn bandwidth_off_aliases() {
+        assert_eq!(normalize_bandwidth(""), "off");
+        assert_eq!(normalize_bandwidth("OFF"), "off");
+        assert_eq!(normalize_bandwidth("10M"), "10M");
+    }
+
+    #[test]
+    fn merges_nested_templates() {
+        let mut dest = json!({ "main": { "transfers": 4 }, "keep": true });
+        merge_template_into(
+            &mut dest,
+            &json!({ "main": { "transfers": 8, "checkers": 2 } }),
+        );
+        assert_eq!(dest["main"]["transfers"], 8);
+        assert_eq!(dest["main"]["checkers"], 2);
+        assert_eq!(dest["keep"], true);
     }
 }

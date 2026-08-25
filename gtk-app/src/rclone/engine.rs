@@ -162,6 +162,40 @@ pub fn validate_cron(expression: &str) -> Result<(), String> {
         .map_err(|e| e.to_string())
 }
 
+pub fn describe_cron(expression: &str) -> String {
+    let parts: Vec<&str> = expression.split_whitespace().collect();
+    if parts.len() < 5 {
+        return expression.to_string();
+    }
+    let (min, hour, dom, mon, dow) = (parts[0], parts[1], parts[2], parts[3], parts[4]);
+    if min.starts_with("*/") && hour == "*" && dom == "*" && mon == "*" && dow == "*" {
+        return format!("Every {} minutes", min.trim_start_matches("*/"));
+    }
+    if min == "0" && hour.starts_with("*/") && dom == "*" && mon == "*" && dow == "*" {
+        return format!("Every {} hours", hour.trim_start_matches("*/"));
+    }
+    if min == "*" && hour == "*" && dom == "*" && mon == "*" && dow == "*" {
+        return "Every minute".into();
+    }
+    if min.chars().all(|c| c.is_ascii_digit())
+        && hour.chars().all(|c| c.is_ascii_digit())
+        && dom == "*"
+        && mon == "*"
+        && dow == "*"
+    {
+        return format!("Daily at {hour}:{min:0>2}");
+    }
+    if min.chars().all(|c| c.is_ascii_digit())
+        && hour.chars().all(|c| c.is_ascii_digit())
+        && dom == "*"
+        && mon == "*"
+        && dow.chars().all(|c| c.is_ascii_digit())
+    {
+        return format!("Weekly on day {dow} at {hour}:{min:0>2}");
+    }
+    expression.to_string()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -180,6 +214,9 @@ mod tests {
         assert!(validate_cron("*/5 * * * *").is_ok());
         assert!(validate_cron("").is_err());
         assert!(validate_cron("not a cron").is_err());
+        assert_eq!(describe_cron("*/5 * * * *"), "Every 5 minutes");
+        assert_eq!(describe_cron("0 */2 * * *"), "Every 2 hours");
+        assert_eq!(describe_cron("30 8 * * *"), "Daily at 8:30");
     }
 
     #[test]

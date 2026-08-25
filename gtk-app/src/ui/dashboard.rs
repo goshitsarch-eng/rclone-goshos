@@ -258,12 +258,7 @@ impl Dashboard {
         self.overview.append(&section_label("Remotes"));
         let list = gtk::ListBox::new();
         list.add_css_class("boxed-list");
-        for remote in snap.remotes.iter().filter(|r| match tab {
-            AppTab::Mount => true,
-            AppTab::Serve => true,
-            AppTab::Operations => true,
-            AppTab::General => true,
-        }) {
+        for remote in snap.remotes.iter() {
             if remote.hidden {
                 continue;
             }
@@ -350,7 +345,7 @@ impl Dashboard {
                     let dash = self.clone();
                     row.connect_activated(move |_| {
                         if let Some(win) = dash.root.root().and_downcast::<gtk::Window>() {
-                            dialogs::job_detail(&win, &job);
+                            dialogs::job_detail(&win, dash.ctx.clone(), job.id);
                         }
                     });
                 }
@@ -376,8 +371,7 @@ impl Dashboard {
         }
         self.overview.append(&serves);
 
-        self.overview.append(&section_label("System"));
-        let sys = adw::ActionRow::new();
+        self.overview.append(&section_label("Bandwidth"));
         let bytes = snap
             .stats
             .get("bytes")
@@ -388,12 +382,95 @@ impl Dashboard {
             .get("speed")
             .and_then(|x| x.as_f64())
             .unwrap_or(0.0);
-        sys.set_title("Bandwidth");
-        sys.set_subtitle(&format!(
+        let bw_group = gtk::ListBox::new();
+        bw_group.add_css_class("boxed-list");
+        let current = adw::ActionRow::new();
+        current.set_title("Current transfer");
+        current.set_subtitle(&format!(
             "{} transferred · {:.1} KiB/s",
             format_bytes(bytes),
             speed / 1024.0
         ));
+        bw_group.append(&current);
+        let limit = ctx_settings_bandwidth(&self.ctx);
+        let limit_row = adw::ActionRow::new();
+        limit_row.set_title("Limit");
+        limit_row.set_subtitle(&if limit.is_empty() || limit == "off" {
+            "Unlimited".into()
+        } else {
+            limit.clone()
+        });
+        bw_group.append(&limit_row);
+        self.overview.append(&bw_group);
+        let presets = gtk::Box::new(gtk::Orientation::Horizontal, 6);
+        presets.set_margin_top(8);
+        presets.add_css_class("linked");
+        for (value, label) in crate::jobs::BANDWIDTH_PRESETS {
+            let btn = gtk::Button::with_label(label);
+            let ctx = self.ctx.clone();
+            let dash = self.clone();
+            let value = (*value).to_string();
+            btn.connect_clicked(move |_| {
+                apply_bandwidth(&ctx, &value);
+                dash.refresh();
+            });
+            presets.append(&btn);
+        }
+        self.overview.append(&presets);
+        let custom = adw::EntryRow::new();
+        custom.set_title("Custom limit (e.g. 2M or 1M:10M)");
+        custom.set_text(&limit);
+        let apply = gtk::Button::with_label("Apply");
+        apply.set_valign(gtk::Align::Center);
+        {
+            let ctx = self.ctx.clone();
+            let dash = self.clone();
+            let custom = custom.clone();
+            apply.connect_clicked(move |_| {
+                apply_bandwidth(&ctx, &custom.text());
+                dash.refresh();
+            });
+        }
+        custom.add_suffix(&apply);
+        self.overview.append(&custom);
+
+        self.overview.append(&section_label("System"));
+        let sys = gtk::ListBox::new();
+        sys.add_css_class("boxed-list");
+        let version = self
+            .ctx
+            .engine
+            .borrow()
+            .as_ref()
+            .map(|e| e.version.clone())
+            .filter(|s| !s.is_empty())
+            .or_else(|| self.ctx.client().and_then(|c| c.version().ok()))
+            .unwrap_or_else(|| "unknown".into());
+        let ver_row = adw::ActionRow::new();
+        ver_row.set_title("rclone");
+        ver_row.set_subtitle(&version);
+        sys.append(&ver_row);
+        if let Some(mem) = self.ctx.client().and_then(|c| c.memstats().ok()) {
+            let alloc = mem.get("Alloc").and_then(|x| x.as_i64()).unwrap_or(0);
+            let sys_bytes = mem.get("Sys").and_then(|x| x.as_i64()).unwrap_or(0);
+            let row = adw::ActionRow::new();
+            row.set_title("Memory");
+            row.set_subtitle(&format!(
+                "{} alloc · {} sys",
+                format_bytes(alloc),
+                format_bytes(sys_bytes)
+            ));
+            sys.append(&row);
+        }
+        let jobs_row = adw::ActionRow::new();
+        jobs_row.set_title("Activity");
+        jobs_row.set_subtitle(&format!(
+            "{} running jobs · {} mounts · {} serves",
+            snap.jobs.iter().filter(|j| j.status == "running").count(),
+            snap.mounts.len(),
+            snap.serves.len()
+        ));
+        sys.append(&jobs_row);
         self.overview.append(&sys);
     }
 
@@ -756,5 +833,22 @@ fn scrolled(child: &impl IsA<gtk::Widget>) -> gtk::ScrolledWindow {
 fn clear_box(box_: &gtk::Box) {
     while let Some(child) = box_.first_child() {
         box_.remove(&child);
+    }
+}
+
+fn ctx_settings_bandwidth(ctx: &AppCtx) -> String {
+    ctx.settings.borrow().core.bandwidth_limit.clone()
+}
+
+fn apply_bandwidth(ctx: &AppCtx, value: &str) {
+    let rate = crate::jobs::normalize_bandwidth(value);
+    ctx.settings.borrow_mut().core.bandwidth_limit = if rate == "off" {
+        String::new()
+    } else {
+        rate.clone()
+    };
+    ctx.persist();
+    if let Some(client) = ctx.client() {
+        let _ = client.bwlimit(Some(&rate));
     }
 }

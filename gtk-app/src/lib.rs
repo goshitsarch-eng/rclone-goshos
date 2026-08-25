@@ -9,8 +9,10 @@ pub mod operations;
 pub mod platform;
 pub mod providers;
 pub mod rclone;
+pub mod rename;
 pub mod settings;
 pub mod store;
+pub mod syntax;
 pub mod updater;
 
 pub const APP_ID: &str = "io.github.zarestia_dev.rclone-manager";

@@ -56,15 +56,59 @@ impl AppCtx {
     }
 
     pub fn client(&self) -> Option<crate::rclone::RcClient> {
+        let settings = self.settings.borrow();
+        let active = settings.core.active_backend.clone();
+        if !active.is_empty() && active != "local" {
+            if let Some(entry) = settings
+                .core
+                .extra_backends
+                .iter()
+                .find(|b| b.name == active)
+            {
+                let user = if entry.user.is_empty() {
+                    None
+                } else {
+                    Some(entry.user.clone())
+                };
+                let pass = if entry.pass.is_empty() {
+                    None
+                } else {
+                    Some(entry.pass.clone())
+                };
+                return Some(
+                    crate::rclone::RcClient::new(&entry.host, entry.port).with_auth(user, pass),
+                );
+            }
+        }
+        drop(settings);
         self.engine.borrow().as_ref().map(|e| e.client.clone())
     }
 
     pub fn engine_ready(&self) -> bool {
+        let settings = self.settings.borrow();
+        if !settings.core.active_backend.is_empty() && settings.core.active_backend != "local" {
+            return settings
+                .core
+                .extra_backends
+                .iter()
+                .any(|b| b.name == settings.core.active_backend);
+        }
+        drop(settings);
         self.engine
             .borrow()
             .as_ref()
             .map(|e| e.available)
             .unwrap_or(false)
+    }
+
+    pub fn restart_engine(&self) {
+        let settings = self.settings.borrow().clone();
+        *self.engine.borrow_mut() = Some(crate::rclone::RcloneEngine::start(&settings));
+        if self.engine_ready() {
+            self.start_autostarts();
+        } else {
+            self.refresh_runtime();
+        }
     }
 
     pub fn refresh_runtime(&self) {
@@ -187,44 +231,13 @@ fn collect_jobs(client: &crate::rclone::RcClient) -> Vec<crate::store::JobInfo> 
         let Ok(status) = client.job_status(jobid) else {
             continue;
         };
-        let finished = status
-            .get("finished")
-            .and_then(|x| x.as_bool())
-            .unwrap_or(false);
-        let success = status
-            .get("success")
-            .and_then(|x| x.as_bool())
-            .unwrap_or(false);
-        let error = status
-            .get("error")
+        let group = status
+            .get("group")
             .and_then(|x| x.as_str())
-            .filter(|s| !s.is_empty())
-            .map(|s| s.to_string());
-        jobs.push(crate::store::JobInfo {
-            id: jobid,
-            operation: status
-                .get("output")
-                .and_then(|o| o.get("operation"))
-                .and_then(|x| x.as_str())
-                .unwrap_or("job")
-                .to_string(),
-            remote: String::new(),
-            profile: "default".into(),
-            status: if !finished {
-                "running".into()
-            } else if success {
-                "completed".into()
-            } else {
-                "failed".into()
-            },
-            origin: "dashboard".into(),
-            start_time: chrono::Utc::now(),
-            error,
-            dry_run: false,
-            src: String::new(),
-            dst: String::new(),
-            group: format!("job/{jobid}"),
-        });
+            .map(|s| s.to_string())
+            .unwrap_or_else(|| format!("job/{jobid}"));
+        let stats = client.stats(Some(&group)).ok();
+        jobs.push(crate::jobs::job_from_status(jobid, &status, stats.as_ref()));
     }
     jobs
 }
