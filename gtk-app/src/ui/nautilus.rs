@@ -259,6 +259,40 @@ impl NautilusView {
             }
             view.list.add_controller(drop);
         }
+        {
+            let view = view.clone();
+            let list = view.list.clone();
+            let drag = gtk::GestureDrag::new();
+            drag.connect_drag_end(move |g, _, _| {
+                let Some((_, y)) = g.start_point() else {
+                    return;
+                };
+                let Some((_, ey)) = g.offset() else {
+                    return;
+                };
+                let y1 = y.min(y + ey);
+                let y2 = y.max(y + ey);
+                if (y2 - y1).abs() < 12.0 {
+                    return;
+                }
+                view.list.unselect_all();
+                let mut child = view.list.first_child();
+                let mut acc = 0.0;
+                while let Some(row) = child {
+                    let h = row.height() as f64;
+                    let top = acc;
+                    let bottom = acc + h;
+                    if bottom >= y1 && top <= y2 {
+                        if let Ok(list_row) = row.clone().downcast::<gtk::ListBoxRow>() {
+                            view.list.select_row(Some(&list_row));
+                        }
+                    }
+                    acc = bottom;
+                    child = row.next_sibling();
+                }
+            });
+            list.add_controller(drag);
+        }
 
         view.reload_sidebar();
         view.reload();

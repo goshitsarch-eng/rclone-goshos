@@ -37,8 +37,15 @@ This client is the GTK 4 + libadwaita rewrite of the Angular/Tauri desktop UI. I
 - Linux Send-to (Nautilus/Dolphin/Nemo) and `--send-to-remote` CLI upload path
 - Autostart + prevent-sleep inhibitor while jobs/mounts/serves are active
 
+- Profile-aware operation start dialog (src/dst/URL/mount/serve type, dry-run, static flags)
+- Per-operation profiles in the remote wizard, CLI flag import, obscure tool
+- Autostart of saved profiles and quick runs
+- Remote order / visibility editor
+- Editable local text files in the viewer
+- Nautilus drag-lasso multi-select
+
 ## Still deepening toward pixel-level Angular parity
 
-- Nautilus lasso / CodeMirror-class text editor chrome
-- Per-profile flag forms identical to every Angular wizard step
+- CodeMirror-class syntax highlighting in the text viewer
 - Standalone dialog windows (Tauri multi-window) and Windows/macOS send-to
+- Live GUI session against rclone rcd (no display in this environment)

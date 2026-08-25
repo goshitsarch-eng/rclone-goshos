@@ -125,6 +125,7 @@ pub fn present_main(app: &adw::Application, ctx: AppCtx) {
         glib::ControlFlow::Continue
     });
 
+    ctx.start_autostarts();
     window.present();
 }
 
@@ -150,6 +151,7 @@ fn app_menu() -> gio::Menu {
     prefs.append(Some("Keyboard Shortcuts"), Some("win.shortcuts"));
     prefs.append(Some("Templates"), Some("win.templates"));
     prefs.append(Some("Install rclone"), Some("win.install-rclone"));
+    prefs.append(Some("Remote order"), Some("win.item-order"));
     menu.append_section(None, &prefs);
 
     let views = gio::Menu::new();
@@ -290,6 +292,20 @@ fn install_actions(
         add_action(
             "install-rclone",
             Box::new(move || dialogs::install_rclone_update(&window, ctx.clone(), toast.clone())),
+        );
+    }
+    {
+        let ctx = ctx.clone();
+        let window = window.clone();
+        let dash = dashboard.clone();
+        add_action(
+            "item-order",
+            Box::new(move || {
+                dialogs::item_order(&window, ctx.clone(), {
+                    let dash = dash.clone();
+                    Rc::new(move || dash.refresh())
+                })
+            }),
         );
     }
     {

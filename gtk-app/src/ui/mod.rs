@@ -113,6 +113,41 @@ impl AppCtx {
         self.inhibitor.borrow_mut().update(running, &reason);
     }
 
+    pub fn start_autostarts(&self) {
+        let Some(client) = self.client() else {
+            return;
+        };
+        let remotes = self.store.borrow().remotes.clone();
+        for (name, meta) in remotes {
+            for (op_key, profiles) in meta.profiles {
+                let Some(op) = crate::operations::OperationType::parse(&op_key) else {
+                    continue;
+                };
+                for profile in profiles.values() {
+                    if profile.app.auto_start {
+                        if let Err(e) = crate::jobs::start_profile(&client, &name, op, profile) {
+                            log::warn!("autostart {op} on {name} failed: {e}");
+                        }
+                    }
+                }
+            }
+        }
+        let quick_runs = self.store.borrow().quick_runs.clone();
+        for qr in quick_runs {
+            if qr.config.app.auto_start {
+                if let Err(e) = crate::jobs::start_profile(
+                    &client,
+                    &qr.remote_name,
+                    qr.operation_type,
+                    &qr.config,
+                ) {
+                    log::warn!("autostart quick run {} failed: {e}", qr.name);
+                }
+            }
+        }
+        self.refresh_runtime();
+    }
+
     pub fn toast(&self, overlay: &adw::ToastOverlay, message: impl AsRef<str>) {
         overlay.add_toast(adw::Toast::new(message.as_ref()));
     }

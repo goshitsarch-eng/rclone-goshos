@@ -4,6 +4,7 @@ pub mod backup;
 pub mod flags;
 pub mod i18n;
 pub mod interactive;
+pub mod jobs;
 pub mod operations;
 pub mod platform;
 pub mod providers;

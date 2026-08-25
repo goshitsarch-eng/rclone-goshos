@@ -33,6 +33,12 @@ pub struct AppConfig {
     pub watch_enabled: bool,
     pub watch_delay: u64,
     pub watch_changed_only: bool,
+    #[serde(default)]
+    pub vfs_profile: String,
+    #[serde(default)]
+    pub filter_profile: String,
+    #[serde(default)]
+    pub backend_profile: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

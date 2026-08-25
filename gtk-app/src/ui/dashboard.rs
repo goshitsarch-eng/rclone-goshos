@@ -189,7 +189,17 @@ impl Dashboard {
         }
         let query = self.search.text().to_lowercase();
         let snap = self.ctx.snapshot.borrow();
-        for remote in &snap.remotes {
+        let order = self.ctx.store.borrow().remote_order.clone();
+        let mut remotes: Vec<_> = snap.remotes.iter().collect();
+        if !order.is_empty() {
+            remotes.sort_by_key(|r| {
+                order
+                    .iter()
+                    .position(|n| n == &r.name)
+                    .unwrap_or(usize::MAX)
+            });
+        }
+        for remote in remotes {
             if remote.hidden {
                 continue;
             }
@@ -437,8 +447,15 @@ impl Dashboard {
                 let toast = self.toast.clone();
                 let dash = self.clone();
                 btn.connect_clicked(move |_| {
-                    start_operation(&ctx, &name, op, &toast);
-                    dash.refresh();
+                    if let Some(win) = dash.root.root().and_downcast::<gtk::Window>() {
+                        dialogs::start_operation(&win, ctx.clone(), &name, op, toast.clone(), {
+                            let dash = dash.clone();
+                            Rc::new(move || dash.refresh())
+                        });
+                    } else {
+                        start_operation(&ctx, &name, op, &toast);
+                        dash.refresh();
+                    }
                 });
             }
             chips.append(&btn);
@@ -568,6 +585,30 @@ impl Dashboard {
         }
         self.detail.append(&vfs);
 
+        self.detail.append(&section_label("Profiles"));
+        let plist = gtk::ListBox::new();
+        plist.add_css_class("boxed-list");
+        if let Some(meta) = self.ctx.store.borrow().remotes.get(&name) {
+            for (op, profiles) in &meta.profiles {
+                for (pname, profile) in profiles {
+                    let row = adw::ActionRow::new();
+                    row.set_title(&format!("{op} / {pname}"));
+                    row.set_subtitle(&crate::jobs::profile_summary(
+                        crate::operations::OperationType::parse(op)
+                            .unwrap_or(crate::operations::OperationType::Sync),
+                        profile,
+                    ));
+                    plist.append(&row);
+                }
+            }
+        }
+        if plist.first_child().is_none() {
+            let row = adw::ActionRow::new();
+            row.set_title("No saved profiles — configure the remote to add them");
+            plist.append(&row);
+        }
+        self.detail.append(&plist);
+
         self.detail
             .append(&section_label("Quick Runs for this remote"));
         let qlist = gtk::ListBox::new();
@@ -628,39 +669,30 @@ fn start_operation(ctx: &AppCtx, name: &str, op: OperationType, toast: &adw::Toa
         toast.add_toast(adw::Toast::new("Rclone engine is offline"));
         return;
     };
-    match op {
-        OperationType::Mount => {
-            let mounted = ctx
-                .snapshot
-                .borrow()
-                .mounts
-                .iter()
-                .any(|m| m.fs.starts_with(&format!("{name}:")));
-            toggle_mount(ctx, name, mounted, toast);
+    if op == OperationType::Mount {
+        let mounted = ctx
+            .snapshot
+            .borrow()
+            .mounts
+            .iter()
+            .any(|m| m.fs.starts_with(&format!("{name}:")));
+        if mounted {
+            toggle_mount(ctx, name, true, toast);
+            return;
         }
-        OperationType::Serve => {
-            match client.serve_start("webdav", &remote_fs(name, ""), "127.0.0.1:0") {
-                Ok(v) => {
-                    let addr = v.get("addr").and_then(|x| x.as_str()).unwrap_or("started");
-                    toast.add_toast(adw::Toast::new(&format!("Serving at {addr}")));
-                }
-                Err(e) => toast.add_toast(adw::Toast::new(&e.to_string())),
-            }
-        }
-        other => {
-            if let Some(endpoint) = other.rc_job_endpoint() {
-                let params = serde_json::json!({
-                    "srcFs": remote_fs(name, ""),
-                    "dstFs": remote_fs(name, ""),
-                });
-                match client.start_job(endpoint, params) {
-                    Ok(id) => {
-                        toast.add_toast(adw::Toast::new(&format!("Started {} job #{id}", other)))
-                    }
-                    Err(e) => toast.add_toast(adw::Toast::new(&e.to_string())),
-                }
-            }
-        }
+    }
+    let profile = ctx
+        .store
+        .borrow()
+        .remotes
+        .get(name)
+        .and_then(|m| m.profiles.get(op.as_str()))
+        .and_then(|m| m.get("default"))
+        .cloned()
+        .unwrap_or_default();
+    match crate::jobs::start_profile(&client, name, op, &profile) {
+        Ok(id) => toast.add_toast(adw::Toast::new(&format!("Started {op} {id}"))),
+        Err(e) => toast.add_toast(adw::Toast::new(&e)),
     }
     ctx.refresh_runtime();
 }

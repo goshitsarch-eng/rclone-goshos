@@ -2,6 +2,7 @@ mod backup;
 mod flags;
 mod i18n;
 mod interactive;
+mod jobs;
 mod operations;
 mod platform;
 mod providers;

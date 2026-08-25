@@ -3,6 +3,7 @@ use crate::interactive::{
     apply_interactive_response, is_continue_disabled, update_interactive_answer, InteractiveAnswer,
     InteractiveFlowState,
 };
+use crate::jobs::parse_cli_flags;
 use crate::operations::OperationType;
 use crate::providers::{parse_providers, Provider, ProviderOption};
 use crate::rclone::remote_fs;
@@ -112,6 +113,42 @@ pub fn present(
     tray.set_active(true);
     let autostart = adw::SwitchRow::new();
     autostart.set_title("Auto-start mount / jobs");
+    let cli = adw::EntryRow::new();
+    cli.set_title("Import CLI flags (--transfers 8 --vfs-cache-mode full)");
+    let obscure_in = adw::EntryRow::new();
+    obscure_in.set_title("Obscure a secret");
+    let obscure_btn = gtk::Button::with_label("Obscure");
+    {
+        let ctx = ctx.clone();
+        let obscure_in = obscure_in.clone();
+        obscure_btn.connect_clicked(move |_| {
+            if let Some(client) = ctx.client() {
+                if let Ok(out) = client.obscure(&obscure_in.text()) {
+                    obscure_in.set_text(&out);
+                }
+            }
+        });
+    }
+    let op_flags: Rc<RefCell<Vec<(OperationType, adw::SwitchRow, adw::EntryRow, adw::EntryRow)>>> =
+        Rc::new(RefCell::new(Vec::new()));
+    let ops_group = adw::PreferencesGroup::new();
+    ops_group.set_title("Per-operation profiles");
+    for op in OperationType::ALL {
+        let enable = adw::SwitchRow::new();
+        enable.set_title(&format!("Configure {}", op.api_label()));
+        enable.set_active(matches!(
+            op,
+            OperationType::Mount | OperationType::Sync | OperationType::Serve
+        ));
+        let osrc = adw::EntryRow::new();
+        osrc.set_title(&format!("{} source", op.as_str()));
+        let odst = adw::EntryRow::new();
+        odst.set_title(&format!("{} destination / mount / addr", op.as_str()));
+        ops_group.add(&enable);
+        ops_group.add(&osrc);
+        ops_group.add(&odst);
+        op_flags.borrow_mut().push((op, enable, osrc, odst));
+    }
 
     let question_title = gtk::Label::new(Some("Interactive configuration"));
     question_title.add_css_class("title-4");
@@ -170,7 +207,10 @@ pub fn present(
     pgroup.add(&cron);
     pgroup.add(&tray);
     pgroup.add(&autostart);
+    pgroup.add(&cli);
+    pgroup.add(&obscure_in);
     profiles.add(&pgroup);
+    profiles.add(&ops_group);
     nav.add_titled(&profiles, Some("profiles"), "Profiles");
 
     let switcher = adw::ViewSwitcher::new();
@@ -288,6 +328,8 @@ pub fn present(
         let cron = cron.clone();
         let tray = tray.clone();
         let autostart = autostart.clone();
+        let op_flags = op_flags.clone();
+        let cli = cli.clone();
         save.connect_clicked(move |_| {
             let remote_name = name.text().to_string();
             if remote_name.is_empty() {
@@ -326,6 +368,8 @@ pub fn present(
                             &cron.text(),
                             tray.is_active(),
                             autostart.is_active(),
+                            &cli.text(),
+                            &op_flags.borrow(),
                         );
                         on_done();
                         dialog.close();
@@ -531,46 +575,66 @@ fn persist_meta(
     cron: &str,
     tray: bool,
     autostart: bool,
+    cli: &str,
+    op_flags: &[(OperationType, adw::SwitchRow, adw::EntryRow, adw::EntryRow)],
 ) {
     let mut meta = RemoteMeta {
         show_on_tray: tray,
         ..RemoteMeta::default()
     };
-    let mut profile = ProfileConfig {
-        name: "default".into(),
-        app: AppConfig {
-            auto_start: autostart,
-            cron_enabled: !cron.is_empty(),
-            cron_expression: cron.to_string(),
-            ..AppConfig::default()
-        },
-        rclone: json!({
-            "srcFs": src,
-            "dstFs": dst,
-            "mountPoint": mount,
+    let extra = parse_cli_flags(cli);
+    for (op, enable, osrc, odst) in op_flags {
+        if !enable.is_active() {
+            continue;
+        }
+        let mut source = osrc.text().to_string();
+        let mut dest = odst.text().to_string();
+        if source.is_empty() {
+            source = src.to_string();
+        }
+        if dest.is_empty() {
+            dest = if *op == OperationType::Mount {
+                mount.to_string()
+            } else {
+                dst.to_string()
+            };
+        }
+        if source.is_empty() {
+            source = remote_fs(remote_name, "");
+        }
+        let mut rclone = json!({
+            "srcFs": source,
+            "dstFs": dest,
+            "mountPoint": if *op == OperationType::Mount { dest.clone() } else { mount.to_string() },
             "fs": remote_fs(remote_name, ""),
+            "path1": source,
+            "path2": dest,
             "type": OperationType::SERVE_TYPES
                 .get(serve_idx as usize)
                 .unwrap_or(&"webdav")
-        }),
-    };
-    if profile
-        .rclone
-        .get("srcFs")
-        .and_then(|x| x.as_str())
-        .unwrap_or("")
-        .is_empty()
-    {
-        profile.rclone["srcFs"] = json!(remote_fs(remote_name, ""));
+        });
+        if let Some(obj) = rclone.as_object_mut() {
+            obj.extend(extra.clone());
+        }
+        let profile = ProfileConfig {
+            name: "default".into(),
+            app: AppConfig {
+                auto_start: autostart
+                    && matches!(
+                        *op,
+                        OperationType::Mount | OperationType::Sync | OperationType::Serve
+                    ),
+                cron_enabled: !cron.is_empty(),
+                cron_expression: cron.to_string(),
+                ..AppConfig::default()
+            },
+            rclone,
+        };
+        meta.profiles
+            .entry(op.as_str().into())
+            .or_default()
+            .insert("default".into(), profile);
     }
-    meta.profiles
-        .entry("mount".into())
-        .or_default()
-        .insert("default".into(), profile.clone());
-    meta.profiles
-        .entry("sync".into())
-        .or_default()
-        .insert("default".into(), profile);
     ctx.store
         .borrow_mut()
         .remotes
