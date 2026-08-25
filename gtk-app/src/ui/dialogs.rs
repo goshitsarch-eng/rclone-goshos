@@ -7281,11 +7281,23 @@ pub(super) fn check_result_row(
     row.set_title(&item.name);
     row.set_subtitle(&item.status);
     if let Some(kind) = item.resolve_kind() {
-        let resolve = gtk::Button::with_label(if item.needs_overwrite_confirm() {
-            "Overwrite"
+        let resolve_label = if item.needs_overwrite_confirm() {
+            ctx.t_or(
+                "shared.transferActivity.actions.overwriteDst",
+                "Overwrite Destination",
+            )
+        } else if kind == "copy_dst_to_src" {
+            ctx.t_or(
+                "shared.transferActivity.actions.resolveToSrc",
+                "Copy to Source",
+            )
         } else {
-            "Resolve"
-        });
+            ctx.t_or(
+                "shared.transferActivity.actions.resolveToDst",
+                "Copy to Destination",
+            )
+        };
+        let resolve = gtk::Button::with_label(&resolve_label);
         resolve.set_valign(gtk::Align::Center);
         let ctx = ctx.clone();
         let item = item.clone();
@@ -7293,12 +7305,23 @@ pub(super) fn check_result_row(
         resolve.connect_clicked(move |_| {
             let go = || resolve_check_item(&ctx, &item, kind);
             if item.needs_overwrite_confirm() {
-                let confirm = adw::AlertDialog::new(
-                    Some("Overwrite destination?"),
-                    Some(&format!("Copy {} onto the destination copy.", item.name)),
+                let title = ctx.t_or(
+                    "shared.transferActivity.actions.resolveOverwriteTitle",
+                    "Resolve File Mismatch",
                 );
-                confirm.add_response("cancel", "Cancel");
-                confirm.add_response("ok", "Overwrite");
+                let message = ctx.tf(
+                    "shared.transferActivity.actions.resolveOverwriteMessage",
+                    &[("name", &item.name)],
+                );
+                let confirm = adw::AlertDialog::new(Some(&title), Some(&message));
+                confirm.add_response("cancel", &ctx.t_or("common.cancel", "Cancel"));
+                confirm.add_response(
+                    "ok",
+                    &ctx.t_or(
+                        "shared.transferActivity.actions.overwriteDst",
+                        "Overwrite Destination",
+                    ),
+                );
                 confirm.set_response_appearance("ok", adw::ResponseAppearance::Destructive);
                 let ctx = ctx.clone();
                 let item = item.clone();
@@ -7315,7 +7338,11 @@ pub(super) fn check_result_row(
         row.add_suffix(&resolve);
     }
     let del_src = gtk::Button::from_icon_name("edit-delete-symbolic");
-    del_src.set_tooltip_text(Some("Delete source"));
+    let del_src_tip = ctx.t_or(
+        "shared.transferActivity.actions.deleteSource",
+        "Delete source",
+    );
+    del_src.set_tooltip_text(Some(&del_src_tip));
     del_src.set_valign(gtk::Align::Center);
     {
         let ctx = ctx.clone();
@@ -7325,7 +7352,11 @@ pub(super) fn check_result_row(
         });
     }
     let del_dst = gtk::Button::from_icon_name("user-trash-symbolic");
-    del_dst.set_tooltip_text(Some("Delete destination"));
+    let del_dst_tip = ctx.t_or(
+        "shared.transferActivity.actions.deleteDestination",
+        "Delete destination",
+    );
+    del_dst.set_tooltip_text(Some(&del_dst_tip));
     del_dst.set_valign(gtk::Align::Center);
     {
         let ctx = ctx.clone();
