@@ -1045,7 +1045,6 @@ impl FlowView {
             "dashboard.generalDetail.remoteConfiguration",
             "Remote Configuration",
         )));
-        let restrict = self.ctx.settings.borrow().general.restrict;
         let dump = self
             .ctx
             .client()
@@ -1053,36 +1052,8 @@ impl FlowView {
             .unwrap_or(serde_json::json!({}));
         let params =
             crate::providers::dump_remote_params(&dump, name).unwrap_or(serde_json::json!({}));
-        let entries = crate::restrict::flatten_settings("", &params, restrict);
-        let list = gtk::ListBox::new();
-        list.add_css_class("boxed-list");
-        if entries.is_empty() {
-            let row = adw::ActionRow::new();
-            row.set_title(
-                &self
-                    .ctx
-                    .t_or("detailShared.settings.noData", "No settings to show"),
-            );
-            row.set_subtitle(
-                &self
-                    .ctx
-                    .t_or("detailShared.settings.notConfigured", "Not configured"),
-            );
-            list.append(&row);
-        } else {
-            let count = adw::ActionRow::new();
-            count.set_title(&self.ctx.tf(
-                "detailShared.settings.metrics",
-                &[("count", &entries.len().to_string())],
-            ));
-            list.append(&count);
-            for (key, value) in entries.into_iter().take(24) {
-                let row = adw::ActionRow::new();
-                row.set_title(&key);
-                row.set_subtitle(&value);
-                list.append(&row);
-            }
-        }
+        self.content
+            .append(&dialogs::settings_list(&self.ctx, &params, 24));
         let edit = gtk::Button::with_label(&self.ctx.t_or(
             "dashboard.generalDetail.editConfiguration",
             "Edit Configuration",
@@ -1093,7 +1064,6 @@ impl FlowView {
             let remote = name.to_string();
             edit.connect_clicked(move |_| view.open_remote_config_step(&remote, "remote"));
         }
-        self.content.append(&list);
         self.content.append(&edit);
     }
 
@@ -1426,6 +1396,17 @@ impl FlowView {
             });
         }
         self.content.append(&tray);
+
+        self.content.append(
+            &self.heading(
+                &self
+                    .ctx
+                    .t_or("flow.quickRun.detail.configuration", "Configuration"),
+            ),
+        );
+        let config_value = serde_json::to_value(&qr.config).unwrap_or(serde_json::json!({}));
+        self.content
+            .append(&dialogs::settings_list(&self.ctx, &config_value, 24));
 
         if let Some(job) = qr.last_job_id.and_then(|id| {
             self.ctx

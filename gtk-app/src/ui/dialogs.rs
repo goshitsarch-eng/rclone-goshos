@@ -128,6 +128,40 @@ fn try_spawn_standalone(ctx: &AppCtx, kind: &str, data: serde_json::Value) -> bo
     true
 }
 
+pub(super) fn settings_list(
+    ctx: &AppCtx,
+    settings: &serde_json::Value,
+    limit: usize,
+) -> gtk::ListBox {
+    let restrict = ctx.settings.borrow().general.restrict;
+    let entries = crate::restrict::flatten_settings("", settings, restrict);
+    let list = gtk::ListBox::new();
+    list.add_css_class("boxed-list");
+    if entries.is_empty() {
+        let row = adw::ActionRow::new();
+        row.set_title(&ctx.t_or(
+            "detailShared.settings.noData",
+            "No configuration data available",
+        ));
+        row.set_subtitle(&ctx.t_or("detailShared.settings.notConfigured", "Not configured"));
+        list.append(&row);
+        return list;
+    }
+    let count = adw::ActionRow::new();
+    count.set_title(&ctx.tf(
+        "detailShared.settings.metrics",
+        &[("count", &entries.len().to_string())],
+    ));
+    list.append(&count);
+    for (key, value) in entries.into_iter().take(limit) {
+        let row = adw::ActionRow::new();
+        row.set_title(&key);
+        row.set_subtitle(&value);
+        list.append(&row);
+    }
+    list
+}
+
 pub fn present_standalone(
     app: &adw::Application,
     ctx: AppCtx,

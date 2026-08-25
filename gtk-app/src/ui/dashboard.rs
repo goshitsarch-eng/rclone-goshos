@@ -2407,7 +2407,14 @@ impl Dashboard {
         let slist = gtk::ListBox::new();
         slist.add_css_class("boxed-list");
         let restrict = self.ctx.settings.borrow().general.restrict;
-        let mut rows = Vec::new();
+        let dump = self
+            .ctx
+            .client()
+            .and_then(|client| client.dump_config().ok())
+            .unwrap_or(serde_json::json!({}));
+        let params =
+            crate::providers::dump_remote_params(&dump, &name).unwrap_or(serde_json::json!({}));
+        let mut rows = crate::restrict::flatten_settings("", &params, restrict);
         if let Some(meta) = self.ctx.store.borrow().remotes.get(&name) {
             for (op, profiles) in &meta.profiles {
                 for (pname, profile) in profiles {
