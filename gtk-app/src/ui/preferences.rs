@@ -846,7 +846,16 @@ fn add_combo(
     if let Some((sub_key, sub_fallback)) = subtitle {
         row.set_subtitle(&session.ctx.t_or(sub_key, sub_fallback));
     }
-    row.set_model(Some(&gtk::StringList::new(options)));
+    let labels: Vec<String> = options
+        .iter()
+        .map(|id| {
+            session
+                .ctx
+                .t_or(&format!("settings.{path}.options.{id}"), id)
+        })
+        .collect();
+    let label_refs: Vec<&str> = labels.iter().map(|s| s.as_str()).collect();
+    row.set_model(Some(&gtk::StringList::new(&label_refs)));
     if let Some(idx) = options.iter().position(|item| *item == current) {
         row.set_selected(idx as u32);
     }

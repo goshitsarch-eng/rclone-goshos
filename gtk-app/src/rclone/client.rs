@@ -683,8 +683,12 @@ impl RcClient {
     }
 
     pub fn list_mounts(&self) -> Result<Vec<MountedRemote>, RcError> {
-        let v = self.call("mount/listmounts", json!({}))?;
-        Ok(parse_mount_points(&v))
+        let mut mounts = self
+            .call("mount/listmounts", json!({}))
+            .map(|v| parse_mount_points(&v))
+            .unwrap_or_default();
+        merge_host_mounts(&mut mounts);
+        Ok(mounts)
     }
 
     pub fn serve_start(&self, serve_type: &str, fs: &str, addr: &str) -> Result<Value, RcError> {
@@ -1004,6 +1008,40 @@ pub fn parse_mount_points(value: &Value) -> Vec<MountedRemote> {
             Some(MountedRemote { fs, mount_point })
         })
         .collect()
+}
+
+fn unescape_mount_field(value: &str) -> String {
+    value.replace("\\040", " ").replace("\\011", "\t")
+}
+
+/// `/proc/mounts` fuse.rclone rows (covers mounts owned by a previous rcd).
+pub fn parse_proc_mounts(text: &str) -> Vec<MountedRemote> {
+    text.lines()
+        .filter_map(|line| {
+            let mut parts = line.split_whitespace();
+            let fs = parts.next()?;
+            let point = parts.next()?;
+            let fstype = parts.next().unwrap_or("");
+            if fstype != "fuse.rclone" {
+                return None;
+            }
+            Some(MountedRemote {
+                fs: unescape_mount_field(fs),
+                mount_point: unescape_mount_field(point),
+            })
+        })
+        .collect()
+}
+
+fn merge_host_mounts(mounts: &mut Vec<MountedRemote>) {
+    let Ok(text) = std::fs::read_to_string("/proc/mounts") else {
+        return;
+    };
+    for extra in parse_proc_mounts(&text) {
+        if !mounts.iter().any(|m| m.mount_point == extra.mount_point) {
+            mounts.push(extra);
+        }
+    }
 }
 
 #[derive(Debug, Clone, Default)]
@@ -1955,6 +1993,20 @@ mod tests {
         assert_eq!(arr[0].fs, "/tmp/rclone-test-remote");
         assert_eq!(arr[0].mount_point, "/home/ubuntu/rclone-manager/testdrive");
         assert!(parse_mount_points(&json!({})).is_empty());
+    }
+
+    #[test]
+    fn parses_proc_mounts_fuse_rclone() {
+        let mounts = parse_proc_mounts(
+            "/tmp/rclone-test-remote /home/ubuntu/rclone-manager/testdrive fuse.rclone rw 0 0\n\
+             /dev/sda1 / ext4 rw 0 0\n",
+        );
+        assert_eq!(mounts.len(), 1);
+        assert_eq!(mounts[0].fs, "/tmp/rclone-test-remote");
+        assert_eq!(
+            mounts[0].mount_point,
+            "/home/ubuntu/rclone-manager/testdrive"
+        );
     }
 
     #[test]

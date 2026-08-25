@@ -508,6 +508,9 @@ This client is the GTK 4 + libadwaita desktop UI. It talks to a local `rclone rc
 - `mount/listmounts` parses rclone 1.60 arrays and marks alias remotes mounted
 - Live GUI: testdrive/dummyexport remotes, FUSE mount of testdrive, Copy start from a profile
 - Start-operation / profile / Flow / Quick Run starts persist `job_history` immediately (not only after a later poll)
+- Host `/proc/mounts` fuse.rclone rows merge into live mounts so alias remotes stay Mounted across rcd restarts
+- Instant rclone 1.60 jobs that vanish from `job/list` finalize as completed, not failed
+- Preferences default-view combo shows translated labels instead of `main_menu`
 
 ## Still deepening
 

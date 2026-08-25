@@ -2073,10 +2073,9 @@ pub fn finalize_dropped_job(job: &JobInfo) -> JobInfo {
     match finished.status.as_str() {
         "running" => finished.status = "completed".into(),
         "preparing" | "starting" => {
-            finished.status = "failed".into();
-            if finished.error.is_none() {
-                finished.error = Some("Job disappeared before rclone reported it".into());
-            }
+            // rclone 1.60 often drops a finished job from job/list before the next poll.
+            finished.status = "completed".into();
+            finished.progress = 1.0;
         }
         _ => {}
     }
@@ -3244,8 +3243,8 @@ mod tests {
         let skipped = merge_preparing_jobs(vec![live_group], &[grouped]);
         assert_eq!(skipped.len(), 1);
         let dropped = finalize_dropped_job(&preparing);
-        assert_eq!(dropped.status, "failed");
-        assert!(dropped.error.is_some());
+        assert_eq!(dropped.status, "completed");
+        assert!(dropped.error.is_none());
         let from_stats = job_from_status(
             4,
             &json!({ "finished": false, "success": false, "output": { "operation": "upload" } }),
