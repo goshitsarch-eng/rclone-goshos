@@ -1233,12 +1233,34 @@ fn helper_page(
     search.set_title(&ctx.t_or("remoteConfig.filterFlags", "Filter flags"));
     flags_group.add(&search);
     let category = match kind {
-        "runtime" => "backend",
+        "runtime" => "runtime",
         other => other,
+    };
+    let runtime_flags: Vec<crate::flags::FlagOption> = if kind == "runtime" {
+        runtime_provider_flags(&ctx, remote)
+    } else {
+        Vec::new()
     };
     let flag_rows: Rc<RefCell<Vec<(String, adw::EntryRow, String)>>> =
         Rc::new(RefCell::new(Vec::new()));
-    for (_, option) in options_for_category(blocks, category) {
+    let runtime_refs: Vec<(&str, &crate::flags::FlagOption)> = runtime_flags
+        .iter()
+        .map(|option| ("runtime", option))
+        .collect();
+    let options: Vec<(&str, &crate::flags::FlagOption)> =
+        if kind == "runtime" && !runtime_refs.is_empty() {
+            runtime_refs
+        } else {
+            options_for_category(
+                blocks,
+                if category == "runtime" {
+                    "backend"
+                } else {
+                    category
+                },
+            )
+        };
+    for (_, option) in options {
         let row = flag_entry(&ctx, option, &current);
         flags_group.add(&row);
         flag_rows
@@ -1546,6 +1568,12 @@ fn wire_profile_actions(
                                     &current,
                                     &name,
                                 );
+                                crate::jobs::rename_serves_profile(
+                                    &mut ctx.snapshot.borrow_mut().serves,
+                                    &remote,
+                                    &current,
+                                    &name,
+                                );
                                 ctx.persist();
                             }
                             if let Some(slot) =
@@ -1630,6 +1658,40 @@ fn extra_source_row(ctx: &AppCtx, value: &str) -> adw::EntryRow {
     row.set_text(value);
     dialogs::attach_path_picker(ctx, &row, crate::picker::FilePickerConfig::folders());
     row
+}
+
+fn runtime_provider_flags(ctx: &AppCtx, remote: &str) -> Vec<FlagOption> {
+    let remote_type = ctx
+        .snapshot
+        .borrow()
+        .remotes
+        .iter()
+        .find(|item| item.name == remote)
+        .map(|item| item.r#type.clone())
+        .unwrap_or_default();
+    if remote_type.is_empty() {
+        return Vec::new();
+    }
+    let Some(client) = ctx.client() else {
+        return Vec::new();
+    };
+    let Ok(value) = client.providers() else {
+        return Vec::new();
+    };
+    crate::providers::parse_providers(&value)
+        .into_iter()
+        .find(|provider| {
+            provider.prefix.eq_ignore_ascii_case(&remote_type)
+                || provider.name.eq_ignore_ascii_case(&remote_type)
+        })
+        .map(|provider| {
+            provider
+                .options
+                .iter()
+                .map(FlagOption::from_provider)
+                .collect()
+        })
+        .unwrap_or_default()
 }
 
 fn flag_entry(ctx: &AppCtx, flag: &FlagOption, current: &Value) -> adw::EntryRow {

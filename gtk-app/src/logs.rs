@@ -106,6 +106,28 @@ impl LogEntry {
     }
 }
 
+pub fn log_operation(
+    level: LogLevel,
+    remote: Option<&str>,
+    operation: Option<&str>,
+    message: &str,
+    context: Option<&Value>,
+) -> String {
+    let mut details = context.cloned().unwrap_or(Value::Object(Map::new()));
+    if let Some(operation) = operation.filter(|op| !op.is_empty()) {
+        if let Some(obj) = details.as_object_mut() {
+            obj.entry("operation")
+                .or_insert_with(|| Value::String(operation.to_string()));
+        }
+    }
+    let context = if details.as_object().is_some_and(|obj| !obj.is_empty()) {
+        Some(details.to_string())
+    } else {
+        None
+    };
+    format_now(level, remote, message, context.as_deref())
+}
+
 pub fn format_now(
     level: LogLevel,
     remote: Option<&str>,
@@ -508,6 +530,7 @@ pub fn read_log_file_tail(max_lines: usize) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serde_json::json;
     use std::collections::HashMap;
 
     #[test]
@@ -607,6 +630,21 @@ mod tests {
         assert_eq!(parsed.level, LogLevel::Info);
         assert_eq!(parsed.remote_name.as_deref(), Some("drive"));
         assert!(parsed.message.contains("started copy 3"));
+    }
+
+    #[test]
+    fn log_operation_embeds_redacted_context() {
+        let line = log_operation(
+            LogLevel::Info,
+            Some("drive"),
+            Some("sync"),
+            "started sync #4",
+            Some(&json!({ "srcFs": "drive:", "password": "secret" })),
+        );
+        assert!(line.contains("started sync #4"));
+        assert!(line.contains("remote=drive"));
+        assert!(line.contains("\"operation\":\"sync\""));
+        assert!(line.contains("drive:"));
     }
 
     #[test]

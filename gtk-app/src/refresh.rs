@@ -4,6 +4,7 @@ use std::time::Duration;
 
 pub const BUSY_POLL: Duration = Duration::from_millis(400);
 pub const IDLE_POLL: Duration = Duration::from_secs(3);
+pub const HIDDEN_POLL: Duration = Duration::from_secs(15);
 pub const IDLE_TICKS: u32 = 7;
 
 pub fn runtime_busy(running_jobs: bool, mount_count: usize, serve_count: usize) -> bool {
@@ -11,7 +12,13 @@ pub fn runtime_busy(running_jobs: bool, mount_count: usize, serve_count: usize) 
 }
 
 pub fn poll_interval(busy: bool) -> Duration {
-    if busy {
+    poll_interval_for(busy, true)
+}
+
+pub fn poll_interval_for(busy: bool, visible: bool) -> Duration {
+    if !visible && !busy {
+        HIDDEN_POLL
+    } else if busy {
         BUSY_POLL
     } else {
         IDLE_POLL
@@ -44,6 +51,9 @@ mod tests {
     fn intervals_match_busy_state() {
         assert_eq!(poll_interval(true), BUSY_POLL);
         assert_eq!(poll_interval(false), IDLE_POLL);
+        assert_eq!(poll_interval_for(false, false), HIDDEN_POLL);
+        assert_eq!(poll_interval_for(true, false), BUSY_POLL);
+        assert_eq!(idle_ticks_for(HIDDEN_POLL) > IDLE_TICKS, true);
     }
 
     #[test]

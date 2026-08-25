@@ -323,13 +323,15 @@ pub fn present_main(app: &adw::Application, ctx: AppCtx) {
         });
     }
     let poll_tick = Rc::new(Cell::new(0u32));
+    let poll_window = window.clone();
     glib::timeout_add_local(crate::refresh::BUSY_POLL, move || {
         let busy = ctx_poll.runtime_busy();
+        let visible = poll_window.is_visible();
         let tick = poll_tick.get();
         if crate::refresh::should_refresh(
             tick,
             busy,
-            crate::refresh::idle_ticks_for(crate::refresh::poll_interval(false)),
+            crate::refresh::idle_ticks_for(crate::refresh::poll_interval_for(busy, visible)),
         ) {
             ctx_poll.tick_automations();
             ctx_poll.refresh_runtime();

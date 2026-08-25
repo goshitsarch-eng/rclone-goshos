@@ -6807,7 +6807,9 @@ pub fn helper_profiles(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, remote: &str
     dialog.set_content_height(520);
     let kind = adw::ComboRow::new();
     kind.set_title(&ctx.t_or("common.category", "Category"));
-    kind.set_model(Some(&gtk::StringList::new(&["vfs", "filter", "backend"])));
+    kind.set_model(Some(&gtk::StringList::new(&[
+        "vfs", "filter", "backend", "runtime",
+    ])));
     let name = adw::EntryRow::new();
     name.set_title(&ctx.t_or("wizards.cliImport.profileName", "Profile name"));
     name.set_text("default");
@@ -6821,7 +6823,7 @@ pub fn helper_profiles(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, remote: &str
         let json_view = json_view.clone();
         let kind = kind.clone();
         move || {
-            let kind_name = ["vfs", "filter", "backend"]
+            let kind_name = ["vfs", "filter", "backend", "runtime"]
                 .get(kind.selected() as usize)
                 .copied()
                 .unwrap_or("vfs");
@@ -6850,7 +6852,7 @@ pub fn helper_profiles(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, remote: &str
         let json_view = json_view.clone();
         let kind = kind.clone();
         save.connect_clicked(move |_| {
-            let kind_name = ["vfs", "filter", "backend"]
+            let kind_name = ["vfs", "filter", "backend", "runtime"]
                 .get(kind.selected() as usize)
                 .copied()
                 .unwrap_or("vfs");
@@ -6869,6 +6871,9 @@ pub fn helper_profiles(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, remote: &str
                     }
                     "backend" => {
                         meta.backend_configs.insert(key, value);
+                    }
+                    "runtime" => {
+                        meta.runtime_remote_configs.insert(key, value);
                     }
                     _ => {
                         meta.vfs_configs.insert(key, value);

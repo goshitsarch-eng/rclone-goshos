@@ -1145,6 +1145,25 @@ impl AppStore {
             .retain(|id, _| !markers.iter().any(|m| id.contains(m.as_str())));
     }
 
+    pub fn log_operation(
+        &mut self,
+        remote: &str,
+        operation: &str,
+        message: &str,
+        context: Option<&Value>,
+    ) {
+        self.push_log(
+            remote,
+            crate::logs::log_operation(
+                crate::logs::LogLevel::Info,
+                Some(remote),
+                Some(operation),
+                message,
+                context,
+            ),
+        );
+    }
+
     pub fn push_log(&mut self, remote: &str, line: String) {
         self.logs.entry(remote.to_string()).or_default().push(line);
         if let Some(lines) = self.logs.get_mut(remote) {

@@ -300,6 +300,14 @@ This client is the GTK 4 + libadwaita rewrite of the Angular/Tauri desktop UI. I
 - Remote wizard last step edits a runtime-remote helper applied to jobs
 - Automations show human-readable cron and watcher summaries
 - Logs translate backend `{key, params}` messages; mount/serve transitions are ingested as structured log lines
+- Flatpak Background portal autostart (XDG desktop file remains the fallback)
+- Hidden-window poll throttle (15s idle when close-to-tray)
+- Structured `log_operation` entries for mount/profile/quick-run starts (redacted RC payload)
+- Operations tab persists the selected profile and scopes live job + transfer rows to it
+- Dashboard transfer activity includes completed transfers
+- General-tab quick runs have Start / Stop / Edit / Browse
+- Profile rename relabels live serve cards
+- Runtime-remote helper page uses provider-typed fields; helper dialog includes runtime
 
 ## Still deepening toward pixel-level Angular parity
 

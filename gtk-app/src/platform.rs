@@ -73,6 +73,11 @@ pub fn autostart_desktop_path() -> PathBuf {
 }
 
 pub fn set_autostart(enabled: bool) -> Result<(), String> {
+    if is_flatpak() {
+        if let Err(err) = request_background_portal(enabled) {
+            log::warn!("Flatpak Background portal failed, using XDG autostart: {err}");
+        }
+    }
     let path = autostart_desktop_path();
     if !enabled {
         let _ = std::fs::remove_file(&path);
@@ -83,6 +88,54 @@ pub fn set_autostart(enabled: bool) -> Result<(), String> {
         "[Desktop Entry]\nType=Application\nName=Rclone Manager\nComment=Manage rclone remotes, mounts, and transfers\nExec={exec}\nIcon=folder-remote\nTerminal=false\nCategories=Network;FileTransfer;\nX-GNOME-Autostart-enabled=true\n"
     );
     write_executable(&path, &desktop).map_err(|e| e.to_string())
+}
+
+pub fn background_portal_commandline() -> Vec<String> {
+    vec!["rclone-manager-gtk".into(), "--hidden".into()]
+}
+
+pub fn background_portal_options(
+    enable: bool,
+) -> std::collections::HashMap<String, dbus::arg::Variant<Box<dyn dbus::arg::RefArg>>> {
+    let mut options = std::collections::HashMap::new();
+    options.insert(
+        "reason".into(),
+        dbus::arg::Variant(Box::new(
+            "Rclone Manager needs to run in the background to handle scheduled jobs and serve remotes."
+                .to_string(),
+        ) as Box<dyn dbus::arg::RefArg>),
+    );
+    options.insert(
+        "autostart".into(),
+        dbus::arg::Variant(Box::new(enable) as Box<dyn dbus::arg::RefArg>),
+    );
+    options.insert(
+        "dbus-activatable".into(),
+        dbus::arg::Variant(Box::new(false) as Box<dyn dbus::arg::RefArg>),
+    );
+    options.insert(
+        "commandline".into(),
+        dbus::arg::Variant(Box::new(background_portal_commandline()) as Box<dyn dbus::arg::RefArg>),
+    );
+    options
+}
+
+pub fn request_background_portal(enable: bool) -> Result<String, String> {
+    let conn = dbus::blocking::Connection::new_session().map_err(|e| e.to_string())?;
+    let proxy = conn.with_proxy(
+        "org.freedesktop.portal.Desktop",
+        "/org/freedesktop/portal/desktop",
+        std::time::Duration::from_secs(8),
+    );
+    let options = background_portal_options(enable);
+    let (path,): (dbus::strings::Path<'static>,) = proxy
+        .method_call(
+            "org.freedesktop.portal.Background",
+            "RequestBackground",
+            ("", options),
+        )
+        .map_err(|e| e.to_string())?;
+    Ok(path.to_string())
 }
 
 pub fn autostart_enabled() -> bool {
@@ -831,6 +884,20 @@ pub fn relaunch() -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn background_portal_options_include_autostart() {
+        let options = background_portal_options(true);
+        assert!(options.contains_key("reason"));
+        assert!(options.contains_key("autostart"));
+        assert!(options.contains_key("commandline"));
+        assert_eq!(
+            background_portal_commandline(),
+            vec!["rclone-manager-gtk".to_string(), "--hidden".to_string()]
+        );
+        let disabled = background_portal_options(false);
+        assert!(disabled.contains_key("autostart"));
+    }
 
     #[test]
     fn sanitizes_and_names_send_to() {

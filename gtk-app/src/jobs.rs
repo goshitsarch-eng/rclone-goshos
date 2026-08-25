@@ -1458,11 +1458,48 @@ pub fn merge_template_into(dest: &mut Value, values: &Value) {
 
 pub fn profile_summary(op: OperationType, profile: &ProfileConfig) -> String {
     let (src, dst) = quick_run_paths(&profile.rclone, op);
-    format!(
+    let mut text = format!(
         "{} → {}",
         src.unwrap_or_else(|| "—".into()),
         dst.unwrap_or_else(|| "—".into())
-    )
+    );
+    if profile.app.cron_enabled && !profile.app.cron_expression.is_empty() {
+        text.push_str(" · ");
+        text.push_str(&crate::rclone::describe_cron(&profile.app.cron_expression));
+    }
+    if profile.app.watch_enabled {
+        text.push_str(" · watch");
+        if profile.app.watch_delay > 0 {
+            text.push_str(&format!(" {}s", profile.app.watch_delay));
+        }
+    }
+    text
+}
+
+pub fn selected_profile_key(remote: &str, op: OperationType) -> String {
+    format!("{remote}:{}", op.as_str())
+}
+
+pub fn rename_serves_profile(
+    serves: &mut [ServeItem],
+    remote: &str,
+    from: &str,
+    to: &str,
+) -> usize {
+    if from.is_empty() || from == to {
+        return 0;
+    }
+    let prefix = format!("{remote}:");
+    let mut updated = 0;
+    for serve in serves {
+        let matches_remote =
+            serve.fs == remote || serve.fs == prefix || serve.fs.starts_with(&prefix);
+        if matches_remote && serve.profile == from {
+            serve.profile = to.to_string();
+            updated += 1;
+        }
+    }
+    updated
 }
 
 #[cfg(test)]
@@ -2029,6 +2066,50 @@ mod tests {
             Some(&json!({ "preparing": true, "bytes": 0 })),
         );
         assert_eq!(from_stats.status, "preparing");
+    }
+
+    #[test]
+    fn profile_summary_includes_cron_and_watch() {
+        let profile = ProfileConfig {
+            name: "nightly".into(),
+            app: crate::store::AppConfig {
+                cron_enabled: true,
+                cron_expression: "0 2 * * *".into(),
+                watch_enabled: true,
+                watch_delay: 12,
+                ..crate::store::AppConfig::default()
+            },
+            rclone: json!({ "srcFs": "drive:", "dstFs": "/tmp/out" }),
+        };
+        let summary = profile_summary(OperationType::Sync, &profile);
+        assert!(summary.contains("drive:"));
+        assert!(summary.contains("/tmp/out"));
+        assert!(summary.contains("watch 12s"));
+        assert!(!summary.contains("0 2 * * *") || summary.contains("2"));
+    }
+
+    #[test]
+    fn renames_serve_profiles_for_remote() {
+        let mut serves = vec![
+            ServeItem {
+                id: "s1".into(),
+                fs: "drive:".into(),
+                profile: "public".into(),
+                ..ServeItem::default()
+            },
+            ServeItem {
+                id: "s2".into(),
+                fs: "box:".into(),
+                profile: "public".into(),
+                ..ServeItem::default()
+            },
+        ];
+        assert_eq!(
+            rename_serves_profile(&mut serves, "drive", "public", "web"),
+            1
+        );
+        assert_eq!(serves[0].profile, "web");
+        assert_eq!(serves[1].profile, "public");
     }
 
     #[test]

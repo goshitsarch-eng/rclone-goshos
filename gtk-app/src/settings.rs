@@ -128,6 +128,8 @@ pub struct RuntimeSettings {
     pub flatpak_warn: bool,
     #[serde(default)]
     pub selected_sync_ops: HashMap<String, String>,
+    #[serde(default)]
+    pub selected_profiles: HashMap<String, String>,
 }
 
 fn default_true() -> bool {
@@ -151,6 +153,7 @@ impl Default for RuntimeSettings {
             show_json_mode: false,
             flatpak_warn: true,
             selected_sync_ops: HashMap::new(),
+            selected_profiles: HashMap::new(),
         }
     }
 }
@@ -453,6 +456,7 @@ mod tests {
         assert!(loaded.nautilus.sidebar_hidden_drives.is_empty());
         assert!(loaded.nautilus.file_type_filter.is_empty());
         assert!(loaded.runtime.selected_sync_ops.is_empty());
+        assert!(loaded.runtime.selected_profiles.is_empty());
         assert_eq!(loaded.nautilus.grid_icon_size, 0);
         assert_eq!(loaded.nautilus.split_divider_pos, 0);
     }

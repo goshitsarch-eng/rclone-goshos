@@ -1183,6 +1183,7 @@ impl Dashboard {
         self.append_status_chips(&name, remote.as_ref());
         if tab == AppTab::Operations {
             self.append_sync_op_picker(&name);
+            self.append_profile_picker(&name, self.selected_sync_op(&name));
         }
 
         let chips = gtk::FlowBox::new();
@@ -1258,7 +1259,9 @@ impl Dashboard {
             self.detail.append(&resync);
         }
 
-        if let Some(job) = remote_jobs_preview(&snap.jobs, &name) {
+        let selected_profile = (tab == AppTab::Operations)
+            .then(|| self.selected_profile_name(&name, self.selected_sync_op(&name)));
+        if let Some(job) = remote_jobs_preview(&snap.jobs, &name, selected_profile.as_deref()) {
             let stats = adw::PreferencesGroup::new();
             stats.set_title(
                 &self
@@ -1524,7 +1527,7 @@ impl Dashboard {
             activity.append(&row);
         }
         self.detail.append(&activity);
-        self.append_transfer_activity(&name, &snap);
+        self.append_transfer_activity(&name, &snap, selected_profile.as_deref());
         if tab == AppTab::General {
             self.append_remote_automations(&name);
         }
@@ -1737,10 +1740,80 @@ impl Dashboard {
             .quick_runs
             .iter()
             .filter(|q| q.remote_name == name)
+            .cloned()
+            .collect::<Vec<_>>()
         {
             let row = adw::ActionRow::new();
             row.set_title(&qr.name);
             row.set_subtitle(&format!("{} · {}", qr.operation_type, qr.status));
+            let start = gtk::Button::from_icon_name("media-playback-start-symbolic");
+            start.set_valign(gtk::Align::Center);
+            start.set_tooltip_text(Some(&self.ctx.t_or("flow.quickRun.actions.start", "Start")));
+            let stop = gtk::Button::from_icon_name("media-playback-stop-symbolic");
+            stop.set_valign(gtk::Align::Center);
+            stop.set_tooltip_text(Some(&self.ctx.t_or("flow.quickRun.actions.stop", "Stop")));
+            let edit = gtk::Button::from_icon_name("document-edit-symbolic");
+            edit.set_valign(gtk::Align::Center);
+            edit.set_tooltip_text(Some(&self.ctx.t_or("common.edit", "Edit")));
+            let open = gtk::Button::from_icon_name("folder-symbolic");
+            open.set_valign(gtk::Align::Center);
+            open.set_tooltip_text(Some(&self.ctx.t_or("common.browse", "Browse")));
+            {
+                let ctx = self.ctx.clone();
+                let toast = self.toast.clone();
+                let dash = self.clone();
+                let qr = qr.clone();
+                start.connect_clicked(move |_| {
+                    start_quick_run(&ctx, &qr, &toast);
+                    dash.refresh();
+                });
+            }
+            {
+                let ctx = self.ctx.clone();
+                let id = qr.last_job_id;
+                let qr_id = qr.id.clone();
+                let dash = self.clone();
+                stop.connect_clicked(move |_| {
+                    if let (Some(client), Some(jobid)) = (ctx.client(), id) {
+                        let _ = client.job_stop(jobid);
+                    }
+                    if let Some(run) = ctx
+                        .store
+                        .borrow_mut()
+                        .quick_runs
+                        .iter_mut()
+                        .find(|q| q.id == qr_id)
+                    {
+                        run.status = "stopped".into();
+                    }
+                    ctx.persist();
+                    dash.refresh();
+                });
+            }
+            {
+                let ctx = self.ctx.clone();
+                let dash = self.clone();
+                let qr = qr.clone();
+                edit.connect_clicked(move |_| {
+                    if let Some(win) = dash.root.root().and_downcast::<gtk::Window>() {
+                        dialogs::quick_run_editor(&win, ctx.clone(), Some(qr.clone()), {
+                            let dash = dash.clone();
+                            Rc::new(move || dash.refresh())
+                        });
+                    }
+                });
+            }
+            {
+                let ctx = self.ctx.clone();
+                let remote = qr.remote_name.clone();
+                open.connect_clicked(move |_| {
+                    ctx.request_browse(&remote, "");
+                });
+            }
+            row.add_suffix(&open);
+            row.add_suffix(&edit);
+            row.add_suffix(&stop);
+            row.add_suffix(&start);
             qlist.append(&row);
         }
         if qlist.first_child().is_none() {
@@ -1787,6 +1860,71 @@ impl Dashboard {
             }
         }
         self.detail.append(&slist);
+    }
+
+    fn selected_profile_name(&self, name: &str, op: OperationType) -> String {
+        let key = crate::jobs::selected_profile_key(name, op);
+        let stored = self
+            .ctx
+            .settings
+            .borrow()
+            .runtime
+            .selected_profiles
+            .get(&key)
+            .cloned();
+        let names = self
+            .ctx
+            .store
+            .borrow()
+            .remotes
+            .get(name)
+            .map(|meta| meta.profile_names(op))
+            .unwrap_or_default();
+        if let Some(name) = stored {
+            if names.iter().any(|n| n == &name) {
+                return name;
+            }
+        }
+        names.into_iter().next().unwrap_or_else(|| "default".into())
+    }
+
+    fn append_profile_picker(&self, name: &str, op: OperationType) {
+        let names = self
+            .ctx
+            .store
+            .borrow()
+            .remotes
+            .get(name)
+            .map(|meta| meta.profile_names(op))
+            .unwrap_or_default();
+        if names.is_empty() {
+            return;
+        }
+        let selected = self.selected_profile_name(name, op);
+        let row = adw::ComboRow::new();
+        row.set_title(&self.ctx.t_or("remote.profiles", "Profile"));
+        let model_names: Vec<&str> = names.iter().map(String::as_str).collect();
+        row.set_model(Some(&gtk::StringList::new(&model_names)));
+        if let Some(idx) = names.iter().position(|n| n == &selected) {
+            row.set_selected(idx as u32);
+        }
+        {
+            let ctx = self.ctx.clone();
+            let remote = name.to_string();
+            let names = names.clone();
+            let dash = self.clone();
+            row.connect_selected_notify(move |combo| {
+                if let Some(profile) = names.get(combo.selected() as usize) {
+                    ctx.settings.borrow_mut().runtime.selected_profiles.insert(
+                        crate::jobs::selected_profile_key(&remote, op),
+                        profile.clone(),
+                    );
+                    ctx.persist();
+                    dash.refresh();
+                }
+            });
+        }
+        self.detail.append(&row);
     }
 
     fn selected_sync_op(&self, name: &str) -> OperationType {
@@ -1928,26 +2066,51 @@ impl Dashboard {
         self.detail.append(&box_);
     }
 
-    fn append_transfer_activity(&self, name: &str, snap: &crate::store::RuntimeSnapshot) {
-        let rows: Vec<_> = snap
+    fn append_transfer_activity(
+        &self,
+        name: &str,
+        snap: &crate::store::RuntimeSnapshot,
+        profile: Option<&str>,
+    ) {
+        let jobs: Vec<_> = snap
             .jobs
             .iter()
-            .filter(|job| job.remote == name)
-            .flat_map(|job| {
-                job.transferring
-                    .as_array()
-                    .cloned()
-                    .unwrap_or_default()
-                    .into_iter()
-                    .map(|item| {
-                        (
-                            job.operation.clone(),
-                            crate::transfers::parse_transfer_row(&item),
-                        )
+            .filter(|job| {
+                job.remote == name
+                    && profile.is_none_or(|wanted| {
+                        job.profile == wanted || job.profile.is_empty() || job.profile == "default"
                     })
             })
-            .take(8)
+            .cloned()
             .collect();
+        let mut rows = Vec::new();
+        for job in &jobs {
+            if let Some(arr) = job.transferring.as_array() {
+                for item in arr {
+                    rows.push((
+                        job.operation.clone(),
+                        crate::transfers::parse_transfer_row(item),
+                        false,
+                    ));
+                }
+            }
+            for source in [
+                job.completed.as_array(),
+                job.stats.get("completed").and_then(|v| v.as_array()),
+            ]
+            .into_iter()
+            .flatten()
+            {
+                for item in source {
+                    rows.push((
+                        job.operation.clone(),
+                        crate::transfers::parse_transfer_row(item),
+                        true,
+                    ));
+                }
+            }
+        }
+        rows.truncate(12);
         if rows.is_empty() {
             return;
         }
@@ -1958,7 +2121,7 @@ impl Dashboard {
         ));
         let list = gtk::ListBox::new();
         list.add_css_class("boxed-list");
-        for (operation, row) in rows {
+        for (operation, row, completed) in rows {
             let item = adw::ActionRow::new();
             item.set_title(&row.name);
             let src = if row.src.is_empty() {
@@ -1971,13 +2134,19 @@ impl Dashboard {
             } else {
                 row.dst.clone()
             };
-            item.set_subtitle(&format!("{}% · {src} → {dst}", row.percentage));
+            let state = if completed {
+                self.ctx
+                    .t_or("shared.transferActivity.status.completed", "Completed")
+            } else {
+                format!("{}%", row.percentage)
+            };
+            item.set_subtitle(&format!("{state} · {src} → {dst}"));
             item.add_suffix(&dialogs::transfer_row_actions(
                 &self.ctx,
                 &self.toast,
                 &row,
                 &operation,
-                false,
+                completed,
             ));
             list.append(&item);
         }
@@ -2094,6 +2263,12 @@ fn toggle_mount(ctx: &AppCtx, name: &str, mounted: bool, toast: &adw::ToastOverl
                     &id,
                     crate::jobs::job_meta_for(name, &profile, "dashboard", &ctx.backend_key(), ""),
                 );
+                ctx.store.borrow_mut().log_operation(
+                    name,
+                    "mount",
+                    &format!("started mount {id}"),
+                    Some(&crate::restrict::redact_value(&profile.rclone)),
+                );
                 toast.add_toast(adw::Toast::new(&format!("Mounted #{id}")));
             }
             Err(e) => toast.add_toast(adw::Toast::new(&e)),
@@ -2160,9 +2335,70 @@ fn toggle_profile(
                 &id,
                 crate::jobs::job_meta_for(name, &profile, "dashboard", &ctx.backend_key(), ""),
             );
+            ctx.store.borrow_mut().log_operation(
+                name,
+                op.as_str(),
+                &format!("started {op} {id}"),
+                Some(&crate::restrict::redact_value(&profile.rclone)),
+            );
             toast.add_toast(adw::Toast::new(&format!("Started {op} {id}")));
         }
         Err(e) => toast.add_toast(adw::Toast::new(&e)),
+    }
+    ctx.refresh_runtime();
+}
+
+fn start_quick_run(ctx: &AppCtx, qr: &crate::store::QuickRun, toast: &adw::ToastOverlay) {
+    let Some(client) = ctx.client() else {
+        toast.add_toast(adw::Toast::new(
+            &ctx.t_or("remote.engineOffline", "Rclone engine is offline"),
+        ));
+        return;
+    };
+    let meta = ctx.store.borrow().remotes.get(&qr.remote_name).cloned();
+    match crate::jobs::start_profile(
+        &client,
+        &qr.remote_name,
+        qr.operation_type,
+        &qr.config,
+        meta.as_ref(),
+        "quickrun",
+    ) {
+        Ok(id) => {
+            crate::jobs::remember_started(
+                &mut ctx.store.borrow_mut().job_meta,
+                &id,
+                crate::jobs::job_meta_for(
+                    &qr.remote_name,
+                    &qr.config,
+                    "quickrun",
+                    &ctx.backend_key(),
+                    &qr.id,
+                ),
+            );
+            ctx.store.borrow_mut().log_operation(
+                &qr.remote_name,
+                qr.operation_type.as_str(),
+                &format!("started quick run {id}"),
+                Some(&crate::restrict::redact_value(&qr.config.rclone)),
+            );
+            if let Some(run) = ctx
+                .store
+                .borrow_mut()
+                .quick_runs
+                .iter_mut()
+                .find(|q| q.id == qr.id)
+            {
+                run.status = "running".into();
+                run.run_count += 1;
+                if let Some(num) = id.trim_start_matches('#').split(',').next() {
+                    run.last_job_id = num.trim().parse().ok();
+                }
+            }
+            ctx.persist();
+            toast.add_toast(adw::Toast::new(&format!("Started {id}")));
+        }
+        Err(e) => toast.add_toast(adw::Toast::new(&ctx.translate_error(&e))),
     }
     ctx.refresh_runtime();
 }
@@ -2193,9 +2429,15 @@ fn start_operation(
 fn remote_jobs_preview<'a>(
     jobs: &'a [crate::store::JobInfo],
     name: &str,
+    profile: Option<&str>,
 ) -> Option<&'a crate::store::JobInfo> {
     jobs.iter()
         .filter(|j| j.remote == name)
+        .filter(|j| {
+            profile.is_none_or(|wanted| {
+                j.profile == wanted || j.profile.is_empty() || j.profile == "default"
+            })
+        })
         .max_by_key(|j| j.id)
 }
 

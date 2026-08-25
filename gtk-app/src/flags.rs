@@ -34,6 +34,23 @@ pub struct FlagOption {
     pub exclusive: bool,
 }
 
+impl FlagOption {
+    pub fn from_provider(option: &crate::providers::ProviderOption) -> Self {
+        Self {
+            name: option.name.clone(),
+            field_name: option.name.clone(),
+            help: option.help.clone(),
+            type_name: option.type_name.clone(),
+            advanced: option.advanced,
+            groups: "Runtime".into(),
+            default_str: option.default_str.clone(),
+            value: option.value.clone(),
+            examples: option.examples.clone(),
+            exclusive: option.exclusive,
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FlagBlock {
     pub name: String,
@@ -478,6 +495,31 @@ fn merge_maps(dest: &mut Value, src: &Value) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn provider_option_maps_to_runtime_flag() {
+        let option = crate::providers::ProviderOption {
+            name: "chunk_size".into(),
+            help: "Upload chunk".into(),
+            required: false,
+            advanced: true,
+            is_password: false,
+            exclusive: false,
+            type_name: "SizeSuffix".into(),
+            default: json!("8Mi"),
+            default_str: "8Mi".into(),
+            value: json!("8Mi"),
+            value_str: "8Mi".into(),
+            examples: vec![],
+            provider: String::new(),
+            example_providers: vec![],
+        };
+        let flag = FlagOption::from_provider(&option);
+        assert_eq!(flag.field_name, "chunk_size");
+        assert_eq!(flag.groups, "Runtime");
+        assert_eq!(flag.default_str, "8Mi");
+        assert!(flag.advanced);
+    }
 
     #[test]
     fn merges_static_and_live_flags() {
