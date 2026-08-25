@@ -821,24 +821,38 @@ pub fn write_dialog_result(
 
 /// `--share-intake FILE [FILE…]` queues local files for the Files upload banner.
 pub fn parse_share_intake_args(args: &[String]) -> Option<Vec<PathBuf>> {
-    if !args.iter().any(|arg| arg == "--share-intake") {
-        return None;
-    }
     let mut files = Vec::new();
+    let mut found = false;
+    let mut taking = false;
     let mut i = 0;
     while i < args.len() {
         match args[i].as_str() {
-            "--send-to-remote" | "--send-to-path" => {
-                i += 1;
+            "--share-intake" => {
+                found = true;
+                taking = true;
             }
-            "--share-intake" => {}
-            other if other.starts_with('-') => {}
+            other if other.starts_with('-') => {
+                taking = false;
+                if matches!(
+                    other,
+                    "--send-to-remote"
+                        | "--send-to-path"
+                        | "--browse"
+                        | "--browse-path"
+                        | "--dialog"
+                        | "--dialog-data"
+                        | "--dialog-result"
+                ) {
+                    i += 1;
+                }
+            }
             _ if i == 0 => {}
-            other => files.push(PathBuf::from(other)),
+            other if taking => files.push(PathBuf::from(other)),
+            _ => {}
         }
         i += 1;
     }
-    Some(files)
+    found.then_some(files)
 }
 
 pub fn enqueue_share_intake(files: &[PathBuf]) {
@@ -1046,6 +1060,19 @@ mod tests {
         assert_eq!(parsed.len(), 2);
         assert_eq!(parsed[0], PathBuf::from("/tmp/a.jpg"));
         assert!(parse_share_intake_args(&["app".into()]).is_none());
+        let mixed = [
+            "app".into(),
+            "--browse".into(),
+            "testdrive:".into(),
+            "--share-intake".into(),
+            "/tmp/a.jpg".into(),
+            "/tmp/b.png".into(),
+        ];
+        let parsed = parse_share_intake_args(&mixed).unwrap();
+        assert_eq!(
+            parsed,
+            vec![PathBuf::from("/tmp/a.jpg"), PathBuf::from("/tmp/b.png")]
+        );
     }
 
     #[test]

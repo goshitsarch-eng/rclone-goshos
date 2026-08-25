@@ -454,6 +454,7 @@ This client is the GTK 4 + libadwaita rewrite of the Angular/Tauri desktop UI. I
 - About Details shows OS/arch, mode, release channel, and Debug tools
 - Ctrl+Shift+M / Ctrl+Shift+S force-reconcile mounts and serves from rclone RC (errors surface as toasts)
 - Files OS uploads (picker, drop `FileList`, clipboard, share-intake) start as one grouped `copyfile` job (`_group`), including mixed files + folders
+- `--share-intake` only queues paths after that flag (does not swallow `--browse` remotes)
 - Files local-disk sidebar uses Angular `LocalDrive` labels: Home / File System i18n, lsblk volume names, removable icons, space/fstype tooltips, Windows/`/sdcard` path normalization
 - Wizard OAuth continuation and save-failed alerts use `wizards.remoteConfig.*` / `settings.remoteSaveFailed`; remote-config helper steps, presets, JSON help, and profile-in-use warnings use i18n keys
 
