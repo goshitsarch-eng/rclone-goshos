@@ -472,6 +472,7 @@ This client is the GTK 4 + libadwaita rewrite of the Angular/Tauri desktop UI. I
 - Destination path inspection uses rclone `operations/stat` + `splitLocalForStat` when the engine OS differs or the path is Windows/UNC
 - Preparing jobs expire after 120s, skip when the same group is already live, and finalize as failed if they disappear from RC
 - `job_meta` (transfer snapshots, execute IDs, groups) is persisted in `store.json` so Job detail rows survive restart
+- Preparing/starting rows from a previous process are finalized on store load so they are not re-injected as live jobs
 - Onboarding Import opens the same restore-preview flow as the menu Import action
 
 ## Still deepening toward pixel-level Angular parity

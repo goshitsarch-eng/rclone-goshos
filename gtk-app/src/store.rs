@@ -940,7 +940,41 @@ impl AppStore {
             Self::default()
         };
         store.seed_alert_defaults(true);
+        let before: Vec<String> = store
+            .job_history
+            .iter()
+            .map(|job| job.status.clone())
+            .collect();
+        store.finalize_stale_preparing();
+        if store
+            .job_history
+            .iter()
+            .zip(before.iter())
+            .any(|(job, status)| job.status != *status)
+        {
+            let _ = store.save();
+        }
         store
+    }
+
+    /// Preparing rows from a previous process cannot be live; keep their
+    /// snapshots but do not re-inject them as in-progress after restart.
+    pub fn finalize_stale_preparing(&mut self) {
+        let has_snapshot = |id: u64| {
+            self.job_meta.get(&id).is_some_and(|meta| {
+                meta.transfer_snapshot
+                    .as_array()
+                    .is_some_and(|arr| !arr.is_empty())
+            })
+        };
+        for job in &mut self.job_history {
+            if job.status != "preparing" && job.status != "starting" {
+                continue;
+            }
+            let done =
+                !job.completed.as_array().is_some_and(|arr| arr.is_empty()) || has_snapshot(job.id);
+            job.status = if done { "completed" } else { "failed" }.into();
+        }
     }
 
     pub fn seed_alert_defaults(&mut self, notifications_on: bool) -> bool {
@@ -2142,6 +2176,63 @@ mod tests {
             loaded.job_meta[&3].transfer_snapshot[0]["src"],
             "/tmp/a.txt"
         );
+    }
+
+    #[test]
+    fn finalizes_preparing_jobs_from_previous_session() {
+        let mut store = AppStore::default();
+        store.job_meta.insert(
+            4,
+            JobMeta {
+                transfer_snapshot: json!([{ "name": "k.txt" }]),
+                ..Default::default()
+            },
+        );
+        store.job_history.push(JobInfo {
+            id: 4,
+            operation: "upload".into(),
+            remote: "testdrive".into(),
+            profile: "default".into(),
+            status: "preparing".into(),
+            origin: "filemanager".into(),
+            start_time: Utc::now(),
+            error: None,
+            dry_run: false,
+            src: "/tmp/k.txt".into(),
+            dst: "k.txt".into(),
+            group: "filemanager-upload/x".into(),
+            stats: json!({}),
+            transferring: json!([]),
+            duration: 0.0,
+            progress: 0.0,
+            output: json!({}),
+            completed: json!([]),
+            parent_job_id: None,
+        });
+        store.job_history.push(JobInfo {
+            id: 5,
+            operation: "upload".into(),
+            remote: "testdrive".into(),
+            profile: "default".into(),
+            status: "starting".into(),
+            origin: "filemanager".into(),
+            start_time: Utc::now(),
+            error: None,
+            dry_run: false,
+            src: String::new(),
+            dst: String::new(),
+            group: String::new(),
+            stats: json!({}),
+            transferring: json!([]),
+            duration: 0.0,
+            progress: 0.0,
+            output: json!({}),
+            completed: json!([]),
+            parent_job_id: None,
+        });
+        store.finalize_stale_preparing();
+        assert_eq!(store.job_history[0].status, "completed");
+        assert_eq!(store.job_history[1].status, "failed");
     }
 
     #[test]
