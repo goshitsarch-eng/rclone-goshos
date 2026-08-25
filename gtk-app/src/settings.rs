@@ -225,6 +225,10 @@ pub struct NautilusSettings {
     pub grid_icon_size: i32,
     #[serde(default)]
     pub split_divider_pos: i32,
+    #[serde(default)]
+    pub split_secondary_remote: String,
+    #[serde(default)]
+    pub split_secondary_path: String,
 }
 
 impl NautilusSettings {
@@ -529,6 +533,8 @@ mod tests {
         assert_eq!(states.get("flow.quickRuns"), Some(&false));
         assert_eq!(loaded.nautilus.grid_icon_size, 0);
         assert_eq!(loaded.nautilus.split_divider_pos, 0);
+        assert!(loaded.nautilus.split_secondary_remote.is_empty());
+        assert!(loaded.nautilus.split_secondary_path.is_empty());
     }
 
     #[test]

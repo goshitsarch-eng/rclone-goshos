@@ -296,6 +296,15 @@ impl NautilusView {
                 .unwrap_or_else(|| "/".into()),
             starred: false,
         };
+        let mut secondary = initial.clone();
+        {
+            let nautilus = ctx.settings.borrow().nautilus.clone();
+            if nautilus.split_enabled && !nautilus.split_secondary_remote.is_empty() {
+                secondary.remote = nautilus.split_secondary_remote;
+                secondary.path = nautilus.split_secondary_path;
+                secondary.title = secondary.remote.clone();
+            }
+        }
 
         let view = Self {
             root,
@@ -317,7 +326,7 @@ impl NautilusView {
             status,
             tabs: Rc::new(RefCell::new(vec![initial.clone()])),
             current: Rc::new(RefCell::new(initial.clone())),
-            secondary: Rc::new(RefCell::new(initial)),
+            secondary: Rc::new(RefCell::new(secondary)),
             history: Rc::new(RefCell::new(vec![])),
             future: Rc::new(RefCell::new(vec![])),
             clipboard: Rc::new(RefCell::new(Vec::new())),
@@ -1275,9 +1284,19 @@ impl NautilusView {
         self.secondary.borrow_mut().remote = remote;
         self.secondary.borrow_mut().path = path;
         self.secondary.borrow_mut().starred = false;
+        self.persist_split_location();
         if *self.split_enabled.borrow() {
             self.reload_pane(&self.secondary.borrow());
         }
+    }
+
+    fn persist_split_location(&self) {
+        let secondary = self.secondary.borrow();
+        let mut settings = self.ctx.settings.borrow_mut();
+        settings.nautilus.split_secondary_remote = secondary.remote.clone();
+        settings.nautilus.split_secondary_path = secondary.path.clone();
+        drop(settings);
+        self.ctx.persist();
     }
 
     fn drag_items_for(
@@ -2876,7 +2895,27 @@ impl NautilusView {
         self.ctx.persist();
         self.right_scroll.set_visible(next);
         if next {
-            *self.secondary.borrow_mut() = self.current.borrow().clone();
+            let saved_remote = self
+                .ctx
+                .settings
+                .borrow()
+                .nautilus
+                .split_secondary_remote
+                .clone();
+            let saved_path = self
+                .ctx
+                .settings
+                .borrow()
+                .nautilus
+                .split_secondary_path
+                .clone();
+            if !saved_remote.is_empty() {
+                self.secondary.borrow_mut().remote = saved_remote;
+                self.secondary.borrow_mut().path = saved_path;
+            } else {
+                *self.secondary.borrow_mut() = self.current.borrow().clone();
+                self.persist_split_location();
+            }
             self.reload();
             self.status.set_text(
                 &self

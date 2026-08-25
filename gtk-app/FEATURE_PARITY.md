@@ -384,6 +384,10 @@ This client is the GTK 4 + libadwaita rewrite of the Angular/Tauri desktop UI. I
 - `--data-dir` / `--cache-dir` / `--logs-dir` and `RCLONE_MANAGER_{DATA,CACHE,LOG}_DIR` override app paths
 - Live GUI session: dashboard lists remotes, Files workspace browses local disks, app menu opens Preferences/About entries
 - Hide rclone 1.60 `job/list` internal noise (empty `job/<id>` leftovers)
+- Tray Mount/Unmount uses `preferred_mount_profile` (not hardcoded `default`)
+- Tray remotes nest per-operation profile submenus with `tray.jobsCount` / `tray.*Count`
+- Tray order matches Tauri: Show App, Files, Quick Runs, remotes, Stop-all, Quit last
+- Files split pane restores the secondary remote/path across restarts
 
 ## Still deepening toward pixel-level Angular parity
 

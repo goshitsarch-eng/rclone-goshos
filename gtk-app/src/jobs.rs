@@ -663,6 +663,14 @@ pub fn preferred_mount_profile(meta: Option<&RemoteMeta>) -> Option<ProfileConfi
     meta.get_profile(OperationType::Mount, preferred)
 }
 
+/// Name used by tray Mount/Unmount when the remote has no `default` profile.
+pub fn preferred_mount_profile_name(meta: Option<&RemoteMeta>) -> String {
+    preferred_mount_profile(meta)
+        .map(|profile| profile.name)
+        .filter(|name| !name.is_empty())
+        .unwrap_or_else(|| "default".into())
+}
+
 pub fn origin_matches(origin: &str, filter: &str) -> bool {
     if filter.is_empty() || filter.eq_ignore_ascii_case("all") {
         return true;
@@ -2484,6 +2492,8 @@ mod tests {
         assert_eq!(profile.rclone["mountPoint"], "/mnt/drive");
         assert!(preferred_mount_profile(None).is_none());
         assert!(preferred_mount_profile(Some(&RemoteMeta::default())).is_none());
+        assert_eq!(preferred_mount_profile_name(Some(&meta)), "default");
+        assert_eq!(preferred_mount_profile_name(None), "default");
     }
 
     #[test]
