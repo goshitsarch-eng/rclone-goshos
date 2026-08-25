@@ -1319,11 +1319,17 @@ fn present_ex(
                     }
                 }
             }
-            let mount_status = crate::path_inspection::inspect_local_path(&mount.text());
-            if let Err(e) = crate::path_inspection::ensure_path(
+            let engine_os = ctx.engine_os();
+            let mount_status = crate::path_inspection::inspect_local_ex(
+                &mount.text(),
+                ctx.client().as_ref(),
+                &engine_os,
+            );
+            if let Err(e) = crate::path_inspection::ensure_path_ex(
                 &mount_status,
                 &mount.text(),
                 ctx.client().as_ref(),
+                &engine_os,
             ) {
                 let err = adw::AlertDialog::new(
                     Some(&ctx.t_or(

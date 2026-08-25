@@ -469,6 +469,10 @@ This client is the GTK 4 + libadwaita rewrite of the Angular/Tauri desktop UI. I
 - Local Windows/UNC breadcrumbs keep `C:\` and `\\server\share` form
 - Wizard path fields show item count plus `df` free/total when the engine OS is this host
 - About/Updates and Delete Remote / Alerts filter chrome use existing i18n keys
+- Destination path inspection uses rclone `operations/stat` + `splitLocalForStat` when the engine OS differs or the path is Windows/UNC
+- Preparing jobs expire after 120s, skip when the same group is already live, and finalize as failed if they disappear from RC
+- `job_meta` (transfer snapshots, execute IDs, groups) is persisted in `store.json` so Job detail rows survive restart
+- Onboarding Import opens the same restore-preview flow as the menu Import action
 
 ## Still deepening toward pixel-level Angular parity
 

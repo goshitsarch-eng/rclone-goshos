@@ -292,18 +292,29 @@ pub struct JobInfo {
     pub parent_job_id: Option<u64>,
 }
 
-/// Local start-time metadata for a job id (not persisted).
-#[derive(Debug, Clone, Default)]
+/// Local start-time metadata for a job id (persisted so grouped transfer
+/// snapshots survive restart).
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct JobMeta {
+    #[serde(default)]
     pub origin: String,
+    #[serde(default)]
     pub profile: String,
+    #[serde(default)]
     pub remote: String,
+    #[serde(default)]
     pub backend: String,
+    #[serde(default)]
     pub quick_run_id: String,
+    #[serde(default)]
     pub execute_id: String,
+    #[serde(default)]
     pub parent_job_id: Option<u64>,
+    #[serde(default)]
     pub target: String,
+    #[serde(default)]
     pub group: String,
+    #[serde(default)]
     pub transfer_snapshot: Value,
 }
 
@@ -911,7 +922,7 @@ pub struct AppStore {
     pub automation_paused: Vec<String>,
     #[serde(default)]
     pub pending_share_paths: Vec<String>,
-    #[serde(default, skip)]
+    #[serde(default)]
     pub job_meta: HashMap<u64, JobMeta>,
     #[serde(default, skip)]
     pub notifications_enabled: bool,
@@ -1052,6 +1063,27 @@ impl AppStore {
         if self.job_history.len() > 80 {
             self.job_history.truncate(80);
         }
+        self.prune_job_meta();
+    }
+
+    pub fn prune_job_meta(&mut self) {
+        if self.job_meta.len() <= 200 {
+            let history: std::collections::HashSet<u64> =
+                self.job_history.iter().map(|job| job.id).collect();
+            if self.job_meta.len() <= history.len().saturating_add(120) {
+                return;
+            }
+        }
+        let history: std::collections::HashSet<u64> =
+            self.job_history.iter().map(|job| job.id).collect();
+        let mut ids: Vec<u64> = self.job_meta.keys().copied().collect();
+        ids.sort_unstable();
+        ids.reverse();
+        let mut keep = history;
+        for id in ids.into_iter().take(200) {
+            keep.insert(id);
+        }
+        self.job_meta.retain(|id, _| keep.contains(id));
     }
 
     pub fn update_job_stats(&mut self, jobid: u64, stats: Value) -> bool {
@@ -2089,6 +2121,27 @@ mod tests {
         assert_eq!(store.job_history[0].transferring[0]["name"], "a.txt");
         assert_eq!(store.job_history[0].status, "preparing");
         assert!(!store.update_job_stats(99, json!({})));
+    }
+
+    #[test]
+    fn job_meta_survives_store_json() {
+        let mut store = AppStore::default();
+        store.job_meta.insert(
+            3,
+            JobMeta {
+                origin: "filemanager".into(),
+                group: "filemanager-upload/abc".into(),
+                transfer_snapshot: json!([{ "name": "a.txt", "src": "/tmp/a.txt" }]),
+                ..Default::default()
+            },
+        );
+        let text = serde_json::to_string(&store).unwrap();
+        let loaded: AppStore = serde_json::from_str(&text).unwrap();
+        assert_eq!(loaded.job_meta[&3].group, "filemanager-upload/abc");
+        assert_eq!(
+            loaded.job_meta[&3].transfer_snapshot[0]["src"],
+            "/tmp/a.txt"
+        );
     }
 
     #[test]

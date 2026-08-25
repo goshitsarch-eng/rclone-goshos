@@ -961,11 +961,9 @@ fn notify_job_changes(
     }
     for job in previous {
         if current.iter().all(|j| j.id != job.id) {
-            let mut finished = job.clone();
-            if finished.status == "running" {
-                finished.status = "completed".into();
-            }
-            ctx.store.borrow_mut().remember_job(finished);
+            ctx.store
+                .borrow_mut()
+                .remember_job(crate::jobs::finalize_dropped_job(job));
             dirty = true;
         }
     }

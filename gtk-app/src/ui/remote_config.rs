@@ -829,14 +829,16 @@ fn operation_page(
         let remote = remote.to_string();
         let refresh_status = move |path: &str| {
             let resolved = crate::path_kind::resolve_job_path(path, &remote);
-            let status = crate::path_inspection::inspect_dest(
+            let status = crate::path_inspection::inspect_dest_ex(
                 &ctx.store.borrow(),
                 &resolved,
                 &remote,
                 op,
                 &ctx.snapshot.borrow().mounts,
+                ctx.client().as_ref(),
+                &ctx.engine_os(),
             );
-            dest_status.set_subtitle(&crate::path_inspection::describe_status(&status));
+            dest_status.set_subtitle(&super::dialogs::path_status_label(&ctx, &status));
         };
         refresh_status(&dst.text());
         dst.connect_changed(move |row| refresh_status(&row.text()));

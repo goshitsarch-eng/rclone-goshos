@@ -141,6 +141,7 @@ fn upload_send_to(ctx: &AppCtx, send: &crate::platform::SendToArgs) {
                     bytes,
                 );
                 ctx.store.borrow_mut().remember_job(preparing);
+                ctx.persist();
                 ctx.store.borrow_mut().update_job_stats(
                     id,
                     crate::jobs::preparing_progress_stats(

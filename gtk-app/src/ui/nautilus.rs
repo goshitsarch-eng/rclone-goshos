@@ -2929,6 +2929,7 @@ impl NautilusView {
                         })
                         .collect::<Vec<_>>());
                     self.ctx.store.borrow_mut().remember_job(preparing.clone());
+                    self.ctx.persist();
                     self.ctx.store.borrow_mut().update_job_stats(
                         id,
                         crate::jobs::preparing_progress_stats(

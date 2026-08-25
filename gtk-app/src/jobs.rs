@@ -1687,14 +1687,47 @@ pub fn preparing_progress_stats(
 }
 
 /// Keep preparing uploads in the live list until rclone reports the same job id.
+pub const PREPARING_TTL_SECS: i64 = 120;
+
 pub fn merge_preparing_jobs(live: Vec<JobInfo>, history: &[JobInfo]) -> Vec<JobInfo> {
     let mut out = live;
+    let now = Utc::now();
     for job in history {
-        if job.status == "preparing" && !out.iter().any(|j| j.id == job.id) {
-            out.insert(0, job.clone());
+        if job.status != "preparing" && job.status != "starting" {
+            continue;
         }
+        if out.iter().any(|j| j.id == job.id) {
+            continue;
+        }
+        if !job.group.is_empty()
+            && out
+                .iter()
+                .any(|j| !j.group.is_empty() && j.group == job.group)
+        {
+            continue;
+        }
+        let age = now.signed_duration_since(job.start_time).num_seconds();
+        if age > PREPARING_TTL_SECS {
+            continue;
+        }
+        out.insert(0, job.clone());
     }
     out
+}
+
+pub fn finalize_dropped_job(job: &JobInfo) -> JobInfo {
+    let mut finished = job.clone();
+    match finished.status.as_str() {
+        "running" => finished.status = "completed".into(),
+        "preparing" | "starting" => {
+            finished.status = "failed".into();
+            if finished.error.is_none() {
+                finished.error = Some("Job disappeared before rclone reported it".into());
+            }
+        }
+        _ => {}
+    }
+    finished
 }
 
 /// Parses raw text output from `operations/cryptcheck` into structured JSON.
@@ -2829,10 +2862,24 @@ mod tests {
                 status: "running".into(),
                 ..preparing.clone()
             }],
-            &[preparing],
+            &[preparing.clone()],
         );
         assert_eq!(already.len(), 1);
         assert_eq!(already[0].status, "running");
+        let mut stale = preparing.clone();
+        stale.start_time = Utc::now() - chrono::Duration::seconds(PREPARING_TTL_SECS + 5);
+        let expired = merge_preparing_jobs(live.clone(), &[stale]);
+        assert_eq!(expired.len(), 1);
+        assert_eq!(expired[0].id, 1);
+        let mut grouped = preparing.clone();
+        grouped.group = "filemanager-upload/abc".into();
+        let mut live_group = running_job(2, "drive", "upload", "default");
+        live_group.group = "filemanager-upload/abc".into();
+        let skipped = merge_preparing_jobs(vec![live_group], &[grouped]);
+        assert_eq!(skipped.len(), 1);
+        let dropped = finalize_dropped_job(&preparing);
+        assert_eq!(dropped.status, "failed");
+        assert!(dropped.error.is_some());
         let from_stats = job_from_status(
             4,
             &json!({ "finished": false, "success": false, "output": { "operation": "upload" } }),

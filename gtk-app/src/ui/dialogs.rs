@@ -3637,14 +3637,16 @@ pub fn start_operation(
         let remote = remote.to_string();
         let refresh_status = move |path: &str| {
             let resolved = crate::path_kind::resolve_job_path(path, &remote);
-            let status = crate::path_inspection::inspect_dest(
+            let status = crate::path_inspection::inspect_dest_ex(
                 &ctx.store.borrow(),
                 &resolved,
                 &remote,
                 op,
                 &ctx.snapshot.borrow().mounts,
+                ctx.client().as_ref(),
+                &ctx.engine_os(),
             );
-            dest_status.set_text(&crate::path_inspection::describe_status(&status));
+            dest_status.set_text(&path_status_label(&ctx, &status));
         };
         refresh_status(&dst.text());
         dst.connect_changed(move |row| refresh_status(&row.text()));
@@ -9773,6 +9775,22 @@ fn apply_quick_run_path_titles(
         ),
     });
     dst.set_visible(op != OperationType::Delete);
+}
+
+pub(crate) fn path_status_label(
+    ctx: &AppCtx,
+    status: &crate::path_inspection::PathStatus,
+) -> String {
+    match status {
+        crate::path_inspection::PathStatus::Collision { remote, profile } => ctx.tf(
+            "remoteConfig.pathStatus.colliding",
+            &[("details", &format!("{remote} ({profile})"))],
+        ),
+        other => ctx.t_or(
+            crate::path_inspection::status_label_key(other),
+            &crate::path_inspection::describe_status(other),
+        ),
+    }
 }
 
 pub(crate) fn attach_path_kind(
