@@ -766,6 +766,7 @@ fn collect_jobs(client: &crate::rclone::RcClient) -> Vec<crate::store::JobInfo> 
         }
         jobs.push(crate::jobs::job_from_status(jobid, &status, Some(&stats)));
     }
+    jobs.retain(crate::jobs::is_managed_job);
     jobs
 }
 

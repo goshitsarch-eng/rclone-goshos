@@ -382,10 +382,11 @@ This client is the GTK 4 + libadwaita rewrite of the Angular/Tauri desktop UI. I
 - 259 GTK `t_or` strings added to all `resources/i18n/*/main.json` locales
 - Desktop CLI `--tray` / `--hidden` starts in the tray (XDG autostart Exec includes `--tray`)
 - `--data-dir` / `--cache-dir` / `--logs-dir` and `RCLONE_MANAGER_{DATA,CACHE,LOG}_DIR` override app paths
+- Live GUI session: dashboard lists remotes, Files workspace browses local disks, app menu opens Preferences/About entries
+- Hide rclone 1.60 `job/list` internal noise (empty `job/<id>` leftovers)
 
 ## Still deepening toward pixel-level Angular parity
 
 - Workflow builder (stub in both apps)
-- Live GUI session against rclone rcd (no display in this environment)
 - Remaining dialogs/Files English labels (core chrome now localized)
 - Pixel-level Angular layouts and leftover English `t_or` fallbacks

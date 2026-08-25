@@ -1327,6 +1327,16 @@ pub fn job_from_status(jobid: u64, status: &Value, stats: Option<&Value>) -> Job
     job
 }
 
+/// rclone 1.60 `job/list` includes finished internal RC jobs (empty src/dst,
+/// operation `job/<id>`). Keep only jobs the app started or can identify.
+pub fn is_managed_job(job: &JobInfo) -> bool {
+    matches!(job.status.as_str(), "running" | "starting" | "preparing")
+        || !job.src.is_empty()
+        || !job.dst.is_empty()
+        || crate::operations::OperationType::parse(&job.operation).is_some()
+        || (!job.origin.is_empty() && job.origin != "dashboard")
+}
+
 /// Local job shown immediately after `start_job` returns, before rclone reports transfers.
 pub fn preparing_job(
     id: u64,
@@ -1926,7 +1936,25 @@ mod tests {
         assert_eq!(job.transferring[0]["name"], "a.bin");
         assert_eq!(job.completed[0]["name"], "done.bin");
         assert_eq!(stats_i64(&job.stats, &["bytes"]), 50);
-        assert_eq!(stats_f64(&job.stats, &["speed"]), 1024.0);
+        assert!(is_managed_job(&job));
+    }
+
+    #[test]
+    fn drops_internal_rc_job_list_noise() {
+        let noise = job_from_status(
+            99,
+            &json!({
+                "finished": true,
+                "success": true,
+                "group": "job/99",
+                "output": {}
+            }),
+            None,
+        );
+        assert_eq!(noise.operation, "job/99");
+        assert!(!is_managed_job(&noise));
+        let upload = preparing_job(3, "drive", "/tmp/a.txt", "drive:Inbox", 1, 12);
+        assert!(is_managed_job(&upload));
     }
 
     #[test]

@@ -1376,7 +1376,7 @@ fn sync_connection_button(ctx: &AppCtx, btn: &gtk::Button) {
 
 fn apply_startup_css() {
     let provider = gtk::CssProvider::new();
-    provider.load_from_string(".startup-loading { background-color: var(--window-bg-color); }");
+    provider.load_from_string(".startup-loading { background-color: @window_bg_color; }");
     if let Some(display) = gtk::gdk::Display::default() {
         gtk::style_context_add_provider_for_display(
             &display,
