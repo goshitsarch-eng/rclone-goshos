@@ -743,10 +743,28 @@ fn emit_runtime_alerts(
 ) {
     let mut dirty = false;
     for event in crate::alerts::mount_events(previous_mounts, mounts) {
+        ctx.store.borrow_mut().push_log(
+            &event.remote,
+            crate::logs::format_now(
+                crate::logs::LogLevel::Notice,
+                Some(&event.remote),
+                &format!("mount {}", event.title),
+                Some(&event.body),
+            ),
+        );
         ctx.store.borrow_mut().record_event(event);
         dirty = true;
     }
     for event in crate::alerts::serve_events(previous_serves, serves) {
+        ctx.store.borrow_mut().push_log(
+            &event.remote,
+            crate::logs::format_now(
+                crate::logs::LogLevel::Notice,
+                Some(&event.remote),
+                &format!("serve {}", event.title),
+                Some(&event.body),
+            ),
+        );
         ctx.store.borrow_mut().record_event(event);
         dirty = true;
     }

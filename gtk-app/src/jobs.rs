@@ -513,6 +513,41 @@ pub fn merge_options_block(obj: &mut Map<String, Value>, block: &str, opts: &Val
     }
 }
 
+pub fn preferred_mount_profile(meta: Option<&RemoteMeta>) -> Option<ProfileConfig> {
+    let meta = meta?;
+    let names = meta.profile_names(OperationType::Mount);
+    if names.is_empty() {
+        return None;
+    }
+    let preferred = names
+        .iter()
+        .find(|name| name.eq_ignore_ascii_case("default"))
+        .or_else(|| names.first())?;
+    meta.get_profile(OperationType::Mount, preferred)
+}
+
+pub fn origin_matches(origin: &str, filter: &str) -> bool {
+    if filter.is_empty() || filter.eq_ignore_ascii_case("all") {
+        return true;
+    }
+    let origin = origin.trim().to_ascii_lowercase();
+    let filter = filter.trim().to_ascii_lowercase();
+    match filter.as_str() {
+        "quickrun" => matches!(origin.as_str(), "quickrun" | "quick-run" | "flow"),
+        "dashboard" => origin.is_empty() || origin == "dashboard",
+        "filemanager" => matches!(origin.as_str(), "filemanager" | "file-manager" | "files"),
+        other => origin == other,
+    }
+}
+
+pub fn automation_origin(id: &str) -> &'static str {
+    if id.starts_with("quick:") {
+        "quickrun"
+    } else {
+        "dashboard"
+    }
+}
+
 pub fn start_profile(
     client: &RcClient,
     remote: &str,
@@ -1788,6 +1823,9 @@ mod tests {
             addr: "127.0.0.1:8080".into(),
             fs: "drive:".into(),
             serve_type: "webdav".into(),
+            origin: "dashboard".into(),
+            profile: "default".into(),
+            option_count: 0,
         }];
         assert!(profile_is_active(
             "drive",
@@ -1991,6 +2029,46 @@ mod tests {
             Some(&json!({ "preparing": true, "bytes": 0 })),
         );
         assert_eq!(from_stats.status, "preparing");
+    }
+
+    #[test]
+    fn prefers_default_mount_profile() {
+        let mut meta = RemoteMeta::default();
+        meta.upsert_profile(
+            OperationType::Mount,
+            ProfileConfig {
+                name: "home".into(),
+                rclone: json!({ "mountPoint": "/mnt/home" }),
+                ..ProfileConfig::default()
+            },
+        );
+        meta.upsert_profile(
+            OperationType::Mount,
+            ProfileConfig {
+                name: "default".into(),
+                rclone: json!({ "mountPoint": "/mnt/drive" }),
+                ..ProfileConfig::default()
+            },
+        );
+        let profile = preferred_mount_profile(Some(&meta)).unwrap();
+        assert_eq!(profile.name, "default");
+        assert_eq!(profile.rclone["mountPoint"], "/mnt/drive");
+        assert!(preferred_mount_profile(None).is_none());
+        assert!(preferred_mount_profile(Some(&RemoteMeta::default())).is_none());
+    }
+
+    #[test]
+    fn origin_filter_matches_angular_chips() {
+        assert!(origin_matches("quickrun", "all"));
+        assert!(origin_matches("flow", "quickrun"));
+        assert!(origin_matches("quick-run", "quickrun"));
+        assert!(origin_matches("", "dashboard"));
+        assert!(origin_matches("dashboard", "dashboard"));
+        assert!(!origin_matches("filemanager", "dashboard"));
+        assert!(origin_matches("files", "filemanager"));
+        assert!(origin_matches("automation", "automation"));
+        assert_eq!(automation_origin("quick:abc"), "quickrun");
+        assert_eq!(automation_origin("remote:drive:sync:default"), "dashboard");
     }
 
     #[test]

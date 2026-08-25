@@ -292,6 +292,14 @@ This client is the GTK 4 + libadwaita rewrite of the Angular/Tauri desktop UI. I
 - Live preparing-job stats (`update_job_stats`) during file/folder uploads
 - Backup restore restarts the engine and reloads automation watchers
 - Folder context Open in New Window; OS toast honors Preferences → Notifications
+- Dashboard transfer activity has per-source and per-destination Open / Copy / URL / Download / Delete
+- Job-detail transfer rows split the same source and destination action groups
+- Overview origin filter chips (all / dashboard / quick run / files / automation) for jobs, serves, and automations
+- Serve cards copy URL and ID, and show origin, profile, and extra option count
+- Mount / Unmount uses the saved default mount profile when one exists
+- Remote wizard last step edits a runtime-remote helper applied to jobs
+- Automations show human-readable cron and watcher summaries
+- Logs translate backend `{key, params}` messages; mount/serve transitions are ingested as structured log lines
 
 ## Still deepening toward pixel-level Angular parity
 

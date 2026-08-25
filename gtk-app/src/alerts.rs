@@ -221,6 +221,9 @@ mod tests {
                 addr: "127.0.0.1:8080".into(),
                 fs: "box:".into(),
                 serve_type: "http".into(),
+                origin: "dashboard".into(),
+                profile: "default".into(),
+                option_count: 0,
             }],
             &[],
         );

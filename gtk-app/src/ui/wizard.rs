@@ -795,6 +795,58 @@ pub fn present(
         &ctx.t_or("modals.remoteConfig.steps.profiles", "Profiles"),
     );
 
+    let runtime_name = adw::EntryRow::new();
+    runtime_name.set_title(&ctx.t_or("remoteConfig.runtimeProfile", "Runtime profile"));
+    let runtime_view = gtk::TextView::new();
+    runtime_view.set_wrap_mode(gtk::WrapMode::WordChar);
+    runtime_view.set_monospace(true);
+    runtime_view.set_left_margin(8);
+    runtime_view.set_right_margin(8);
+    runtime_view.set_top_margin(8);
+    runtime_view.set_bottom_margin(8);
+    if let Some(meta) = &existing_meta {
+        let names = meta.helper_names("runtime");
+        let chosen = names
+            .iter()
+            .find(|n| n.eq_ignore_ascii_case("default"))
+            .cloned()
+            .or_else(|| names.into_iter().next())
+            .unwrap_or_else(|| "default".into());
+        runtime_name.set_text(&chosen);
+        if let Some(value) = meta.helper_profile("runtime", &chosen) {
+            fill_json_view(
+                &runtime_view,
+                &value,
+                ctx.settings.borrow().general.restrict,
+            );
+        } else {
+            fill_json_view(&runtime_view, &json!({}), false);
+        }
+    } else {
+        runtime_name.set_text("default");
+        fill_json_view(&runtime_view, &json!({}), false);
+    }
+    let runtime_page = adw::PreferencesPage::new();
+    let runtime_group = adw::PreferencesGroup::new();
+    runtime_group.set_title(&ctx.t_or("modals.remoteConfig.steps.runtimeRemote", "Runtime remote"));
+    runtime_group.set_description(Some(&ctx.t_or(
+        "wizards.remoteConfig.runtimeRemoteWarning.description",
+        "These options are applied to jobs at runtime and are not written into rclone.conf.",
+    )));
+    runtime_group.add(&runtime_name);
+    let runtime_scroll = gtk::ScrolledWindow::new();
+    runtime_scroll.set_min_content_height(220);
+    runtime_scroll.set_hexpand(true);
+    runtime_scroll.set_vexpand(true);
+    runtime_scroll.set_child(Some(&runtime_view));
+    runtime_group.add(&runtime_scroll);
+    runtime_page.add(&runtime_group);
+    nav.add_titled(
+        &runtime_page,
+        Some("runtime"),
+        &ctx.t_or("modals.remoteConfig.steps.runtimeRemote", "Runtime"),
+    );
+
     let switcher = adw::ViewSwitcher::new();
     switcher.set_stack(Some(&nav));
     switcher.set_policy(adw::ViewSwitcherPolicy::Wide);
@@ -950,6 +1002,8 @@ pub fn present(
         let custom_options = custom_options.clone();
         let json_mode = json_mode.clone();
         let json_view = json_view.clone();
+        let runtime_name = runtime_name.clone();
+        let runtime_view = runtime_view.clone();
         save.connect_clicked(move |_| {
             let remote_name = name.text().to_string();
             let existing_names = ctx.store.borrow().remote_names();
@@ -1095,6 +1149,8 @@ pub fn present(
                             autostart.is_active(),
                             &cli.text(),
                             &op_flags.borrow(),
+                            &runtime_name.text(),
+                            &textview_text(&runtime_view),
                         );
                         on_done();
                         dialog.close();
@@ -1689,6 +1745,8 @@ fn persist_meta(
     autostart: bool,
     cli: &str,
     op_flags: &[(OperationType, adw::SwitchRow, adw::EntryRow, adw::EntryRow)],
+    runtime_name: &str,
+    runtime_json: &str,
 ) {
     let mut meta = ctx
         .store
@@ -1731,6 +1789,11 @@ fn persist_meta(
         if let Some(obj) = rclone.as_object_mut() {
             obj.extend(extra.clone());
         }
+        let helper = if runtime_name.trim().is_empty() {
+            "default".to_string()
+        } else {
+            runtime_name.trim().to_string()
+        };
         let profile = ProfileConfig {
             name: "default".into(),
             app: AppConfig {
@@ -1741,6 +1804,7 @@ fn persist_meta(
                     ),
                 cron_enabled: !cron.is_empty(),
                 cron_expression: cron.to_string(),
+                runtime_remote_profile: helper,
                 ..AppConfig::default()
             },
             rclone,
@@ -1749,6 +1813,18 @@ fn persist_meta(
             .entry(op.as_str().into())
             .or_default()
             .insert("default".into(), profile);
+    }
+    let helper = if runtime_name.trim().is_empty() {
+        "default"
+    } else {
+        runtime_name.trim()
+    };
+    if let Ok(value) = serde_json::from_str::<Value>(runtime_json.trim()) {
+        if value.as_object().is_some_and(|obj| !obj.is_empty()) {
+            meta.upsert_helper("runtime", helper, value);
+        }
+    } else if !runtime_json.trim().is_empty() {
+        meta.upsert_helper("runtime", helper, json!({ "raw": runtime_json.trim() }));
     }
     crate::presets::apply_to_remote_meta(
         &mut meta,

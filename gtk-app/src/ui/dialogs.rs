@@ -1363,6 +1363,7 @@ pub fn logs(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, remote: Option<String>)
     let copy_label = ctx.t_or("common.copy", "Copy");
     let context_label = ctx.t_or("modals.logs.logContext", "Log Context");
     let apply = {
+        let ctx = ctx.clone();
         let list = list.clone();
         let stack = stack.clone();
         let entries = entries.clone();
@@ -1403,10 +1404,11 @@ pub fn logs(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, remote: Option<String>)
                     }
                 });
                 let message = gtk::Label::new(None);
-                if crate::ansi::has_ansi(&entry.message) {
-                    message.set_markup(&crate::ansi::ansi_to_pango(&entry.message));
+                let translated = ctx.translate_error(&entry.message);
+                if crate::ansi::has_ansi(&translated) {
+                    message.set_markup(&crate::ansi::ansi_to_pango(&translated));
                 } else {
-                    message.set_text(&entry.message);
+                    message.set_text(&translated);
                 }
                 message.set_wrap(true);
                 message.set_wrap_mode(gtk::pango::WrapMode::WordChar);
@@ -5275,13 +5277,19 @@ fn append_transfer_rows(
     job_type: &str,
 ) {
     let empty_title = if active {
-        "No active transfers"
+        ctx.t_or(
+            "shared.transferActivity.empty.noActive",
+            "No active transfers",
+        )
     } else {
-        "No completed transfers"
+        ctx.t_or(
+            "shared.transferActivity.empty.noRecent",
+            "No completed transfers",
+        )
     };
     let Some(arr) = items else {
         let row = adw::ActionRow::new();
-        row.set_title(empty_title);
+        row.set_title(&empty_title);
         list.append(&row);
         return;
     };
@@ -5293,118 +5301,199 @@ fn append_transfer_rows(
         }
         let row = adw::ActionRow::new();
         row.set_title(&parsed.name);
-        row.set_subtitle(&format!(
-            "{}% · {}",
-            parsed.percentage,
-            crate::rclone::format_bytes(parsed.size)
-        ));
-        let actions = gtk::Box::new(gtk::Orientation::Horizontal, 4);
-        if let Some((remote, path)) = crate::transfers::browse_for(&parsed.src)
-            .or_else(|| crate::transfers::browse_for(&parsed.dst))
-        {
-            let open = gtk::Button::from_icon_name("folder-open-symbolic");
-            open.set_tooltip_text(Some("Open in Files"));
-            open.set_valign(gtk::Align::Center);
-            let ctx = ctx.clone();
-            let parent = parent.clone();
-            open.connect_clicked(move |_| {
-                ctx.request_browse(&remote, &path);
-                parent.close();
-            });
-            actions.append(&open);
-        }
-        let copy = gtk::Button::from_icon_name("edit-copy-symbolic");
-        copy.set_tooltip_text(Some("Copy path"));
-        copy.set_valign(gtk::Align::Center);
-        let copy_text = if !parsed.dst.is_empty() {
-            parsed.dst.clone()
+        let src = if parsed.src.is_empty() {
+            "—".into()
         } else {
             parsed.src.clone()
         };
-        copy.connect_clicked(move |_| {
-            if let Some(display) = gtk::gdk::Display::default() {
-                display.clipboard().set_text(&copy_text);
-            }
-        });
-        actions.append(&copy);
-        if let Some((remote, path, name)) = crate::transfers::download_target(&parsed.src)
-            .or_else(|| crate::transfers::download_target(&parsed.dst))
-        {
-            let dl = gtk::Button::from_icon_name("folder-download-symbolic");
-            dl.set_tooltip_text(Some("Download"));
-            dl.set_valign(gtk::Align::Center);
-            let ctx = ctx.clone();
-            let parent = parent.clone();
-            dl.connect_clicked(move |_| {
-                download_file(&parent, ctx.clone(), &remote, &path, &name);
-            });
-            actions.append(&dl);
-        }
-        if let Some((remote, path)) = crate::transfers::browse_for(&parsed.src)
-            .or_else(|| crate::transfers::browse_for(&parsed.dst))
-        {
-            let info = ctx.fs_info(&remote);
-            if crate::transfers::can_public_link(&remote, info.as_ref()) {
-                let link = gtk::Button::from_icon_name("emblem-shared-symbolic");
-                link.set_tooltip_text(Some("Copy public URL"));
-                link.set_valign(gtk::Align::Center);
-                let ctx = ctx.clone();
-                link.connect_clicked(move |_| {
-                    let Some(client) = ctx.client() else {
-                        return;
-                    };
-                    let (fs, remote_path) = crate::transfers::fs_and_remote(&if path.is_empty() {
-                        format!("{remote}:")
-                    } else if remote == "local" {
-                        path.clone()
-                    } else {
-                        format!("{remote}:{path}")
-                    });
-                    if let Ok(url) = client.public_link(&fs, &remote_path) {
-                        if let Some(display) = gtk::gdk::Display::default() {
-                            display.clipboard().set_text(&url);
-                        }
-                    }
-                });
-                actions.append(&link);
-            }
-        }
-        if crate::transfers::can_delete_source(job_type) && !parsed.src.is_empty() {
-            let del = gtk::Button::from_icon_name("user-trash-symbolic");
-            del.set_tooltip_text(Some("Delete source"));
-            del.set_valign(gtk::Align::Center);
-            let ctx = ctx.clone();
-            let parent = parent.clone();
-            let src = parsed.src.clone();
-            del.connect_clicked(move |_| {
-                confirm_delete_path(&parent, ctx.clone(), &src, "Delete source file?");
-            });
-            actions.append(&del);
-        }
-        if crate::transfers::can_delete_dest(job_type, !active) && !parsed.dst.is_empty() {
-            let del = gtk::Button::from_icon_name("edit-delete-symbolic");
-            del.set_tooltip_text(Some("Delete destination"));
-            del.set_valign(gtk::Align::Center);
-            let ctx = ctx.clone();
-            let parent = parent.clone();
-            let dst = parsed.dst.clone();
-            del.connect_clicked(move |_| {
-                confirm_delete_path(&parent, ctx.clone(), &dst, "Delete destination file?");
-            });
-            actions.append(&del);
-        }
-        row.add_suffix(&actions);
+        let dst = if parsed.dst.is_empty() {
+            "—".into()
+        } else {
+            parsed.dst.clone()
+        };
+        row.set_subtitle(&format!(
+            "{}% · {} · {src} → {dst}",
+            parsed.percentage,
+            crate::rclone::format_bytes(parsed.size)
+        ));
+        row.add_suffix(&transfer_row_actions(
+            ctx, parent, &parsed, job_type, !active,
+        ));
         list.append(&row);
         shown += 1;
     }
     if shown == 0 {
         let row = adw::ActionRow::new();
-        row.set_title(empty_title);
+        row.set_title(&empty_title);
         list.append(&row);
     }
 }
 
-fn confirm_delete_path(parent: &adw::Dialog, ctx: AppCtx, path: &str, title: &str) {
+pub(crate) fn transfer_row_actions(
+    ctx: &AppCtx,
+    parent: &impl IsA<gtk::Widget>,
+    parsed: &crate::transfers::TransferRow,
+    job_type: &str,
+    completed: bool,
+) -> gtk::Box {
+    let actions = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+    actions.set_valign(gtk::Align::Center);
+    if !parsed.src.is_empty() {
+        actions.append(&transfer_side_actions(
+            ctx,
+            parent,
+            &parsed.src,
+            job_type,
+            true,
+            true,
+        ));
+    }
+    if !parsed.dst.is_empty() {
+        actions.append(&transfer_side_actions(
+            ctx,
+            parent,
+            &parsed.dst,
+            job_type,
+            completed,
+            false,
+        ));
+    }
+    actions
+}
+
+fn transfer_side_actions(
+    ctx: &AppCtx,
+    parent: &impl IsA<gtk::Widget>,
+    path: &str,
+    job_type: &str,
+    allow_dest_ops: bool,
+    is_source: bool,
+) -> gtk::Box {
+    let side = gtk::Box::new(gtk::Orientation::Horizontal, 2);
+    side.add_css_class("linked");
+    side.set_valign(gtk::Align::Center);
+    let copy_url = if is_source {
+        crate::transfers::can_copy_url_source(path, job_type, path_fs_info(ctx, path).as_ref())
+    } else {
+        crate::transfers::can_copy_url_dest(
+            path,
+            job_type,
+            allow_dest_ops,
+            path_fs_info(ctx, path).as_ref(),
+        )
+    };
+    let can_download = if is_source {
+        crate::transfers::can_download_source(path, job_type)
+    } else {
+        crate::transfers::can_download_dest(path, job_type, allow_dest_ops)
+    };
+    let can_delete = if is_source {
+        crate::transfers::can_delete_source(job_type) && !path.is_empty()
+    } else {
+        crate::transfers::can_delete_dest(job_type, allow_dest_ops) && !path.is_empty()
+    };
+    if let Some((remote, rest)) = crate::transfers::browse_for(path) {
+        let open = gtk::Button::from_icon_name("folder-open-symbolic");
+        open.set_tooltip_text(Some(&ctx.t_or("common.browse", "Open in Files")));
+        open.set_valign(gtk::Align::Center);
+        let ctx = ctx.clone();
+        open.connect_clicked(move |_| {
+            ctx.request_browse(&remote, &rest);
+        });
+        side.append(&open);
+    }
+    let copy = gtk::Button::from_icon_name("edit-copy-symbolic");
+    copy.set_tooltip_text(Some(&ctx.t_or("common.copy", "Copy path")));
+    copy.set_valign(gtk::Align::Center);
+    let copy_text = path.to_string();
+    copy.connect_clicked(move |_| {
+        if let Some(display) = gtk::gdk::Display::default() {
+            display.clipboard().set_text(&copy_text);
+        }
+    });
+    side.append(&copy);
+    if copy_url {
+        if let Some((remote, rest)) = crate::transfers::browse_for(path) {
+            let link = gtk::Button::from_icon_name("emblem-shared-symbolic");
+            link.set_tooltip_text(Some(
+                &ctx.t_or("shared.transferActivity.actions.copyUrl", "Copy URL"),
+            ));
+            link.set_valign(gtk::Align::Center);
+            let ctx = ctx.clone();
+            link.connect_clicked(move |_| {
+                let Some(client) = ctx.client() else {
+                    return;
+                };
+                let full = if rest.is_empty() {
+                    format!("{remote}:")
+                } else if remote == "local" {
+                    rest.clone()
+                } else {
+                    format!("{remote}:{rest}")
+                };
+                let (fs, remote_path) = crate::transfers::fs_and_remote(&full);
+                if let Ok(url) = client.public_link(&fs, &remote_path) {
+                    if let Some(display) = gtk::gdk::Display::default() {
+                        display.clipboard().set_text(&url);
+                    }
+                }
+            });
+            side.append(&link);
+        }
+    }
+    if can_download {
+        if let Some((remote, rest, name)) = crate::transfers::download_target(path) {
+            let dl = gtk::Button::from_icon_name("folder-download-symbolic");
+            dl.set_tooltip_text(Some(
+                &ctx.t_or("shared.transferActivity.actions.download", "Download File"),
+            ));
+            dl.set_valign(gtk::Align::Center);
+            let ctx = ctx.clone();
+            let parent = parent.clone();
+            dl.connect_clicked(move |_| {
+                download_file(&parent, ctx.clone(), &remote, &rest, &name);
+            });
+            side.append(&dl);
+        }
+    }
+    if can_delete {
+        let del = gtk::Button::from_icon_name(if is_source {
+            "user-trash-symbolic"
+        } else {
+            "edit-delete-symbolic"
+        });
+        del.set_tooltip_text(Some(&if is_source {
+            ctx.t_or("nautilus.modals.delete.title", "Delete source")
+        } else {
+            ctx.t_or("nautilus.modals.delete.title", "Delete destination")
+        }));
+        del.set_valign(gtk::Align::Center);
+        let ctx = ctx.clone();
+        let parent = parent.clone();
+        let path = path.to_string();
+        let title = if is_source {
+            ctx.t_or("nautilus.modals.delete.title", "Delete source file?")
+        } else {
+            ctx.t_or("nautilus.modals.delete.title", "Delete destination file?")
+        };
+        del.connect_clicked(move |_| {
+            confirm_delete_path(&parent, ctx.clone(), &path, &title);
+        });
+        side.append(&del);
+    }
+    side
+}
+
+fn path_fs_info(ctx: &AppCtx, path: &str) -> Option<crate::rclone::FsInfo> {
+    crate::transfers::remote_name_from_path(path).and_then(|remote| ctx.fs_info(&remote))
+}
+
+pub(crate) fn confirm_delete_path(
+    parent: &impl IsA<gtk::Widget>,
+    ctx: AppCtx,
+    path: &str,
+    title: &str,
+) {
     let alert = adw::AlertDialog::new(Some(title), Some(path));
     alert.add_response("cancel", "Cancel");
     alert.add_response("delete", "Delete");

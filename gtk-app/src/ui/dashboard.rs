@@ -23,6 +23,7 @@ pub struct Dashboard {
     editing_layout: Rc<RefCell<bool>>,
     dry_run: Rc<Cell<bool>>,
     resync: Rc<Cell<bool>>,
+    origin_filter: Rc<RefCell<String>>,
 }
 
 impl Dashboard {
@@ -106,6 +107,7 @@ impl Dashboard {
             editing_layout: Rc::new(RefCell::new(false)),
             dry_run: Rc::new(Cell::new(false)),
             resync: Rc::new(Cell::new(false)),
+            origin_filter: Rc::new(RefCell::new("all".into())),
         };
 
         let mut group_anchor: Option<gtk::ToggleButton> = None;
@@ -406,6 +408,7 @@ impl Dashboard {
         layout_bar.append(&order_btn);
         layout_bar.append(&reset);
         self.overview.append(&layout_bar);
+        self.overview.append(&self.origin_filter_bar());
         let layout = crate::layout::PanelLayout::from_value(
             &self.ctx.settings.borrow().runtime.dashboard_layout,
         );
@@ -424,6 +427,42 @@ impl Dashboard {
                 _ => {}
             }
         }
+    }
+
+    fn origin_filter_bar(&self) -> gtk::Box {
+        let bar = gtk::Box::new(gtk::Orientation::Horizontal, 6);
+        bar.add_css_class("linked");
+        bar.set_halign(gtk::Align::Start);
+        bar.set_margin_bottom(4);
+        let current = self.origin_filter.borrow().clone();
+        for (id, key, fallback) in [
+            ("all", "common.all", "All"),
+            ("dashboard", "navigation.dashboard", "Dashboard"),
+            ("quickrun", "flow.tabs.quickRun", "Quick Run"),
+            ("filemanager", "navigation.files", "Files"),
+            (
+                "automation",
+                "generalOverview.panels.automations",
+                "Automations",
+            ),
+        ] {
+            let btn = gtk::ToggleButton::with_label(&self.ctx.t_or(key, fallback));
+            btn.set_active(current == id);
+            {
+                let dash = self.clone();
+                let id = id.to_string();
+                btn.connect_clicked(move |_| {
+                    *dash.origin_filter.borrow_mut() = id.clone();
+                    dash.refresh();
+                });
+            }
+            bar.append(&btn);
+        }
+        bar
+    }
+
+    fn origin_filter(&self) -> String {
+        self.origin_filter.borrow().clone()
     }
 
     fn append_panel_chrome(&self, id: &str) {
@@ -531,7 +570,9 @@ impl Dashboard {
             browse.set_tooltip_text(Some(&self.ctx.t_or("common.browse", "Browse")));
             let mount = gtk::Button::from_icon_name("drive-harddisk-symbolic");
             mount.set_valign(gtk::Align::Center);
-            mount.set_tooltip_text(Some("Mount / Unmount"));
+            mount.set_tooltip_text(Some(
+                &self.ctx.t_or("remote.mountToggle", "Mount / Unmount"),
+            ));
             {
                 let ctx = self.ctx.clone();
                 let name = remote.name.clone();
@@ -678,7 +719,14 @@ impl Dashboard {
     fn render_jobs_panel(&self, snap: &crate::store::RuntimeSnapshot) {
         let jobs = gtk::ListBox::new();
         jobs.add_css_class("boxed-list");
-        if snap.jobs.is_empty() {
+        let filter = self.origin_filter();
+        let filtered: Vec<_> = snap
+            .jobs
+            .iter()
+            .filter(|job| crate::jobs::origin_matches(&job.origin, &filter))
+            .cloned()
+            .collect();
+        if filtered.is_empty() {
             let row = adw::ActionRow::new();
             row.set_title(
                 &self
@@ -687,10 +735,19 @@ impl Dashboard {
             );
             jobs.append(&row);
         } else {
-            for job in &snap.jobs {
+            for job in &filtered {
                 let row = adw::ActionRow::new();
                 row.set_title(&format!("{} · {}", job.operation, job.remote));
-                row.set_subtitle(&format!("{} · {}", job.status, job.profile));
+                row.set_subtitle(&format!(
+                    "{} · {} · {}",
+                    job.status,
+                    job.profile,
+                    if job.origin.is_empty() {
+                        "dashboard"
+                    } else {
+                        job.origin.as_str()
+                    }
+                ));
                 let stop = gtk::Button::from_icon_name("media-playback-stop-symbolic");
                 stop.set_valign(gtk::Align::Center);
                 {
@@ -722,7 +779,14 @@ impl Dashboard {
     fn render_serves_panel(&self, snap: &crate::store::RuntimeSnapshot) {
         let serves = gtk::ListBox::new();
         serves.add_css_class("boxed-list");
-        if snap.serves.is_empty() {
+        let filter = self.origin_filter();
+        let filtered: Vec<_> = snap
+            .serves
+            .iter()
+            .filter(|serve| crate::jobs::origin_matches(&serve.origin, &filter))
+            .cloned()
+            .collect();
+        if filtered.is_empty() {
             let row = adw::ActionRow::new();
             row.set_title(
                 &self
@@ -731,13 +795,31 @@ impl Dashboard {
             );
             serves.append(&row);
         } else {
-            for serve in &snap.serves {
+            for serve in &filtered {
                 let row = adw::ActionRow::new();
                 row.set_title(&format!("{} · {}", serve.serve_type, serve.fs));
-                row.set_subtitle(&serve.addr);
+                let mut subtitle = serve.addr.clone();
+                if !serve.profile.is_empty() {
+                    subtitle.push_str(&format!(" · {}", serve.profile));
+                }
+                if !serve.origin.is_empty() {
+                    subtitle.push_str(&format!(" · {}", serve.origin));
+                }
+                if serve.option_count > 0 {
+                    subtitle.push_str(&format!(
+                        " · {} {}",
+                        serve.option_count,
+                        self.ctx.t_or("shared.serveCard.labels.active", "active")
+                    ));
+                }
+                row.set_subtitle(&subtitle);
                 let stop = gtk::Button::from_icon_name("media-playback-stop-symbolic");
                 stop.set_valign(gtk::Align::Center);
-                stop.set_tooltip_text(Some("Stop this serve"));
+                stop.set_tooltip_text(Some(
+                    &self
+                        .ctx
+                        .t_or("shared.serveCard.tooltips.stop", "Stop this serve"),
+                ));
                 {
                     let ctx = self.ctx.clone();
                     let id = serve.id.clone();
@@ -750,11 +832,46 @@ impl Dashboard {
                         }
                     });
                 }
-                if !serve.addr.is_empty() {
-                    let open = gtk::LinkButton::new(&format!("http://{}", serve.addr));
+                let url = serve.url();
+                if !url.is_empty() {
+                    let copy_url = gtk::Button::from_icon_name("edit-copy-symbolic");
+                    copy_url.set_valign(gtk::Align::Center);
+                    copy_url.set_tooltip_text(Some(
+                        &self
+                            .ctx
+                            .t_or("shared.serveCard.tooltips.copyUrl", "Click to copy URL"),
+                    ));
+                    {
+                        let url = url.clone();
+                        copy_url.connect_clicked(move |_| {
+                            if let Some(display) = gtk::gdk::Display::default() {
+                                display.clipboard().set_text(&url);
+                            }
+                        });
+                    }
+                    row.add_suffix(&copy_url);
+                    let open = gtk::LinkButton::new(&url);
                     open.set_label(&self.ctx.t_or("common.open", "Open"));
                     open.set_valign(gtk::Align::Center);
                     row.add_suffix(&open);
+                }
+                if !serve.id.is_empty() {
+                    let copy_id = gtk::Button::from_icon_name("edit-select-all-symbolic");
+                    copy_id.set_valign(gtk::Align::Center);
+                    copy_id.set_tooltip_text(Some(
+                        &self
+                            .ctx
+                            .t_or("shared.serveCard.tooltips.copyId", "Click to copy ID"),
+                    ));
+                    {
+                        let id = serve.id.clone();
+                        copy_id.connect_clicked(move |_| {
+                            if let Some(display) = gtk::gdk::Display::default() {
+                                display.clipboard().set_text(&id);
+                            }
+                        });
+                    }
+                    row.add_suffix(&copy_id);
                 }
                 row.add_suffix(&stop);
                 {
@@ -908,7 +1025,13 @@ impl Dashboard {
     fn render_automations_panel(&self) {
         let autos = gtk::ListBox::new();
         autos.add_css_class("boxed-list");
-        let records = crate::automation::collect(&self.ctx.store.borrow());
+        let filter = self.origin_filter();
+        let records: Vec<_> = crate::automation::collect(&self.ctx.store.borrow())
+            .into_iter()
+            .filter(|record| {
+                crate::jobs::origin_matches(crate::jobs::automation_origin(&record.id), &filter)
+            })
+            .collect();
         if records.is_empty() {
             let row = adw::ActionRow::new();
             row.set_title(
@@ -930,15 +1053,27 @@ impl Dashboard {
                     .next_run
                     .map(|t| t.format("%Y-%m-%d %H:%M").to_string())
                     .unwrap_or_else(|| "—".into());
+                let cron = if record.cron_enabled {
+                    crate::rclone::describe_cron_i18n(&record.cron, &self.ctx.i18n.borrow())
+                } else {
+                    self.ctx.t_or("common.off", "off")
+                };
+                let watch = if record.watch_enabled {
+                    format!(
+                        "watch {}s{}",
+                        record.watch_delay,
+                        if record.watch_changed_only {
+                            " changed"
+                        } else {
+                            ""
+                        }
+                    )
+                } else {
+                    self.ctx.t_or("common.off", "off")
+                };
                 row.set_subtitle(&format!(
-                    "{} · cron={} · watch={} · next {next}{}",
+                    "{} · {cron} · {watch} · next {next}{}",
                     record.operation,
-                    if record.cron_enabled {
-                        record.cron.as_str()
-                    } else {
-                        "off"
-                    },
-                    if record.watch_enabled { "on" } else { "off" },
                     if paused { " · paused" } else { "" }
                 ));
                 let enabled = gtk::Switch::new();
@@ -1355,7 +1490,30 @@ impl Dashboard {
         for serve in remote_serves {
             let row = adw::ActionRow::new();
             row.set_title(&format!("Serve · {}", serve.serve_type));
-            row.set_subtitle(&serve.addr);
+            let mut subtitle = serve.addr.clone();
+            if !serve.profile.is_empty() {
+                subtitle.push_str(&format!(" · {}", serve.profile));
+            }
+            if !serve.origin.is_empty() {
+                subtitle.push_str(&format!(" · {}", serve.origin));
+            }
+            row.set_subtitle(&subtitle);
+            let url = serve.url();
+            if !url.is_empty() {
+                let copy_url = gtk::Button::from_icon_name("edit-copy-symbolic");
+                copy_url.set_valign(gtk::Align::Center);
+                copy_url.set_tooltip_text(Some(
+                    &self
+                        .ctx
+                        .t_or("shared.serveCard.tooltips.copyUrl", "Click to copy URL"),
+                ));
+                copy_url.connect_clicked(move |_| {
+                    if let Some(display) = gtk::gdk::Display::default() {
+                        display.clipboard().set_text(&url);
+                    }
+                });
+                row.add_suffix(&copy_url);
+            }
             {
                 let ctx = self.ctx.clone();
                 let id = serve.id.clone();
@@ -1781,7 +1939,12 @@ impl Dashboard {
                     .cloned()
                     .unwrap_or_default()
                     .into_iter()
-                    .map(|item| crate::transfers::parse_transfer_row(&item))
+                    .map(|item| {
+                        (
+                            job.operation.clone(),
+                            crate::transfers::parse_transfer_row(&item),
+                        )
+                    })
             })
             .take(8)
             .collect();
@@ -1789,14 +1952,33 @@ impl Dashboard {
             return;
         }
         self.detail.append(&section_label(
-            &self.ctx.t_or("jobDetail.transfers", "Current transfers"),
+            &self
+                .ctx
+                .t_or("shared.transferActivity.title", "Transfer Activity"),
         ));
         let list = gtk::ListBox::new();
         list.add_css_class("boxed-list");
-        for row in rows {
+        for (operation, row) in rows {
             let item = adw::ActionRow::new();
             item.set_title(&row.name);
-            item.set_subtitle(&format!("{}% · {}", row.percentage, row.src));
+            let src = if row.src.is_empty() {
+                "—".into()
+            } else {
+                row.src.clone()
+            };
+            let dst = if row.dst.is_empty() {
+                "—".into()
+            } else {
+                row.dst.clone()
+            };
+            item.set_subtitle(&format!("{}% · {src} → {dst}", row.percentage));
+            item.add_suffix(&dialogs::transfer_row_actions(
+                &self.ctx,
+                &self.toast,
+                &row,
+                &operation,
+                false,
+            ));
             list.append(&item);
         }
         self.detail.append(&list);
@@ -1821,16 +2003,24 @@ impl Dashboard {
             let paused = self.ctx.store.borrow().is_automation_paused(&record.id);
             let row = adw::ActionRow::new();
             row.set_title(&record.name);
+            let schedule = if record.cron_enabled {
+                crate::rclone::describe_cron_i18n(&record.cron, &self.ctx.i18n.borrow())
+            } else if record.watch_enabled {
+                format!(
+                    "watch {}s{}",
+                    record.watch_delay,
+                    if record.watch_changed_only {
+                        " changed"
+                    } else {
+                        ""
+                    }
+                )
+            } else {
+                self.ctx.t_or("common.off", "off")
+            };
             row.set_subtitle(&format!(
-                "{} · {}{}",
+                "{} · {schedule}{}",
                 record.operation,
-                if record.cron_enabled {
-                    record.cron.as_str()
-                } else if record.watch_enabled {
-                    "watch"
-                } else {
-                    "off"
-                },
                 if paused { " · paused" } else { "" }
             ));
             let enabled = gtk::Switch::new();
@@ -1860,29 +2050,62 @@ impl Dashboard {
 
 fn toggle_mount(ctx: &AppCtx, name: &str, mounted: bool, toast: &adw::ToastOverlay) {
     let Some(client) = ctx.client() else {
-        toast.add_toast(adw::Toast::new("Rclone engine is offline"));
+        toast.add_toast(adw::Toast::new(
+            &ctx.t_or("remote.engineOffline", "Rclone engine is offline"),
+        ));
         return;
     };
+    let snap = ctx.snapshot.borrow().clone();
+    let meta = ctx.store.borrow().remotes.get(name).cloned();
+    let profile = crate::jobs::preferred_mount_profile(meta.as_ref());
+    let pname = profile
+        .as_ref()
+        .map(|p| p.name.as_str())
+        .filter(|s| !s.is_empty())
+        .unwrap_or("default");
     if mounted {
-        if let Some(m) = ctx
-            .snapshot
-            .borrow()
-            .mounts
-            .iter()
-            .find(|m| m.fs.starts_with(&format!("{name}:")))
-        {
-            match client.unmount(&m.mount_point) {
-                Ok(_) => toast.add_toast(adw::Toast::new("Unmounted")),
-                Err(e) => toast.add_toast(adw::Toast::new(&e.to_string())),
+        match crate::jobs::stop_profile(
+            &client,
+            name,
+            OperationType::Mount,
+            pname,
+            &snap.jobs,
+            &snap.mounts,
+            &snap.serves,
+        ) {
+            Ok(msg) => toast.add_toast(adw::Toast::new(&msg)),
+            Err(e) => toast.add_toast(adw::Toast::new(&e)),
+        }
+        ctx.refresh_runtime();
+        return;
+    }
+    if let Some(profile) = profile {
+        match crate::jobs::start_profile(
+            &client,
+            name,
+            OperationType::Mount,
+            &profile,
+            meta.as_ref(),
+            "dashboard",
+        ) {
+            Ok(id) => {
+                crate::jobs::remember_started(
+                    &mut ctx.store.borrow_mut().job_meta,
+                    &id,
+                    crate::jobs::job_meta_for(name, &profile, "dashboard", &ctx.backend_key(), ""),
+                );
+                toast.add_toast(adw::Toast::new(&format!("Mounted #{id}")));
             }
+            Err(e) => toast.add_toast(adw::Toast::new(&e)),
         }
-    } else {
-        let mount_point = default_mount_point(name);
-        let _ = std::fs::create_dir_all(&mount_point);
-        match client.mount(&remote_fs(name, ""), &mount_point, "mount") {
-            Ok(_) => toast.add_toast(adw::Toast::new(&format!("Mounted at {mount_point}"))),
-            Err(e) => toast.add_toast(adw::Toast::new(&e.to_string())),
-        }
+        ctx.refresh_runtime();
+        return;
+    }
+    let mount_point = default_mount_point(name);
+    let _ = std::fs::create_dir_all(&mount_point);
+    match client.mount(&remote_fs(name, ""), &mount_point, "mount") {
+        Ok(_) => toast.add_toast(adw::Toast::new(&format!("Mounted at {mount_point}"))),
+        Err(e) => toast.add_toast(adw::Toast::new(&e.to_string())),
     }
     ctx.refresh_runtime();
 }

@@ -693,28 +693,7 @@ impl RcClient {
             .unwrap_or_default();
         Ok(list
             .iter()
-            .filter_map(|item| {
-                Some(ServeItem {
-                    id: item.get("id")?.as_str()?.to_string(),
-                    addr: item
-                        .get("addr")
-                        .and_then(|x| x.as_str())
-                        .unwrap_or_default()
-                        .to_string(),
-                    fs: item
-                        .get("params")
-                        .and_then(|p| p.get("fs"))
-                        .and_then(|x| x.as_str())
-                        .unwrap_or_default()
-                        .to_string(),
-                    serve_type: item
-                        .get("params")
-                        .and_then(|p| p.get("type"))
-                        .and_then(|x| x.as_str())
-                        .unwrap_or_default()
-                        .to_string(),
-                })
-            })
+            .filter_map(|item| ServeItem::from_rc(item))
             .collect())
     }
 
@@ -912,12 +891,83 @@ pub struct MountedRemote {
     pub mount_point: String,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct ServeItem {
     pub id: String,
     pub addr: String,
     pub fs: String,
     pub serve_type: String,
+    pub origin: String,
+    pub profile: String,
+    pub option_count: usize,
+}
+
+impl ServeItem {
+    pub fn from_rc(item: &Value) -> Option<Self> {
+        let params = item.get("params").cloned().unwrap_or(json!({}));
+        let option_count = params
+            .as_object()
+            .map(|obj| {
+                obj.keys()
+                    .filter(|key| {
+                        !matches!(
+                            key.as_str(),
+                            "fs" | "type" | "origin" | "profile" | "url" | "addr"
+                        )
+                    })
+                    .count()
+            })
+            .unwrap_or(0);
+        Some(Self {
+            id: item.get("id")?.as_str()?.to_string(),
+            addr: item
+                .get("addr")
+                .or_else(|| params.get("addr"))
+                .or_else(|| params.get("url"))
+                .and_then(|x| x.as_str())
+                .unwrap_or_default()
+                .to_string(),
+            fs: params
+                .get("fs")
+                .and_then(|x| x.as_str())
+                .unwrap_or_default()
+                .to_string(),
+            serve_type: params
+                .get("type")
+                .and_then(|x| x.as_str())
+                .unwrap_or_default()
+                .to_string(),
+            origin: params
+                .get("origin")
+                .and_then(|x| x.as_str())
+                .unwrap_or_default()
+                .to_string(),
+            profile: params
+                .get("profile")
+                .and_then(|x| x.as_str())
+                .unwrap_or_default()
+                .to_string(),
+            option_count,
+        })
+    }
+
+    pub fn url(&self) -> String {
+        let addr = self.addr.trim();
+        if addr.is_empty() {
+            return String::new();
+        }
+        if addr.contains("://") {
+            return addr.to_string();
+        }
+        let scheme = match self.serve_type.to_ascii_lowercase().as_str() {
+            "sftp" => "sftp",
+            "ftp" => "ftp",
+            "webdav" | "http" | "dlna" | "restic" | "s3" | "nfs" => "http",
+            other if other.contains("https") => "https",
+            _ => "http",
+        };
+        format!("{scheme}://{addr}")
+    }
 }
 
 pub fn remote_fs(name: &str, path: &str) -> String {
@@ -1688,6 +1738,45 @@ mod tests {
         assert_eq!(format_bytes(512), "512 B");
         assert_eq!(format_bytes(1536), "1.5 KiB");
         assert_eq!(format_bytes(-1), "—");
+    }
+
+    #[test]
+    fn parses_serve_item_origin_and_url() {
+        let item = ServeItem::from_rc(&json!({
+            "id": "s1",
+            "addr": "127.0.0.1:8080",
+            "params": {
+                "fs": "drive:",
+                "type": "webdav",
+                "origin": "quickrun",
+                "profile": "public",
+                "user": "ada",
+                "pass": "secret"
+            }
+        }))
+        .unwrap();
+        assert_eq!(item.id, "s1");
+        assert_eq!(item.origin, "quickrun");
+        assert_eq!(item.profile, "public");
+        assert_eq!(item.option_count, 2);
+        assert_eq!(item.url(), "http://127.0.0.1:8080");
+        assert_eq!(
+            ServeItem {
+                addr: "https://example/s".into(),
+                ..ServeItem::default()
+            }
+            .url(),
+            "https://example/s"
+        );
+        assert_eq!(
+            ServeItem {
+                addr: "127.0.0.1:22".into(),
+                serve_type: "sftp".into(),
+                ..ServeItem::default()
+            }
+            .url(),
+            "sftp://127.0.0.1:22"
+        );
     }
 
     #[test]

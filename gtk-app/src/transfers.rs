@@ -115,6 +115,71 @@ pub fn can_public_link(remote: &str, info: Option<&crate::rclone::FsInfo>) -> bo
     remote != "local" && remote != "/" && info.is_none_or(|i| i.has_feature("PublicLink"))
 }
 
+pub fn is_move_job(job_type: &str) -> bool {
+    job_type.to_ascii_lowercase().contains("move")
+}
+
+pub fn is_delete_job(job_type: &str) -> bool {
+    let lower = job_type.to_ascii_lowercase();
+    matches!(lower.as_str(), "delete" | "purge" | "rmdirs" | "cleanup")
+        || lower.starts_with("delete/")
+        || lower.starts_with("purge/")
+        || lower.starts_with("rmdirs/")
+        || lower.starts_with("cleanup/")
+}
+
+pub fn remote_name_from_path(path: &str) -> Option<String> {
+    if path.is_empty() {
+        return None;
+    }
+    let (remote, _) = crate::rclone::split_remote_path(path);
+    if remote.is_empty()
+        || remote == "local"
+        || remote == "/"
+        || matches!(remote.as_str(), "http" | "https" | "ftp" | "sftp" | "ftps")
+    {
+        None
+    } else {
+        Some(remote)
+    }
+}
+
+pub fn can_copy_url_source(
+    src: &str,
+    job_type: &str,
+    info: Option<&crate::rclone::FsInfo>,
+) -> bool {
+    if is_move_job(job_type) || is_delete_job(job_type) {
+        return false;
+    }
+    remote_name_from_path(src).is_some_and(|remote| can_public_link(&remote, info))
+}
+
+pub fn can_copy_url_dest(
+    dst: &str,
+    job_type: &str,
+    completed: bool,
+    info: Option<&crate::rclone::FsInfo>,
+) -> bool {
+    completed
+        && !is_delete_job(job_type)
+        && remote_name_from_path(dst).is_some_and(|remote| can_public_link(&remote, info))
+}
+
+pub fn can_download_source(src: &str, job_type: &str) -> bool {
+    if is_move_job(job_type) || is_delete_job(job_type) {
+        return false;
+    }
+    remote_name_from_path(src).is_some() && download_target(src).is_some()
+}
+
+pub fn can_download_dest(dst: &str, job_type: &str, completed: bool) -> bool {
+    completed
+        && !is_delete_job(job_type)
+        && remote_name_from_path(dst).is_some()
+        && download_target(dst).is_some()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -159,5 +224,23 @@ mod tests {
         assert!(download_target("drive:").is_none());
         assert!(can_public_link("drive", None));
         assert!(!can_public_link("local", None));
+    }
+
+    #[test]
+    fn src_dst_actions_match_angular_rules() {
+        assert!(can_copy_url_source("drive:Photos/a.jpg", "copy", None));
+        assert!(!can_copy_url_source("/tmp/a.jpg", "copy", None));
+        assert!(!can_copy_url_source("drive:Photos/a.jpg", "move", None));
+        assert!(!can_copy_url_dest("box:out/a.jpg", "copy", false, None));
+        assert!(can_copy_url_dest("box:out/a.jpg", "copy", true, None));
+        assert!(!can_copy_url_dest("box:out/a.jpg", "delete", true, None));
+        assert!(can_download_source("drive:Photos/a.jpg", "sync"));
+        assert!(!can_download_source("drive:Photos/a.jpg", "delete"));
+        assert!(!can_download_dest("box:out/a.jpg", "copy", false));
+        assert!(can_download_dest("box:out/a.jpg", "copy", true));
+        assert_eq!(remote_name_from_path("drive:x").as_deref(), Some("drive"));
+        assert!(remote_name_from_path("/tmp/x").is_none());
+        assert!(is_move_job("copy/move"));
+        assert!(is_delete_job("delete/purge"));
     }
 }
