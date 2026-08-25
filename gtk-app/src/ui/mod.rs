@@ -13,7 +13,7 @@ use crate::platform::PowerInhibitor;
 use crate::rclone::RcloneEngine;
 use crate::settings::AppSettings;
 use crate::store::{AppStore, RuntimeSnapshot};
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
 use std::rc::Rc;
 
@@ -30,6 +30,7 @@ pub struct AppCtx {
     pub selected_quick_run: Rc<RefCell<Option<String>>>,
     pub pending_browse: Rc<RefCell<Option<(String, String)>>>,
     pub pending_nav: Rc<RefCell<Option<crate::navigation::NavTarget>>>,
+    pub pending_show: Rc<Cell<bool>>,
     pub inhibitor: Rc<RefCell<PowerInhibitor>>,
     pub watch_mtimes: Rc<RefCell<HashMap<String, u64>>>,
     pub watch_hub: Rc<RefCell<crate::watch::WatchHub>>,
@@ -65,6 +66,7 @@ impl AppCtx {
             selected_quick_run: Rc::new(RefCell::new(None)),
             pending_browse: Rc::new(RefCell::new(None)),
             pending_nav: Rc::new(RefCell::new(None)),
+            pending_show: Rc::new(Cell::new(false)),
             inhibitor: Rc::new(RefCell::new(PowerInhibitor::new())),
             watch_mtimes: Rc::new(RefCell::new(HashMap::new())),
             watch_hub: Rc::new(RefCell::new(crate::watch::WatchHub::new())),
@@ -217,6 +219,14 @@ impl AppCtx {
 
     pub fn take_nav(&self) -> Option<crate::navigation::NavTarget> {
         self.pending_nav.borrow_mut().take()
+    }
+
+    pub fn request_show(&self) {
+        self.pending_show.set(true);
+    }
+
+    pub fn take_show(&self) -> bool {
+        self.pending_show.replace(false)
     }
 
     pub fn apply_persisted_options(&self) {

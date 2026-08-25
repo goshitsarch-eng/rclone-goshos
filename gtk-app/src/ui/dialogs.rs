@@ -2013,7 +2013,9 @@ pub fn rclone_flags(parent: &impl IsA<gtk::Widget>, ctx: AppCtx) {
     crate::flags::merge_current_values(&mut blocks, &current);
     let edits: Rc<RefCell<Vec<(String, String, serde_json::Value)>>> =
         Rc::new(RefCell::new(Vec::new()));
-    for category in ["backend", "filter", "vfs", "mount", "copy", "sync", "check"] {
+    for category in [
+        "backend", "filter", "vfs", "mount", "copy", "sync", "check", "network", "other",
+    ] {
         let page = adw::PreferencesPage::new();
         page.set_title(&category.to_ascii_uppercase());
         let group = adw::PreferencesGroup::new();
@@ -2657,6 +2659,21 @@ fn backend_editor(
             }
             drop(settings);
             ctx.persist();
+            let options_from = if source_id.is_empty() {
+                ctx.backend_key()
+            } else {
+                source_id.clone()
+            };
+            if options_from != entry.name {
+                let dest_empty = crate::backend_options::load_for(&entry.name)
+                    .as_object()
+                    .is_none_or(|o| o.is_empty());
+                if dest_empty {
+                    if let Err(e) = crate::backend_options::copy_for(&options_from, &entry.name) {
+                        log::warn!("copy backend.json failed: {e}");
+                    }
+                }
+            }
             if !source_id.is_empty() {
                 if let (Some(source), dest) =
                     (rc_client_for(&ctx, &source_id), rc_client_for_entry(&entry))
@@ -2696,53 +2713,119 @@ pub fn alerts(parent: &impl IsA<gtk::Widget>, ctx: AppCtx) {
     let stack = adw::ViewStack::new();
     let history = gtk::ListBox::new();
     history.add_css_class("boxed-list");
-    let stats = ctx.store.borrow().alert_stats();
-    let stats_row = adw::ActionRow::new();
-    stats_row.set_title(&ctx.t_or("alerts.stats", "History stats"));
-    let last = stats
-        .last_at
-        .map(|t| t.format("%Y-%m-%d %H:%M").to_string())
-        .unwrap_or_else(|| "—".into());
-    stats_row.set_subtitle(&format!(
-        "{} total · {} ack · {} open · {} delivered · last {last}",
-        stats.total, stats.acknowledged, stats.unacknowledged, stats.delivered
-    ));
-    history.append(&stats_row);
-    let events: Vec<_> = ctx
-        .store
-        .borrow()
-        .alert_history
-        .iter()
-        .take(50)
-        .cloned()
-        .collect();
-    for event in &events {
-        let row = adw::ActionRow::new();
-        row.set_title(&event.title);
-        row.set_subtitle(&format!(
-            "{} · {} · {}",
-            event.severity.as_str(),
-            event.kind.as_str(),
-            event.body
-        ));
-        history.append(&row);
+    let search = gtk::SearchEntry::new();
+    search.set_placeholder_text(Some(&ctx.t_or("alerts.search", "Search history")));
+    let severity =
+        gtk::DropDown::from_strings(&["All", "Critical", "High", "Average", "Warning", "Info"]);
+    let fill_cell: Rc<RefCell<Rc<dyn Fn()>>> = Rc::new(RefCell::new(Rc::new(|| {})));
+    let fill: Rc<dyn Fn()> = {
+        let history = history.clone();
+        let search = search.clone();
+        let severity = severity.clone();
+        let ctx = ctx.clone();
+        let fill_cell = fill_cell.clone();
+        Rc::new(move || {
+            while let Some(child) = history.first_child() {
+                history.remove(&child);
+            }
+            let stats = ctx.store.borrow().alert_stats();
+            let stats_row = adw::ActionRow::new();
+            stats_row.set_title(&ctx.t_or("alerts.stats", "History stats"));
+            let last = stats
+                .last_at
+                .map(|t| t.format("%Y-%m-%d %H:%M").to_string())
+                .unwrap_or_else(|| "—".into());
+            stats_row.set_subtitle(&format!(
+                "{} total · {} ack · {} open · {} delivered · last {last}",
+                stats.total, stats.acknowledged, stats.unacknowledged, stats.delivered
+            ));
+            history.append(&stats_row);
+            let sev = match severity.selected() {
+                1 => Some("critical"),
+                2 => Some("high"),
+                3 => Some("average"),
+                4 => Some("warning"),
+                5 => Some("info"),
+                _ => None,
+            };
+            let events = ctx.store.borrow().filter_alert_history(&search.text(), sev);
+            let mut shown = 0;
+            for event in events.into_iter().take(80) {
+                let row = adw::ActionRow::new();
+                row.set_title(&event.title);
+                row.set_subtitle(&format!(
+                    "{} · {} · {}",
+                    event.severity.as_str(),
+                    event.kind.as_str(),
+                    event.body
+                ));
+                if !event.acknowledged {
+                    let ack_one = gtk::Button::from_icon_name("object-select-symbolic");
+                    ack_one.set_tooltip_text(Some(&ctx.t_or("alerts.acknowledge", "Acknowledge")));
+                    ack_one.set_valign(gtk::Align::Center);
+                    let ctx = ctx.clone();
+                    let id = event.id.clone();
+                    let fill_cell = fill_cell.clone();
+                    ack_one.connect_clicked(move |_| {
+                        ctx.store.borrow_mut().acknowledge_alert(&id);
+                        ctx.persist();
+                        let fill = fill_cell.borrow().clone();
+                        fill();
+                    });
+                    row.add_suffix(&ack_one);
+                }
+                history.append(&row);
+                shown += 1;
+            }
+            if shown == 0 {
+                let row = adw::ActionRow::new();
+                row.set_title(&ctx.t_or("alerts.noHistory", "No alert history"));
+                history.append(&row);
+            }
+        })
+    };
+    *fill_cell.borrow_mut() = fill.clone();
+    fill();
+    {
+        let fill = fill.clone();
+        search.connect_search_changed(move |_| fill());
     }
-    if events.is_empty() {
-        let row = adw::ActionRow::new();
-        row.set_title(&ctx.t_or("alerts.noHistory", "No alert history"));
-        history.append(&row);
+    {
+        let fill = fill.clone();
+        severity.connect_selected_notify(move |_| fill());
     }
     let ack = gtk::Button::with_label(&ctx.t_or("alerts.acknowledgeAll", "Acknowledge all"));
     {
         let ctx = ctx.clone();
+        let fill = fill.clone();
         ack.connect_clicked(move |_| {
             ctx.store.borrow_mut().acknowledge_all();
             ctx.persist();
+            fill();
         });
     }
+    let clear = gtk::Button::with_label(&ctx.t_or("alerts.clearHistory", "Clear history"));
+    clear.add_css_class("destructive-action");
+    {
+        let ctx = ctx.clone();
+        let fill = fill.clone();
+        clear.connect_clicked(move |_| {
+            ctx.store.borrow_mut().clear_alert_history();
+            ctx.persist();
+            fill();
+        });
+    }
+    let filters = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+    search.set_hexpand(true);
+    filters.append(&search);
+    filters.append(&severity);
+    let buttons = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+    buttons.append(&ack);
+    buttons.append(&clear);
     let history_box = gtk::Box::new(gtk::Orientation::Vertical, 8);
+    history_box.append(&filters);
     history_box.append(&scrolled_list(&history));
-    history_box.append(&ack);
+    history_box.append(&buttons);
     let history_title = ctx.t_or("alerts.history", "History");
     stack.add_titled(&history_box, Some("history"), &history_title);
 
@@ -4683,6 +4766,48 @@ fn append_transfer_rows(
             }
         });
         actions.append(&copy);
+        if let Some((remote, path, name)) = crate::transfers::download_target(&parsed.src)
+            .or_else(|| crate::transfers::download_target(&parsed.dst))
+        {
+            let dl = gtk::Button::from_icon_name("folder-download-symbolic");
+            dl.set_tooltip_text(Some("Download"));
+            dl.set_valign(gtk::Align::Center);
+            let ctx = ctx.clone();
+            let parent = parent.clone();
+            dl.connect_clicked(move |_| {
+                download_file(&parent, ctx.clone(), &remote, &path, &name);
+            });
+            actions.append(&dl);
+        }
+        if let Some((remote, path)) = crate::transfers::browse_for(&parsed.src)
+            .or_else(|| crate::transfers::browse_for(&parsed.dst))
+        {
+            let info = ctx.fs_info(&remote);
+            if crate::transfers::can_public_link(&remote, info.as_ref()) {
+                let link = gtk::Button::from_icon_name("emblem-shared-symbolic");
+                link.set_tooltip_text(Some("Copy public URL"));
+                link.set_valign(gtk::Align::Center);
+                let ctx = ctx.clone();
+                link.connect_clicked(move |_| {
+                    let Some(client) = ctx.client() else {
+                        return;
+                    };
+                    let (fs, remote_path) = crate::transfers::fs_and_remote(&if path.is_empty() {
+                        format!("{remote}:")
+                    } else if remote == "local" {
+                        path.clone()
+                    } else {
+                        format!("{remote}:{path}")
+                    });
+                    if let Ok(url) = client.public_link(&fs, &remote_path) {
+                        if let Some(display) = gtk::gdk::Display::default() {
+                            display.clipboard().set_text(&url);
+                        }
+                    }
+                });
+                actions.append(&link);
+            }
+        }
         if crate::transfers::can_delete_source(job_type) && !parsed.src.is_empty() {
             let del = gtk::Button::from_icon_name("user-trash-symbolic");
             del.set_tooltip_text(Some("Delete source"));
@@ -5988,6 +6113,8 @@ fn capture_template(parent: &impl IsA<gtk::Widget>, ctx: AppCtx) {
         ("copy", "Copy"),
         ("sync", "Sync"),
         ("check", "Check"),
+        ("network", "Network"),
+        ("other", "Other"),
     ];
     let switches: Vec<(&'static str, adw::SwitchRow)> = categories
         .into_iter()

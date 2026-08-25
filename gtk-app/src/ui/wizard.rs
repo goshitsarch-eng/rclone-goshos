@@ -3,7 +3,9 @@ use crate::interactive::{
     apply_interactive_response, is_continue_disabled, update_interactive_answer, InteractiveAnswer,
     InteractiveFlowState,
 };
-use crate::jobs::parse_cli_flags;
+use crate::jobs::{
+    first_path, flatten_rclone, parse_cli_flags, profile_src_dst, DEST_KEYS, SOURCE_KEYS,
+};
 use crate::operations::OperationType;
 use crate::providers::{parse_providers, Provider, ProviderOption};
 use crate::rclone::remote_fs;
@@ -42,6 +44,14 @@ pub fn present(
         .and_then(|c| c.providers().ok())
         .map(|v| parse_providers(&v))
         .unwrap_or_default();
+    let existing_params = existing.as_ref().and_then(|name| {
+        ctx.client()
+            .and_then(|c| c.dump_config().ok())
+            .and_then(|dump| crate::providers::dump_remote_params(&dump, name))
+    });
+    let existing_meta = existing
+        .as_ref()
+        .and_then(|name| ctx.store.borrow().remotes.get(name).cloned());
 
     let name = adw::EntryRow::new();
     name.set_title("Remote name");
@@ -87,6 +97,14 @@ pub fn present(
         providers.first(),
         true,
     );
+    if let Some(ref params) = existing_params {
+        if let Some(type_name) = crate::providers::dump_provider_type(params) {
+            if let Some(idx) = crate::providers::provider_index_by_name(&providers, &type_name) {
+                type_row.set_selected(idx as u32);
+            }
+        }
+        apply_dump_to_wizard_fields(&state, params);
+    }
 
     {
         let fields_group = fields_group.clone();
@@ -95,6 +113,7 @@ pub fn present(
         let providers = providers.clone();
         let parent = parent.clone();
         let ctx = ctx.clone();
+        let existing_params = existing_params.clone();
         type_row.connect_selected_notify(move |row| {
             let provider = providers.get(row.selected() as usize);
             rebuild_fields(
@@ -106,6 +125,16 @@ pub fn present(
                 provider,
                 true,
             );
+            if let Some(params) = existing_params.as_ref() {
+                let matches_type = crate::providers::dump_provider_type(params).is_some_and(|t| {
+                    provider.is_some_and(|p| {
+                        p.name.eq_ignore_ascii_case(&t) || p.prefix.eq_ignore_ascii_case(&t)
+                    })
+                });
+                if matches_type {
+                    apply_dump_to_wizard_fields(&state, params);
+                }
+            }
         });
     }
 
@@ -167,6 +196,11 @@ pub fn present(
         ops_group.add(&osrc);
         ops_group.add(&odst);
         op_flags.borrow_mut().push((op, enable, osrc, odst));
+    }
+    if let Some(ref meta) = existing_meta {
+        apply_existing_meta(
+            meta, &mount, &src, &dst, &serve, &cron, &tray, &autostart, &op_flags,
+        );
     }
 
     let question_title = gtk::Label::new(Some("Interactive configuration"));
@@ -532,6 +566,88 @@ fn apply_path_usage(row: &adw::EntryRow) {
     }
 }
 
+fn apply_dump_to_wizard_fields(state: &Rc<RefCell<WizardState>>, params: &Value) {
+    for (name, row) in state.borrow().fields.iter() {
+        if let Some(text) = crate::providers::dump_field_text(params, name) {
+            row.set_text(&text);
+        }
+    }
+}
+
+fn apply_existing_meta(
+    meta: &RemoteMeta,
+    mount: &adw::EntryRow,
+    src: &adw::EntryRow,
+    dst: &adw::EntryRow,
+    serve: &adw::ComboRow,
+    cron: &adw::EntryRow,
+    tray: &adw::SwitchRow,
+    autostart: &adw::SwitchRow,
+    op_flags: &Rc<RefCell<Vec<(OperationType, adw::SwitchRow, adw::EntryRow, adw::EntryRow)>>>,
+) {
+    tray.set_active(meta.show_on_tray);
+    if let Some((_, dest)) = profile_src_dst(meta, OperationType::Mount) {
+        if let Some(dest) = dest {
+            if !dest.is_empty() {
+                mount.set_text(&dest);
+            }
+        }
+    }
+    for op in [
+        OperationType::Sync,
+        OperationType::Copy,
+        OperationType::Move,
+        OperationType::Bisync,
+    ] {
+        let (psrc, pdst) = profile_src_dst(meta, op);
+        if src.text().is_empty() {
+            if let Some(value) = psrc {
+                src.set_text(&value);
+            }
+        }
+        if dst.text().is_empty() {
+            if let Some(value) = pdst {
+                dst.set_text(&value);
+            }
+        }
+        if !src.text().is_empty() && !dst.text().is_empty() {
+            break;
+        }
+    }
+    if let Some(profile) = meta
+        .get_profile(OperationType::Mount, "default")
+        .or_else(|| meta.get_profile(OperationType::Sync, "default"))
+        .or_else(|| meta.get_profile(OperationType::Serve, "default"))
+    {
+        if profile.app.auto_start {
+            autostart.set_active(true);
+        }
+        if cron.text().is_empty() && !profile.app.cron_expression.is_empty() {
+            cron.set_text(&profile.app.cron_expression);
+        }
+    }
+    if let Some(profile) = meta.get_profile(OperationType::Serve, "default") {
+        let rclone = flatten_rclone(&profile.rclone);
+        if let Some(t) = rclone.get("type").and_then(|v| v.as_str()) {
+            if let Some(idx) = OperationType::SERVE_TYPES.iter().position(|s| *s == t) {
+                serve.set_selected(idx as u32);
+            }
+        }
+    }
+    for (op, enable, osrc, odst) in op_flags.borrow().iter() {
+        if let Some(profile) = meta.get_profile(*op, "default") {
+            enable.set_active(true);
+            let rclone = flatten_rclone(&profile.rclone);
+            if let Some(s) = first_path(&rclone, SOURCE_KEYS) {
+                osrc.set_text(&s);
+            }
+            if let Some(d) = first_path(&rclone, DEST_KEYS) {
+                odst.set_text(&d);
+            }
+        }
+    }
+}
+
 fn collect_params(state: &Rc<RefCell<WizardState>>) -> Value {
     let mut map = serde_json::Map::new();
     for (key, row) in state.borrow().fields.iter() {
@@ -642,10 +758,14 @@ fn persist_meta(
     cli: &str,
     op_flags: &[(OperationType, adw::SwitchRow, adw::EntryRow, adw::EntryRow)],
 ) {
-    let mut meta = RemoteMeta {
-        show_on_tray: tray,
-        ..RemoteMeta::default()
-    };
+    let mut meta = ctx
+        .store
+        .borrow()
+        .remotes
+        .get(remote_name)
+        .cloned()
+        .unwrap_or_default();
+    meta.show_on_tray = tray;
     let extra = parse_cli_flags(cli);
     for (op, enable, osrc, odst) in op_flags {
         if !enable.is_active() {

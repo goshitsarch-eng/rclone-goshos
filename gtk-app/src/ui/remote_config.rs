@@ -412,6 +412,30 @@ fn operation_page(
     } else if op != OperationType::Serve && op != OperationType::Delete {
         dialogs::attach_path_picker(&ctx, &dst, crate::picker::FilePickerConfig::folders());
     }
+    let dest_status = adw::ActionRow::new();
+    dest_status.set_title("Path status");
+    dest_status.set_visible(matches!(
+        op,
+        OperationType::Mount | OperationType::Sync | OperationType::Copy | OperationType::Bisync
+    ));
+    {
+        let dest_status = dest_status.clone();
+        let ctx = ctx.clone();
+        let remote = remote.to_string();
+        let refresh_status = move |path: &str| {
+            let resolved = crate::path_kind::resolve_job_path(path, &remote);
+            let status = crate::path_inspection::inspect_dest(
+                &ctx.store.borrow(),
+                &resolved,
+                &remote,
+                op,
+                &ctx.snapshot.borrow().mounts,
+            );
+            dest_status.set_subtitle(&crate::path_inspection::describe_status(&status));
+        };
+        refresh_status(&dst.text());
+        dst.connect_changed(move |row| refresh_status(&row.text()));
+    }
 
     let serve = adw::ComboRow::new();
     serve.set_title("Serve type");
@@ -529,6 +553,7 @@ fn operation_page(
         identity.add(kind);
     }
     identity.add(&dst);
+    identity.add(&dest_status);
     identity.add(&serve);
 
     let automation = adw::PreferencesGroup::new();

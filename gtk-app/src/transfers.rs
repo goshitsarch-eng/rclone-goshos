@@ -97,6 +97,24 @@ pub fn fs_and_remote(path: &str) -> (String, String) {
     }
 }
 
+pub fn download_target(path: &str) -> Option<(String, String, String)> {
+    let (remote, rest) = browse_for(path)?;
+    if rest.is_empty() || rest.ends_with('/') {
+        return None;
+    }
+    let name = rest
+        .rsplit(['/', '\\'])
+        .next()
+        .filter(|s| !s.is_empty())
+        .unwrap_or(&rest)
+        .to_string();
+    Some((remote, rest, name))
+}
+
+pub fn can_public_link(remote: &str, info: Option<&crate::rclone::FsInfo>) -> bool {
+    remote != "local" && remote != "/" && info.is_none_or(|i| i.has_feature("PublicLink"))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -130,5 +148,16 @@ mod tests {
         assert!(can_delete_dest("copy", true));
         assert!(!can_delete_dest("copy", false));
         assert!(!can_delete_dest("check", true));
+    }
+
+    #[test]
+    fn download_and_public_link_targets() {
+        let target = download_target("drive:Photos/a.jpg").unwrap();
+        assert_eq!(target.0, "drive");
+        assert_eq!(target.1, "Photos/a.jpg");
+        assert_eq!(target.2, "a.jpg");
+        assert!(download_target("drive:").is_none());
+        assert!(can_public_link("drive", None));
+        assert!(!can_public_link("local", None));
     }
 }

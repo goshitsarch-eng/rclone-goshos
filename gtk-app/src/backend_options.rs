@@ -47,6 +47,22 @@ pub fn merge_and_save(backend_key: &str, delta: &Value) -> Result<Value, String>
     Ok(current)
 }
 
+pub fn copy_options(all: &Value, from_key: &str, to_key: &str) -> Value {
+    let mut root = all.as_object().cloned().unwrap_or_default();
+    let options = root.get(from_key).cloned().unwrap_or_else(|| json!({}));
+    root.insert(to_key.to_string(), options);
+    Value::Object(root)
+}
+
+pub fn copy_for(from_key: &str, to_key: &str) -> Result<Value, String> {
+    if from_key == to_key {
+        return Ok(load_for(to_key));
+    }
+    let all = copy_options(&load_all(), from_key, to_key);
+    save_all(&all)?;
+    Ok(load_for(to_key))
+}
+
 pub fn apply(client: &RcClient, backend_key: &str) {
     let options = load_for(backend_key);
     if options.as_object().is_some_and(|o| !o.is_empty()) {
@@ -94,5 +110,15 @@ mod tests {
             .unwrap_or_else(|| json!({}));
         assert_eq!(missing, json!({}));
         assert_eq!(all["local"]["main"]["LogLevel"], "DEBUG");
+    }
+
+    #[test]
+    fn copies_backend_options_between_keys() {
+        let all = json!({ "local": { "main": { "Transfers": 8 } } });
+        let copied = copy_options(&all, "local", "office");
+        assert_eq!(copied["office"]["main"]["Transfers"], 8);
+        assert_eq!(copied["local"]["main"]["Transfers"], 8);
+        let empty = copy_options(&all, "missing", "office");
+        assert_eq!(empty["office"], json!({}));
     }
 }

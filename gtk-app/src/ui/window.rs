@@ -257,6 +257,10 @@ pub fn present_main(app: &adw::Application, ctx: AppCtx) {
         let window_nav = window.clone();
         let toast_nav = toast.clone();
         glib::timeout_add_local(std::time::Duration::from_millis(200), move || {
+            if ctx_nav.take_show() {
+                window_nav.set_visible(true);
+                window_nav.present();
+            }
             if let Some(target) = ctx_nav.take_nav() {
                 apply_nav(
                     &ctx_nav,

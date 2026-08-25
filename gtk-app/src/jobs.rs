@@ -818,6 +818,62 @@ pub fn normalize_bandwidth(value: &str) -> String {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BwLimitStatus {
+    pub rate: String,
+    pub bytes_per_sec: i64,
+    pub bytes_per_sec_tx: i64,
+    pub bytes_per_sec_rx: i64,
+}
+
+impl Default for BwLimitStatus {
+    fn default() -> Self {
+        Self {
+            rate: "off".into(),
+            bytes_per_sec: 0,
+            bytes_per_sec_tx: 0,
+            bytes_per_sec_rx: 0,
+        }
+    }
+}
+
+fn json_i64(value: &Value, keys: &[&str]) -> i64 {
+    keys.iter()
+        .find_map(|key| value.get(*key))
+        .and_then(|v| {
+            v.as_i64()
+                .or_else(|| v.as_u64().map(|n| n as i64))
+                .or_else(|| v.as_f64().map(|n| n as i64))
+                .or_else(|| v.as_str().and_then(|s| s.parse().ok()))
+        })
+        .unwrap_or(0)
+}
+
+pub fn parse_bwlimit(value: &Value) -> BwLimitStatus {
+    let rate = value
+        .get("rate")
+        .and_then(|v| v.as_str())
+        .map(normalize_bandwidth)
+        .unwrap_or_else(|| "off".into());
+    BwLimitStatus {
+        rate,
+        bytes_per_sec: json_i64(value, &["bytesPerSec", "bytesPerSecond"]),
+        bytes_per_sec_tx: json_i64(value, &["bytesPerSecTx", "bytesPerSecondTx"]),
+        bytes_per_sec_rx: json_i64(value, &["bytesPerSecRx", "bytesPerSecondRx"]),
+    }
+}
+
+pub fn profile_src_dst(meta: &RemoteMeta, op: OperationType) -> (Option<String>, Option<String>) {
+    let Some(profile) = meta.get_profile(op, "default") else {
+        return (None, None);
+    };
+    let rclone = flatten_rclone(&profile.rclone);
+    (
+        first_path(&rclone, SOURCE_KEYS),
+        first_path(&rclone, DEST_KEYS),
+    )
+}
+
 pub fn merge_template_into(dest: &mut Value, values: &Value) {
     match (dest, values) {
         (Value::Object(d), Value::Object(s)) => {
@@ -999,6 +1055,39 @@ mod tests {
         assert_eq!(normalize_bandwidth(""), "off");
         assert_eq!(normalize_bandwidth("OFF"), "off");
         assert_eq!(normalize_bandwidth("10M"), "10M");
+    }
+
+    #[test]
+    fn parses_core_bwlimit() {
+        let status = parse_bwlimit(&json!({
+            "rate": "1M:2M",
+            "bytesPerSec": 1_572_864,
+            "bytesPerSecTx": 1_048_576,
+            "bytesPerSecRx": 2_097_152
+        }));
+        assert_eq!(status.rate, "1M:2M");
+        assert_eq!(status.bytes_per_sec, 1_572_864);
+        assert_eq!(status.bytes_per_sec_tx, 1_048_576);
+        assert_eq!(status.bytes_per_sec_rx, 2_097_152);
+        assert_eq!(parse_bwlimit(&json!({})).rate, "off");
+        assert_eq!(parse_bwlimit(&json!({ "rate": "OFF" })).rate, "off");
+    }
+
+    #[test]
+    fn reads_default_profile_paths() {
+        let mut meta = crate::store::RemoteMeta::default();
+        meta.upsert_profile(
+            OperationType::Sync,
+            ProfileConfig {
+                name: "default".into(),
+                app: crate::store::AppConfig::default(),
+                rclone: json!({ "srcFs": "drive:photos", "dstFs": "/tmp/out" }),
+            },
+        );
+        let (src, dst) = profile_src_dst(&meta, OperationType::Sync);
+        assert_eq!(src.as_deref(), Some("drive:photos"));
+        assert_eq!(dst.as_deref(), Some("/tmp/out"));
+        assert_eq!(profile_src_dst(&meta, OperationType::Copy), (None, None));
     }
 
     #[test]

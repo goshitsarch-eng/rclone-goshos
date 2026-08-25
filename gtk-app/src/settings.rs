@@ -157,6 +157,8 @@ pub struct NautilusSettings {
     pub sidebar_hidden_drives: Vec<String>,
     #[serde(default)]
     pub file_type_filter: String,
+    #[serde(default)]
+    pub split_enabled: bool,
 }
 
 impl NautilusSettings {

@@ -199,6 +199,51 @@ pub fn provider_icon(provider: &str) -> &'static str {
     }
 }
 
+pub fn dump_remote_params(dump: &Value, remote: &str) -> Option<Value> {
+    dump.get(remote).cloned().filter(|v| v.is_object())
+}
+
+pub fn dump_provider_type(params: &Value) -> Option<String> {
+    params
+        .get("type")
+        .and_then(|v| v.as_str())
+        .filter(|s| !s.is_empty())
+        .map(|s| s.to_string())
+}
+
+pub fn provider_index_by_name(providers: &[Provider], type_name: &str) -> Option<usize> {
+    let wanted = type_name.trim();
+    if wanted.is_empty() {
+        return None;
+    }
+    providers
+        .iter()
+        .position(|p| p.name.eq_ignore_ascii_case(wanted) || p.prefix.eq_ignore_ascii_case(wanted))
+}
+
+pub fn dump_field_text(params: &Value, name: &str) -> Option<String> {
+    match params.get(name)? {
+        Value::Null => None,
+        Value::String(s) if s.is_empty() => None,
+        Value::String(s) => Some(s.clone()),
+        Value::Bool(b) => Some(b.to_string()),
+        Value::Number(n) => Some(n.to_string()),
+        other => Some(other.to_string()),
+    }
+}
+
+pub fn apply_dump_to_options(options: &mut [ProviderOption], params: &Value) {
+    for option in options {
+        if let Some(text) = dump_field_text(params, &option.name) {
+            option.value_str = text.clone();
+            option.value = params
+                .get(&option.name)
+                .cloned()
+                .unwrap_or(Value::String(text));
+        }
+    }
+}
+
 pub fn parse_config_step(value: &Value) -> ConfigStep {
     let state = value
         .get("State")
@@ -275,5 +320,36 @@ mod tests {
         assert_eq!(provider_icon("crypt"), "security-high-symbolic");
         assert_eq!(provider_icon("drive"), "folder-remote-symbolic");
         assert_eq!(provider_icon(""), "folder-remote-symbolic");
+    }
+
+    #[test]
+    fn dump_helpers_select_provider_and_fill_options() {
+        let dump = json!({
+            "photos": {
+                "type": "drive",
+                "client_id": "abc",
+                "team_drive": true,
+                "chunk_size": 8
+            }
+        });
+        let params = dump_remote_params(&dump, "photos").unwrap();
+        assert_eq!(dump_provider_type(&params).as_deref(), Some("drive"));
+        assert!(dump_remote_params(&dump, "missing").is_none());
+        let mut providers = parse_providers(&json!({
+            "providers": [
+                {"Name": "s3", "Prefix": "s3", "Options": []},
+                {"Name": "drive", "Prefix": "drive", "Options": [
+                    {"Name": "client_id"},
+                    {"Name": "team_drive"},
+                    {"Name": "chunk_size"}
+                ]}
+            ]
+        }));
+        assert_eq!(provider_index_by_name(&providers, "DRIVE"), Some(1));
+        apply_dump_to_options(&mut providers[1].options, &params);
+        assert_eq!(providers[1].options[0].value_str, "abc");
+        assert_eq!(providers[1].options[1].value_str, "true");
+        assert_eq!(providers[1].options[2].value_str, "8");
+        assert_eq!(dump_field_text(&params, "token"), None);
     }
 }

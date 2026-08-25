@@ -9,6 +9,9 @@ pub enum TrayCommand {
     StopJobs,
     StopServes,
     MountRemote(String),
+    UnmountRemote(String),
+    BrowseRemote(String),
+    BrowseInApp(String),
     StartQuickRun(String),
     ShowWindow,
 }
@@ -30,9 +33,15 @@ impl TrayBus {
     }
 }
 
+#[derive(Clone)]
+struct TrayRemote {
+    name: String,
+    mounted: bool,
+}
+
 struct StatusIcon {
     tx: Sender<TrayCommand>,
-    remotes: Vec<String>,
+    remotes: Vec<TrayRemote>,
     quick_runs: Vec<(String, String)>,
     icon_name: String,
     show_label: String,
@@ -40,6 +49,9 @@ struct StatusIcon {
     stop_jobs: String,
     stop_serves: String,
     mount_prefix: String,
+    unmount_prefix: String,
+    browse_label: String,
+    browse_in_app: String,
 }
 
 impl ksni::Tray for StatusIcon {
@@ -98,13 +110,67 @@ impl ksni::Tray for StatusIcon {
             MenuItem::Separator,
         ];
         for remote in &self.remotes {
-            let name = remote.clone();
+            let name = remote.name.clone();
+            let mounted = remote.mounted;
+            let mount_label = format!("{} {}", self.mount_prefix, name);
+            let unmount_label = format!("{} {}", self.unmount_prefix, name);
+            let browse_label = self.browse_label.clone();
+            let browse_in_app = self.browse_in_app.clone();
             items.push(
-                StandardItem {
-                    label: format!("{} {name}", self.mount_prefix),
-                    activate: Box::new(move |this: &mut Self| {
-                        let _ = this.tx.send(TrayCommand::MountRemote(name.clone()));
-                    }),
+                SubMenu {
+                    label: if mounted {
+                        format!("● {name}")
+                    } else {
+                        name.clone()
+                    },
+                    submenu: vec![
+                        StandardItem {
+                            label: mount_label,
+                            enabled: !mounted,
+                            activate: Box::new({
+                                let name = name.clone();
+                                move |this: &mut Self| {
+                                    let _ = this.tx.send(TrayCommand::MountRemote(name.clone()));
+                                }
+                            }),
+                            ..Default::default()
+                        }
+                        .into(),
+                        StandardItem {
+                            label: unmount_label,
+                            enabled: mounted,
+                            activate: Box::new({
+                                let name = name.clone();
+                                move |this: &mut Self| {
+                                    let _ = this.tx.send(TrayCommand::UnmountRemote(name.clone()));
+                                }
+                            }),
+                            ..Default::default()
+                        }
+                        .into(),
+                        StandardItem {
+                            label: browse_label,
+                            activate: Box::new({
+                                let name = name.clone();
+                                move |this: &mut Self| {
+                                    let _ = this.tx.send(TrayCommand::BrowseRemote(name.clone()));
+                                }
+                            }),
+                            ..Default::default()
+                        }
+                        .into(),
+                        StandardItem {
+                            label: browse_in_app,
+                            activate: Box::new({
+                                let name = name.clone();
+                                move |this: &mut Self| {
+                                    let _ = this.tx.send(TrayCommand::BrowseInApp(name.clone()));
+                                }
+                            }),
+                            ..Default::default()
+                        }
+                        .into(),
+                    ],
                     ..Default::default()
                 }
                 .into(),
@@ -137,12 +203,23 @@ fn tray_icon_name(theme: &str) -> &'static str {
     }
 }
 
+fn remote_mounts(ctx: &AppCtx, name: &str) -> Vec<String> {
+    let prefix = format!("{name}:");
+    ctx.snapshot
+        .borrow()
+        .mounts
+        .iter()
+        .filter(|m| m.fs == name || m.fs.starts_with(&prefix))
+        .map(|m| m.mount_point.clone())
+        .collect()
+}
+
 pub fn start(ctx: &AppCtx) -> Option<TrayBus> {
     if !ctx.settings.borrow().general.tray_enabled {
         return None;
     }
     let (tx, rx) = mpsc::channel();
-    let remotes: Vec<String> = ctx
+    let remotes: Vec<TrayRemote> = ctx
         .snapshot
         .borrow()
         .remotes
@@ -156,7 +233,10 @@ pub fn start(ctx: &AppCtx) -> Option<TrayBus> {
                 .unwrap_or(true)
         })
         .take(ctx.settings.borrow().core.max_tray_items.max(1))
-        .map(|r| r.name.clone())
+        .map(|r| TrayRemote {
+            name: r.name.clone(),
+            mounted: r.mounted,
+        })
         .collect();
     let quick_runs: Vec<(String, String)> = ctx
         .store
@@ -180,6 +260,9 @@ pub fn start(ctx: &AppCtx) -> Option<TrayBus> {
         stop_jobs: ctx.t_or("tray.stopAllJobs", "Stop All Jobs"),
         stop_serves: ctx.t_or("tray.stopAllServes", "Stop All Serves"),
         mount_prefix: ctx.t_or("tray.mount", "Mount"),
+        unmount_prefix: ctx.t_or("tray.unmount", "Unmount"),
+        browse_label: ctx.t_or("tray.browse", "Browse"),
+        browse_in_app: ctx.t_or("tray.browseInApp", "Browse in app"),
     };
     std::thread::Builder::new()
         .name("rclone-manager-sni".into())
@@ -232,6 +315,26 @@ pub fn handle(ctx: &AppCtx, cmd: TrayCommand) {
             }
             ctx.refresh_runtime();
         }
+        TrayCommand::UnmountRemote(name) => {
+            if let Some(c) = ctx.client() {
+                for point in remote_mounts(ctx, &name) {
+                    let _ = c.unmount(&point);
+                }
+            }
+            ctx.refresh_runtime();
+        }
+        TrayCommand::BrowseRemote(name) => {
+            if let Some(point) = remote_mounts(ctx, &name).into_iter().next() {
+                let _ = open::that(point);
+            } else {
+                ctx.request_show();
+                ctx.request_browse(&name, "");
+            }
+        }
+        TrayCommand::BrowseInApp(name) => {
+            ctx.request_show();
+            ctx.request_browse(&name, "");
+        }
         TrayCommand::StartQuickRun(id) => {
             let qr = ctx
                 .store
@@ -253,6 +356,6 @@ pub fn handle(ctx: &AppCtx, cmd: TrayCommand) {
                 }
             }
         }
-        TrayCommand::ShowWindow => {}
+        TrayCommand::ShowWindow => ctx.request_show(),
     }
 }

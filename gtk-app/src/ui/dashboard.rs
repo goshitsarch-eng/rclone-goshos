@@ -743,13 +743,33 @@ impl Dashboard {
         bw_group.append(&current);
         let limit = ctx_settings_bandwidth(&self.ctx);
         let limit_row = adw::ActionRow::new();
-        limit_row.set_title("Limit");
+        limit_row.set_title("Saved limit");
         limit_row.set_subtitle(&if limit.is_empty() || limit == "off" {
             "Unlimited".into()
         } else {
             limit.clone()
         });
         bw_group.append(&limit_row);
+        if let Some(live) = self
+            .ctx
+            .client()
+            .and_then(|c| c.bwlimit(None).ok())
+            .map(|v| crate::jobs::parse_bwlimit(&v))
+        {
+            let live_row = adw::ActionRow::new();
+            live_row.set_title("Live limit");
+            live_row.set_subtitle(&format!(
+                "{} · tx {}/s · rx {}/s",
+                if live.rate == "off" {
+                    "Unlimited".into()
+                } else {
+                    live.rate.clone()
+                },
+                format_bytes(live.bytes_per_sec_tx),
+                format_bytes(live.bytes_per_sec_rx)
+            ));
+            bw_group.append(&live_row);
+        }
         self.overview.append(&bw_group);
         let presets = gtk::Box::new(gtk::Orientation::Horizontal, 6);
         presets.set_margin_top(8);

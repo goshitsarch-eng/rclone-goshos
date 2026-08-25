@@ -18,6 +18,7 @@ const BACKEND_EXCLUDE: &[&str] = &["Copy", "Sync", "Filter", "Mount", "VFS", "RC
 const COPY_GROUPS: &[&str] = &["Copy"];
 const SYNC_GROUPS: &[&str] = &["Copy", "Sync"];
 const CHECK_GROUPS: &[&str] = &["Check"];
+const NETWORK_GROUPS: &[&str] = &["Proxy", "HTTP", "FTP"];
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FlagOption {
@@ -58,6 +59,8 @@ pub fn classify_flag(groups: &str) -> &'static str {
         "copy"
     } else if flag_has_any_group(groups, CHECK_GROUPS) {
         "check"
+    } else if flag_has_any_group(groups, NETWORK_GROUPS) {
+        "network"
     } else if flag_has_any_group(groups, BACKEND_EXCLUDE) {
         "other"
     } else if flag_has_any_group(groups, BACKEND_INCLUDE) || groups.is_empty() {
@@ -511,6 +514,11 @@ mod tests {
         assert_eq!(classify_flag("Mount"), "mount");
         assert_eq!(classify_flag("Performance,Networking"), "backend");
         assert_eq!(classify_flag("Check"), "check");
+        assert_eq!(classify_flag("HTTP"), "network");
+        assert_eq!(classify_flag("Proxy"), "network");
+        assert_eq!(classify_flag("FTP"), "network");
+        assert_eq!(classify_flag("RC"), "other");
+        assert_eq!(classify_flag("WebDAV"), "other");
     }
 
     #[test]

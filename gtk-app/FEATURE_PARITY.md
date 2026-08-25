@@ -16,7 +16,7 @@ This client is the GTK 4 + libadwaita rewrite of the Angular/Tauri desktop UI. I
 - Quick runs: create/edit/duplicate/delete, cron validation + human-readable hint, watcher, autostart, tray flag, start/stop, folder pickers
 - Workflow builder placeholder (same as current Angular stub)
 - Preferences: language, default view, tray, startup (XDG autostart), notifications, restrict, prevent sleep (systemd-inhibit), rclone binary, bandwidth, tray item cap, log level, standalone dialogs
-- Rclone flags editor: category pages (backend/filter/vfs/mount/copy/sync/check) writing `options/set`
+- Rclone flags editor: category pages (backend/filter/vfs/mount/copy/sync/check/network/other) writing `options/set`
 - Backends: local rcd plus extra RC backends with add/test/switch/remove
 - Alerts: history, rule editor, action editor (os_toast, webhook, telegram, whatsapp, script, email/mqtt logged)
 - Backup/restore zip with category picker, notes, and restore preview
@@ -26,7 +26,7 @@ This client is the GTK 4 + libadwaita rewrite of the Angular/Tauri desktop UI. I
 - Keyboard shortcuts (global + nautilus)
 - Theme: system / light / dark
 - i18n: en-US, tr-TR, es-ES, zh-CN, fr-FR, uk-UA, ru-RU, pt-BR, ja-JP
-- Native StatusNotifier tray (ksni) with remotes and quick runs
+- Native StatusNotifier tray (ksni) with per-remote Mount/Unmount/Browse menus and Show Window restore
 - Live job polling from rclone `job/list` + `job/status` + group `core/stats`, with failure alerts
 - Provider list from `config/providers` when adding remotes
 - Live job detail (progress, speed, ETA, transferring list, stop, reset stats)
@@ -173,6 +173,14 @@ This client is the GTK 4 + libadwaita rewrite of the Angular/Tauri desktop UI. I
 - Markdown preview toggle and dedicated PDF open panel in the file viewer
 - Structured VFS panel (stats, queue, forget file, recursive refresh, relative expiry)
 - Mount-plugin module (FUSE / WinFsp / FUSE-T) in repair and onboarding
+- Close-to-tray restore: tray Show Window presents the hidden main window
+- Wizard edit prefills provider type, dumped rclone fields, and saved mount/src/dst/tray profiles
+- Alert history search, severity filter, per-item acknowledge, and clear
+- Live `core/bwlimit` on the dashboard Bandwidth panel
+- Job transfer rows: Download and Copy public URL
+- Files split view persisted in settings; Ctrl+Tab / Alt+↑ shortcuts
+- Extra RC backends copy persisted `backend.json` options from the source backend
+- Remote-config dest path inspection (mount collisions / will-create)
 
 ## Still deepening toward pixel-level Angular parity
 

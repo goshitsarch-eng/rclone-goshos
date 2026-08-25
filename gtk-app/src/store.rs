@@ -833,6 +833,46 @@ impl AppStore {
         }
     }
 
+    pub fn acknowledge_alert(&mut self, id: &str) -> bool {
+        if let Some(event) = self.alert_history.iter_mut().find(|e| e.id == id) {
+            event.acknowledged = true;
+            true
+        } else {
+            false
+        }
+    }
+
+    pub fn clear_alert_history(&mut self) {
+        self.alert_history.clear();
+    }
+
+    pub fn filter_alert_history(&self, query: &str, severity: Option<&str>) -> Vec<AlertEvent> {
+        let q = query.trim().to_ascii_lowercase();
+        let severity = severity
+            .map(str::trim)
+            .filter(|s| !s.is_empty() && !s.eq_ignore_ascii_case("all"));
+        self.alert_history
+            .iter()
+            .filter(|event| {
+                if let Some(wanted) = severity {
+                    if !event.severity.as_str().eq_ignore_ascii_case(wanted) {
+                        return false;
+                    }
+                }
+                if q.is_empty() {
+                    return true;
+                }
+                event.title.to_ascii_lowercase().contains(&q)
+                    || event.body.to_ascii_lowercase().contains(&q)
+                    || event.kind.as_str().contains(q.as_str())
+                    || event.severity.as_str().contains(q.as_str())
+                    || event.remote.to_ascii_lowercase().contains(&q)
+                    || event.origin.to_ascii_lowercase().contains(&q)
+            })
+            .cloned()
+            .collect()
+    }
+
     pub fn record_event(&mut self, mut event: AlertEvent) {
         let matching: Vec<String> = self
             .alert_rules
@@ -1432,6 +1472,41 @@ mod tests {
         assert!(stats.last_at.is_some());
         assert!(!store.alert_actions[0].enabled);
         assert!(!store.alert_rules[0].enabled);
+    }
+
+    #[test]
+    fn filters_and_acknowledges_alert_history() {
+        let mut store = AppStore::default();
+        let mut high = AlertEvent::new(
+            AlertEventKind::Job,
+            AlertSeverity::High,
+            "Copy failed".into(),
+            "drive:a".into(),
+        );
+        high.remote = "drive".into();
+        let info = AlertEvent::new(
+            AlertEventKind::System,
+            AlertSeverity::Info,
+            "Engine ready".into(),
+            "ok".into(),
+        );
+        let high_id = high.id.clone();
+        store.alert_history.push(high);
+        store.alert_history.push(info);
+        assert_eq!(store.filter_alert_history("copy", None).len(), 1);
+        assert_eq!(store.filter_alert_history("", Some("info")).len(), 1);
+        assert_eq!(store.filter_alert_history("drive", Some("high")).len(), 1);
+        assert!(store.filter_alert_history("missing", None).is_empty());
+        assert!(store.acknowledge_alert(&high_id));
+        assert!(!store.acknowledge_alert("missing"));
+        assert!(store
+            .alert_history
+            .iter()
+            .find(|e| e.id == high_id)
+            .is_some_and(|e| e.acknowledged));
+        store.clear_alert_history();
+        assert!(store.alert_history.is_empty());
+        assert_eq!(store.unacknowledged_alerts(), 0);
     }
 
     #[test]

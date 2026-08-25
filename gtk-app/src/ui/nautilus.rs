@@ -179,7 +179,7 @@ impl NautilusView {
         let right_scroll = gtk::ScrolledWindow::new();
         right_scroll.set_vexpand(true);
         right_scroll.set_child(Some(&right_stack));
-        right_scroll.set_visible(false);
+        right_scroll.set_visible(ctx.settings.borrow().nautilus.split_enabled);
         let paned = gtk::Paned::new(gtk::Orientation::Horizontal);
         paned.set_start_child(Some(&files_scroll));
         paned.set_end_child(Some(&right_scroll));
@@ -277,7 +277,7 @@ impl NautilusView {
             redo: Rc::new(RefCell::new(vec![])),
             tab_bar,
             next_tab_id: Rc::new(RefCell::new(2)),
-            split_enabled: Rc::new(RefCell::new(false)),
+            split_enabled: Rc::new(RefCell::new(ctx.settings.borrow().nautilus.split_enabled)),
             paned,
             right_scroll,
             ops,
@@ -768,6 +768,23 @@ impl NautilusView {
             }
             if key == gtk::gdk::Key::BackSpace {
                 view.go_up();
+                return glib::Propagation::Stop;
+            }
+            if modifier.contains(gtk::gdk::ModifierType::ALT_MASK)
+                && (key == gtk::gdk::Key::Up || key == gtk::gdk::Key::KP_Up)
+            {
+                view.go_up();
+                return glib::Propagation::Stop;
+            }
+            if ctrl
+                && (key == gtk::gdk::Key::Tab
+                    || key == gtk::gdk::Key::ISO_Left_Tab
+                    || key == gtk::gdk::Key::Page_Down
+                    || key == gtk::gdk::Key::Page_Up)
+            {
+                view.cycle_tab(
+                    shift || key == gtk::gdk::Key::ISO_Left_Tab || key == gtk::gdk::Key::Page_Up,
+                );
                 return glib::Propagation::Stop;
             }
             glib::Propagation::Proceed
@@ -1822,6 +1839,8 @@ impl NautilusView {
     fn toggle_split(&self) {
         let next = !*self.split_enabled.borrow();
         *self.split_enabled.borrow_mut() = next;
+        self.ctx.settings.borrow_mut().nautilus.split_enabled = next;
+        self.ctx.persist();
         self.right_scroll.set_visible(next);
         if next {
             *self.secondary.borrow_mut() = self.current.borrow().clone();
@@ -2344,6 +2363,28 @@ impl NautilusView {
             *self.current.borrow_mut() = tab;
             self.reload();
         }
+    }
+
+    fn cycle_tab(&self, reverse: bool) {
+        let tabs = self.tabs.borrow();
+        if tabs.len() < 2 {
+            return;
+        }
+        let Some(idx) = tabs.iter().position(|t| t.id == self.current.borrow().id) else {
+            return;
+        };
+        let next = if reverse {
+            if idx == 0 {
+                tabs.len() - 1
+            } else {
+                idx - 1
+            }
+        } else {
+            (idx + 1) % tabs.len()
+        };
+        let id = tabs[next].id;
+        drop(tabs);
+        self.activate_tab(id);
     }
 
     fn open_new_tab(&self) {
