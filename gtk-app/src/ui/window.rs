@@ -128,12 +128,45 @@ pub fn present_main(app: &adw::Application, ctx: AppCtx) {
     sync_connection_button(&ctx, &conn_btn);
     header.pack_start(&conn_btn);
 
+    let home_btn = gtk::Button::from_icon_name("go-home-symbolic");
+    home_btn.set_tooltip_text(Some(&ctx.t_or("titlebar.home", "Home")));
+    home_btn.add_css_class("flat");
+    home_btn.set_visible(false);
+    {
+        let ctx = ctx.clone();
+        let dash = dashboard.clone();
+        let stack = view_stack.clone();
+        home_btn.connect_clicked(move |_| {
+            *ctx.selected_remote.borrow_mut() = None;
+            stack.set_visible_child_name("main_menu");
+            dash.refresh();
+        });
+    }
+    header.pack_start(&home_btn);
+
     let menu_btn = gtk::MenuButton::builder()
         .icon_name("open-menu-symbolic")
-        .tooltip_text("Application menu")
+        .tooltip_text(&ctx.t_or("titlebar.appMenu", "Application menu"))
         .build();
     menu_btn.set_menu_model(Some(&app_menu(&ctx)));
     header.pack_end(&menu_btn);
+
+    let notice_btn = gtk::Button::from_icon_name("dialog-warning-symbolic");
+    notice_btn.add_css_class("flat");
+    notice_btn.set_visible(false);
+    {
+        let ctx = ctx.clone();
+        let window = window.clone();
+        notice_btn.connect_clicked(move |_| {
+            if ctx.updates.borrow().has_updates() {
+                dialogs::about(&window, ctx.clone());
+            } else {
+                dialogs::alerts(&window, ctx.clone());
+            }
+        });
+    }
+    sync_notice_button(&ctx, &notice_btn);
+    header.pack_end(&notice_btn);
 
     let banner = adw::Banner::new("");
     banner.set_button_label(Some("Repair"));
@@ -205,6 +238,8 @@ pub fn present_main(app: &adw::Application, ctx: AppCtx) {
     let banner_poll = banner.clone();
     let banner_kind_poll = banner_kind.clone();
     let conn_btn_poll = conn_btn.clone();
+    let home_btn_poll = home_btn.clone();
+    let notice_btn_poll = notice_btn.clone();
     {
         let ctx_nav = ctx.clone();
         let stack_nav = view_stack.clone();
@@ -245,6 +280,8 @@ pub fn present_main(app: &adw::Application, ctx: AppCtx) {
             ctx_poll.refresh_updates();
         }
         sync_connection_button(&ctx_poll, &conn_btn_poll);
+        sync_home_button(&ctx_poll, &home_btn_poll);
+        sync_notice_button(&ctx_poll, &notice_btn_poll);
         update_banner(&ctx_poll, &banner_poll, &banner_kind_poll);
         if let Some(tray) = &tray {
             tray.drain(&ctx_poll);
@@ -497,8 +534,12 @@ fn install_actions(
         );
     }
     {
+        let ctx = ctx.clone();
         let window = window.clone();
-        add_action("shortcuts", Box::new(move || dialogs::shortcuts(&window)));
+        add_action(
+            "shortcuts",
+            Box::new(move || dialogs::shortcuts(&window, &ctx)),
+        );
     }
     {
         let ctx = ctx.clone();
@@ -840,6 +881,38 @@ fn update_banner(ctx: &AppCtx, banner: &adw::Banner, kind: &Rc<std::cell::RefCel
     }
     banner.set_revealed(false);
     *kind.borrow_mut() = BannerKind::None;
+}
+
+fn sync_home_button(ctx: &AppCtx, btn: &gtk::Button) {
+    btn.set_visible(ctx.selected_remote.borrow().is_some());
+}
+
+fn sync_notice_button(ctx: &AppCtx, btn: &gtk::Button) {
+    let updates = ctx.updates.borrow().clone();
+    let alerts = ctx.store.borrow().unacknowledged_alerts();
+    if updates.has_updates() {
+        btn.set_visible(true);
+        btn.set_icon_name("software-update-available-symbolic");
+        let tip = match updates.banner_kind() {
+            "all" => ctx.t_or(
+                "titlebar.updates.all",
+                "Application and Rclone updates available",
+            ),
+            "rclone" => ctx.t_or("titlebar.updates.rclone", "Rclone update available"),
+            _ => ctx.t_or("titlebar.updates.app", "Application update available"),
+        };
+        btn.set_tooltip_text(Some(&tip));
+    } else if alerts > 0 {
+        btn.set_visible(true);
+        btn.set_icon_name("dialog-warning-symbolic");
+        btn.set_tooltip_text(Some(&format!(
+            "{} ({})",
+            ctx.t_or("alerts.unacknowledged", "Unacknowledged"),
+            alerts
+        )));
+    } else {
+        btn.set_visible(false);
+    }
 }
 
 fn sync_connection_button(ctx: &AppCtx, btn: &gtk::Button) {

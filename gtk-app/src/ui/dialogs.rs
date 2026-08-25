@@ -45,7 +45,7 @@ pub fn prompt(
 
 pub fn preferences(parent: &impl IsA<gtk::Widget>, ctx: AppCtx) {
     let dialog = adw::PreferencesDialog::new();
-    dialog.set_title("Preferences");
+    dialog.set_title(&ctx.t_or("titlebar.menu.preferences", "Preferences"));
     dialog.set_search_enabled(true);
 
     let general = adw::PreferencesPage::new();
@@ -736,9 +736,9 @@ pub fn about(parent: &impl IsA<gtk::Widget>, ctx: AppCtx) {
     dialog.present(Some(parent));
 }
 
-pub fn shortcuts(parent: &impl IsA<gtk::Widget>) {
+pub fn shortcuts(parent: &impl IsA<gtk::Widget>, ctx: &AppCtx) {
     let dialog = adw::Dialog::new();
-    dialog.set_title("Keyboard Shortcuts");
+    dialog.set_title(&ctx.t_or("titlebar.menu.shortcuts", "Keyboard Shortcuts"));
     dialog.set_content_width(560);
     dialog.set_content_height(520);
     let list = gtk::ListBox::new();
@@ -1547,7 +1547,7 @@ fn backend_editor(
 
 pub fn alerts(parent: &impl IsA<gtk::Widget>, ctx: AppCtx) {
     let dialog = adw::Dialog::new();
-    dialog.set_title("Alerts");
+    dialog.set_title(&ctx.t_or("alerts.title", "Alerts"));
     dialog.set_content_width(720);
     dialog.set_content_height(560);
     let stack = adw::ViewStack::new();
