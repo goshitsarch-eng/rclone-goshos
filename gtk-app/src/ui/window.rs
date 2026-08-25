@@ -405,6 +405,9 @@ pub fn present_main(app: &adw::Application, ctx: AppCtx) {
         });
     }
     window.present();
+    if crate::cli::start_hidden() {
+        window.set_visible(false);
+    }
 }
 
 fn app_menu(ctx: &AppCtx) -> gio::Menu {

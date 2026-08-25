@@ -380,6 +380,8 @@ This client is the GTK 4 + libadwaita rewrite of the Angular/Tauri desktop UI. I
 - Files launch from `--browse` / `--browse-path` and Angular nautilus URLs (`?browse=`, `#/nautilus/`, `/nautilus/`)
 - Files folder context menu uses an Open submenu (Open / New Tab / New Window), matching Angular `slide-menu`
 - 259 GTK `t_or` strings added to all `resources/i18n/*/main.json` locales
+- Desktop CLI `--tray` / `--hidden` starts in the tray (XDG autostart Exec includes `--tray`)
+- `--data-dir` / `--cache-dir` / `--logs-dir` and `RCLONE_MANAGER_{DATA,CACHE,LOG}_DIR` override app paths
 
 ## Still deepening toward pixel-level Angular parity
 

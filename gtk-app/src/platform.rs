@@ -84,10 +84,14 @@ pub fn set_autostart(enabled: bool) -> Result<(), String> {
         return Ok(());
     }
     let exec = current_exe_quoted();
-    let desktop = format!(
-        "[Desktop Entry]\nType=Application\nName=Rclone Manager\nComment=Manage rclone remotes, mounts, and transfers\nExec={exec}\nIcon=folder-remote\nTerminal=false\nCategories=Network;FileTransfer;\nX-GNOME-Autostart-enabled=true\n"
-    );
-    write_executable(&path, &desktop).map_err(|e| e.to_string())
+    write_executable(&path, &autostart_desktop_entry(&exec)).map_err(|e| e.to_string())
+}
+
+/// XDG autostart entry. `--tray` matches Tauri `tauri_plugin_autostart`.
+pub fn autostart_desktop_entry(exec: &str) -> String {
+    format!(
+        "[Desktop Entry]\nType=Application\nName=Rclone Manager\nComment=Manage rclone remotes, mounts, and transfers\nExec={exec} --tray\nIcon=folder-remote\nTerminal=false\nCategories=Network;FileTransfer;\nX-GNOME-Autostart-enabled=true\n"
+    )
 }
 
 pub fn background_portal_commandline() -> Vec<String> {
@@ -922,6 +926,13 @@ pub fn relaunch() -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn autostart_desktop_uses_tray_flag() {
+        let entry = autostart_desktop_entry("\"/opt/rclone-manager-gtk\"");
+        assert!(entry.contains("Exec=\"/opt/rclone-manager-gtk\" --tray"));
+        assert!(entry.contains("X-GNOME-Autostart-enabled=true"));
+    }
 
     #[test]
     fn background_portal_options_include_autostart() {
