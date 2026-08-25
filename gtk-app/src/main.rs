@@ -24,6 +24,7 @@ mod mime;
 mod mount_plugin;
 mod mqtt;
 mod navigation;
+mod onboarding;
 mod operations;
 mod path_inspection;
 mod path_kind;

@@ -1,8 +1,11 @@
 //! Mount helper detection and install (FUSE / WinFsp / FUSE-T).
 
+use crate::updater::DownloadProgress;
 use serde_json::Value;
 #[cfg(any(target_os = "windows", target_os = "macos"))]
 use std::path::Path;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex};
 #[cfg(any(target_os = "windows", target_os = "macos"))]
 use std::time::Duration;
 
@@ -142,15 +145,26 @@ fn fetch_github(url: &str) -> Result<Value, String> {
 }
 
 pub fn install() -> Result<String, String> {
+    install_ex(None, None)
+}
+
+pub fn install_ex(
+    cancel: Option<Arc<AtomicBool>>,
+    progress: Option<Arc<Mutex<DownloadProgress>>>,
+) -> Result<String, String> {
+    if cancel.as_ref().is_some_and(|c| c.load(Ordering::Relaxed)) {
+        return Err("cancelled".into());
+    }
     #[cfg(not(any(target_os = "windows", target_os = "macos")))]
     {
+        let _ = progress;
         return crate::repair::try_install_fuse();
     }
     #[cfg(any(target_os = "windows", target_os = "macos"))]
     {
         let info = fetch_latest_info()?;
         let dest = std::env::temp_dir().join(&info.filename);
-        crate::updater::download_file(&info.download_url, &dest, None, None)?;
+        crate::updater::download_file(&info.download_url, &dest, cancel, progress)?;
         install_local(&dest)?;
         let _ = std::fs::remove_file(&dest);
         if is_installed() {
@@ -220,5 +234,7 @@ mod tests {
         .unwrap();
         assert_eq!(fuse.name, "FUSE-T");
         assert!(fuse_t_pkg_from_release(&json!({ "assets": [] })).is_none());
+        let cancel = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(true));
+        assert_eq!(install_ex(Some(cancel), None).unwrap_err(), "cancelled");
     }
 }

@@ -26,6 +26,7 @@ pub mod mime;
 pub mod mount_plugin;
 pub mod mqtt;
 pub mod navigation;
+pub mod onboarding;
 pub mod operations;
 pub mod path_inspection;
 pub mod path_kind;

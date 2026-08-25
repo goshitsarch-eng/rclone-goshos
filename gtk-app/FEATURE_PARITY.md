@@ -357,11 +357,16 @@ This client is the GTK 4 + libadwaita rewrite of the Angular/Tauri desktop UI. I
 - Job detail adds one Open button per source/destination when a job lists multiple paths
 - Title-bar banners use `banners.engine.*` / Flatpak / metered / development i18n
 - Quick Run editor can add multiple sources (saved as `srcFs` arrays) for sync/copy/move/check
+- Onboarding skips rclone/plugin/password cards when they are not needed (Angular card filter)
+- Onboarding page indicators, keyboard next/back, and Import on the welcome card
+- Illustrated default-view cards (badge + title + description) matching `onboarding.uiOptions.*`
+- Live rclone and mount-plugin install progress with cancel (same download-progress model as Updates)
+- Onboarding password Unlock validates via RC/CLI before continuing
+- Custom / existing rclone install locations on the install card
 
 ## Still deepening toward pixel-level Angular parity
 
 - Workflow builder (stub in both apps)
 - Live GUI session against rclone rcd (no display in this environment)
 - Remaining dialogs/Files English labels (core chrome now localized)
-- Onboarding illustrated view cards and live mount-plugin progress
 - Pixel-level Angular layouts and leftover English `t_or` fallbacks
