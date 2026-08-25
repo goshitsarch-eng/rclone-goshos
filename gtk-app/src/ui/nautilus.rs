@@ -2,7 +2,8 @@ use super::dialogs;
 use super::AppCtx;
 use crate::operations::FileTypeCategory;
 use crate::rclone::{
-    format_bytes, join_remote_path, parent_remote_path, remote_fs, split_remote_path, DirEntry,
+    format_bytes, format_relative_mod_time, join_remote_path, parent_remote_path, remote_fs,
+    split_remote_path, DirEntry,
 };
 use crate::store::{sort_entries, Bookmark};
 use adw::prelude::*;
@@ -2030,7 +2031,11 @@ impl NautilusView {
         row.set_subtitle(&if entry.is_dir {
             self.ctx.t_or("nautilus.selection.folder", "Folder")
         } else {
-            format!("{} · {}", format_bytes(entry.size), entry.mod_time)
+            format!(
+                "{} · {}",
+                format_bytes(entry.size),
+                format_relative_mod_time(&entry.mod_time)
+            )
         });
         let icon = gtk::Image::from_icon_name(&crate::mime::icon_for_entry(
             &entry.name,
@@ -2046,7 +2051,7 @@ impl NautilusView {
         size.add_css_class("dim-label");
         size.set_width_chars(10);
         size.set_xalign(1.0);
-        let modified = gtk::Label::new(Some(&entry.mod_time));
+        let modified = gtk::Label::new(Some(&format_relative_mod_time(&entry.mod_time)));
         modified.add_css_class("dim-label");
         modified.set_width_chars(18);
         modified.set_xalign(1.0);

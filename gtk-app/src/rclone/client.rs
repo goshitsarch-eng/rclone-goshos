@@ -1271,6 +1271,7 @@ pub struct StatItem {
     pub is_dir: bool,
     pub size: i64,
     pub mime: String,
+    pub mod_time: String,
 }
 
 pub const CAT_PREVIEW_BYTES: i64 = 512 * 1024;
@@ -1361,7 +1362,55 @@ pub fn parse_stat(value: &Value) -> Option<StatItem> {
             .and_then(|v| v.as_str())
             .unwrap_or("")
             .to_string(),
+        mod_time: item
+            .get("ModTime")
+            .or_else(|| item.get("modTime"))
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string(),
     })
+}
+
+pub fn format_mod_time(raw: &str) -> String {
+    if raw.is_empty() {
+        return String::new();
+    }
+    match chrono::DateTime::parse_from_rfc3339(raw) {
+        Ok(dt) => dt
+            .with_timezone(&chrono::Local)
+            .format("%Y-%m-%d %H:%M")
+            .to_string(),
+        Err(_) => raw.to_string(),
+    }
+}
+
+/// Angular `formatRelativeDate` equivalent for listing and properties.
+pub fn format_relative_mod_time(raw: &str) -> String {
+    let Ok(dt) = chrono::DateTime::parse_from_rfc3339(raw) else {
+        return format_mod_time(raw);
+    };
+    let local = dt.with_timezone(&chrono::Local);
+    let delta = chrono::Local::now().signed_duration_since(local);
+    let secs = delta.num_seconds();
+    if secs < 0 {
+        return local.format("%Y-%m-%d %H:%M").to_string();
+    }
+    if secs < 60 {
+        return "Just now".into();
+    }
+    let mins = secs / 60;
+    if mins < 60 {
+        return format!("{mins}m ago");
+    }
+    let hours = mins / 60;
+    if hours < 24 {
+        return format!("{hours}h ago");
+    }
+    let days = hours / 24;
+    if days < 7 {
+        return format!("{days}d ago");
+    }
+    local.format("%Y-%m-%d").to_string()
 }
 
 pub fn vfs_forget_payload(fs: &str, file: Option<&str>) -> Value {
@@ -1743,6 +1792,22 @@ mod tests {
         assert!(item.is_dir);
         assert_eq!(item.name, "Photos");
         assert_eq!(item.mime, "inode/directory");
+        assert!(item.mod_time.is_empty());
+        let stamped = parse_stat(&json!({
+            "item": {
+                "Name": "notes.txt",
+                "IsDir": false,
+                "Size": 12,
+                "MimeType": "text/plain",
+                "ModTime": "2024-05-01T12:00:00Z"
+            }
+        }))
+        .unwrap();
+        assert_eq!(stamped.mod_time, "2024-05-01T12:00:00Z");
+        assert_eq!(format_mod_time("2024-05-01T12:00:00Z").len(), 16);
+        assert_eq!(format_mod_time(""), "");
+        assert_eq!(format_mod_time("not-a-date"), "not-a-date");
+        assert_eq!(format_relative_mod_time(""), "");
         assert!(parse_stat(&json!({ "item": null })).is_none());
     }
 

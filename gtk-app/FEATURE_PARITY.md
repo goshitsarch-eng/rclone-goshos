@@ -256,6 +256,10 @@ This client is the GTK 4 + libadwaita rewrite of the Angular/Tauri desktop UI. I
 - File viewer folder size (`operations/size`) plus Space preview including directories
 - Cron descriptions: weekday names, daily hour ranges, every-N-days, and locale packs
 - Remaining dialog chrome (backends, templates, repair, multi-rename, action order, alerts) uses i18n fallbacks
+- Properties: ModTime, used/free/total rows, contained-file stats, hash copy-to-clipboard
+- Files listing shows relative Modified dates
+- File viewer: size in chrome, ArrowLeft/ArrowRight gallery, binary / preview-unavailable pages
+- Alert rule and action editors use `alerts.*` labels
 
 ## Still deepening toward pixel-level Angular parity
 

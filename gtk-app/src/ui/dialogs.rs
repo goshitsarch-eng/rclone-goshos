@@ -4290,58 +4290,72 @@ pub fn properties(
             let row = adw::ActionRow::new();
             row.set_title(&ctx.t_or("fileBrowser.properties.kind", "Kind"));
             row.set_subtitle(&format!(
-                "{} · {}{}",
-                if stat.is_dir {
-                    ctx.t_or("fileBrowser.properties.directory", "Directory")
-                } else {
-                    ctx.t_or("fileBrowser.properties.file", "File")
-                },
-                crate::rclone::format_bytes(stat.size),
+                "{}{}",
                 if stat.mime.is_empty() {
+                    if stat.is_dir {
+                        ctx.t_or("fileBrowser.properties.directory", "Directory")
+                    } else {
+                        ctx.t_or("fileBrowser.properties.file", "File")
+                    }
+                } else {
+                    stat.mime.clone()
+                },
+                if stat.is_dir {
                     String::new()
                 } else {
-                    format!(" · {}", stat.mime)
+                    format!(" · {}", crate::rclone::format_bytes(stat.size))
                 }
             ));
             list.append(&row);
+            if !stat.mod_time.is_empty() {
+                let row = adw::ActionRow::new();
+                row.set_title(&ctx.t_or("fileBrowser.properties.modified", "Modified"));
+                row.set_subtitle(&crate::rclone::format_mod_time(&stat.mod_time));
+                list.append(&row);
+            }
         }
         if let Ok(about) = client.about(&fs) {
-            let used = about.get("used").and_then(|x| x.as_i64()).unwrap_or(-1);
-            let total = about.get("total").and_then(|x| x.as_i64()).unwrap_or(-1);
-            let free = about.get("free").and_then(|x| x.as_i64()).unwrap_or(-1);
-            let row = adw::ActionRow::new();
-            row.set_title(&ctx.t_or("fileBrowser.properties.storage", "Disk usage"));
-            row.set_subtitle(&format!(
-                "used {} · free {} · total {}",
-                crate::rclone::format_bytes(used),
-                crate::rclone::format_bytes(free),
-                crate::rclone::format_bytes(total)
-            ));
-            list.append(&row);
+            for (key, label, fallback) in [
+                ("used", "fileBrowser.properties.used", "Used"),
+                ("free", "fileBrowser.properties.free", "Free"),
+                ("total", "fileBrowser.properties.totalCapacity", "Total"),
+            ] {
+                if let Some(value) = about.get(key).and_then(|x| x.as_i64()) {
+                    let row = adw::ActionRow::new();
+                    row.set_title(&ctx.t_or(label, fallback));
+                    row.set_subtitle(&crate::rclone::format_bytes(value));
+                    list.append(&row);
+                }
+            }
         }
         if remote == "local" {
             if let Ok(du) = client.du(Some(path)) {
                 let row = adw::ActionRow::new();
                 row.set_title(&ctx.t_or("fileBrowser.properties.localDisk", "Local disk"));
-                row.set_subtitle(&format!(
-                    "{} · used {} · free {} · total {}",
-                    du.dir,
-                    crate::rclone::format_bytes(du.used),
-                    crate::rclone::format_bytes(du.free),
-                    crate::rclone::format_bytes(du.total)
-                ));
+                row.set_subtitle(&du.dir);
                 list.append(&row);
+                for (label, fallback, value) in [
+                    ("fileBrowser.properties.used", "Used", du.used),
+                    ("fileBrowser.properties.free", "Free", du.free),
+                    ("fileBrowser.properties.totalCapacity", "Total", du.total),
+                ] {
+                    let row = adw::ActionRow::new();
+                    row.set_title(&ctx.t_or(label, fallback));
+                    row.set_subtitle(&crate::rclone::format_bytes(value));
+                    list.append(&row);
+                }
             }
         }
         if let Ok(size) = client.size(&fs, path) {
+            let (count, bytes) = crate::rclone::parse_object_size(&size);
+            let count_row = adw::ActionRow::new();
+            count_row
+                .set_title(&ctx.t_or("fileBrowser.properties.containedFiles", "Contained files"));
+            count_row.set_subtitle(&count.to_string());
+            list.append(&count_row);
             let row = adw::ActionRow::new();
-            row.set_title(&ctx.t_or("fileBrowser.properties.size", "Size"));
-            let count = size.get("count").and_then(|x| x.as_i64());
-            let bytes = size.get("bytes").and_then(|x| x.as_i64()).unwrap_or(-1);
-            row.set_subtitle(&match count {
-                Some(n) => format!("{} · {n} objects", crate::rclone::format_bytes(bytes)),
-                None => crate::rclone::format_bytes(bytes),
-            });
+            row.set_title(&ctx.t_or("fileBrowser.properties.totalSize", "Total size"));
+            row.set_subtitle(&crate::rclone::format_bytes(bytes));
             list.append(&row);
         }
         let hashes = info
@@ -4393,7 +4407,24 @@ pub fn properties(
                         calc.emit_clicked();
                     }
                 }
+                let copy = gtk::Button::from_icon_name("edit-copy-symbolic");
+                copy.set_valign(gtk::Align::Center);
+                copy.set_tooltip_text(Some(&ctx.t_or(
+                    "fileBrowser.properties.copyToClipboard",
+                    "Copy to clipboard",
+                )));
+                {
+                    let row = row.clone();
+                    copy.connect_clicked(move |_| {
+                        if let Some(text) = row.subtitle() {
+                            if let Some(display) = gtk::gdk::Display::default() {
+                                display.clipboard().set_text(&text);
+                            }
+                        }
+                    });
+                }
                 row.add_suffix(&calc);
+                row.add_suffix(&copy);
                 list.append(&row);
             }
         }
@@ -4434,7 +4465,10 @@ pub fn properties(
                                     display.clipboard().set_text(&url);
                                 }
                             }
-                            Ok(_) => link_row.set_subtitle("Remote did not return a public link"),
+                            Ok(_) => link_row.set_subtitle(&ctx.t_or(
+                                "fileBrowser.properties.noPublicLink",
+                                "Remote did not return a public link",
+                            )),
                             Err(e) => link_row.set_subtitle(&e.to_string()),
                         }
                     }
@@ -5268,9 +5302,29 @@ pub fn file_viewer(
     next.set_tooltip_text(Some(
         &ctx.t_or("fileBrowser.fileViewer.nextFile", "Next file"),
     ));
-    let pos = gtk::Label::new(Some(&match index {
-        Some(i) if !siblings.is_empty() => format!("{} / {}", i + 1, siblings.len()),
-        _ => name.to_string(),
+    let size_hint = if remote == "local" {
+        std::fs::metadata(path).ok().map(|m| m.len() as i64)
+    } else {
+        ctx.client().and_then(|c| {
+            let fs = if remote == "local" {
+                "/".into()
+            } else {
+                remote_fs(remote, "")
+            };
+            c.stat(&fs, path).ok().flatten().map(|s| s.size)
+        })
+    }
+    .filter(|n| *n > 0)
+    .map(crate::rclone::format_bytes);
+    let pos = gtk::Label::new(Some(&{
+        let base = match index {
+            Some(i) if !siblings.is_empty() => format!("{} / {}", i + 1, siblings.len()),
+            _ => name.to_string(),
+        };
+        match &size_hint {
+            Some(size) => format!("{base} · {size}"),
+            None => base,
+        }
     }));
     pos.set_hexpand(true);
     pos.set_xalign(0.5);
@@ -5339,6 +5393,23 @@ pub fn file_viewer(
     nav.append(&prev);
     nav.append(&pos);
     nav.append(&next);
+    {
+        let keys = gtk::EventControllerKey::new();
+        let prev = prev.clone();
+        let next = next.clone();
+        keys.connect_key_pressed(move |_, key, _, _| {
+            if key == gtk::gdk::Key::Left || key == gtk::gdk::Key::KP_Left {
+                prev.emit_clicked();
+                return glib::Propagation::Stop;
+            }
+            if key == gtk::gdk::Key::Right || key == gtk::gdk::Key::KP_Right {
+                next.emit_clicked();
+                return glib::Propagation::Stop;
+            }
+            glib::Propagation::Proceed
+        });
+        dialog.add_controller(keys);
+    }
     let category = crate::operations::FileTypeCategory::from_name(name, is_dir);
     let info = gtk::Label::new(Some(&format!("{remote}:{path}")));
     info.set_wrap(true);
@@ -5590,6 +5661,38 @@ pub fn file_viewer(
             attach_text_preview(&box_, name, &text, true, Some(&local_s), None);
         }
     }
+    let previewed = is_dir
+        || matches!(
+            category,
+            crate::operations::FileTypeCategory::Archive
+                | crate::operations::FileTypeCategory::Image
+                | crate::operations::FileTypeCategory::Video
+                | crate::operations::FileTypeCategory::Audio
+                | crate::operations::FileTypeCategory::Pdf
+                | crate::operations::FileTypeCategory::Text
+        );
+    if !previewed {
+        let page = adw::StatusPage::new();
+        page.set_icon_name(Some(
+            if matches!(category, crate::operations::FileTypeCategory::Binary) {
+                "application-x-executable-symbolic"
+            } else {
+                "dialog-information-symbolic"
+            },
+        ));
+        page.set_title(
+            &if matches!(category, crate::operations::FileTypeCategory::Binary) {
+                ctx.t_or("fileBrowser.fileViewer.binaryFile", "This is a binary file")
+            } else {
+                ctx.t_or(
+                    "fileBrowser.fileViewer.previewNotAvailable",
+                    "Preview not available",
+                )
+            },
+        );
+        page.set_description(Some(name));
+        box_.append(&page);
+    }
     dialog.set_child(Some(&box_));
     dialog.present(Some(parent));
 }
@@ -5666,11 +5769,11 @@ pub fn remote_about(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, remote: &str) {
         let info = ctx.fs_info(remote).or_else(|| client.fs_info(&fs).ok());
         if let Some(info) = info {
             let name = adw::ActionRow::new();
-            name.set_title("Name");
+            name.set_title(&ctx.t("common.name"));
             name.set_subtitle(&info.name);
             usage.add(&name);
             let root = adw::ActionRow::new();
-            root.set_title("Root");
+            root.set_title(&ctx.t_or("fileBrowser.remoteAbout.root", "Root"));
             let root_text = if info.root.is_empty() {
                 "/".to_string()
             } else {
@@ -7187,18 +7290,19 @@ fn alert_rule_editor(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, existing_id: O
             .cloned()
     });
     let name = adw::EntryRow::new();
-    name.set_title("Name");
+    name.set_title(&ctx.t_or("alerts.ruleName", "Name"));
+    let default_rule_name = ctx.t_or("alerts.createRule", "New rule");
     name.set_text(
         existing
             .as_ref()
             .map(|r| r.name.as_str())
-            .unwrap_or("New rule"),
+            .unwrap_or(&default_rule_name),
     );
     let enabled = adw::SwitchRow::new();
-    enabled.set_title("Enabled");
+    enabled.set_title(&ctx.t("alerts.enabled"));
     enabled.set_active(existing.as_ref().map(|r| r.enabled).unwrap_or(true));
     let auto_ack = adw::SwitchRow::new();
-    auto_ack.set_title("Auto-acknowledge");
+    auto_ack.set_title(&ctx.t_or("alerts.rule.autoAcknowledge", "Auto-acknowledge"));
     auto_ack.set_active(
         existing
             .as_ref()
@@ -7206,7 +7310,7 @@ fn alert_rule_editor(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, existing_id: O
             .unwrap_or(false),
     );
     let severity = adw::ComboRow::new();
-    severity.set_title("Minimum severity");
+    severity.set_title(&ctx.t_or("alerts.rule.severityMin", "Minimum severity"));
     severity.set_model(Some(&gtk::StringList::new(SEVERITIES)));
     if let Some(rule) = &existing {
         if let Some(idx) = SEVERITIES
@@ -7217,7 +7321,7 @@ fn alert_rule_editor(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, existing_id: O
         }
     }
     let cooldown = adw::EntryRow::new();
-    cooldown.set_title("Cooldown (seconds)");
+    cooldown.set_title(&ctx.t_or("alerts.rule.cooldown", "Cooldown (seconds)"));
     cooldown.set_text(
         &existing
             .as_ref()
@@ -7225,7 +7329,7 @@ fn alert_rule_editor(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, existing_id: O
             .unwrap_or_else(|| "0".into()),
     );
     let remotes = adw::EntryRow::new();
-    remotes.set_title("Remote filter (comma-separated)");
+    remotes.set_title(&ctx.t_or("alerts.rule.remoteFilter", "Remote filter"));
     remotes.set_text(
         &existing
             .as_ref()
@@ -7233,7 +7337,7 @@ fn alert_rule_editor(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, existing_id: O
             .unwrap_or_default(),
     );
     let backends = adw::EntryRow::new();
-    backends.set_title("Backend filter (comma-separated)");
+    backends.set_title(&ctx.t_or("alerts.rule.backendFilter", "Backend filter"));
     backends.set_text(
         &existing
             .as_ref()
@@ -7241,7 +7345,7 @@ fn alert_rule_editor(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, existing_id: O
             .unwrap_or_default(),
     );
     let profiles = adw::EntryRow::new();
-    profiles.set_title("Profile filter (comma-separated)");
+    profiles.set_title(&ctx.t_or("alerts.rule.profileFilter", "Profile filter"));
     profiles.set_text(
         &existing
             .as_ref()
@@ -7249,7 +7353,7 @@ fn alert_rule_editor(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, existing_id: O
             .unwrap_or_default(),
     );
     let origins = adw::EntryRow::new();
-    origins.set_title("Origin filter (comma-separated)");
+    origins.set_title(&ctx.t_or("alerts.rule.originFilter", "Origin filter"));
     origins.set_text(
         &existing
             .as_ref()
@@ -7260,7 +7364,7 @@ fn alert_rule_editor(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, existing_id: O
         .iter()
         .map(|kind| {
             let row = adw::SwitchRow::new();
-            row.set_title(&format!("Event: {}", kind.as_str()));
+            row.set_title(&ctx.t_or(&format!("alerts.events.{}", kind.as_str()), kind.as_str()));
             row.set_active(
                 existing
                     .as_ref()
@@ -7291,7 +7395,7 @@ fn alert_rule_editor(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, existing_id: O
 
     let save = gtk::Button::with_label(&ctx.t("common.save"));
     save.add_css_class("suggested-action");
-    let delete = gtk::Button::with_label("Delete");
+    let delete = gtk::Button::with_label(&ctx.t("common.delete"));
     delete.add_css_class("destructive-action");
     delete.set_visible(existing_id.is_some());
     {
@@ -7375,7 +7479,7 @@ fn alert_rule_editor(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, existing_id: O
 
     let page = adw::PreferencesPage::new();
     let general = adw::PreferencesGroup::new();
-    general.set_title("Rule");
+    general.set_title(&ctx.t_or("alerts.ruleLabel", "Rule"));
     general.add(&name);
     general.add(&enabled);
     general.add(&auto_ack);
@@ -7387,13 +7491,13 @@ fn alert_rule_editor(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, existing_id: O
     general.add(&origins);
     page.add(&general);
     let events = adw::PreferencesGroup::new();
-    events.set_title("Events");
+    events.set_title(&ctx.t_or("alerts.rule.eventFilter", "Events"));
     for (_, row) in &event_switches {
         events.add(row);
     }
     page.add(&events);
     let actions = adw::PreferencesGroup::new();
-    actions.set_title("Actions");
+    actions.set_title(&ctx.t("alerts.actions"));
     for (_, row) in &action_switches {
         actions.add(row);
     }
@@ -7425,18 +7529,19 @@ fn alert_action_editor(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, existing_id:
             .cloned()
     });
     let name = adw::EntryRow::new();
-    name.set_title("Name");
+    name.set_title(&ctx.t_or("alerts.action.placeholderName", "Name"));
+    let default_action_name = ctx.t_or("alerts.createAction", "New action");
     name.set_text(
         existing
             .as_ref()
             .map(|a| a.name.as_str())
-            .unwrap_or("New action"),
+            .unwrap_or(&default_action_name),
     );
     let enabled = adw::SwitchRow::new();
-    enabled.set_title("Enabled");
+    enabled.set_title(&ctx.t("alerts.enabled"));
     enabled.set_active(existing.as_ref().map(|a| a.enabled).unwrap_or(true));
     let kind = adw::ComboRow::new();
-    kind.set_title("Kind");
+    kind.set_title(&ctx.t_or("alerts.action.kind", "Kind"));
     kind.set_model(Some(&gtk::StringList::new(ACTION_KINDS)));
     if let Some(action) = &existing {
         if let Some(idx) = ACTION_KINDS.iter().position(|k| *k == action.kind) {
@@ -7444,13 +7549,13 @@ fn alert_action_editor(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, existing_id:
         }
     }
     let url = adw::EntryRow::new();
-    url.set_title("URL");
+    url.set_title(&ctx.t_or("alerts.action.url", "URL"));
     let method = adw::EntryRow::new();
-    method.set_title("Method");
+    method.set_title(&ctx.t_or("alerts.action.method", "Method"));
     let token = adw::PasswordEntryRow::new();
-    token.set_title("Token");
+    token.set_title(&ctx.t_or("alerts.action.botToken", "Token"));
     let extra = adw::EntryRow::new();
-    extra.set_title("Extra");
+    extra.set_title(&ctx.t_or("common.moreActions", "Extra"));
     let wa_provider = adw::ComboRow::new();
     wa_provider.set_title(&ctx.t_or("alerts.action.whatsappProvider", "WhatsApp provider"));
     wa_provider.set_model(Some(&gtk::StringList::new(&[
@@ -7466,7 +7571,7 @@ fn alert_action_editor(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, existing_id:
         wa_provider.set_selected(1);
     }
     let body = adw::EntryRow::new();
-    body.set_title("Body template");
+    body.set_title(&ctx.t_or("alerts.action.bodyTemplate", "Body template"));
     if let Some(action) = &existing {
         url.set_text(&action_cfg(action, &["url", "broker_url", "smtp_server"]));
         method.set_text(&action_cfg(action, &["method", "topic", "smtp_port"]));
@@ -7489,8 +7594,11 @@ fn alert_action_editor(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, existing_id:
         body.set_text("{{title}}: {{body}}");
     }
     let retries = adw::SpinRow::with_range(0.0, 5.0, 1.0);
-    retries.set_title("Retry count");
-    retries.set_subtitle("Extra delivery attempts after a failure");
+    retries.set_title(&ctx.t_or("alerts.action.retryCount", "Retry count"));
+    retries.set_subtitle(&ctx.t_or(
+        "alerts.action.bodyTemplateHint",
+        "Extra delivery attempts after a failure",
+    ));
     retries.set_value(
         existing
             .as_ref()
@@ -7647,6 +7755,7 @@ fn alert_action_editor(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, existing_id:
         let extra = extra.clone();
         let body = body.clone();
         let wa_provider = wa_provider.clone();
+        let ctx = ctx.clone();
         move |selected: &str| match selected {
             "os_toast" => {
                 wa_provider.set_visible(false);
@@ -7655,42 +7764,42 @@ fn alert_action_editor(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, existing_id:
                 token.set_visible(false);
                 extra.set_visible(false);
                 body.set_visible(true);
-                body.set_title("Toast body template");
+                body.set_title(&ctx.t_or("alerts.action.messageTemplate", "Toast body template"));
             }
             "webhook" => {
                 wa_provider.set_visible(false);
                 url.set_visible(true);
-                url.set_title("Webhook URL");
+                url.set_title(&ctx.t_or("alerts.action.url", "Webhook URL"));
                 method.set_visible(true);
-                method.set_title("HTTP method");
+                method.set_title(&ctx.t_or("alerts.action.method", "HTTP method"));
                 token.set_visible(false);
                 extra.set_visible(false);
                 body.set_visible(true);
-                body.set_title("JSON / body template");
+                body.set_title(&ctx.t_or("alerts.action.bodyTemplate", "JSON / body template"));
             }
             "telegram" => {
                 wa_provider.set_visible(false);
                 url.set_visible(false);
                 method.set_visible(false);
                 token.set_visible(true);
-                token.set_title("Bot token");
+                token.set_title(&ctx.t_or("alerts.action.botToken", "Bot token"));
                 extra.set_visible(true);
-                extra.set_title("Chat ID");
+                extra.set_title(&ctx.t_or("alerts.action.chatId", "Chat ID"));
                 body.set_visible(true);
-                body.set_title("Message template");
+                body.set_title(&ctx.t_or("alerts.action.messageTemplate", "Message template"));
             }
             "whatsapp" => {
                 wa_provider.set_visible(true);
                 let custom = wa_provider.selected() == 1;
                 url.set_visible(custom);
-                url.set_title("Gateway URL");
+                url.set_title(&ctx.t_or("alerts.action.gatewayUrl", "Gateway URL"));
                 method.set_visible(false);
                 token.set_visible(!custom);
-                token.set_title("API key");
+                token.set_title(&ctx.t_or("alerts.action.apiKey", "API key"));
                 extra.set_visible(true);
-                extra.set_title("Phone number");
+                extra.set_title(&ctx.t_or("alerts.action.phone", "Phone number"));
                 body.set_visible(true);
-                body.set_title("Message template");
+                body.set_title(&ctx.t_or("alerts.action.messageTemplate", "Message template"));
             }
             "script" => {
                 wa_provider.set_visible(false);
@@ -7698,34 +7807,34 @@ fn alert_action_editor(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, existing_id:
                 method.set_visible(false);
                 token.set_visible(false);
                 extra.set_visible(true);
-                extra.set_title("Command");
+                extra.set_title(&ctx.t_or("alerts.action.command", "Command"));
                 body.set_visible(true);
-                body.set_title("Stdin template");
+                body.set_title(&ctx.t_or("alerts.action.bodyTemplate", "Stdin template"));
             }
             "email" => {
                 wa_provider.set_visible(false);
                 url.set_visible(true);
-                url.set_title("SMTP host");
+                url.set_title(&ctx.t_or("alerts.action.smtpHost", "SMTP host"));
                 method.set_visible(true);
-                method.set_title("SMTP port");
+                method.set_title(&ctx.t_or("alerts.action.smtpPort", "SMTP port"));
                 token.set_visible(true);
-                token.set_title("Password");
+                token.set_title(&ctx.t("common.password"));
                 extra.set_visible(true);
-                extra.set_title("From / to address");
+                extra.set_title(&ctx.t_or("alerts.action.fromTo", "From / to address"));
                 body.set_visible(true);
-                body.set_title("Body template");
+                body.set_title(&ctx.t_or("alerts.action.bodyTemplate", "Body template"));
             }
             "mqtt" => {
                 wa_provider.set_visible(false);
                 url.set_visible(true);
-                url.set_title("Broker URL");
+                url.set_title(&ctx.t_or("alerts.action.brokerUrl", "Broker URL"));
                 method.set_visible(true);
-                method.set_title("Topic");
+                method.set_title(&ctx.t_or("alerts.action.topic", "Topic"));
                 token.set_visible(true);
-                token.set_title("Password");
+                token.set_title(&ctx.t("common.password"));
                 extra.set_visible(false);
                 body.set_visible(true);
-                body.set_title("Payload template");
+                body.set_title(&ctx.t_or("alerts.action.bodyTemplate", "Payload template"));
             }
             _ => {}
         }
