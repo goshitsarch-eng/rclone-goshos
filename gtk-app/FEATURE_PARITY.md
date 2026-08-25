@@ -253,11 +253,14 @@ This client is the GTK 4 + libadwaita rewrite of the Angular/Tauri desktop UI. I
 - Keyboard shortcuts dialog is categorized and searchable
 - File viewer: extract archive, Edit/Cancel/Save for text, i18n chrome
 - Shared prompts use translated OK/Cancel
+- File viewer folder size (`operations/size`) plus Space preview including directories
+- Cron descriptions: weekday names, daily hour ranges, every-N-days, and locale packs
+- Remaining dialog chrome (backends, templates, repair, multi-rename, action order, alerts) uses i18n fallbacks
 
 ## Still deepening toward pixel-level Angular parity
 
 - Workflow builder (stub in both apps)
 - Live GUI session against rclone rcd (no display in this environment)
 - Native share portal / Android share intent (Linux uses `--share-intake` + Files banner)
-- Remaining dialogs/Files English labels
-- Full cronstrue locale packs (GTK uses an expanded pattern matcher)
+- Remaining dialogs/Files English labels (core chrome now localized)
+- cronstrue-quality coverage for uncommon cron forms beyond the expanded matcher

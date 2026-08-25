@@ -41,6 +41,31 @@
     "clearAll": "清除全部",
     "acknowledge": "确认"
   },
+  "cron": {
+    "everyMinute": "每分钟",
+    "everyMinutes": "每 {{n}} 分钟",
+    "everyHours": "每 {{n}} 小时",
+    "everyDays": "每 {{n}} 天",
+    "hourlyAt": "每小时的第 {{min}} 分钟",
+    "dailyAt": "每天 {{time}}",
+    "dailyBetween": "每天 {{start}} 至 {{end}}",
+    "weekdaysAt": "工作日 {{time}}",
+    "weekendsAt": "周末 {{time}}",
+    "monthlyAt": "每月 {{dom}} 日 {{time}}",
+    "weeklyAt": "每周第 {{dow}} 天 {{time}}",
+    "weeklyDaysAt": "每周 {{days}} {{time}}",
+    "weeklyOnAt": "每周{{day}} {{time}}",
+    "days": {
+      "0": "星期日",
+      "1": "星期一",
+      "2": "星期二",
+      "3": "星期三",
+      "4": "星期四",
+      "5": "星期五",
+      "6": "星期六",
+      "7": "星期日"
+    }
+  },
   "remoteConfig": {
     "pathStatus": {
       "clean": "干净且为空",

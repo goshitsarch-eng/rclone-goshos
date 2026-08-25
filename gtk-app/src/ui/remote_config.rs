@@ -498,12 +498,13 @@ fn remote_page(
     edit_primary.set_valign(gtk::Align::Center);
     {
         let parent = parent.clone();
+        let ctx = ctx.clone();
         let primary_ids = primary_ids.clone();
         let primary_row = primary_row.clone();
         edit_primary.connect_clicked(move |_| {
             let catalog = crate::action_order::catalog_ids();
             let current = primary_ids.borrow().clone();
-            dialogs::action_order(&parent, "Primary actions", &catalog, &current, {
+            dialogs::action_order(&parent, &ctx, "Primary actions", &catalog, &current, {
                 let primary_ids = primary_ids.clone();
                 let primary_row = primary_row.clone();
                 move |ids| {
@@ -521,6 +522,7 @@ fn remote_page(
     edit_sync.set_valign(gtk::Align::Center);
     {
         let parent = parent.clone();
+        let ctx = ctx.clone();
         let sync_ids = sync_ids.clone();
         let sync_row = sync_row.clone();
         edit_sync.connect_clicked(move |_| {
@@ -530,7 +532,7 @@ fn remote_page(
                 .map(|op| op.as_str())
                 .collect();
             let current = sync_ids.borrow().clone();
-            dialogs::action_order(&parent, "Sync actions", &catalog, &current, {
+            dialogs::action_order(&parent, &ctx, "Sync actions", &catalog, &current, {
                 let sync_ids = sync_ids.clone();
                 let sync_row = sync_row.clone();
                 move |ids| {

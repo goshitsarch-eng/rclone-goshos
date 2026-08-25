@@ -1283,6 +1283,13 @@ pub struct DiskUsage {
     pub used: i64,
 }
 
+/// Object count and byte total from `operations/size`.
+pub fn parse_object_size(value: &Value) -> (i64, i64) {
+    let count = value.get("count").and_then(|v| v.as_i64()).unwrap_or(0);
+    let bytes = value.get("bytes").and_then(|v| v.as_i64()).unwrap_or(0);
+    (count, bytes)
+}
+
 pub fn parse_du(value: &Value) -> Option<DiskUsage> {
     let info = value.get("info").unwrap_or(value);
     let total = info
@@ -1715,6 +1722,16 @@ mod tests {
             ),
             vec!["mount", "cmount"]
         );
+    }
+
+    #[test]
+    fn parse_object_size_reads_count_and_bytes() {
+        assert_eq!(
+            parse_object_size(&json!({ "count": 12, "bytes": 4096 })),
+            (12, 4096)
+        );
+        assert_eq!(parse_object_size(&json!({})), (0, 0));
+        assert_eq!(parse_object_size(&json!({ "count": "x" })), (0, 0));
     }
 
     #[test]

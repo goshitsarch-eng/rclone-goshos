@@ -41,6 +41,31 @@
     "clearAll": "Limpar tudo",
     "acknowledge": "Reconhecer"
   },
+  "cron": {
+    "everyMinute": "A cada minuto",
+    "everyMinutes": "A cada {{n}} minutos",
+    "everyHours": "A cada {{n}} horas",
+    "everyDays": "A cada {{n}} dias",
+    "hourlyAt": "A cada hora no minuto {{min}}",
+    "dailyAt": "Todos os dias às {{time}}",
+    "dailyBetween": "Todos os dias entre {{start}} e {{end}}",
+    "weekdaysAt": "Dias úteis às {{time}}",
+    "weekendsAt": "Fins de semana às {{time}}",
+    "monthlyAt": "Todo dia {{dom}} do mês às {{time}}",
+    "weeklyAt": "Semanalmente no dia {{dow}} às {{time}}",
+    "weeklyDaysAt": "Semanalmente nos dias {{days}} às {{time}}",
+    "weeklyOnAt": "Toda {{day}} às {{time}}",
+    "days": {
+      "0": "domingo",
+      "1": "segunda-feira",
+      "2": "terça-feira",
+      "3": "quarta-feira",
+      "4": "quinta-feira",
+      "5": "sexta-feira",
+      "6": "sábado",
+      "7": "domingo"
+    }
+  },
   "remoteConfig": {
     "pathStatus": {
       "clean": "Limpo & Vazio",

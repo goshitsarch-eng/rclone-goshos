@@ -1140,6 +1140,12 @@ impl NautilusView {
                 view.rename_selected();
                 return glib::Propagation::Stop;
             }
+            if key == gtk::gdk::Key::space {
+                if let Some(name) = view.selected_names().first().cloned() {
+                    view.open_viewer(&name);
+                    return glib::Propagation::Stop;
+                }
+            }
             if modifier.contains(gtk::gdk::ModifierType::ALT_MASK)
                 && (key == gtk::gdk::Key::Return || key == gtk::gdk::Key::KP_Enter)
             {
@@ -2131,7 +2137,22 @@ impl NautilusView {
             return;
         }
         if let Some(win) = self.root.root().and_downcast::<gtk::Window>() {
-            dialogs::file_viewer(&win, self.ctx.clone(), &tab.remote, &next, name, &[]);
+            let is_dir = self
+                .last_listing
+                .borrow()
+                .iter()
+                .find(|e| e.name == name)
+                .map(|e| e.is_dir)
+                .unwrap_or(false);
+            dialogs::file_viewer(
+                &win,
+                self.ctx.clone(),
+                &tab.remote,
+                &next,
+                name,
+                is_dir,
+                &[],
+            );
         }
     }
 
@@ -2185,19 +2206,24 @@ impl NautilusView {
         let current = self.current.borrow().clone();
         let path = join_remote_path(&current.path, name);
         if let Some(win) = self.root.root().and_downcast::<gtk::Window>() {
-            let siblings: Vec<String> = self
+            let siblings: Vec<(String, bool)> = self
                 .last_listing
                 .borrow()
                 .iter()
-                .filter(|e| !e.is_dir)
-                .map(|e| e.name.clone())
+                .map(|e| (e.name.clone(), e.is_dir))
                 .collect();
+            let is_dir = siblings
+                .iter()
+                .find(|(n, _)| n == name)
+                .map(|(_, d)| *d)
+                .unwrap_or(false);
             dialogs::file_viewer(
                 &win,
                 self.ctx.clone(),
                 &current.remote,
                 &path,
                 name,
+                is_dir,
                 &siblings,
             );
         }

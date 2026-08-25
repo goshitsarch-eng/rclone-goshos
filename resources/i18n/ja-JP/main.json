@@ -41,6 +41,31 @@
     "clearAll": "すべてクリア",
     "acknowledge": "確認"
   },
+  "cron": {
+    "everyMinute": "毎分",
+    "everyMinutes": "{{n}} 分ごと",
+    "everyHours": "{{n}} 時間ごと",
+    "everyDays": "{{n}} 日ごと",
+    "hourlyAt": "毎時 {{min}} 分",
+    "dailyAt": "毎日 {{time}}",
+    "dailyBetween": "毎日 {{start}}〜{{end}}",
+    "weekdaysAt": "平日 {{time}}",
+    "weekendsAt": "週末 {{time}}",
+    "monthlyAt": "毎月 {{dom}} 日 {{time}}",
+    "weeklyAt": "毎週 {{dow}} 曜日 {{time}}",
+    "weeklyDaysAt": "毎週 {{days}} {{time}}",
+    "weeklyOnAt": "毎週{{day}} {{time}}",
+    "days": {
+      "0": "日曜日",
+      "1": "月曜日",
+      "2": "火曜日",
+      "3": "水曜日",
+      "4": "木曜日",
+      "5": "金曜日",
+      "6": "土曜日",
+      "7": "日曜日"
+    }
+  },
   "remoteConfig": {
     "pathStatus": {
       "clean": "空のディレクトリ",

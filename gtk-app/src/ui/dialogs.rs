@@ -876,6 +876,11 @@ pub fn shortcuts(parent: &impl IsA<gtk::Widget>, ctx: &AppCtx) {
                 ),
                 ("F5", "nautilus.actions.reload", "Reload listing"),
                 ("F2", "nautilus.contextMenu.rename", "Rename"),
+                (
+                    "Space",
+                    "fileBrowser.fileViewer.title",
+                    "Preview file or folder",
+                ),
                 ("Delete", "nautilus.contextMenu.delete", "Delete"),
                 (
                     "Ctrl+C / X / V",
@@ -1939,6 +1944,7 @@ pub fn rclone_flags(parent: &impl IsA<gtk::Widget>, ctx: AppCtx) {
 
 pub fn action_order(
     parent: &impl IsA<gtk::Widget>,
+    ctx: &AppCtx,
     title: &str,
     catalog: &[&str],
     current: &[String],
@@ -1954,10 +1960,18 @@ pub fn action_order(
     let list = gtk::ListBox::new();
     list.add_css_class("boxed-list");
     let rebuild: Rc<RefCell<Box<dyn Fn()>>> = Rc::new(RefCell::new(Box::new(|| {})));
+    let visible_l = ctx.t_or("common.show", "Visible");
+    let hidden_l = ctx.t_or("common.hide", "Hidden");
+    let up_tip = ctx.t_or("modals.itemOrderVisibility.showItem", "Move up");
+    let down_tip = ctx.t_or("modals.itemOrderVisibility.hideItem", "Move down");
     let rebuild_fn = {
         let list = list.clone();
         let items = items.clone();
         let rebuild = rebuild.clone();
+        let visible_l = visible_l.clone();
+        let hidden_l = hidden_l.clone();
+        let up_tip = up_tip.clone();
+        let down_tip = down_tip.clone();
         Rc::new(move || {
             while let Some(child) = list.first_child() {
                 list.remove(&child);
@@ -1966,7 +1980,7 @@ pub fn action_order(
             for (idx, item) in snapshot.iter().enumerate() {
                 let row = adw::ActionRow::new();
                 row.set_title(&item.id);
-                row.set_subtitle(if item.visible { "Visible" } else { "Hidden" });
+                row.set_subtitle(if item.visible { &visible_l } else { &hidden_l });
                 let visible = gtk::Switch::new();
                 visible.set_active(item.visible);
                 visible.set_valign(gtk::Align::Center);
@@ -1985,7 +1999,7 @@ pub fn action_order(
                 }
                 let up = gtk::Button::from_icon_name("go-up-symbolic");
                 up.set_valign(gtk::Align::Center);
-                up.set_tooltip_text(Some("Move up"));
+                up.set_tooltip_text(Some(&up_tip));
                 {
                     let items = items.clone();
                     let rebuild = rebuild.clone();
@@ -1996,7 +2010,7 @@ pub fn action_order(
                 }
                 let down = gtk::Button::from_icon_name("go-down-symbolic");
                 down.set_valign(gtk::Align::Center);
-                down.set_tooltip_text(Some("Move down"));
+                down.set_tooltip_text(Some(&down_tip));
                 {
                     let items = items.clone();
                     let rebuild = rebuild.clone();
@@ -2018,7 +2032,7 @@ pub fn action_order(
     });
     rebuild_fn();
 
-    let save = gtk::Button::with_label("Save");
+    let save = gtk::Button::with_label(&ctx.t("common.save"));
     save.add_css_class("suggested-action");
     {
         let dialog = dialog.clone();
@@ -2028,14 +2042,14 @@ pub fn action_order(
             dialog.close();
         });
     }
-    let cancel = gtk::Button::with_label("Cancel");
+    let cancel = gtk::Button::with_label(&ctx.t("common.cancel"));
     {
         let dialog = dialog.clone();
         cancel.connect_clicked(move |_| {
             dialog.close();
         });
     }
-    let reset = gtk::Button::with_label("Reset");
+    let reset = gtk::Button::with_label(&ctx.t("common.reset"));
     {
         let items = items.clone();
         let rebuild = rebuild.clone();
@@ -2059,9 +2073,10 @@ pub fn action_order(
     box_.set_margin_bottom(12);
     box_.set_margin_start(12);
     box_.set_margin_end(12);
-    let hint = gtk::Label::new(Some(
+    let hint = gtk::Label::new(Some(&ctx.t_or(
+        "modals.actionSelection.description",
         "Toggle visibility and reorder. Hidden actions stay available in Configure.",
-    ));
+    )));
     hint.add_css_class("dim-label");
     hint.set_wrap(true);
     hint.set_xalign(0.0);
@@ -2122,9 +2137,9 @@ pub fn backends(parent: &impl IsA<gtk::Widget>, ctx: AppCtx) {
         let row = adw::ActionRow::new();
         row.set_title(&backend.name);
         let marker = if active == backend.name {
-            " · active"
+            format!(" · {}", ctx.t_or("modals.backend.active", "active"))
         } else {
-            ""
+            String::new()
         };
         let identity = {
             let user = if backend.user.is_empty() {
@@ -2155,14 +2170,17 @@ pub fn backends(parent: &impl IsA<gtk::Widget>, ctx: AppCtx) {
         ));
         let test = gtk::Button::from_icon_name("network-transmit-receive-symbolic");
         test.set_valign(gtk::Align::Center);
-        test.set_tooltip_text(Some("Test connection"));
-        let use_btn = gtk::Button::with_label("Use");
+        test.set_tooltip_text(Some(
+            &ctx.t_or("modals.backend.testConnection", "Test connection"),
+        ));
+        let use_btn = gtk::Button::with_label(&ctx.t_or("common.continue", "Use"));
         use_btn.set_valign(gtk::Align::Center);
         let remove = gtk::Button::from_icon_name("user-trash-symbolic");
         remove.set_valign(gtk::Align::Center);
         {
             let backend = backend.clone();
             let parent = parent.clone();
+            let ctx = ctx.clone();
             test.connect_clicked(move |_| {
                 let user = if backend.user.is_empty() {
                     None
@@ -2178,14 +2196,23 @@ pub fn backends(parent: &impl IsA<gtk::Widget>, ctx: AppCtx) {
                     crate::rclone::RcClient::new(&backend.host, backend.port).with_auth(user, pass);
                 let msg = if client.ping() {
                     format!(
-                        "Connected — {}",
-                        client.version().unwrap_or_else(|_| "unknown".into())
+                        "{} — {}",
+                        ctx.t_or("modals.backend.status.connected", "Connected"),
+                        client
+                            .version()
+                            .unwrap_or_else(|_| ctx.t_or("backup.restore.unknown", "unknown"))
                     )
                 } else {
-                    format!("Unreachable at {}:{}", backend.host, backend.port)
+                    ctx.tf(
+                        "modals.backend.status.error",
+                        &[("message", &format!("{}:{}", backend.host, backend.port))],
+                    )
                 };
-                let alert = adw::AlertDialog::new(Some("Backend test"), Some(&msg));
-                alert.add_response("ok", "OK");
+                let alert = adw::AlertDialog::new(
+                    Some(&ctx.t_or("modals.backend.testConnection", "Backend test")),
+                    Some(&msg),
+                );
+                alert.add_response("ok", &ctx.t("common.ok"));
                 alert.present(Some(&parent));
             });
         }
@@ -2217,7 +2244,9 @@ pub fn backends(parent: &impl IsA<gtk::Widget>, ctx: AppCtx) {
         }
         let edit = gtk::Button::from_icon_name("document-edit-symbolic");
         edit.set_valign(gtk::Align::Center);
-        edit.set_tooltip_text(Some("Edit backend"));
+        edit.set_tooltip_text(Some(
+            &ctx.t_or("modals.backend.editBackend", "Edit backend"),
+        ));
         {
             let ctx = ctx.clone();
             let parent = parent.clone();
@@ -2226,9 +2255,12 @@ pub fn backends(parent: &impl IsA<gtk::Widget>, ctx: AppCtx) {
                 backend_editor(&parent, ctx.clone(), Some(backend.clone()));
             });
         }
-        let clone = gtk::Button::with_label("Clone");
+        let clone = gtk::Button::with_label(&ctx.t("common.duplicate"));
         clone.set_valign(gtk::Align::Center);
-        clone.set_tooltip_text(Some("Duplicate connection settings into a new backend"));
+        clone.set_tooltip_text(Some(&ctx.t_or(
+            "modals.backend.copyOptions.description",
+            "Duplicate connection settings into a new backend",
+        )));
         {
             let ctx = ctx.clone();
             let parent = parent.clone();
@@ -2238,9 +2270,14 @@ pub fn backends(parent: &impl IsA<gtk::Widget>, ctx: AppCtx) {
                 backend_editor(&parent, ctx.clone(), Some(entry.clone()));
             });
         }
-        let copy = gtk::Button::with_label("Copy remotes");
+        let copy = gtk::Button::with_label(
+            &ctx.t_or("modals.backend.copyOptions.remotesConfig", "Copy remotes"),
+        );
         copy.set_valign(gtk::Align::Center);
-        copy.set_tooltip_text(Some("Copy remotes from the active backend to this one"));
+        copy.set_tooltip_text(Some(&ctx.t_or(
+            "modals.backend.copyOptions.description",
+            "Copy remotes from the active backend to this one",
+        )));
         {
             let backend = backend.clone();
             let ctx = ctx.clone();
@@ -2262,11 +2299,14 @@ pub fn backends(parent: &impl IsA<gtk::Widget>, ctx: AppCtx) {
                     },
                 );
                 let msg = match dest.copy_remotes_from(&source) {
-                    Ok(n) => format!("Copied {n} remotes"),
+                    Ok(n) => format!("{}: {n}", ctx.t_or("common.copied", "Copied remotes")),
                     Err(e) => e.to_string(),
                 };
-                let alert = adw::AlertDialog::new(Some("Copy remotes"), Some(&msg));
-                alert.add_response("ok", "OK");
+                let alert = adw::AlertDialog::new(
+                    Some(&ctx.t_or("modals.backend.copyOptions.remotesConfig", "Copy remotes")),
+                    Some(&msg),
+                );
+                alert.add_response("ok", &ctx.t("common.ok"));
                 alert.present(Some(&parent));
             });
         }
@@ -2278,7 +2318,8 @@ pub fn backends(parent: &impl IsA<gtk::Widget>, ctx: AppCtx) {
         row.add_suffix(&remove);
         list.append(&row);
     }
-    let add = gtk::Button::with_label("Add remote RC backend");
+    let add =
+        gtk::Button::with_label(&ctx.t_or("modals.backend.addBackend", "Add remote RC backend"));
     {
         let ctx = ctx.clone();
         let parent = parent.clone();
@@ -2856,7 +2897,7 @@ fn remote_editor(
     group.add(&extra);
     page.add(&group);
 
-    let save = gtk::Button::with_label("Save");
+    let save = gtk::Button::with_label(&ctx.t("common.save"));
     save.add_css_class("suggested-action");
     {
         let ctx = ctx.clone();
@@ -4225,13 +4266,13 @@ pub fn properties(
             ctx.t_or("fileBrowser.properties.location", "Location"),
             path.to_string(),
         ),
-        (
-            ctx.t_or("modals.jobDetail.fields.type", "Type"),
-            format!(
-                "{:?}",
-                crate::operations::FileTypeCategory::from_name(name, false)
-            ),
-        ),
+        (ctx.t_or("modals.jobDetail.fields.type", "Type"), {
+            let cat = crate::operations::FileTypeCategory::from_name(name, false);
+            ctx.t_or(
+                &format!("fileBrowser.fileTypes.{cat:?}"),
+                &format!("{cat:?}"),
+            )
+        }),
     ] {
         let row = adw::ActionRow::new();
         row.set_title(&title);
@@ -4250,7 +4291,11 @@ pub fn properties(
             row.set_title(&ctx.t_or("fileBrowser.properties.kind", "Kind"));
             row.set_subtitle(&format!(
                 "{} · {}{}",
-                if stat.is_dir { "Directory" } else { "File" },
+                if stat.is_dir {
+                    ctx.t_or("fileBrowser.properties.directory", "Directory")
+                } else {
+                    ctx.t_or("fileBrowser.properties.file", "File")
+                },
                 crate::rclone::format_bytes(stat.size),
                 if stat.mime.is_empty() {
                     String::new()
@@ -5203,7 +5248,8 @@ pub fn file_viewer(
     remote: &str,
     path: &str,
     name: &str,
-    siblings: &[String],
+    is_dir: bool,
+    siblings: &[(String, bool)],
 ) {
     let dialog = adw::Dialog::new();
     dialog.set_title(name);
@@ -5213,7 +5259,7 @@ pub fn file_viewer(
     nav.set_margin_start(12);
     nav.set_margin_end(12);
     nav.set_margin_top(8);
-    let index = siblings.iter().position(|n| n == name);
+    let index = siblings.iter().position(|(n, _)| n == name);
     let prev = gtk::Button::from_icon_name("go-previous-symbolic");
     prev.set_tooltip_text(Some(
         &ctx.t_or("fileBrowser.fileViewer.previousFile", "Previous file"),
@@ -5239,13 +5285,13 @@ pub fn file_viewer(
         let siblings = siblings.to_vec();
         let dialog = dialog.clone();
         prev.connect_clicked(move |_| {
-            let Some(i) = siblings.iter().position(|n| n == name.as_str()) else {
+            let Some(i) = siblings.iter().position(|(n, _)| n == name.as_str()) else {
                 return;
             };
             if i == 0 {
                 return;
             }
-            let prev_name = siblings[i - 1].clone();
+            let (prev_name, prev_dir) = siblings[i - 1].clone();
             let parent_path = crate::rclone::parent_remote_path(&path);
             let next_path = crate::rclone::join_remote_path(&parent_path, &prev_name);
             dialog.close();
@@ -5255,6 +5301,7 @@ pub fn file_viewer(
                 &remote,
                 &next_path,
                 &prev_name,
+                prev_dir,
                 &siblings,
             );
         });
@@ -5268,13 +5315,13 @@ pub fn file_viewer(
         let siblings = siblings.to_vec();
         let dialog = dialog.clone();
         next.connect_clicked(move |_| {
-            let Some(i) = siblings.iter().position(|n| n == name.as_str()) else {
+            let Some(i) = siblings.iter().position(|(n, _)| n == name.as_str()) else {
                 return;
             };
             if i + 1 >= siblings.len() {
                 return;
             }
-            let next_name = siblings[i + 1].clone();
+            let (next_name, next_dir) = siblings[i + 1].clone();
             let parent_path = crate::rclone::parent_remote_path(&path);
             let next_path = crate::rclone::join_remote_path(&parent_path, &next_name);
             dialog.close();
@@ -5284,6 +5331,7 @@ pub fn file_viewer(
                 &remote,
                 &next_path,
                 &next_name,
+                next_dir,
                 &siblings,
             );
         });
@@ -5291,7 +5339,7 @@ pub fn file_viewer(
     nav.append(&prev);
     nav.append(&pos);
     nav.append(&next);
-    let category = crate::operations::FileTypeCategory::from_name(name, false);
+    let category = crate::operations::FileTypeCategory::from_name(name, is_dir);
     let info = gtk::Label::new(Some(&format!("{remote}:{path}")));
     info.set_wrap(true);
     info.set_margin_top(16);
@@ -5329,7 +5377,55 @@ pub fn file_viewer(
     actions.append(&open);
     actions.append(&download);
     box_.append(&actions);
-    if matches!(category, crate::operations::FileTypeCategory::Archive) {
+    if is_dir {
+        let size_label = gtk::Label::new(Some(&ctx.t_or(
+            "fileBrowser.fileViewer.calculatingFolderSize",
+            "Calculating folder size...",
+        )));
+        size_label.add_css_class("dim-label");
+        size_label.set_wrap(true);
+        size_label.set_xalign(0.0);
+        size_label.set_margin_start(16);
+        size_label.set_margin_end(16);
+        let fs = if remote == "local" {
+            "/".into()
+        } else {
+            remote_fs(remote, "")
+        };
+        if let Some(client) = ctx.client() {
+            match client.size(&fs, path) {
+                Ok(size) => {
+                    let (count, bytes) = crate::rclone::parse_object_size(&size);
+                    let count_s = count.to_string();
+                    let bytes_s = crate::rclone::format_bytes(bytes);
+                    let contains = ctx.tf(
+                        "fileBrowser.fileViewer.containsFiles",
+                        &[("count", &count_s)],
+                    );
+                    let contains = if contains.contains("{{") {
+                        format!("Contains {count} files")
+                    } else {
+                        contains
+                    };
+                    let total = ctx.tf("fileBrowser.fileViewer.totalSize", &[("size", &bytes_s)]);
+                    let total = if total.contains("{{") {
+                        format!("Total size: {bytes_s}")
+                    } else {
+                        total
+                    };
+                    size_label.set_text(&format!("{contains}\n{total}"));
+                }
+                Err(_) => {
+                    size_label.set_text(&ctx.t_or(
+                        "fileBrowser.fileViewer.errorCalculateSize",
+                        "Failed to calculate folder size",
+                    ));
+                }
+            }
+        }
+        box_.append(&size_label);
+    }
+    if !is_dir && matches!(category, crate::operations::FileTypeCategory::Archive) {
         let heading = gtk::Label::new(Some(
             &ctx.t_or("fileBrowser.fileViewer.archiveContents", "Archive Contents"),
         ));
@@ -5420,17 +5516,20 @@ pub fn file_viewer(
         }
         actions.append(&extract);
     }
-    let mut preview_path = if remote == "local" {
+    let mut preview_path = if !is_dir && remote == "local" {
         Some(std::path::PathBuf::from(path))
     } else {
         None
     };
-    if remote != "local" {
+    if !is_dir && remote != "local" {
         if let Some(client) = ctx.client() {
             let fs = remote_fs(remote, "");
             if matches!(category, crate::operations::FileTypeCategory::Text) {
                 if let Ok(text) = client.cat(&fs, path, Some(crate::rclone::CAT_PREVIEW_BYTES)) {
-                    info.set_text("Remote preview via operations/cat");
+                    info.set_text(&ctx.t_or(
+                        "fileBrowser.fileViewer.remotePreview",
+                        "Remote preview via operations/cat",
+                    ));
                     attach_text_preview(
                         &box_,
                         name,
@@ -5446,7 +5545,13 @@ pub fn file_viewer(
                     .copy_file(&fs, path, "/", &dest.to_string_lossy())
                     .is_ok()
                 {
-                    info.set_text(&format!("Downloaded preview to {}", dest.display()));
+                    info.set_text(&ctx.tf(
+                        "fileBrowser.fileViewer.downloadedPreview",
+                        &[("path", &dest.display().to_string())],
+                    ));
+                    if info.text().contains("{{") {
+                        info.set_text(&format!("Downloaded preview to {}", dest.display()));
+                    }
                     preview_path = Some(dest);
                 }
             }
@@ -5534,7 +5639,10 @@ pub fn remote_about(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, remote: &str) {
             }
             Err(e) => {
                 let row = adw::ActionRow::new();
-                row.set_title("Unable to query disk usage");
+                row.set_title(&ctx.t_or(
+                    "fileBrowser.remoteAbout.usageUnavailable",
+                    "Unable to query disk usage",
+                ));
                 row.set_subtitle(&e.to_string());
                 usage.add(&row);
             }
@@ -5542,7 +5650,7 @@ pub fn remote_about(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, remote: &str) {
         match client.size(&fs, "") {
             Ok(size) => {
                 let row = adw::ActionRow::new();
-                row.set_title("Objects");
+                row.set_title(&ctx.t_or("fileBrowser.remoteAbout.objects", "Objects"));
                 let count = size.get("count").and_then(|x| x.as_i64()).unwrap_or(0);
                 let bytes = size.get("bytes").and_then(|x| x.as_i64()).unwrap_or(0);
                 row.set_subtitle(&format!("{count} · {}", crate::rclone::format_bytes(bytes)));
@@ -5688,7 +5796,7 @@ pub fn templates(parent: &impl IsA<gtk::Widget>, ctx: AppCtx) {
         let row = adw::ActionRow::new();
         row.set_title(&template.name);
         row.set_subtitle(&template.description);
-        let apply = gtk::Button::with_label("Apply");
+        let apply = gtk::Button::with_label(&ctx.t_or("remoteConfig.applyTemplate", "Apply"));
         apply.set_valign(gtk::Align::Center);
         apply.add_css_class("suggested-action");
         let delete = gtk::Button::from_icon_name("user-trash-symbolic");
@@ -5710,10 +5818,13 @@ pub fn templates(parent: &impl IsA<gtk::Widget>, ctx: AppCtx) {
                         }
                     }
                     let toast = adw::AlertDialog::new(
-                        Some("Template applied"),
-                        Some("Helper and operation profiles were updated from this template."),
+                        Some(&ctx.t_or("templates.applySuccess", "Template applied")),
+                        Some(&ctx.t_or(
+                            "templates.applySuccess",
+                            "Helper and operation profiles were updated from this template.",
+                        )),
                     );
-                    toast.add_response("ok", "OK");
+                    toast.add_response("ok", &ctx.t("common.ok"));
                     toast.present(Some(&parent));
                     return;
                 }
@@ -5721,16 +5832,21 @@ pub fn templates(parent: &impl IsA<gtk::Widget>, ctx: AppCtx) {
                     match client.options_set(values.clone()) {
                         Ok(_) => {
                             let toast = adw::AlertDialog::new(
-                                Some("Template applied"),
-                                Some("Current rclone options were updated from this template."),
+                                Some(&ctx.t_or("templates.applySuccess", "Template applied")),
+                                Some(&ctx.t_or(
+                                    "templates.applySuccess",
+                                    "Current rclone options were updated from this template.",
+                                )),
                             );
-                            toast.add_response("ok", "OK");
+                            toast.add_response("ok", &ctx.t("common.ok"));
                             toast.present(Some(&parent));
                         }
                         Err(e) => {
-                            let err =
-                                adw::AlertDialog::new(Some("Apply failed"), Some(&e.to_string()));
-                            err.add_response("ok", "OK");
+                            let err = adw::AlertDialog::new(
+                                Some(&ctx.t_or("common.error", "Apply failed")),
+                                Some(&e.to_string()),
+                            );
+                            err.add_response("ok", &ctx.t("common.ok"));
                             err.present(Some(&parent));
                         }
                     }
@@ -5762,10 +5878,12 @@ pub fn templates(parent: &impl IsA<gtk::Widget>, ctx: AppCtx) {
     }
     if list.first_child().is_none() {
         let row = adw::ActionRow::new();
-        row.set_title("No saved templates");
+        row.set_title(&ctx.t_or("templates.noUserTemplates", "No saved templates"));
         list.append(&row);
     }
-    let add = gtk::Button::with_label("Save current flags as template");
+    let add = gtk::Button::with_label(
+        &ctx.t_or("templates.saveAsTemplate", "Save current flags as template"),
+    );
     {
         let ctx = ctx.clone();
         let parent = parent.clone();
@@ -6206,7 +6324,7 @@ pub fn item_order(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, on_done: Rc<dyn F
         }
     }
     refill(&list, &names, &hidden);
-    let save = gtk::Button::with_label("Save");
+    let save = gtk::Button::with_label(&ctx.t("common.save"));
     save.add_css_class("suggested-action");
     {
         let ctx = ctx.clone();
@@ -6605,7 +6723,7 @@ fn capture_template(parent: &impl IsA<gtk::Widget>, ctx: AppCtx) {
     for (_, row) in &switches {
         group.add(row);
     }
-    let save = gtk::Button::with_label("Save");
+    let save = gtk::Button::with_label(&ctx.t("common.save"));
     save.add_css_class("suggested-action");
     {
         let ctx = ctx.clone();
@@ -7171,7 +7289,7 @@ fn alert_rule_editor(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, existing_id: O
         })
         .collect();
 
-    let save = gtk::Button::with_label("Save");
+    let save = gtk::Button::with_label(&ctx.t("common.save"));
     save.add_css_class("suggested-action");
     let delete = gtk::Button::with_label("Delete");
     delete.add_css_class("destructive-action");
@@ -7404,10 +7522,10 @@ fn alert_action_editor(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, existing_id:
             }
         });
     }
-    let test = gtk::Button::with_label("Test");
-    let save = gtk::Button::with_label("Save");
+    let test = gtk::Button::with_label(&ctx.t_or("modals.backend.testConnection", "Test"));
+    let save = gtk::Button::with_label(&ctx.t("common.save"));
     save.add_css_class("suggested-action");
-    let delete = gtk::Button::with_label("Delete");
+    let delete = gtk::Button::with_label(&ctx.t("common.delete"));
     delete.add_css_class("destructive-action");
     delete.set_visible(existing_id.is_some());
     let collect = {
@@ -7703,8 +7821,11 @@ pub fn repair(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, toast: adw::ToastOver
     list.add_css_class("boxed-list");
     if issues.is_empty() {
         let row = adw::ActionRow::new();
-        row.set_title("No issues detected");
-        row.set_subtitle("rclone, FUSE, config, and the RC engine look healthy.");
+        row.set_title(&ctx.t_or("repair.noIssues", "No issues detected"));
+        row.set_subtitle(&ctx.t_or(
+            "repair.healthy",
+            "rclone, FUSE, config, and the RC engine look healthy.",
+        ));
         list.append(&row);
     }
     for issue in issues {
@@ -7732,7 +7853,7 @@ pub fn repair(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, toast: adw::ToastOver
                             Some(&format!("Install {}", crate::mount_plugin::plugin_label())),
                             Some(&e),
                         );
-                        help.add_response("ok", "OK");
+                        help.add_response("ok", &ctx.t("common.ok"));
                         help.present(Some(&parent));
                     }
                 },
@@ -7747,14 +7868,16 @@ pub fn repair(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, toast: adw::ToastOver
                 }
                 crate::repair::RepairKind::EngineUnreachable => {
                     ctx.restart_engine();
-                    toast.add_toast(adw::Toast::new("Engine restart requested"));
+                    toast.add_toast(adw::Toast::new(
+                        &ctx.t_or("repair.engineRestarted", "Engine restart requested"),
+                    ));
                 }
             });
         }
         row.add_suffix(&btn);
         list.append(&row);
     }
-    let install = gtk::Button::with_label("Install rclone");
+    let install = gtk::Button::with_label(&ctx.t_or("repair.installRclone", "Install rclone"));
     {
         let ctx = ctx.clone();
         let toast = toast.clone();
@@ -7764,19 +7887,20 @@ pub fn repair(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, toast: adw::ToastOver
             ctx.restart_engine();
         });
     }
-    let browse = gtk::Button::with_label("Choose binary…");
+    let browse = gtk::Button::with_label(&ctx.t_or("repair.chooseBinary", "Choose binary…"));
     {
         let ctx = ctx.clone();
         let parent = parent.clone();
         browse.connect_clicked(move |_| pick_rclone_binary(&parent, ctx.clone()));
     }
-    let config_btn = gtk::Button::with_label("Choose rclone.conf…");
+    let config_btn =
+        gtk::Button::with_label(&ctx.t_or("repair.chooseConfig", "Choose rclone.conf…"));
     {
         let ctx = ctx.clone();
         let parent = parent.clone();
         config_btn.connect_clicked(move |_| restore_or_pick_config(&parent, ctx.clone()));
     }
-    let restart = gtk::Button::with_label("Restart engine");
+    let restart = gtk::Button::with_label(&ctx.t_or("repair.restartEngine", "Restart engine"));
     {
         let ctx = ctx.clone();
         restart.connect_clicked(move |_| {
@@ -7858,26 +7982,31 @@ pub fn multi_rename(
     dialog.set_content_width(560);
     dialog.set_content_height(620);
     let mode = adw::ComboRow::new();
-    mode.set_title("Mode");
-    mode.set_model(Some(&gtk::StringList::new(&[
-        "Template",
+    mode.set_title(&ctx.t_or("nautilus.modals.multiRename.templateMode", "Mode"));
+    let template_l = ctx.t_or("nautilus.modals.multiRename.templateMode", "Template");
+    let replace_l = ctx.t_or(
+        "nautilus.modals.multiRename.replaceMode",
         "Find and replace",
-    ])));
+    );
+    mode.set_model(Some(&gtk::StringList::new(&[&template_l, &replace_l])));
     let template = adw::EntryRow::new();
-    template.set_title("Template");
+    template.set_title(&ctx.t_or("nautilus.modals.multiRename.templateInput", "Template"));
     template.set_text("[Original file name]");
     let find = adw::EntryRow::new();
-    find.set_title("Find");
+    find.set_title(&ctx.t_or("nautilus.modals.multiRename.findLabel", "Find"));
     let replace = adw::EntryRow::new();
-    replace.set_title("Replace with");
+    replace.set_title(&ctx.t_or("nautilus.modals.multiRename.replaceLabel", "Replace with"));
     let start = adw::EntryRow::new();
-    start.set_title("Counter start");
+    start.set_title(&ctx.t_or("nautilus.modals.multiRename.counterStart", "Counter start"));
     start.set_text("1");
     let step = adw::EntryRow::new();
-    step.set_title("Counter step");
+    step.set_title(&ctx.t_or("nautilus.modals.multiRename.counterStep", "Counter step"));
     step.set_text("1");
     let pad = adw::EntryRow::new();
-    pad.set_title("Counter padding");
+    pad.set_title(&ctx.t_or(
+        "nautilus.modals.multiRename.counterPadding",
+        "Counter padding",
+    ));
     pad.set_text("2");
     let case_sensitive = adw::SwitchRow::new();
     case_sensitive.set_title(&ctx.t_or(
@@ -7945,7 +8074,7 @@ pub fn multi_rename(
         case_sensitive.connect_active_notify(move |_| refresh_preview());
     }
     refresh_preview();
-    let apply = gtk::Button::with_label("Rename");
+    let apply = gtk::Button::with_label(&ctx.t_or("nautilus.modals.multiRename.rename", "Rename"));
     apply.add_css_class("suggested-action");
     {
         let ctx = ctx.clone();

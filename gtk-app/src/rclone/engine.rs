@@ -189,6 +189,23 @@ fn cron_is_weekend(dow: &str) -> bool {
     matches!(dow, "0,6" | "6,0" | "0,6,7" | "6,0,7")
 }
 
+fn cron_day_name(dow: &str, i18n: &crate::i18n::I18n) -> String {
+    let key = format!("cron.days.{dow}");
+    i18n.t_or(
+        &key,
+        match dow {
+            "0" | "7" => "Sunday",
+            "1" => "Monday",
+            "2" => "Tuesday",
+            "3" => "Wednesday",
+            "4" => "Thursday",
+            "5" => "Friday",
+            "6" => "Saturday",
+            other => other,
+        },
+    )
+}
+
 pub fn describe_cron_i18n(expression: &str, i18n: &crate::i18n::I18n) -> String {
     let parts: Vec<&str> = expression.split_whitespace().collect();
     if parts.len() < 5 {
@@ -253,12 +270,41 @@ pub fn describe_cron_i18n(expression: &str, i18n: &crate::i18n::I18n) -> String 
             format!("Monthly on day {dom} at {time}")
         };
     }
+    if cron_is_int(min)
+        && hour.contains('-')
+        && cron_is_int(hour.split('-').next().unwrap_or(""))
+        && cron_is_int(hour.split('-').nth(1).unwrap_or(""))
+        && !hour.contains(',')
+        && dom == "*"
+        && mon == "*"
+        && dow == "*"
+    {
+        let start = cron_time(hour.split('-').next().unwrap_or(hour), min);
+        let end = cron_time(hour.split('-').nth(1).unwrap_or(hour), min);
+        return if i18n.has("cron.dailyBetween") {
+            i18n.tf("cron.dailyBetween", &[("start", &start), ("end", &end)])
+        } else {
+            format!("Daily between {start} and {end}")
+        };
+    }
+    if min == "0" && hour == "0" && dom.starts_with("*/") && mon == "*" && dow == "*" {
+        let n = dom.trim_start_matches("*/");
+        return if i18n.has("cron.everyDays") {
+            i18n.tf("cron.everyDays", &[("n", n)])
+        } else {
+            format!("Every {n} days")
+        };
+    }
     if cron_is_int(min) && cron_is_int(hour) && dom == "*" && mon == "*" && cron_is_int(dow) {
         let time = cron_time(hour, min);
+        let day = cron_day_name(dow, i18n);
+        if i18n.has("cron.weeklyOnAt") {
+            return i18n.tf("cron.weeklyOnAt", &[("day", &day), ("time", &time)]);
+        }
         return if i18n.has("cron.weeklyAt") {
             i18n.tf("cron.weeklyAt", &[("dow", dow), ("time", &time)])
         } else {
-            format!("Weekly on day {dow} at {time}")
+            format!("Weekly on {day} at {time}")
         };
     }
     if cron_is_int(min) && cron_is_int(hour) && dom == "*" && mon == "*" && dow.contains(',') {
@@ -301,9 +347,19 @@ mod tests {
             describe_cron("0 9 * * 1,3,5"),
             "Weekly on days 1,3,5 at 9:00"
         );
+        assert_eq!(describe_cron("0 9 * * 1"), "Weekly on Monday at 9:00");
+        assert_eq!(
+            describe_cron("0 9-17 * * *"),
+            "Daily between 9:00 and 17:00"
+        );
+        assert_eq!(describe_cron("0 0 */3 * *"), "Every 3 days");
         let i18n = crate::i18n::I18n::default();
         assert_eq!(describe_cron_i18n("*/5 * * * *", &i18n), "Every 5 minutes");
         assert_eq!(describe_cron_i18n("* * * * *", &i18n), "Every minute");
+        assert_eq!(
+            describe_cron_i18n("0 9 * * 1", &i18n),
+            "Weekly on Monday at 9:00"
+        );
     }
 
     #[test]
