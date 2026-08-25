@@ -72,7 +72,13 @@ fn main() {
     }
     let app = adw::Application::builder().application_id(APP_ID).build();
     app.connect_activate(ui::activate);
-    let code = app.run();
+    // GApplication rejects unknown flags such as --browse / --tray. Keep the
+    // full argv in std::env::args() for activate() and pass only argv0 here.
+    let argv0 = args
+        .first()
+        .cloned()
+        .unwrap_or_else(|| "rclone-manager-gtk".into());
+    let code = app.run_with_args(&[argv0]);
     std::process::exit(code.value());
 }
 
