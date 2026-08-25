@@ -148,14 +148,7 @@ fn register_application_options(app: &adw::Application) {
         "Dashboard remote",
         Some("NAME"),
     );
-    app.add_main_option(
-        "flow",
-        0.into(),
-        OptionFlags::OPTIONAL_ARG,
-        OptionArg::String,
-        "Open Flow / a Quick Run",
-        Some("ID"),
-    );
+    add("flow", OptionArg::None, "Open the Flow workspace", None);
     add(
         "quick-run",
         OptionArg::String,

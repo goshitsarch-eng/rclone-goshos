@@ -621,9 +621,17 @@ mod tests {
                 standalone: false,
             })
         );
-        let flow = parse_launch_args(&["app".into(), "--flow".into(), "nightly".into()], false);
+        let flow = parse_launch_args(&["app".into(), "--flow".into()], false);
         assert_eq!(
             flow,
+            Some(LaunchRequest {
+                target: NavTarget::Flow { quick_run: None },
+                standalone: false,
+            })
+        );
+        let flow_qr = parse_launch_args(&["app".into(), "--flow".into(), "nightly".into()], false);
+        assert_eq!(
+            flow_qr,
             Some(LaunchRequest {
                 target: NavTarget::Flow {
                     quick_run: Some("nightly".into()),
