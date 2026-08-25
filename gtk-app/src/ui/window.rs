@@ -261,6 +261,11 @@ pub fn present_main(app: &adw::Application, ctx: AppCtx) {
                 window_nav.set_visible(true);
                 window_nav.present();
             }
+            if ctx_nav.take_quit() {
+                if let Some(app) = window_nav.application() {
+                    app.quit();
+                }
+            }
             if let Some(target) = ctx_nav.take_nav() {
                 apply_nav(
                     &ctx_nav,

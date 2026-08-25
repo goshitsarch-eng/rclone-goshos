@@ -584,30 +584,37 @@ impl Dashboard {
                             continue;
                         }
                         for pname in meta.profile_names(op) {
-                            let chip =
-                                gtk::Button::with_label(&format!("{} · {pname}", op.api_label()));
-                            chip.set_tooltip_text(Some("Start this profile"));
+                            let snap = self.ctx.snapshot.borrow();
+                            let active = crate::jobs::profile_is_active(
+                                &remote.name,
+                                op,
+                                &pname,
+                                &snap.jobs,
+                                &snap.mounts,
+                                &snap.serves,
+                            );
+                            drop(snap);
+                            let chip = gtk::Button::with_label(&if active {
+                                format!("Stop {} · {pname}", op.api_label())
+                            } else {
+                                format!("{} · {pname}", op.api_label())
+                            });
+                            chip.set_tooltip_text(Some(if active {
+                                "Stop this profile"
+                            } else {
+                                "Start this profile"
+                            }));
+                            if active {
+                                chip.add_css_class("destructive-action");
+                            }
                             let ctx = self.ctx.clone();
                             let name = remote.name.clone();
                             let toast = self.toast.clone();
                             let dash = self.clone();
+                            let pname = pname.clone();
                             chip.connect_clicked(move |_| {
-                                if let Some(win) = dash.root.root().and_downcast::<gtk::Window>() {
-                                    dialogs::start_operation(
-                                        &win,
-                                        ctx.clone(),
-                                        &name,
-                                        op,
-                                        toast.clone(),
-                                        {
-                                            let dash = dash.clone();
-                                            Rc::new(move || dash.refresh())
-                                        },
-                                    );
-                                } else {
-                                    start_operation(&ctx, &name, op, &toast);
-                                    dash.refresh();
-                                }
+                                toggle_profile(&ctx, &name, op, &pname, &toast);
+                                dash.refresh();
                             });
                             chips.append(&chip);
                         }
@@ -1220,33 +1227,36 @@ impl Dashboard {
                             .unwrap_or(crate::operations::OperationType::Sync),
                         profile,
                     ));
-                    let start = gtk::Button::from_icon_name("media-playback-start-symbolic");
+                    let op_ty = crate::operations::OperationType::parse(op)
+                        .unwrap_or(crate::operations::OperationType::Sync);
+                    let snap = self.ctx.snapshot.borrow();
+                    let active = crate::jobs::profile_is_active(
+                        &name,
+                        op_ty,
+                        pname,
+                        &snap.jobs,
+                        &snap.mounts,
+                        &snap.serves,
+                    );
+                    drop(snap);
+                    let start = gtk::Button::from_icon_name(if active {
+                        "media-playback-stop-symbolic"
+                    } else {
+                        "media-playback-start-symbolic"
+                    });
                     start.set_valign(gtk::Align::Center);
-                    start.set_tooltip_text(Some("Start profile"));
+                    start.set_tooltip_text(Some(if active {
+                        "Stop profile"
+                    } else {
+                        "Start profile"
+                    }));
                     {
                         let ctx = self.ctx.clone();
                         let toast = self.toast.clone();
                         let remote = name.clone();
-                        let profile = profile.clone();
-                        let op = crate::operations::OperationType::parse(op)
-                            .unwrap_or(crate::operations::OperationType::Sync);
+                        let pname = pname.clone();
                         start.connect_clicked(move |_| {
-                            if let Some(client) = ctx.client() {
-                                let meta = ctx.store.borrow().remotes.get(&remote).cloned();
-                                match crate::jobs::start_profile(
-                                    &client,
-                                    &remote,
-                                    op,
-                                    &profile,
-                                    meta.as_ref(),
-                                ) {
-                                    Ok(id) => {
-                                        toast.add_toast(adw::Toast::new(&format!("Started {id}")))
-                                    }
-                                    Err(e) => toast.add_toast(adw::Toast::new(&e)),
-                                }
-                                ctx.refresh_runtime();
-                            }
+                            toggle_profile(&ctx, &remote, op_ty, &pname, &toast);
                         });
                     }
                     row.add_suffix(&start);
@@ -1362,38 +1372,67 @@ fn toggle_mount(ctx: &AppCtx, name: &str, mounted: bool, toast: &adw::ToastOverl
     ctx.refresh_runtime();
 }
 
-fn start_operation(ctx: &AppCtx, name: &str, op: OperationType, toast: &adw::ToastOverlay) {
+fn toggle_profile(
+    ctx: &AppCtx,
+    name: &str,
+    op: OperationType,
+    profile_name: &str,
+    toast: &adw::ToastOverlay,
+) {
     let Some(client) = ctx.client() else {
         toast.add_toast(adw::Toast::new("Rclone engine is offline"));
         return;
     };
-    if op == OperationType::Mount {
-        let mounted = ctx
-            .snapshot
-            .borrow()
-            .mounts
-            .iter()
-            .any(|m| m.fs.starts_with(&format!("{name}:")));
-        if mounted {
-            toggle_mount(ctx, name, true, toast);
-            return;
+    let snap = ctx.snapshot.borrow().clone();
+    if crate::jobs::profile_is_active(
+        name,
+        op,
+        profile_name,
+        &snap.jobs,
+        &snap.mounts,
+        &snap.serves,
+    ) {
+        match crate::jobs::stop_profile(
+            &client,
+            name,
+            op,
+            profile_name,
+            &snap.jobs,
+            &snap.mounts,
+            &snap.serves,
+        ) {
+            Ok(msg) => toast.add_toast(adw::Toast::new(&msg)),
+            Err(e) => toast.add_toast(adw::Toast::new(&e)),
         }
+        ctx.refresh_runtime();
+        return;
     }
-    let profile = ctx
-        .store
-        .borrow()
-        .remotes
-        .get(name)
-        .and_then(|m| m.profiles.get(op.as_str()))
-        .and_then(|m| m.get("default"))
-        .cloned()
-        .unwrap_or_default();
     let meta = ctx.store.borrow().remotes.get(name).cloned();
+    let profile = meta
+        .as_ref()
+        .and_then(|m| m.get_profile(op, profile_name))
+        .unwrap_or_default();
     match crate::jobs::start_profile(&client, name, op, &profile, meta.as_ref()) {
         Ok(id) => toast.add_toast(adw::Toast::new(&format!("Started {op} {id}"))),
         Err(e) => toast.add_toast(adw::Toast::new(&e)),
     }
     ctx.refresh_runtime();
+}
+
+fn start_operation(ctx: &AppCtx, name: &str, op: OperationType, toast: &adw::ToastOverlay) {
+    let profile = ctx
+        .store
+        .borrow()
+        .remotes
+        .get(name)
+        .and_then(|m| {
+            m.profile_names(op)
+                .into_iter()
+                .next()
+                .or_else(|| Some("default".into()))
+        })
+        .unwrap_or_else(|| "default".into());
+    toggle_profile(ctx, name, op, &profile, toast);
 }
 
 fn default_mount_point(name: &str) -> String {

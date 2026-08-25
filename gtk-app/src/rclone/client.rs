@@ -451,6 +451,34 @@ impl RcClient {
         }
     }
 
+    pub fn transferred(&self, group: Option<&str>) -> Result<Value, RcError> {
+        match group {
+            Some(g) => self.call("core/transferred", json!({ "group": g })),
+            None => self.call("core/transferred", json!({})),
+        }
+    }
+
+    pub fn stats_delete(&self, group: Option<&str>) -> Result<Value, RcError> {
+        match group {
+            Some(g) => self.call("core/stats-delete", json!({ "group": g })),
+            None => self.call("core/stats-delete", json!({})),
+        }
+    }
+
+    pub fn batch(&self, inputs: &[Value]) -> Result<Value, RcError> {
+        self.call("job/batch", json!({ "inputs": inputs }))
+    }
+
+    pub fn mount_types(&self) -> Result<Vec<String>, RcError> {
+        let v = self.call("mount/types", json!({}))?;
+        Ok(parse_named_list(&v, &["mountTypes", "types"]))
+    }
+
+    pub fn serve_types(&self) -> Result<Vec<String>, RcError> {
+        let v = self.call("serve/types", json!({}))?;
+        Ok(parse_named_list(&v, &["serveTypes", "types"]))
+    }
+
     pub fn reset_stats(&self, group: Option<&str>) -> Result<Value, RcError> {
         match group {
             Some(g) => self.call("core/stats-reset", json!({ "group": g })),
@@ -894,6 +922,38 @@ pub fn archive_list_payload(src: &str, long: bool) -> Value {
     json!({ "action": "list", "src": src, "long": long })
 }
 
+pub fn batch_input(path: &str, params: Value) -> Value {
+    let mut obj = params.as_object().cloned().unwrap_or_default();
+    obj.insert("_path".into(), json!(path));
+    Value::Object(obj)
+}
+
+pub fn parse_batch_results(value: &Value) -> Vec<Value> {
+    value
+        .get("results")
+        .and_then(|v| v.as_array())
+        .cloned()
+        .unwrap_or_default()
+}
+
+pub fn parse_named_list(value: &Value, keys: &[&str]) -> Vec<String> {
+    for key in keys {
+        if let Some(arr) = value.get(*key).and_then(|v| v.as_array()) {
+            return arr
+                .iter()
+                .filter_map(|v| v.as_str().map(|s| s.to_string()))
+                .collect();
+        }
+    }
+    if let Some(arr) = value.as_array() {
+        return arr
+            .iter()
+            .filter_map(|v| v.as_str().map(|s| s.to_string()))
+            .collect();
+    }
+    Vec::new()
+}
+
 pub fn public_link_payload(fs: &str, remote: &str, expire: Option<&str>, unlink: bool) -> Value {
     let mut body = json!({ "fs": fs, "remote": remote });
     if let Some(obj) = body.as_object_mut() {
@@ -1271,6 +1331,21 @@ mod tests {
         assert_eq!(
             browse_target("/tmp/out"),
             Some(("local".into(), "/tmp/out".into()))
+        );
+        assert_eq!(
+            batch_input("job/status", json!({ "jobid": 1 })),
+            json!({ "_path": "job/status", "jobid": 1 })
+        );
+        assert_eq!(
+            parse_batch_results(&json!({ "results": [{ "ok": true }] })).len(),
+            1
+        );
+        assert_eq!(
+            parse_named_list(
+                &json!({ "mountTypes": ["mount", "cmount"] }),
+                &["mountTypes"]
+            ),
+            vec!["mount", "cmount"]
         );
     }
 

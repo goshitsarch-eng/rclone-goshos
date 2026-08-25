@@ -2,8 +2,8 @@
 //! `start_profile_batch` / `parse_common_config`.
 
 use crate::operations::OperationType;
-use crate::rclone::{remote_fs, RcClient, RcError};
-use crate::store::{quick_run_paths, JobInfo, ProfileConfig, RemoteMeta};
+use crate::rclone::{remote_fs, MountedRemote, RcClient, RcError, ServeItem};
+use crate::store::{quick_run_paths, JobInfo, ProfileConfig, QuickRun, RemoteMeta};
 use chrono::{DateTime, Utc};
 use serde_json::{json, Map, Value};
 
@@ -453,6 +453,14 @@ pub fn start_profile(
 ) -> Result<String, String> {
     let mut rclone = flatten_rclone(&profile.rclone);
     apply_helper_options(&mut rclone, profile, meta);
+    if let Some(obj) = rclone.as_object_mut() {
+        let pname = if profile.name.is_empty() {
+            "default"
+        } else {
+            profile.name.as_str()
+        };
+        obj.insert("profile".into(), json!(pname));
+    }
     let dest = default_dest(remote, &rclone, op);
     let mut sources = path_list(&rclone, SOURCE_KEYS);
     if sources.is_empty() {
@@ -473,6 +481,144 @@ pub fn start_profile(
         ids.push(start_request(client, &request).map_err(|e| e.to_string())?);
     }
     Ok(ids.join(", "))
+}
+
+pub fn job_is_running(job: &JobInfo) -> bool {
+    matches!(job.status.as_str(), "running" | "starting")
+}
+
+pub fn job_operation_matches(job_op: &str, op: OperationType) -> bool {
+    let key = op.as_str();
+    let lower = job_op.to_ascii_lowercase();
+    if lower == key || lower == op.api_label().to_ascii_lowercase() {
+        return true;
+    }
+    lower.split(['/', ':', ' ', '.']).any(|part| part == key)
+}
+
+pub fn job_belongs_to_remote(job: &JobInfo, remote: &str) -> bool {
+    let prefix = format!("{remote}:");
+    job.remote.eq_ignore_ascii_case(remote)
+        || job.src.starts_with(&prefix)
+        || job.dst.starts_with(&prefix)
+        || job.group.contains(remote)
+}
+
+pub fn find_active_job<'a>(
+    jobs: &'a [JobInfo],
+    remote: &str,
+    op: OperationType,
+    profile: &str,
+) -> Option<&'a JobInfo> {
+    let wanted = if profile.is_empty() {
+        "default"
+    } else {
+        profile
+    };
+    jobs.iter().find(|job| {
+        job_is_running(job)
+            && job_belongs_to_remote(job, remote)
+            && job_operation_matches(&job.operation, op)
+            && (job.profile.is_empty()
+                || job.profile == wanted
+                || (job.profile == "default" && wanted == "default"))
+    })
+}
+
+pub fn find_active_mount<'a>(
+    mounts: &'a [MountedRemote],
+    remote: &str,
+) -> Option<&'a MountedRemote> {
+    let prefix = format!("{remote}:");
+    mounts
+        .iter()
+        .find(|m| m.fs == remote || m.fs == prefix || m.fs.starts_with(&prefix))
+}
+
+pub fn find_active_serve<'a>(serves: &'a [ServeItem], remote: &str) -> Option<&'a ServeItem> {
+    let prefix = format!("{remote}:");
+    serves
+        .iter()
+        .find(|s| s.fs == remote || s.fs == prefix || s.fs.starts_with(&prefix))
+}
+
+pub fn profile_is_active(
+    remote: &str,
+    op: OperationType,
+    profile: &str,
+    jobs: &[JobInfo],
+    mounts: &[MountedRemote],
+    serves: &[ServeItem],
+) -> bool {
+    match op {
+        OperationType::Mount => find_active_mount(mounts, remote).is_some(),
+        OperationType::Serve => find_active_serve(serves, remote).is_some(),
+        _ => find_active_job(jobs, remote, op, profile).is_some(),
+    }
+}
+
+pub fn stop_profile(
+    client: &RcClient,
+    remote: &str,
+    op: OperationType,
+    profile: &str,
+    jobs: &[JobInfo],
+    mounts: &[MountedRemote],
+    serves: &[ServeItem],
+) -> Result<String, String> {
+    match op {
+        OperationType::Mount => {
+            let mount = find_active_mount(mounts, remote)
+                .ok_or_else(|| format!("{remote} is not mounted"))?;
+            client
+                .unmount(&mount.mount_point)
+                .map(|_| format!("Unmounted {}", mount.mount_point))
+                .map_err(|e| e.to_string())
+        }
+        OperationType::Serve => {
+            let serve = find_active_serve(serves, remote)
+                .ok_or_else(|| format!("{remote} is not serving"))?;
+            client
+                .serve_stop(&serve.id)
+                .map(|_| format!("Stopped serve {}", serve.addr))
+                .map_err(|e| e.to_string())
+        }
+        _ => {
+            let job = find_active_job(jobs, remote, op, profile)
+                .ok_or_else(|| format!("No running {op} for {remote}/{profile}"))?;
+            client
+                .job_stop(job.id)
+                .map(|_| format!("Stopped job #{}", job.id))
+                .map_err(|e| e.to_string())
+        }
+    }
+}
+
+pub fn find_active_quick_run<'a>(jobs: &'a [JobInfo], qr: &QuickRun) -> Option<&'a JobInfo> {
+    if let Some(id) = qr.last_job_id {
+        if let Some(job) = jobs.iter().find(|j| j.id == id && job_is_running(j)) {
+            return Some(job);
+        }
+    }
+    jobs.iter().find(|job| {
+        job_is_running(job)
+            && job.origin == "quick-run"
+            && job_belongs_to_remote(job, &qr.remote_name)
+            && job_operation_matches(&job.operation, qr.operation_type)
+    })
+}
+
+pub fn merge_completed_transfers(stats: &mut Value, transferred: &Value) {
+    let list = transferred
+        .get("transferred")
+        .cloned()
+        .or_else(|| transferred.as_array().cloned().map(Value::Array))
+        .unwrap_or(json!([]));
+    if let Some(obj) = stats.as_object_mut() {
+        obj.insert("completed".into(), list);
+    } else {
+        *stats = json!({ "completed": list });
+    }
 }
 
 pub fn parse_cli_flags(cli: &str) -> Map<String, Value> {
@@ -1088,6 +1234,92 @@ mod tests {
         assert_eq!(src.as_deref(), Some("drive:photos"));
         assert_eq!(dst.as_deref(), Some("/tmp/out"));
         assert_eq!(profile_src_dst(&meta, OperationType::Copy), (None, None));
+    }
+
+    fn running_job(id: u64, remote: &str, op: &str, profile: &str) -> JobInfo {
+        JobInfo {
+            id,
+            operation: op.into(),
+            remote: remote.into(),
+            profile: profile.into(),
+            status: "running".into(),
+            origin: "dashboard".into(),
+            start_time: Utc::now(),
+            error: None,
+            dry_run: false,
+            src: format!("{remote}:src"),
+            dst: "/tmp".into(),
+            group: format!("job/{id}"),
+            stats: json!({}),
+            transferring: json!([]),
+            duration: 0.0,
+            progress: 0.0,
+            output: json!({}),
+            completed: json!([]),
+        }
+    }
+
+    #[test]
+    fn finds_and_matches_active_profiles() {
+        let jobs = vec![
+            running_job(1, "drive", "sync", "nightly"),
+            running_job(2, "drive", "copy/move", "default"),
+        ];
+        assert!(job_operation_matches("sync/copy", OperationType::Sync));
+        assert!(job_operation_matches(
+            "operations/copyfile",
+            OperationType::Copy
+        ));
+        assert!(!job_operation_matches("job/1", OperationType::Sync));
+        assert_eq!(
+            find_active_job(&jobs, "drive", OperationType::Sync, "nightly").map(|j| j.id),
+            Some(1)
+        );
+        assert!(find_active_job(&jobs, "drive", OperationType::Sync, "missing").is_none());
+        let mounts = vec![MountedRemote {
+            fs: "drive:photos".into(),
+            mount_point: "/mnt/drive".into(),
+        }];
+        assert!(find_active_mount(&mounts, "drive").is_some());
+        assert!(find_active_mount(&mounts, "dropbox").is_none());
+        let serves = vec![ServeItem {
+            id: "abc".into(),
+            addr: "127.0.0.1:8080".into(),
+            fs: "drive:".into(),
+            serve_type: "webdav".into(),
+        }];
+        assert!(profile_is_active(
+            "drive",
+            OperationType::Serve,
+            "default",
+            &[],
+            &[],
+            &serves
+        ));
+        assert!(profile_is_active(
+            "drive",
+            OperationType::Mount,
+            "default",
+            &[],
+            &mounts,
+            &[]
+        ));
+        let mut qr = QuickRun::new("Nightly".into(), OperationType::Sync, "drive".into());
+        qr.last_job_id = Some(1);
+        let mut job = running_job(1, "drive", "sync", "default");
+        job.origin = "quick-run".into();
+        assert!(find_active_quick_run(&[job], &qr).is_some());
+    }
+
+    #[test]
+    fn merges_core_transferred_into_stats() {
+        let mut stats = json!({ "bytes": 12 });
+        merge_completed_transfers(&mut stats, &json!({ "transferred": [{ "name": "a.bin" }] }));
+        assert_eq!(stats["completed"][0]["name"], "a.bin");
+        assert_eq!(stats["bytes"], 12);
+        let mut empty = json!(null);
+        merge_completed_transfers(&mut empty, &json!([{ "name": "b" }]));
+        assert_eq!(empty["completed"][0]["name"], "b");
     }
 
     #[test]

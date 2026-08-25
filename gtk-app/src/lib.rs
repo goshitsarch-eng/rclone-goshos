@@ -39,6 +39,7 @@ pub mod smtp;
 pub mod store;
 pub mod syntax;
 pub mod transfers;
+pub mod tray_menu;
 pub mod updater;
 pub mod vfs;
 pub mod watch;

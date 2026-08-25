@@ -170,6 +170,12 @@ pub fn analyze_backup_with_password(
             remotes: vec![],
         }
     };
+    let mut manifest = manifest;
+    if manifest.remotes.is_empty() {
+        if let Some(store) = read_zip_json::<AppStore>(&mut archive, "store.json", password) {
+            manifest.remotes = store_remote_names(&store);
+        }
+    }
     Ok(BackupAnalysis {
         valid: names
             .iter()
@@ -192,11 +198,81 @@ pub fn restore_backup_with_password(
     path: &Path,
     password: Option<&str>,
 ) -> Result<(Option<AppSettings>, Option<AppStore>, Option<Value>), String> {
+    restore_backup_scoped(path, password, None, None)
+}
+
+pub fn store_remote_names(store: &AppStore) -> Vec<String> {
+    let mut names: Vec<String> = store.remotes.keys().cloned().collect();
+    names.sort();
+    names
+}
+
+pub fn scoped_store(
+    mut store: AppStore,
+    profile: Option<&str>,
+    restore_as: Option<&str>,
+) -> AppStore {
+    let Some(from) = profile.map(str::trim).filter(|s| !s.is_empty()) else {
+        return store;
+    };
+    let dest = restore_as
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .unwrap_or(from);
+    let mut scoped = AppStore::default();
+    if let Some(meta) = store.remotes.remove(from) {
+        scoped.remotes.insert(dest.to_string(), meta);
+    }
+    scoped.quick_runs = store
+        .quick_runs
+        .into_iter()
+        .filter_map(|mut q| {
+            if q.remote_name != from {
+                return None;
+            }
+            q.remote_name = dest.to_string();
+            Some(q)
+        })
+        .collect();
+    scoped.alert_history = store
+        .alert_history
+        .into_iter()
+        .filter(|e| e.remote == from)
+        .map(|mut e| {
+            e.remote = dest.to_string();
+            e
+        })
+        .collect();
+    scoped
+}
+
+pub fn scoped_rclone(dump: Value, profile: Option<&str>, restore_as: Option<&str>) -> Value {
+    let Some(from) = profile.map(str::trim).filter(|s| !s.is_empty()) else {
+        return dump;
+    };
+    let dest = restore_as
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .unwrap_or(from);
+    dump.as_object()
+        .and_then(|obj| obj.get(from).cloned())
+        .map(|cfg| serde_json::json!({ dest: cfg }))
+        .unwrap_or_else(|| serde_json::json!({}))
+}
+
+pub fn restore_backup_scoped(
+    path: &Path,
+    password: Option<&str>,
+    profile: Option<&str>,
+    restore_as: Option<&str>,
+) -> Result<(Option<AppSettings>, Option<AppStore>, Option<Value>), String> {
     let file = File::open(path).map_err(|e| e.to_string())?;
     let mut archive = ZipArchive::new(file).map_err(|e| e.to_string())?;
     let settings = read_zip_json::<AppSettings>(&mut archive, "settings.json", password);
-    let store = read_zip_json::<AppStore>(&mut archive, "store.json", password);
-    let rclone = read_zip_json::<Value>(&mut archive, "rclone.json", password);
+    let store = read_zip_json::<AppStore>(&mut archive, "store.json", password)
+        .map(|s| scoped_store(s, profile, restore_as));
+    let rclone = read_zip_json::<Value>(&mut archive, "rclone.json", password)
+        .map(|d| scoped_rclone(d, profile, restore_as));
     Ok((settings, store, rclone))
 }
 
@@ -258,6 +334,34 @@ mod tests {
         assert!(s.is_some());
         assert!(st.is_some());
         assert_eq!(r.unwrap()["demo"]["type"], "local");
+    }
+
+    #[test]
+    fn scopes_restore_to_one_remote_and_rename() {
+        let mut store = AppStore::default();
+        store
+            .remotes
+            .insert("drive".into(), crate::store::RemoteMeta::default());
+        store
+            .remotes
+            .insert("dropbox".into(), crate::store::RemoteMeta::default());
+        store.quick_runs.push(crate::store::QuickRun::new(
+            "Nightly".into(),
+            crate::operations::OperationType::Sync,
+            "drive".into(),
+        ));
+        let scoped = scoped_store(store, Some("drive"), Some("photos"));
+        assert!(scoped.remotes.contains_key("photos"));
+        assert!(!scoped.remotes.contains_key("drive"));
+        assert!(!scoped.remotes.contains_key("dropbox"));
+        assert_eq!(scoped.quick_runs[0].remote_name, "photos");
+        let dump = serde_json::json!({
+            "drive": { "type": "drive" },
+            "dropbox": { "type": "dropbox" }
+        });
+        let rclone = scoped_rclone(dump, Some("drive"), Some("photos"));
+        assert_eq!(rclone["photos"]["type"], "drive");
+        assert!(rclone.get("dropbox").is_none());
     }
 
     #[test]

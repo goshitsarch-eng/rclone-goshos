@@ -2717,11 +2717,30 @@ pub fn alerts(parent: &impl IsA<gtk::Widget>, ctx: AppCtx) {
     search.set_placeholder_text(Some(&ctx.t_or("alerts.search", "Search history")));
     let severity =
         gtk::DropDown::from_strings(&["All", "Critical", "High", "Average", "Warning", "Info"]);
+    let (remote_vals, profile_vals, backend_vals) = ctx.store.borrow().alert_filter_values();
+    let mut remote_labels = vec!["All remotes".to_string()];
+    remote_labels.extend(remote_vals);
+    let mut profile_labels = vec!["All profiles".to_string()];
+    profile_labels.extend(profile_vals);
+    let mut backend_labels = vec!["All backends".to_string()];
+    backend_labels.extend(backend_vals);
+    let remote_refs: Vec<&str> = remote_labels.iter().map(|s| s.as_str()).collect();
+    let profile_refs: Vec<&str> = profile_labels.iter().map(|s| s.as_str()).collect();
+    let backend_refs: Vec<&str> = backend_labels.iter().map(|s| s.as_str()).collect();
+    let remote_dd = gtk::DropDown::from_strings(&remote_refs);
+    let profile_dd = gtk::DropDown::from_strings(&profile_refs);
+    let backend_dd = gtk::DropDown::from_strings(&backend_refs);
     let fill_cell: Rc<RefCell<Rc<dyn Fn()>>> = Rc::new(RefCell::new(Rc::new(|| {})));
     let fill: Rc<dyn Fn()> = {
         let history = history.clone();
         let search = search.clone();
         let severity = severity.clone();
+        let remote_dd = remote_dd.clone();
+        let profile_dd = profile_dd.clone();
+        let backend_dd = backend_dd.clone();
+        let remote_labels = remote_labels.clone();
+        let profile_labels = profile_labels.clone();
+        let backend_labels = backend_labels.clone();
         let ctx = ctx.clone();
         let fill_cell = fill_cell.clone();
         Rc::new(move || {
@@ -2748,7 +2767,24 @@ pub fn alerts(parent: &impl IsA<gtk::Widget>, ctx: AppCtx) {
                 5 => Some("info"),
                 _ => None,
             };
-            let events = ctx.store.borrow().filter_alert_history(&search.text(), sev);
+            let pick = |dd: &gtk::DropDown, labels: &[String]| {
+                let idx = dd.selected() as usize;
+                if idx == 0 {
+                    None
+                } else {
+                    labels.get(idx).cloned()
+                }
+            };
+            let events = ctx
+                .store
+                .borrow()
+                .filter_alerts(&crate::store::AlertHistoryFilter {
+                    query: search.text().to_string(),
+                    severity: sev.map(|s| s.to_string()),
+                    remote: pick(&remote_dd, &remote_labels),
+                    profile: pick(&profile_dd, &profile_labels),
+                    backend: pick(&backend_dd, &backend_labels),
+                });
             let mut shown = 0;
             for event in events.into_iter().take(80) {
                 let row = adw::ActionRow::new();
@@ -2794,6 +2830,18 @@ pub fn alerts(parent: &impl IsA<gtk::Widget>, ctx: AppCtx) {
         let fill = fill.clone();
         severity.connect_selected_notify(move |_| fill());
     }
+    {
+        let fill = fill.clone();
+        remote_dd.connect_selected_notify(move |_| fill());
+    }
+    {
+        let fill = fill.clone();
+        profile_dd.connect_selected_notify(move |_| fill());
+    }
+    {
+        let fill = fill.clone();
+        backend_dd.connect_selected_notify(move |_| fill());
+    }
     let ack = gtk::Button::with_label(&ctx.t_or("alerts.acknowledgeAll", "Acknowledge all"));
     {
         let ctx = ctx.clone();
@@ -2819,6 +2867,9 @@ pub fn alerts(parent: &impl IsA<gtk::Widget>, ctx: AppCtx) {
     search.set_hexpand(true);
     filters.append(&search);
     filters.append(&severity);
+    filters.append(&remote_dd);
+    filters.append(&profile_dd);
+    filters.append(&backend_dd);
     let buttons = gtk::Box::new(gtk::Orientation::Horizontal, 8);
     buttons.append(&ack);
     buttons.append(&clear);
@@ -4032,7 +4083,19 @@ pub fn restore_preview(
     let password = gtk::PasswordEntry::new();
     password.set_show_peek_icon(true);
     password.set_placeholder_text(Some("Zip password (if encrypted)"));
-    dialog.set_extra_child(Some(&password));
+    let mut scope_labels = vec!["All remotes".to_string()];
+    if let Some(analysis) = &analysis {
+        scope_labels.extend(analysis.manifest.remotes.iter().cloned());
+    }
+    let scope_refs: Vec<&str> = scope_labels.iter().map(|s| s.as_str()).collect();
+    let scope = gtk::DropDown::from_strings(&scope_refs);
+    let as_name = adw::EntryRow::new();
+    as_name.set_title("Restore as (optional rename)");
+    let extra = gtk::Box::new(gtk::Orientation::Vertical, 8);
+    extra.append(&password);
+    extra.append(&scope);
+    extra.append(&as_name);
+    dialog.set_extra_child(Some(&extra));
     dialog.add_response("cancel", "Cancel");
     dialog.add_response("restore", "Restore");
     dialog.set_response_appearance("restore", adw::ResponseAppearance::Destructive);
@@ -4046,7 +4109,19 @@ pub fn restore_preview(
         } else {
             Some(pw.as_str())
         };
-        match backup::restore_backup_with_password(&path, pw) {
+        let selected = scope.selected() as usize;
+        let profile = if selected == 0 {
+            None
+        } else {
+            scope_labels.get(selected).map(|s| s.as_str())
+        };
+        let restore_as = as_name.text().to_string();
+        let restore_as = if restore_as.trim().is_empty() {
+            None
+        } else {
+            Some(restore_as.as_str())
+        };
+        match backup::restore_backup_scoped(&path, pw, profile, restore_as) {
             Ok((settings, store, rclone)) => {
                 if let Some(settings) = settings {
                     *ctx.settings.borrow_mut() = settings;

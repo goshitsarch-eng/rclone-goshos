@@ -37,6 +37,7 @@ mod smtp;
 mod store;
 mod syntax;
 mod transfers;
+mod tray_menu;
 mod ui;
 mod updater;
 mod vfs;

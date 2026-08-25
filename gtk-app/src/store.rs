@@ -847,8 +847,33 @@ impl AppStore {
     }
 
     pub fn filter_alert_history(&self, query: &str, severity: Option<&str>) -> Vec<AlertEvent> {
-        let q = query.trim().to_ascii_lowercase();
-        let severity = severity
+        self.filter_alerts(&AlertHistoryFilter {
+            query: query.to_string(),
+            severity: severity.map(|s| s.to_string()),
+            ..AlertHistoryFilter::default()
+        })
+    }
+
+    pub fn filter_alerts(&self, filter: &AlertHistoryFilter) -> Vec<AlertEvent> {
+        let q = filter.query.trim().to_ascii_lowercase();
+        let severity = filter
+            .severity
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty() && !s.eq_ignore_ascii_case("all"));
+        let remote = filter
+            .remote
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty() && !s.eq_ignore_ascii_case("all"));
+        let profile = filter
+            .profile
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty() && !s.eq_ignore_ascii_case("all"));
+        let backend = filter
+            .backend
+            .as_deref()
             .map(str::trim)
             .filter(|s| !s.is_empty() && !s.eq_ignore_ascii_case("all"));
         self.alert_history
@@ -856,6 +881,21 @@ impl AppStore {
             .filter(|event| {
                 if let Some(wanted) = severity {
                     if !event.severity.as_str().eq_ignore_ascii_case(wanted) {
+                        return false;
+                    }
+                }
+                if let Some(wanted) = remote {
+                    if !event.remote.eq_ignore_ascii_case(wanted) {
+                        return false;
+                    }
+                }
+                if let Some(wanted) = profile {
+                    if !event.profile.eq_ignore_ascii_case(wanted) {
+                        return false;
+                    }
+                }
+                if let Some(wanted) = backend {
+                    if !event.backend.eq_ignore_ascii_case(wanted) {
                         return false;
                     }
                 }
@@ -868,9 +908,32 @@ impl AppStore {
                     || event.severity.as_str().contains(q.as_str())
                     || event.remote.to_ascii_lowercase().contains(&q)
                     || event.origin.to_ascii_lowercase().contains(&q)
+                    || event.profile.to_ascii_lowercase().contains(&q)
+                    || event.backend.to_ascii_lowercase().contains(&q)
             })
             .cloned()
             .collect()
+    }
+
+    pub fn alert_filter_values(&self) -> (Vec<String>, Vec<String>, Vec<String>) {
+        let mut remotes = Vec::new();
+        let mut profiles = Vec::new();
+        let mut backends = Vec::new();
+        for event in &self.alert_history {
+            if !event.remote.is_empty() && !remotes.iter().any(|r| r == &event.remote) {
+                remotes.push(event.remote.clone());
+            }
+            if !event.profile.is_empty() && !profiles.iter().any(|r| r == &event.profile) {
+                profiles.push(event.profile.clone());
+            }
+            if !event.backend.is_empty() && !backends.iter().any(|r| r == &event.backend) {
+                backends.push(event.backend.clone());
+            }
+        }
+        remotes.sort();
+        profiles.sort();
+        backends.sort();
+        (remotes, profiles, backends)
     }
 
     pub fn record_event(&mut self, mut event: AlertEvent) {
@@ -1026,6 +1089,15 @@ pub const ALERT_TEMPLATE_KEYS: &[&str] = &[
     "{{backend}}",
     "{{profile}}",
 ];
+
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct AlertHistoryFilter {
+    pub query: String,
+    pub severity: Option<String>,
+    pub remote: Option<String>,
+    pub profile: Option<String>,
+    pub backend: Option<String>,
+}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AlertStats {
@@ -1497,6 +1569,25 @@ mod tests {
         assert_eq!(store.filter_alert_history("", Some("info")).len(), 1);
         assert_eq!(store.filter_alert_history("drive", Some("high")).len(), 1);
         assert!(store.filter_alert_history("missing", None).is_empty());
+        store.alert_history[0].profile = "nightly".into();
+        store.alert_history[0].backend = "local".into();
+        assert_eq!(
+            store
+                .filter_alerts(&AlertHistoryFilter {
+                    remote: Some("drive".into()),
+                    profile: Some("nightly".into()),
+                    backend: Some("local".into()),
+                    ..AlertHistoryFilter::default()
+                })
+                .len(),
+            1
+        );
+        assert!(store
+            .filter_alerts(&AlertHistoryFilter {
+                remote: Some("dropbox".into()),
+                ..AlertHistoryFilter::default()
+            })
+            .is_empty());
         assert!(store.acknowledge_alert(&high_id));
         assert!(!store.acknowledge_alert("missing"));
         assert!(store

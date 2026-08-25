@@ -31,6 +31,7 @@ pub struct AppCtx {
     pub pending_browse: Rc<RefCell<Option<(String, String)>>>,
     pub pending_nav: Rc<RefCell<Option<crate::navigation::NavTarget>>>,
     pub pending_show: Rc<Cell<bool>>,
+    pub pending_quit: Rc<Cell<bool>>,
     pub inhibitor: Rc<RefCell<PowerInhibitor>>,
     pub watch_mtimes: Rc<RefCell<HashMap<String, u64>>>,
     pub watch_hub: Rc<RefCell<crate::watch::WatchHub>>,
@@ -67,6 +68,7 @@ impl AppCtx {
             pending_browse: Rc::new(RefCell::new(None)),
             pending_nav: Rc::new(RefCell::new(None)),
             pending_show: Rc::new(Cell::new(false)),
+            pending_quit: Rc::new(Cell::new(false)),
             inhibitor: Rc::new(RefCell::new(PowerInhibitor::new())),
             watch_mtimes: Rc::new(RefCell::new(HashMap::new())),
             watch_hub: Rc::new(RefCell::new(crate::watch::WatchHub::new())),
@@ -227,6 +229,14 @@ impl AppCtx {
 
     pub fn take_show(&self) -> bool {
         self.pending_show.replace(false)
+    }
+
+    pub fn request_quit(&self) {
+        self.pending_quit.set(true);
+    }
+
+    pub fn take_quit(&self) -> bool {
+        self.pending_quit.replace(false)
     }
 
     pub fn apply_persisted_options(&self) {
@@ -575,15 +585,37 @@ fn collect_jobs(client: &crate::rclone::RcClient) -> Vec<crate::store::JobInfo> 
     let Ok(list) = client.job_list() else {
         return Vec::new();
     };
-    let ids = list
+    let ids: Vec<u64> = list
         .get("jobids")
         .and_then(|x| x.as_array())
         .cloned()
-        .unwrap_or_default();
+        .unwrap_or_default()
+        .into_iter()
+        .filter_map(|id| id.as_u64())
+        .collect();
+    let inputs: Vec<serde_json::Value> = ids
+        .iter()
+        .map(|jobid| {
+            crate::rclone::batch_input("job/status", serde_json::json!({ "jobid": jobid }))
+        })
+        .collect();
+    let batched = client
+        .batch(&inputs)
+        .ok()
+        .map(|v| crate::rclone::parse_batch_results(&v));
     let mut jobs = Vec::new();
-    for id in ids {
-        let Some(jobid) = id.as_u64() else { continue };
-        let Ok(status) = client.job_status(jobid) else {
+    for (idx, jobid) in ids.into_iter().enumerate() {
+        let status = batched
+            .as_ref()
+            .and_then(|rows| rows.get(idx))
+            .and_then(|row| {
+                row.get("output")
+                    .cloned()
+                    .or_else(|| row.get("result").cloned())
+                    .or_else(|| Some(row.clone()))
+            })
+            .or_else(|| client.job_status(jobid).ok());
+        let Some(status) = status else {
             continue;
         };
         let group = status
@@ -591,8 +623,17 @@ fn collect_jobs(client: &crate::rclone::RcClient) -> Vec<crate::store::JobInfo> 
             .and_then(|x| x.as_str())
             .map(|s| s.to_string())
             .unwrap_or_else(|| format!("job/{jobid}"));
-        let stats = client.stats(Some(&group)).ok();
-        jobs.push(crate::jobs::job_from_status(jobid, &status, stats.as_ref()));
+        let mut stats = client.stats(Some(&group)).unwrap_or(serde_json::json!({}));
+        let finished = status
+            .get("finished")
+            .and_then(|x| x.as_bool())
+            .unwrap_or(false);
+        if finished {
+            if let Ok(transferred) = client.transferred(Some(&group)) {
+                crate::jobs::merge_completed_transfers(&mut stats, &transferred);
+            }
+        }
+        jobs.push(crate::jobs::job_from_status(jobid, &status, Some(&stats)));
     }
     jobs
 }

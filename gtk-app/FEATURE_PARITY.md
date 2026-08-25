@@ -181,6 +181,12 @@ This client is the GTK 4 + libadwaita rewrite of the Angular/Tauri desktop UI. I
 - Files split view persisted in settings; Ctrl+Tab / Alt+↑ shortcuts
 - Extra RC backends copy persisted `backend.json` options from the source backend
 - Remote-config dest path inspection (mount collisions / will-create)
+- Tray per-remote profile Start/Stop, quick-run stop, Open Files, and Quit
+- Dashboard profile chips and detail rows toggle start/stop
+- `core/transferred` merged into finished job stats; `job/batch` used for status poll
+- RC wrappers for `core/stats-delete`, `mount/types`, `serve/types`
+- Alert history filters by remote / profile / backend
+- Backup restore can scope to one remote and rename it (`restore as`)
 
 ## Still deepening toward pixel-level Angular parity
 

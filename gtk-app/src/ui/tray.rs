@@ -1,25 +1,15 @@
 use super::AppCtx;
+use crate::jobs::{find_active_quick_run, start_profile, stop_profile};
+use crate::operations::OperationType;
 use crate::rclone::remote_fs;
+use crate::tray_menu::{plan_tray, TrayAction, TrayMenuItem};
 use std::sync::mpsc::{self, Receiver, Sender};
 use std::sync::{Arc, Mutex};
 
-#[derive(Debug, Clone)]
-pub enum TrayCommand {
-    UnmountAll,
-    StopJobs,
-    StopServes,
-    MountRemote(String),
-    UnmountRemote(String),
-    BrowseRemote(String),
-    BrowseInApp(String),
-    StartQuickRun(String),
-    ShowWindow,
-}
-
 #[derive(Clone)]
 pub struct TrayBus {
-    pub tx: Sender<TrayCommand>,
-    rx: Arc<Mutex<Receiver<TrayCommand>>>,
+    pub tx: Sender<TrayAction>,
+    rx: Arc<Mutex<Receiver<TrayAction>>>,
 }
 
 impl TrayBus {
@@ -33,25 +23,10 @@ impl TrayBus {
     }
 }
 
-#[derive(Clone)]
-struct TrayRemote {
-    name: String,
-    mounted: bool,
-}
-
 struct StatusIcon {
-    tx: Sender<TrayCommand>,
-    remotes: Vec<TrayRemote>,
-    quick_runs: Vec<(String, String)>,
+    tx: Sender<TrayAction>,
+    items: Vec<TrayMenuItem>,
     icon_name: String,
-    show_label: String,
-    unmount_all: String,
-    stop_jobs: String,
-    stop_serves: String,
-    mount_prefix: String,
-    unmount_prefix: String,
-    browse_label: String,
-    browse_in_app: String,
 }
 
 impl ksni::Tray for StatusIcon {
@@ -72,128 +47,35 @@ impl ksni::Tray for StatusIcon {
     }
 
     fn menu(&self) -> Vec<ksni::MenuItem<Self>> {
-        use ksni::menu::*;
-        let mut items = vec![
-            StandardItem {
-                label: self.show_label.clone(),
-                activate: Box::new(|this: &mut Self| {
-                    let _ = this.tx.send(TrayCommand::ShowWindow);
-                }),
-                ..Default::default()
-            }
-            .into(),
-            MenuItem::Separator,
-            StandardItem {
-                label: self.unmount_all.clone(),
-                activate: Box::new(|this: &mut Self| {
-                    let _ = this.tx.send(TrayCommand::UnmountAll);
-                }),
-                ..Default::default()
-            }
-            .into(),
-            StandardItem {
-                label: self.stop_jobs.clone(),
-                activate: Box::new(|this: &mut Self| {
-                    let _ = this.tx.send(TrayCommand::StopJobs);
-                }),
-                ..Default::default()
-            }
-            .into(),
-            StandardItem {
-                label: self.stop_serves.clone(),
-                activate: Box::new(|this: &mut Self| {
-                    let _ = this.tx.send(TrayCommand::StopServes);
-                }),
-                ..Default::default()
-            }
-            .into(),
-            MenuItem::Separator,
-        ];
-        for remote in &self.remotes {
-            let name = remote.name.clone();
-            let mounted = remote.mounted;
-            let mount_label = format!("{} {}", self.mount_prefix, name);
-            let unmount_label = format!("{} {}", self.unmount_prefix, name);
-            let browse_label = self.browse_label.clone();
-            let browse_in_app = self.browse_in_app.clone();
-            items.push(
-                SubMenu {
-                    label: if mounted {
-                        format!("● {name}")
-                    } else {
-                        name.clone()
-                    },
-                    submenu: vec![
-                        StandardItem {
-                            label: mount_label,
-                            enabled: !mounted,
-                            activate: Box::new({
-                                let name = name.clone();
-                                move |this: &mut Self| {
-                                    let _ = this.tx.send(TrayCommand::MountRemote(name.clone()));
-                                }
-                            }),
-                            ..Default::default()
-                        }
-                        .into(),
-                        StandardItem {
-                            label: unmount_label,
-                            enabled: mounted,
-                            activate: Box::new({
-                                let name = name.clone();
-                                move |this: &mut Self| {
-                                    let _ = this.tx.send(TrayCommand::UnmountRemote(name.clone()));
-                                }
-                            }),
-                            ..Default::default()
-                        }
-                        .into(),
-                        StandardItem {
-                            label: browse_label,
-                            activate: Box::new({
-                                let name = name.clone();
-                                move |this: &mut Self| {
-                                    let _ = this.tx.send(TrayCommand::BrowseRemote(name.clone()));
-                                }
-                            }),
-                            ..Default::default()
-                        }
-                        .into(),
-                        StandardItem {
-                            label: browse_in_app,
-                            activate: Box::new({
-                                let name = name.clone();
-                                move |this: &mut Self| {
-                                    let _ = this.tx.send(TrayCommand::BrowseInApp(name.clone()));
-                                }
-                            }),
-                            ..Default::default()
-                        }
-                        .into(),
-                    ],
-                    ..Default::default()
-                }
-                .into(),
-            );
-        }
-        if !self.quick_runs.is_empty() {
-            items.push(MenuItem::Separator);
-        }
-        for (id, label) in &self.quick_runs {
-            let id = id.clone();
-            items.push(
-                StandardItem {
-                    label: format!("Run {label}"),
-                    activate: Box::new(move |this: &mut Self| {
-                        let _ = this.tx.send(TrayCommand::StartQuickRun(id.clone()));
-                    }),
-                    ..Default::default()
-                }
-                .into(),
-            );
-        }
-        items
+        self.items.iter().map(|item| to_ksni(item)).collect()
     }
+}
+
+fn to_ksni(item: &TrayMenuItem) -> ksni::MenuItem<StatusIcon> {
+    use ksni::menu::*;
+    if !item.children.is_empty() {
+        return SubMenu {
+            label: item.label.clone(),
+            submenu: item.children.iter().map(to_ksni).collect(),
+            ..Default::default()
+        }
+        .into();
+    }
+    if item.action.is_none() {
+        return MenuItem::Separator;
+    }
+    let action = item.action.clone();
+    StandardItem {
+        label: item.label.clone(),
+        enabled: item.enabled,
+        activate: Box::new(move |this: &mut StatusIcon| {
+            if let Some(action) = action.clone() {
+                let _ = this.tx.send(action);
+            }
+        }),
+        ..Default::default()
+    }
+    .into()
 }
 
 fn tray_icon_name(theme: &str) -> &'static str {
@@ -214,55 +96,53 @@ fn remote_mounts(ctx: &AppCtx, name: &str) -> Vec<String> {
         .collect()
 }
 
+fn localize_plan(ctx: &AppCtx, items: &mut [TrayMenuItem]) {
+    for item in items {
+        if let Some(action) = &item.action {
+            item.label = match action {
+                TrayAction::ShowWindow => ctx.t_or("tray.showApp", "Show Window"),
+                TrayAction::OpenFiles => ctx.t_or("tray.openFiles", "Open Files"),
+                TrayAction::Quit => ctx.t_or("tray.quit", "Quit"),
+                TrayAction::UnmountAll => ctx.t_or("tray.unmountAll", "Unmount All"),
+                TrayAction::StopJobs => ctx.t_or("tray.stopAllJobs", "Stop All Jobs"),
+                TrayAction::StopServes => ctx.t_or("tray.stopAllServes", "Stop All Serves"),
+                _ => item.label.clone(),
+            };
+        }
+        localize_plan(ctx, &mut item.children);
+    }
+}
+
 pub fn start(ctx: &AppCtx) -> Option<TrayBus> {
     if !ctx.settings.borrow().general.tray_enabled {
         return None;
     }
     let (tx, rx) = mpsc::channel();
-    let remotes: Vec<TrayRemote> = ctx
-        .snapshot
-        .borrow()
-        .remotes
+    let snap = ctx.snapshot.borrow();
+    let store = ctx.store.borrow();
+    let mut items = plan_tray(
+        &snap.remotes,
+        &store,
+        &snap.jobs,
+        &snap.mounts,
+        &snap.serves,
+        ctx.settings.borrow().core.max_tray_items.max(1),
+    );
+    drop(snap);
+    drop(store);
+    localize_plan(ctx, &mut items);
+    let remotes = items
         .iter()
-        .filter(|r| {
-            ctx.store
-                .borrow()
-                .remotes
-                .get(&r.name)
-                .map(|m| m.show_on_tray)
-                .unwrap_or(true)
-        })
-        .take(ctx.settings.borrow().core.max_tray_items.max(1))
-        .map(|r| TrayRemote {
-            name: r.name.clone(),
-            mounted: r.mounted,
-        })
-        .collect();
-    let quick_runs: Vec<(String, String)> = ctx
-        .store
-        .borrow()
-        .quick_runs
-        .iter()
-        .filter(|q| q.show_on_tray)
-        .map(|q| (q.id.clone(), q.name.clone()))
-        .collect();
+        .filter(|i| !i.children.is_empty() && i.label != "Quick Runs")
+        .count();
     let bus = TrayBus {
         tx: tx.clone(),
         rx: Arc::new(Mutex::new(rx)),
     };
     let icon = StatusIcon {
         tx: tx.clone(),
-        remotes: remotes.clone(),
-        quick_runs: quick_runs.clone(),
+        items,
         icon_name: tray_icon_name(&ctx.settings.borrow().general.tray_icon_theme).into(),
-        show_label: ctx.t_or("tray.showApp", "Show Window"),
-        unmount_all: ctx.t_or("tray.unmountAll", "Unmount All"),
-        stop_jobs: ctx.t_or("tray.stopAllJobs", "Stop All Jobs"),
-        stop_serves: ctx.t_or("tray.stopAllServes", "Stop All Serves"),
-        mount_prefix: ctx.t_or("tray.mount", "Mount"),
-        unmount_prefix: ctx.t_or("tray.unmount", "Unmount"),
-        browse_label: ctx.t_or("tray.browse", "Browse"),
-        browse_in_app: ctx.t_or("tray.browseInApp", "Browse in app"),
     };
     std::thread::Builder::new()
         .name("rclone-manager-sni".into())
@@ -271,23 +151,19 @@ pub fn start(ctx: &AppCtx) -> Option<TrayBus> {
             let _ = service.run();
         })
         .ok();
-    log::info!(
-        "StatusNotifier tray started ({} remotes, {} quick runs)",
-        remotes.len(),
-        quick_runs.len()
-    );
+    log::info!("StatusNotifier tray started ({remotes} remotes)");
     Some(bus)
 }
 
-pub fn handle(ctx: &AppCtx, cmd: TrayCommand) {
+pub fn handle(ctx: &AppCtx, cmd: TrayAction) {
     match cmd {
-        TrayCommand::UnmountAll => {
+        TrayAction::UnmountAll => {
             if let Some(c) = ctx.client() {
                 let _ = c.unmount_all();
             }
             ctx.refresh_runtime();
         }
-        TrayCommand::StopJobs => {
+        TrayAction::StopJobs => {
             if let Some(c) = ctx.client() {
                 if let Ok(list) = c.job_list() {
                     if let Some(arr) = list.get("jobids").and_then(|x| x.as_array()) {
@@ -301,29 +177,54 @@ pub fn handle(ctx: &AppCtx, cmd: TrayCommand) {
             }
             ctx.refresh_runtime();
         }
-        TrayCommand::StopServes => {
+        TrayAction::StopServes => {
             if let Some(c) = ctx.client() {
                 let _ = c.serve_stop_all();
             }
             ctx.refresh_runtime();
         }
-        TrayCommand::MountRemote(name) => {
+        TrayAction::MountRemote { remote, profile } => {
             if let Some(c) = ctx.client() {
-                let point = dirs::home_dir().unwrap_or_default().join("mnt").join(&name);
-                let _ = std::fs::create_dir_all(&point);
-                let _ = c.mount(&remote_fs(&name, ""), &point.to_string_lossy(), "mount");
-            }
-            ctx.refresh_runtime();
-        }
-        TrayCommand::UnmountRemote(name) => {
-            if let Some(c) = ctx.client() {
-                for point in remote_mounts(ctx, &name) {
-                    let _ = c.unmount(&point);
+                let meta = ctx.store.borrow().remotes.get(&remote).cloned();
+                let cfg = meta
+                    .as_ref()
+                    .and_then(|m| m.get_profile(OperationType::Mount, &profile))
+                    .unwrap_or_default();
+                if let Err(e) =
+                    start_profile(&c, &remote, OperationType::Mount, &cfg, meta.as_ref())
+                {
+                    log::warn!("tray mount {remote} failed: {e}");
+                    let point = dirs::home_dir()
+                        .unwrap_or_default()
+                        .join("mnt")
+                        .join(&remote);
+                    let _ = std::fs::create_dir_all(&point);
+                    let _ = c.mount(&remote_fs(&remote, ""), &point.to_string_lossy(), "mount");
                 }
             }
             ctx.refresh_runtime();
         }
-        TrayCommand::BrowseRemote(name) => {
+        TrayAction::UnmountRemote { remote } => {
+            if let Some(c) = ctx.client() {
+                let mounts = ctx.snapshot.borrow().mounts.clone();
+                if let Err(e) = stop_profile(
+                    &c,
+                    &remote,
+                    OperationType::Mount,
+                    "default",
+                    &[],
+                    &mounts,
+                    &[],
+                ) {
+                    for point in remote_mounts(ctx, &remote) {
+                        let _ = c.unmount(&point);
+                    }
+                    log::warn!("tray unmount {remote}: {e}");
+                }
+            }
+            ctx.refresh_runtime();
+        }
+        TrayAction::BrowseRemote(name) => {
             if let Some(point) = remote_mounts(ctx, &name).into_iter().next() {
                 let _ = open::that(point);
             } else {
@@ -331,11 +232,55 @@ pub fn handle(ctx: &AppCtx, cmd: TrayCommand) {
                 ctx.request_browse(&name, "");
             }
         }
-        TrayCommand::BrowseInApp(name) => {
+        TrayAction::BrowseInApp(name) => {
             ctx.request_show();
             ctx.request_browse(&name, "");
         }
-        TrayCommand::StartQuickRun(id) => {
+        TrayAction::StartProfile {
+            remote,
+            op,
+            profile,
+        } => {
+            let Some(op) = OperationType::parse(&op) else {
+                return;
+            };
+            if let Some(c) = ctx.client() {
+                let meta = ctx.store.borrow().remotes.get(&remote).cloned();
+                let cfg = meta
+                    .as_ref()
+                    .and_then(|m| m.get_profile(op, &profile))
+                    .unwrap_or_default();
+                if let Err(e) = start_profile(&c, &remote, op, &cfg, meta.as_ref()) {
+                    log::warn!("tray start {op} {remote}/{profile} failed: {e}");
+                }
+            }
+            ctx.refresh_runtime();
+        }
+        TrayAction::StopProfile {
+            remote,
+            op,
+            profile,
+        } => {
+            let Some(op) = OperationType::parse(&op) else {
+                return;
+            };
+            if let Some(c) = ctx.client() {
+                let snap = ctx.snapshot.borrow().clone();
+                if let Err(e) = stop_profile(
+                    &c,
+                    &remote,
+                    op,
+                    &profile,
+                    &snap.jobs,
+                    &snap.mounts,
+                    &snap.serves,
+                ) {
+                    log::warn!("tray stop {op} {remote}/{profile} failed: {e}");
+                }
+            }
+            ctx.refresh_runtime();
+        }
+        TrayAction::StartQuickRun(id) => {
             let qr = ctx
                 .store
                 .borrow()
@@ -344,18 +289,40 @@ pub fn handle(ctx: &AppCtx, cmd: TrayCommand) {
                 .find(|q| q.id == id)
                 .cloned();
             if let (Some(c), Some(qr)) = (ctx.client(), qr) {
-                if let Some(endpoint) = qr.operation_type.rc_job_endpoint() {
-                    let (src, dst) = qr.paths();
-                    let _ = c.start_job(
-                        endpoint,
-                        serde_json::json!({
-                            "srcFs": src.unwrap_or_else(|| remote_fs(&qr.remote_name, "")),
-                            "dstFs": dst.unwrap_or_else(|| remote_fs(&qr.remote_name, "")),
-                        }),
-                    );
+                let meta = ctx.store.borrow().remotes.get(&qr.remote_name).cloned();
+                if let Err(e) = start_profile(
+                    &c,
+                    &qr.remote_name,
+                    qr.operation_type,
+                    &qr.config,
+                    meta.as_ref(),
+                ) {
+                    log::warn!("tray quick run {} failed: {e}", qr.name);
                 }
             }
+            ctx.refresh_runtime();
         }
-        TrayCommand::ShowWindow => ctx.request_show(),
+        TrayAction::StopQuickRun(id) => {
+            let qr = ctx
+                .store
+                .borrow()
+                .quick_runs
+                .iter()
+                .find(|q| q.id == id)
+                .cloned();
+            if let (Some(c), Some(qr)) = (ctx.client(), qr) {
+                let jobs = ctx.snapshot.borrow().jobs.clone();
+                if let Some(job) = find_active_quick_run(&jobs, &qr) {
+                    let _ = c.job_stop(job.id);
+                }
+            }
+            ctx.refresh_runtime();
+        }
+        TrayAction::OpenFiles => {
+            ctx.request_show();
+            ctx.request_browse("local", "");
+        }
+        TrayAction::ShowWindow => ctx.request_show(),
+        TrayAction::Quit => ctx.request_quit(),
     }
 }
