@@ -77,6 +77,12 @@
     "nthWeekdayAt": "{{nth}} {{day}} {{time}}",
     "inMonthsAt": "{{months}} içinde {{time}}",
     "inMonthsOnDayAt": "{{months}} ayının {{dom}}. günü {{time}}",
+    "atTimes": "{{times}}",
+    "hourlyAtMinutes": "Her saat {{mins}} dakikalarında",
+    "everyHoursBetween": "{{start}}–{{end}} arasında her {{n}} saatte",
+    "everyMinutesAt": "{{times}} saatinde her {{n}} dakikada",
+    "atMinutesBetween": "{{start}}–{{end}} arasında {{mins}} dakikalarında",
+    "atHours": "{{hours}}",
     "days": {
       "0": "Pazar",
       "1": "Pazartesi",
@@ -570,7 +576,8 @@
     "acknowledge": "Acknowledge",
     "addRule": "Add rule",
     "addAction": "Add action",
-    "templateKeys": "Insert template key"
+    "templateKeys": "Insert template key",
+    "statsLine": "{{total}} toplam · {{ack}} onaylı · {{open}} açık · {{delivered}} iletildi · son {{last}}"
   },
   "settings": {
     "resetAll": {
@@ -851,7 +858,8 @@
       "add": "Add remote or quick run",
       "developer": "Developer",
       "trayActions": "Tray actions",
-      "memoryUnavailable": "Bellek istatistikleri kullanılamıyor"
+      "memoryUnavailable": "Bellek istatistikleri kullanılamıyor",
+      "remoteVisible": "Kenar çubuğunda ve genel bakışta görünür"
     },
     "detach": "Detach the current workspace into a new window"
   },
@@ -2798,6 +2806,8 @@
       "copyPublicLink": "Ortak Bağlantıyı Kopyala",
       "createFolderWithItems": "Seçilenlerle Yeni Klasör...",
       "renameMultiple": "Çoklu Yeniden Adlandır...",
+      "star": "Yıldızla / Kaldır",
+      "bookmark": "Yer imi",
       "pathOptions": "Path options",
       "move": "Move",
       "openNative": "Open native",
@@ -2814,6 +2824,9 @@
       "showHidden": "Gizli Dosyaları Göster",
       "toggleLayout": "Düzeni Değiştir",
       "viewOptions": "Görünüm Seçenekleri",
+      "star": "Bu klasörü yıldızla",
+      "starred": "Yıldızlı",
+      "unstarred": "Yıldızlardan kaldırıldı",
       "smaller": "Smaller",
       "larger": "Larger"
     },
@@ -2846,7 +2859,8 @@
       "getPublicLinkStarted": "Ortak bağlantı oluşturuluyor...",
       "archiveCreateStarted": "Arşiv oluşturma başlatıldı...",
       "sendToAdded": "'{{remote}}{{path}}' dosya yöneticisi sağ tık menüsüne eklendi",
-      "sendToRemoved": "'{{remote}}{{path}}' dosya yöneticisi sağ tık menüsünden kaldırıldı"
+      "sendToRemoved": "'{{remote}}{{path}}' dosya yöneticisi sağ tık menüsünden kaldırıldı",
+      "locationNotAllowed": "Bu konum bu seçici için izinli değil"
     },
     "androidShare": {
       "uploadHere": "{{count}} paylaşılan dosyayı bu klasöre yükle",

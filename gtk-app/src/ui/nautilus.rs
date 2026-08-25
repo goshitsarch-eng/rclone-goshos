@@ -2138,9 +2138,10 @@ impl NautilusView {
         }
         if let Some(req) = self.ctx.pending_picker.borrow().as_ref() {
             if !crate::picker::is_location_allowed(input, &req.config) {
-                self.toast.add_toast(adw::Toast::new(
+                self.toast.add_toast(adw::Toast::new(&self.ctx.t_or(
+                    "nautilus.notifications.locationNotAllowed",
                     "That location is not allowed for this picker",
-                ));
+                )));
                 return;
             }
         }

@@ -77,6 +77,12 @@
     "nthWeekdayAt": "Le {{nth}} {{day}} à {{time}}",
     "inMonthsAt": "En {{months}} à {{time}}",
     "inMonthsOnDayAt": "Le {{dom}} {{months}} à {{time}}",
+    "atTimes": "À {{times}}",
+    "hourlyAtMinutes": "Toutes les heures aux minutes {{mins}}",
+    "everyHoursBetween": "Toutes les {{n}} heures entre {{start}} et {{end}}",
+    "everyMinutesAt": "Toutes les {{n}} minutes à {{times}}",
+    "atMinutesBetween": "Aux minutes {{mins}} entre {{start}} et {{end}}",
+    "atHours": "À {{hours}}",
     "days": {
       "0": "dimanche",
       "1": "lundi",
@@ -277,7 +283,7 @@
       "enabled": "Activé",
       "disabled": "Désactivé",
       "running": "En cours d'exécution",
-      "cloneFailed": "Échec",
+      "failed": "Échec",
       "stopping": "Arrêt en cours"
     },
     "toggle": {
@@ -570,7 +576,8 @@
     "acknowledge": "Acknowledge",
     "addRule": "Add rule",
     "addAction": "Add action",
-    "templateKeys": "Insert template key"
+    "templateKeys": "Insert template key",
+    "statsLine": "{{total}} au total · {{ack}} accusés · {{open}} ouverts · {{delivered}} livrés · dernier {{last}}"
   },
   "settings": {
     "resetAll": {
@@ -851,7 +858,8 @@
       "add": "Add remote or quick run",
       "developer": "Developer",
       "trayActions": "Tray actions",
-      "memoryUnavailable": "Statistiques mémoire indisponibles"
+      "memoryUnavailable": "Statistiques mémoire indisponibles",
+      "remoteVisible": "Visible dans la barre latérale et l’aperçu"
     },
     "detach": "Detach the current workspace into a new window"
   },
@@ -2798,6 +2806,8 @@
       "copyPublicLink": "Copier le lien public",
       "createFolderWithItems": "Nouveau dossier avec la sélection...",
       "renameMultiple": "Renommer plusieurs...",
+      "star": "Étoile / Retirer",
+      "bookmark": "Signet",
       "pathOptions": "Path options",
       "move": "Move",
       "openNative": "Open native",
@@ -2814,6 +2824,9 @@
       "showHidden": "Afficher les fichiers cachés",
       "toggleLayout": "Basculer la disposition",
       "viewOptions": "Options d'affichage",
+      "star": "Marquer ce dossier",
+      "starred": "Favoris",
+      "unstarred": "Retiré des favoris",
       "smaller": "Smaller",
       "larger": "Larger"
     },
@@ -2846,7 +2859,8 @@
       "getPublicLinkStarted": "Génération du lien public...",
       "archiveCreateStarted": "Création de l'archive démarrée...",
       "sendToAdded": "'{{remote}}{{path}}' ajouté au menu du gestionnaire de fichiers",
-      "sendToRemoved": "'{{remote}}{{path}}' retiré du menu du gestionnaire de fichiers"
+      "sendToRemoved": "'{{remote}}{{path}}' retiré du menu du gestionnaire de fichiers",
+      "locationNotAllowed": "Cet emplacement n’est pas autorisé pour ce sélecteur"
     },
     "androidShare": {
       "uploadHere": "Téléverser {{count}} fichier(s) partagé(s) dans ce dossier",

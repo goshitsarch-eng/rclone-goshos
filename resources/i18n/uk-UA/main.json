@@ -77,6 +77,12 @@
     "nthWeekdayAt": "{{nth}} {{day}} о {{time}}",
     "inMonthsAt": "У {{months}} о {{time}}",
     "inMonthsOnDayAt": "{{dom}} {{months}} о {{time}}",
+    "atTimes": "О {{times}}",
+    "hourlyAtMinutes": "Щогодини в хвилини {{mins}}",
+    "everyHoursBetween": "Кожні {{n}} год між {{start}} і {{end}}",
+    "everyMinutesAt": "Кожні {{n}} хв о {{times}}",
+    "atMinutesBetween": "У хвилини {{mins}} між {{start}} і {{end}}",
+    "atHours": "О {{hours}}",
     "days": {
       "0": "неділю",
       "1": "понеділок",
@@ -570,7 +576,8 @@
     "acknowledge": "Acknowledge",
     "addRule": "Add rule",
     "addAction": "Add action",
-    "templateKeys": "Insert template key"
+    "templateKeys": "Insert template key",
+    "statsLine": "{{total}} усього · {{ack}} підтверджено · {{open}} відкрито · {{delivered}} доставлено · останнє {{last}}"
   },
   "settings": {
     "resetAll": {
@@ -851,7 +858,8 @@
       "add": "Add remote or quick run",
       "developer": "Developer",
       "trayActions": "Tray actions",
-      "memoryUnavailable": "Статистика пам’яті недоступна"
+      "memoryUnavailable": "Статистика пам’яті недоступна",
+      "remoteVisible": "Видно на бічній панелі та в огляді"
     },
     "detach": "Detach the current workspace into a new window"
   },
@@ -2798,6 +2806,8 @@
       "copyPublicLink": "Копіювати публічне посилання",
       "createFolderWithItems": "Нова папка з виділеним...",
       "renameMultiple": "Перейменувати декілька...",
+      "star": "Позначити / Зняти",
+      "bookmark": "Закладка",
       "pathOptions": "Path options",
       "move": "Move",
       "openNative": "Open native",
@@ -2814,6 +2824,9 @@
       "showHidden": "Показувати приховані файли",
       "toggleLayout": "Перемкнути макет",
       "viewOptions": "Параметри перегляду",
+      "star": "Позначити цю папку",
+      "starred": "Позначені",
+      "unstarred": "Прибрано з позначених",
       "smaller": "Smaller",
       "larger": "Larger"
     },
@@ -2846,7 +2859,8 @@
       "getPublicLinkStarted": "Створення публічного посилання...",
       "archiveCreateStarted": "Створення архіву розпочато...",
       "sendToAdded": "Додано '{{remote}}{{path}}' до контекстного меню файлового менеджера",
-      "sendToRemoved": "Вилучено '{{remote}}{{path}}' з контекстного меню файлового менеджера"
+      "sendToRemoved": "Вилучено '{{remote}}{{path}}' з контекстного меню файлового менеджера",
+      "locationNotAllowed": "Це розташування заборонене для цього вибору"
     },
     "androidShare": {
       "uploadHere": "Завантажити {{count}} спільних файл(ів) до цієї папки",

@@ -77,6 +77,12 @@
     "nthWeekdayAt": "{{nth}} の{{day}} {{time}}",
     "inMonthsAt": "{{months}} {{time}}",
     "inMonthsOnDayAt": "{{months}} {{dom}} 日 {{time}}",
+    "atTimes": "{{times}}",
+    "hourlyAtMinutes": "毎時 {{mins}} 分",
+    "everyHoursBetween": "{{start}}〜{{end}} の間、{{n}} 時間ごと",
+    "everyMinutesAt": "{{times}} に {{n}} 分ごと",
+    "atMinutesBetween": "{{start}}〜{{end}} の {{mins}} 分",
+    "atHours": "{{hours}}",
     "days": {
       "0": "日曜日",
       "1": "月曜日",
@@ -570,7 +576,8 @@
     "acknowledge": "Acknowledge",
     "addRule": "Add rule",
     "addAction": "Add action",
-    "templateKeys": "Insert template key"
+    "templateKeys": "Insert template key",
+    "statsLine": "合計 {{total}} · 確認 {{ack}} · 未確認 {{open}} · 配信 {{delivered}} · 最終 {{last}}"
   },
   "settings": {
     "resetAll": {
@@ -851,7 +858,8 @@
       "add": "Add remote or quick run",
       "developer": "Developer",
       "trayActions": "Tray actions",
-      "memoryUnavailable": "メモリ統計を取得できません"
+      "memoryUnavailable": "メモリ統計を取得できません",
+      "remoteVisible": "サイドバーと概要に表示"
     },
     "detach": "Detach the current workspace into a new window"
   },
@@ -2798,6 +2806,8 @@
       "copyPublicLink": "公開リンクをコピー",
       "createFolderWithItems": "選択項目から新しいフォルダを作成...",
       "renameMultiple": "一括名前変更...",
+      "star": "スター / 解除",
+      "bookmark": "ブックマーク",
       "pathOptions": "Path options",
       "move": "Move",
       "openNative": "Open native",
@@ -2814,6 +2824,9 @@
       "showHidden": "隠しファイルを表示",
       "toggleLayout": "レイアウトの切り替え",
       "viewOptions": "表示オプション",
+      "star": "このフォルダをスター",
+      "starred": "スター済み",
+      "unstarred": "スターから削除",
       "smaller": "Smaller",
       "larger": "Larger"
     },
@@ -2846,7 +2859,8 @@
       "getPublicLinkStarted": "公開リンクを生成中...",
       "archiveCreateStarted": "圧縮を開始しました...",
       "sendToAdded": "'{{remote}}{{path}}' をファイルマネージャーメニューに追加しました",
-      "sendToRemoved": "'{{remote}}{{path}}' をファイルマネージャーメニューから削除しました"
+      "sendToRemoved": "'{{remote}}{{path}}' をファイルマネージャーメニューから削除しました",
+      "locationNotAllowed": "この選択ではその場所は使えません"
     },
     "androidShare": {
       "uploadHere": "{{count}} 個の共有ファイルをこのフォルダにアップロード",

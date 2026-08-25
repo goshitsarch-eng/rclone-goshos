@@ -77,6 +77,12 @@
     "nthWeekdayAt": "第 {{nth}} 个{{day}} {{time}}",
     "inMonthsAt": "在 {{months}} {{time}}",
     "inMonthsOnDayAt": "在 {{months}} {{dom}} 日 {{time}}",
+    "atTimes": "在 {{times}}",
+    "hourlyAtMinutes": "每小时的 {{mins}} 分",
+    "everyHoursBetween": "在 {{start}} 至 {{end}} 之间每 {{n}} 小时",
+    "everyMinutesAt": "在 {{times}} 每 {{n}} 分钟",
+    "atMinutesBetween": "在 {{start}} 至 {{end}} 之间的 {{mins}} 分",
+    "atHours": "在 {{hours}}",
     "days": {
       "0": "星期日",
       "1": "星期一",
@@ -570,7 +576,8 @@
     "acknowledge": "Acknowledge",
     "addRule": "Add rule",
     "addAction": "Add action",
-    "templateKeys": "Insert template key"
+    "templateKeys": "Insert template key",
+    "statsLine": "共 {{total}} · 已确认 {{ack}} · 未确认 {{open}} · 已送达 {{delivered}} · 最近 {{last}}"
   },
   "settings": {
     "resetAll": {
@@ -851,7 +858,8 @@
       "add": "Add remote or quick run",
       "developer": "Developer",
       "trayActions": "Tray actions",
-      "memoryUnavailable": "内存统计不可用"
+      "memoryUnavailable": "内存统计不可用",
+      "remoteVisible": "在侧栏和总览中可见"
     },
     "detach": "Detach the current workspace into a new window"
   },
@@ -2798,6 +2806,8 @@
       "copyPublicLink": "复制公共链接",
       "createFolderWithItems": "用所选项目新建文件夹...",
       "renameMultiple": "批量重命名...",
+      "star": "加星 / 取消",
+      "bookmark": "书签",
       "pathOptions": "Path options",
       "move": "Move",
       "openNative": "Open native",
@@ -2814,6 +2824,9 @@
       "showHidden": "显示隐藏文件",
       "toggleLayout": "切换布局",
       "viewOptions": "视图选项",
+      "star": "将此文件夹加星",
+      "starred": "已加星",
+      "unstarred": "已从加星中移除",
       "smaller": "Smaller",
       "larger": "Larger"
     },
@@ -2846,7 +2859,8 @@
       "getPublicLinkStarted": "正在生成公共链接...",
       "archiveCreateStarted": "已开始创建归档操作...",
       "sendToAdded": "已将“{{remote}}{{path}}”添加至文件管理器右键菜单",
-      "sendToRemoved": "已将“{{remote}}{{path}}”从文件管理器右键菜单移除"
+      "sendToRemoved": "已将“{{remote}}{{path}}”从文件管理器右键菜单移除",
+      "locationNotAllowed": "此选择器不允许该位置"
     },
     "androidShare": {
       "uploadHere": "将 {{count}} 个共享文件上传至此文件夹",

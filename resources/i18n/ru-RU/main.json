@@ -77,6 +77,12 @@
     "nthWeekdayAt": "{{nth}} {{day}} в {{time}}",
     "inMonthsAt": "В {{months}} в {{time}}",
     "inMonthsOnDayAt": "{{dom}} {{months}} в {{time}}",
+    "atTimes": "В {{times}}",
+    "hourlyAtMinutes": "Каждый час в минуты {{mins}}",
+    "everyHoursBetween": "Каждые {{n}} ч между {{start}} и {{end}}",
+    "everyMinutesAt": "Каждые {{n}} мин в {{times}}",
+    "atMinutesBetween": "В минуты {{mins}} между {{start}} и {{end}}",
+    "atHours": "В {{hours}}",
     "days": {
       "0": "воскресенье",
       "1": "понедельник",
@@ -570,7 +576,8 @@
     "acknowledge": "Acknowledge",
     "addRule": "Add rule",
     "addAction": "Add action",
-    "templateKeys": "Insert template key"
+    "templateKeys": "Insert template key",
+    "statsLine": "{{total}} всего · {{ack}} подтверждено · {{open}} открыто · {{delivered}} доставлено · последнее {{last}}"
   },
   "settings": {
     "resetAll": {
@@ -851,7 +858,8 @@
       "add": "Add remote or quick run",
       "developer": "Developer",
       "trayActions": "Tray actions",
-      "memoryUnavailable": "Статистика памяти недоступна"
+      "memoryUnavailable": "Статистика памяти недоступна",
+      "remoteVisible": "Видно в боковой панели и обзоре"
     },
     "detach": "Detach the current workspace into a new window"
   },
@@ -2798,6 +2806,8 @@
       "copyPublicLink": "Копировать публичную ссылку",
       "createFolderWithItems": "Создать папку из выбранных элементов...",
       "renameMultiple": "Переименовать несколько элементов...",
+      "star": "В избранное / убрать",
+      "bookmark": "Закладка",
       "pathOptions": "Path options",
       "move": "Move",
       "openNative": "Open native",
@@ -2814,6 +2824,9 @@
       "showHidden": "Показывать скрытые файлы",
       "toggleLayout": "Переключить макет",
       "viewOptions": "Параметры просмотра",
+      "star": "Добавить папку в избранное",
+      "starred": "Избранное",
+      "unstarred": "Удалено из избранного",
       "smaller": "Smaller",
       "larger": "Larger"
     },
@@ -2846,7 +2859,8 @@
       "getPublicLinkStarted": "Создание публичной ссылки...",
       "archiveCreateStarted": "Создание архива...",
       "sendToAdded": "«{{remote}}{{path}}» добавлено в меню файлового менеджера",
-      "sendToRemoved": "«{{remote}}{{path}}» удалено из меню файлового менеджера"
+      "sendToRemoved": "«{{remote}}{{path}}» удалено из меню файлового менеджера",
+      "locationNotAllowed": "Это расположение недопустимо для этого выбора"
     },
     "androidShare": {
       "uploadHere": "Загрузить {{count}} общих файл(а/ов) в эту папку",

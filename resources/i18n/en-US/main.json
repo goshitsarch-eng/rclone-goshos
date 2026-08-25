@@ -576,7 +576,8 @@
     "acknowledge": "Acknowledge",
     "addRule": "Add rule",
     "addAction": "Add action",
-    "templateKeys": "Insert template key"
+    "templateKeys": "Insert template key",
+    "statsLine": "{{total}} total · {{ack}} ack · {{open}} open · {{delivered}} delivered · last {{last}}"
   },
   "settings": {
     "resetAll": {
@@ -857,7 +858,8 @@
       "add": "Add remote or quick run",
       "developer": "Developer",
       "trayActions": "Tray actions",
-      "memoryUnavailable": "Memory stats unavailable"
+      "memoryUnavailable": "Memory stats unavailable",
+      "remoteVisible": "Visible in sidebar and overview"
     },
     "detach": "Detach the current workspace into a new window"
   },
@@ -2857,7 +2859,8 @@
       "getPublicLinkStarted": "Generating public link...",
       "archiveCreateStarted": "Archive creation started...",
       "sendToAdded": "Added '{{remote}}{{path}}' to File Manager menu",
-      "sendToRemoved": "Removed '{{remote}}{{path}}' from File Manager menu"
+      "sendToRemoved": "Removed '{{remote}}{{path}}' from File Manager menu",
+      "locationNotAllowed": "That location is not allowed for this picker"
     },
     "androidShare": {
       "uploadHere": "Upload {{count}} shared file(s) to this folder",

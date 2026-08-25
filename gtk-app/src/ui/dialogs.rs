@@ -3096,9 +3096,15 @@ pub fn alerts(parent: &impl IsA<gtk::Widget>, ctx: AppCtx) {
                 .last_at
                 .map(|t| t.format("%Y-%m-%d %H:%M").to_string())
                 .unwrap_or_else(|| "—".into());
-            stats_row.set_subtitle(&format!(
-                "{} total · {} ack · {} open · {} delivered · last {last}",
-                stats.total, stats.acknowledged, stats.unacknowledged, stats.delivered
+            stats_row.set_subtitle(&ctx.tf(
+                "alerts.statsLine",
+                &[
+                    ("total", &stats.total.to_string()),
+                    ("ack", &stats.acknowledged.to_string()),
+                    ("open", &stats.unacknowledged.to_string()),
+                    ("delivered", &stats.delivered.to_string()),
+                    ("last", &last),
+                ],
             ));
             history.append(&stats_row);
             let sev = match severity.selected() {
@@ -8887,6 +8893,7 @@ pub fn item_order(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, on_done: Rc<dyn F
         list: &gtk::ListBox,
         names: &Rc<RefCell<Vec<String>>>,
         hidden: &Rc<RefCell<Vec<String>>>,
+        subtitle: &str,
     ) {
         while let Some(child) = list.first_child() {
             list.remove(&child);
@@ -8895,7 +8902,7 @@ pub fn item_order(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, on_done: Rc<dyn F
         for (idx, name) in current.iter().enumerate() {
             let row = adw::SwitchRow::new();
             row.set_title(name);
-            row.set_subtitle("Visible in sidebar and overview");
+            row.set_subtitle(subtitle);
             row.set_active(!hidden.borrow().iter().any(|n| n == name));
             {
                 let hidden = hidden.clone();
@@ -8918,6 +8925,7 @@ pub fn item_order(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, on_done: Rc<dyn F
                 let names = names.clone();
                 let hidden = hidden.clone();
                 let list = list.clone();
+                let subtitle = subtitle.to_string();
                 let idx = idx;
                 up.connect_clicked(move |_| {
                     {
@@ -8926,13 +8934,14 @@ pub fn item_order(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, on_done: Rc<dyn F
                             names.swap(idx, idx - 1);
                         }
                     }
-                    refill(&list, &names, &hidden);
+                    refill(&list, &names, &hidden, &subtitle);
                 });
             }
             {
                 let names = names.clone();
                 let hidden = hidden.clone();
                 let list = list.clone();
+                let subtitle = subtitle.to_string();
                 let idx = idx;
                 down.connect_clicked(move |_| {
                     {
@@ -8941,7 +8950,7 @@ pub fn item_order(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, on_done: Rc<dyn F
                             names.swap(idx, idx + 1);
                         }
                     }
-                    refill(&list, &names, &hidden);
+                    refill(&list, &names, &hidden, &subtitle);
                 });
             }
             row.add_suffix(&up);
@@ -8949,7 +8958,11 @@ pub fn item_order(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, on_done: Rc<dyn F
             list.append(&row);
         }
     }
-    refill(&list, &names, &hidden);
+    let visible_subtitle = ctx.t_or(
+        "titlebar.menu.remoteVisible",
+        "Visible in sidebar and overview",
+    );
+    refill(&list, &names, &hidden, &visible_subtitle);
     let save = gtk::Button::with_label(&ctx.t("common.save"));
     save.add_css_class("suggested-action");
     {

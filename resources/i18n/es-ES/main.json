@@ -77,6 +77,12 @@
     "nthWeekdayAt": "El {{nth}} {{day}} a las {{time}}",
     "inMonthsAt": "En {{months}} a las {{time}}",
     "inMonthsOnDayAt": "El día {{dom}} de {{months}} a las {{time}}",
+    "atTimes": "A las {{times}}",
+    "hourlyAtMinutes": "Cada hora en los minutos {{mins}}",
+    "everyHoursBetween": "Cada {{n}} horas entre {{start}} y {{end}}",
+    "everyMinutesAt": "Cada {{n}} minutos a las {{times}}",
+    "atMinutesBetween": "En los minutos {{mins}} entre {{start}} y {{end}}",
+    "atHours": "A las {{hours}}",
     "days": {
       "0": "domingo",
       "1": "lunes",
@@ -570,7 +576,8 @@
     "acknowledge": "Acknowledge",
     "addRule": "Add rule",
     "addAction": "Add action",
-    "templateKeys": "Insert template key"
+    "templateKeys": "Insert template key",
+    "statsLine": "{{total}} total · {{ack}} ack · {{open}} abiertos · {{delivered}} entregados · último {{last}}"
   },
   "settings": {
     "resetAll": {
@@ -851,7 +858,8 @@
       "add": "Add remote or quick run",
       "developer": "Developer",
       "trayActions": "Tray actions",
-      "memoryUnavailable": "Estadísticas de memoria no disponibles"
+      "memoryUnavailable": "Estadísticas de memoria no disponibles",
+      "remoteVisible": "Visible en la barra lateral y en la vista general"
     },
     "detach": "Detach the current workspace into a new window"
   },
@@ -2798,6 +2806,8 @@
       "copyPublicLink": "Copiar enlace público",
       "createFolderWithItems": "Nueva carpeta con selección...",
       "renameMultiple": "Renombrar varios...",
+      "star": "Destacar / Quitar",
+      "bookmark": "Marcador",
       "pathOptions": "Path options",
       "move": "Move",
       "openNative": "Open native",
@@ -2814,6 +2824,9 @@
       "showHidden": "Mostrar archivos ocultos",
       "toggleLayout": "Alternar diseño",
       "viewOptions": "Opciones de vista",
+      "star": "Destacar esta carpeta",
+      "starred": "Destacados",
+      "unstarred": "Quitado de Destacados",
       "smaller": "Smaller",
       "larger": "Larger"
     },
@@ -2846,7 +2859,8 @@
       "getPublicLinkStarted": "Generando enlace público...",
       "archiveCreateStarted": "Creación de archivo iniciada...",
       "sendToAdded": "Se agregó '{{remote}}{{path}}' al menú del administrador de archivos",
-      "sendToRemoved": "Se quitó '{{remote}}{{path}}' del menú del administrador de archivos"
+      "sendToRemoved": "Se quitó '{{remote}}{{path}}' del menú del administrador de archivos",
+      "locationNotAllowed": "Esa ubicación no está permitida para este selector"
     },
     "androidShare": {
       "uploadHere": "Subir {{count}} archivo(s) compartido(s) a esta carpeta",

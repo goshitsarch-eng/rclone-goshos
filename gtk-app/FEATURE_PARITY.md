@@ -506,5 +506,4 @@ This client is the GTK 4 + libadwaita desktop UI. It talks to a local `rclone rc
 ## Still deepening
 
 - Workflow builder (stub in both apps)
-- Remaining dialogs/Files English labels (core chrome now localized)
-- Pixel-level layouts and leftover English `t_or` fallbacks
+- Pixel-level layouts vs Angular CSS (non-blocking for functional parity)
