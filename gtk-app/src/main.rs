@@ -8,6 +8,7 @@ mod checks;
 mod command_options;
 mod connection;
 mod cron;
+mod dnd;
 mod fileops;
 mod flags;
 mod i18n;

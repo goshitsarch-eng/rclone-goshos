@@ -332,6 +332,68 @@ impl AppTab {
             Self::Serve => "network-server-symbolic",
         }
     }
+
+    pub fn includes_operation(self, op: OperationType) -> bool {
+        match self {
+            Self::General => true,
+            Self::Mount => op == OperationType::Mount,
+            Self::Serve => op == OperationType::Serve,
+            Self::Operations => !matches!(op, OperationType::Mount | OperationType::Serve),
+        }
+    }
+
+    pub fn default_operation(self) -> OperationType {
+        match self {
+            Self::Mount => OperationType::Mount,
+            Self::Serve => OperationType::Serve,
+            Self::Operations | Self::General => OperationType::Sync,
+        }
+    }
+
+    pub fn remote_is_active(self, mounted: bool, serving: bool, job_active: bool) -> bool {
+        match self {
+            Self::General => mounted || serving || job_active,
+            Self::Mount => mounted,
+            Self::Serve => serving,
+            Self::Operations => job_active,
+        }
+    }
+
+    pub fn active_section_fallback(self) -> &'static str {
+        match self {
+            Self::General => "Active",
+            Self::Mount => "Mounted",
+            Self::Operations => "Running",
+            Self::Serve => "Serving",
+        }
+    }
+
+    pub fn idle_section_fallback(self) -> &'static str {
+        match self {
+            Self::General => "Available",
+            Self::Mount => "Not mounted",
+            Self::Operations => "Idle",
+            Self::Serve => "Not serving",
+        }
+    }
+
+    pub fn active_section_key(self) -> &'static str {
+        match self {
+            Self::General => "generalOverview.active",
+            Self::Mount => "mountOverview.active",
+            Self::Operations => "operationsOverview.active",
+            Self::Serve => "serveOverview.active",
+        }
+    }
+
+    pub fn idle_section_key(self) -> &'static str {
+        match self {
+            Self::General => "generalOverview.inactive",
+            Self::Mount => "mountOverview.inactive",
+            Self::Operations => "operationsOverview.inactive",
+            Self::Serve => "serveOverview.inactive",
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -550,6 +612,14 @@ mod tests {
         assert_eq!(AppTab::parse("operations"), Some(AppTab::Operations));
         assert_eq!(AppTab::parse("serve"), Some(AppTab::Serve));
         assert_eq!(AppTab::parse("nope"), None);
+        assert!(AppTab::Mount.includes_operation(OperationType::Mount));
+        assert!(!AppTab::Mount.includes_operation(OperationType::Sync));
+        assert!(AppTab::Operations.includes_operation(OperationType::Bisync));
+        assert!(!AppTab::Operations.includes_operation(OperationType::Serve));
+        assert_eq!(AppTab::Serve.default_operation(), OperationType::Serve);
+        assert!(AppTab::Mount.remote_is_active(true, false, false));
+        assert!(!AppTab::Serve.remote_is_active(true, false, true));
+        assert!(AppTab::Operations.remote_is_active(false, false, true));
     }
 
     #[test]

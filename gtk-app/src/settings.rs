@@ -2,6 +2,7 @@
 
 use crate::operations::MainView;
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::path::PathBuf;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -121,6 +122,8 @@ pub struct RuntimeSettings {
     pub show_json_mode: bool,
     #[serde(default = "default_true")]
     pub flatpak_warn: bool,
+    #[serde(default)]
+    pub selected_sync_ops: HashMap<String, String>,
 }
 
 fn default_true() -> bool {
@@ -143,6 +146,7 @@ impl Default for RuntimeSettings {
             dashboard_card_variant: "compact".into(),
             show_json_mode: false,
             flatpak_warn: true,
+            selected_sync_ops: HashMap::new(),
         }
     }
 }
@@ -165,6 +169,10 @@ pub struct NautilusSettings {
     pub file_type_filter: String,
     #[serde(default)]
     pub split_enabled: bool,
+    #[serde(default)]
+    pub grid_icon_size: i32,
+    #[serde(default)]
+    pub split_divider_pos: i32,
 }
 
 impl NautilusSettings {
@@ -178,8 +186,23 @@ impl NautilusSettings {
         if self.icon_size == 0 {
             self.icon_size = 48;
         }
+        if self.grid_icon_size == 0 {
+            self.grid_icon_size = self.icon_size.max(48);
+        }
         self.sidebar_visible = true;
         self
+    }
+
+    pub fn list_icon_px(&self) -> i32 {
+        self.icon_size.max(32)
+    }
+
+    pub fn grid_icon_px(&self) -> i32 {
+        if self.grid_icon_size > 0 {
+            self.grid_icon_size
+        } else {
+            self.icon_size.max(48)
+        }
     }
 }
 
@@ -421,6 +444,9 @@ mod tests {
         assert!(loaded.nautilus.sidebar_drive_order.is_empty());
         assert!(loaded.nautilus.sidebar_hidden_drives.is_empty());
         assert!(loaded.nautilus.file_type_filter.is_empty());
+        assert!(loaded.runtime.selected_sync_ops.is_empty());
+        assert_eq!(loaded.nautilus.grid_icon_size, 0);
+        assert_eq!(loaded.nautilus.split_divider_pos, 0);
     }
 
     #[test]

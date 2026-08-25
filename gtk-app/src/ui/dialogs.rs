@@ -95,7 +95,7 @@ pub fn present_standalone(
                 Some(remote.clone())
             },
         ),
-        "export" => export_backup(&window, ctx.clone(), toast),
+        "export" => export_backup(&window, ctx.clone(), toast, None),
         "backend" => backends(&window, ctx.clone()),
         "rclone-flags" => rclone_flags(&window, ctx.clone()),
         "job-detail" => job_detail(&window, ctx.clone(), jobid),
@@ -3629,7 +3629,12 @@ pub fn quick_run_editor(
     dialog.present(Some(parent));
 }
 
-pub fn export_backup(parent: &impl IsA<gtk::Window>, ctx: AppCtx, toast: adw::ToastOverlay) {
+pub fn export_backup(
+    parent: &impl IsA<gtk::Window>,
+    ctx: AppCtx,
+    toast: adw::ToastOverlay,
+    remote: Option<&str>,
+) {
     let dialog = adw::Dialog::new();
     dialog.set_title(&ctx.t_or("modals.export.title", "Export backup"));
     dialog.set_content_width(480);
@@ -3656,6 +3661,12 @@ pub fn export_backup(parent: &impl IsA<gtk::Window>, ctx: AppCtx, toast: adw::To
     }
     let specific = adw::SwitchRow::new();
     specific.set_title(&ctx.t_or("modals.export.selectRemote", "Export only one remote"));
+    if let Some(name) = remote {
+        specific.set_active(true);
+        if let Some(idx) = remotes.iter().position(|r| r == name) {
+            remote_row.set_selected(idx as u32);
+        }
+    }
     let note = adw::EntryRow::new();
     note.set_title(&ctx.t_or("modals.export.noteLabel", "Note"));
     let password = adw::PasswordEntryRow::new();

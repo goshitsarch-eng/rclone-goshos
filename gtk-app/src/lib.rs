@@ -10,6 +10,7 @@ pub mod checks;
 pub mod command_options;
 pub mod connection;
 pub mod cron;
+pub mod dnd;
 pub mod fileops;
 pub mod flags;
 pub mod i18n;

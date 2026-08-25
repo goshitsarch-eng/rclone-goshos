@@ -236,6 +236,14 @@ This client is the GTK 4 + libadwaita rewrite of the Angular/Tauri desktop UI. I
 - Files archive dialog uses the current selection; Copy URL supports optional filename + `autoFilename`
 - Config password validate/encrypt/decrypt prefer RC (`config/validatepassword|encrypt|decrypt`) with CLI fallback
 - Multi-rename find/replace honors a case-sensitive toggle
+- Internal Files drag-and-drop: listings, folder rows, split pane, breadcrumbs, tabs, and sidebar (same-remote move, cross-remote copy, drop-to-star)
+- Files hover-open during drag (1s): folders, breadcrumbs, sidebar, tabs, and Starred
+- Dual-pane drops and hover-open navigate the secondary listing; split divider position is persisted
+- Separate list/grid Files icon sizes
+- Dashboard tabs group remotes into active vs available and filter remote-detail operations/profiles
+- Remote detail: mount/ops/serve status chips, disk-usage bar + retry, live transfers, per-remote automations
+- Operations tab remembers the last sync/copy/move/bisync choice per remote
+- Reset remote settings (keep the rclone remote), show-in-tray toggle, and export prefilled for that remote
 
 ## Still deepening toward pixel-level Angular parity
 
@@ -243,4 +251,4 @@ This client is the GTK 4 + libadwaita rewrite of the Angular/Tauri desktop UI. I
 - Live GUI session against rclone rcd (no display in this environment)
 - Native share portal / Android share intent (Linux uses `--share-intake` + Files banner)
 - Remaining dialogs/Files English labels
-- Internal Files drag-and-drop between folders/panes (copy/cut/paste works)
+- Detach Main Menu / Flow to standalone windows (Files tabs already detach)

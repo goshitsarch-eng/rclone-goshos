@@ -695,7 +695,7 @@ fn install_actions(
         let toast = toast.clone();
         add_action(
             "export",
-            Box::new(move || dialogs::export_backup(&window, ctx.clone(), toast.clone())),
+            Box::new(move || dialogs::export_backup(&window, ctx.clone(), toast.clone(), None)),
         );
     }
     {

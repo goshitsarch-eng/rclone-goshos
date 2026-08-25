@@ -833,6 +833,15 @@ impl AppStore {
         names
     }
 
+    pub fn reset_remote_settings(&mut self, name: &str) {
+        self.remotes.insert(name.to_string(), RemoteMeta::default());
+        let markers = [format!("remote:{name}:"), format!(":{name}:")];
+        self.automation_paused
+            .retain(|id| !markers.iter().any(|m| id.contains(m.as_str())));
+        self.automation_last_run
+            .retain(|id, _| !markers.iter().any(|m| id.contains(m.as_str())));
+    }
+
     pub fn apply_delete_remote(&mut self, name: &str) {
         self.remotes.remove(name);
         self.quick_runs.retain(|run| run.remote_name != name);
@@ -1362,6 +1371,16 @@ pub fn disk_label_from_about(about: &Value) -> String {
     )
 }
 
+pub fn disk_usage_ratio(about: &Value) -> Option<f64> {
+    let total = about.get("total").and_then(|x| x.as_i64()).unwrap_or(-1);
+    let used = about.get("used").and_then(|x| x.as_i64()).unwrap_or(-1);
+    if total > 0 && used >= 0 {
+        Some((used as f64 / total as f64).clamp(0.0, 1.0))
+    } else {
+        None
+    }
+}
+
 pub fn sort_entries(entries: &mut [DirEntry], sort_by: &str, desc: bool) {
     entries.sort_by(|a, b| {
         if a.is_dir != b.is_dir {
@@ -1446,6 +1465,38 @@ mod tests {
         assert!(store.toggle_automation_paused("remote:drive:sync:default"));
         assert!(store.is_automation_paused("remote:drive:sync:default"));
         assert!(!store.toggle_automation_paused("remote:drive:sync:default"));
+    }
+
+    #[test]
+    fn reset_remote_settings_keeps_remote_and_clears_profiles() {
+        let mut store = AppStore::default();
+        let mut meta = RemoteMeta::default();
+        meta.show_on_tray = true;
+        let mut profile = ProfileConfig::default();
+        profile.name = "nightly".into();
+        meta.upsert_profile(OperationType::Sync, profile);
+        store.remotes.insert("drive".into(), meta);
+        store.remote_order = vec!["drive".into()];
+        store
+            .automation_last_run
+            .insert("remote:drive:sync:nightly".into(), Utc::now());
+        store.reset_remote_settings("drive");
+        let reset = store.remotes.get("drive").expect("remote stays");
+        assert!(reset.profiles.is_empty());
+        assert!(!reset.show_on_tray);
+        assert_eq!(store.remote_order, ["drive"]);
+        assert!(store.automation_last_run.is_empty());
+    }
+
+    #[test]
+    fn disk_usage_ratio_from_about() {
+        assert_eq!(
+            disk_usage_ratio(&json!({"total": 100, "used": 25})),
+            Some(0.25)
+        );
+        assert_eq!(disk_usage_ratio(&json!({"total": 0, "used": 1})), None);
+        assert_eq!(disk_usage_ratio(&json!({})), None);
+        assert_eq!(disk_label_from_about(&json!({})), "Not supported");
     }
 
     #[test]
