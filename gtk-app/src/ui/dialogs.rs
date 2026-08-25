@@ -181,7 +181,7 @@ pub fn present_standalone(
         .application(app)
         .title(&req.kind)
         .default_width(780)
-        .default_height(640)
+        .default_height(720)
         .build();
     let toast = adw::ToastOverlay::new();
     window.set_content(Some(&toast));
@@ -4127,6 +4127,7 @@ pub fn quick_run_editor(
         ctx.t_or("flow.quickRun.editor.createTitle", "Create Quick Run")
     });
     dialog.set_content_width(520);
+    dialog.set_content_height(640);
     let group = adw::PreferencesGroup::new();
     let name = adw::EntryRow::new();
     name.set_title(&ctx.t_or("flow.quickRun.editor.name", "Name"));
@@ -4956,7 +4957,13 @@ pub fn quick_run_editor(
     box_.append(&flag_switcher);
     box_.append(&flag_stack);
     box_.append(&save);
-    dialog.set_child(Some(&box_));
+    let scroll = gtk::ScrolledWindow::new();
+    scroll.set_policy(gtk::PolicyType::Never, gtk::PolicyType::Automatic);
+    scroll.set_propagate_natural_height(true);
+    scroll.set_vexpand(true);
+    scroll.set_hexpand(true);
+    scroll.set_child(Some(&box_));
+    dialog.set_child(Some(&scroll));
     dialog.present(Some(parent));
 }
 
