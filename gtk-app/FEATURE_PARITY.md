@@ -371,6 +371,8 @@ This client is the GTK 4 + libadwaita rewrite of the Angular/Tauri desktop UI. I
 - Flow overview Edit layout hides/reorders `quick_run_layout` panels (same model as the dashboard)
 - Repair corrupt-config offers Restore Backup (import preview) or Choose rclone.conf
 - Quick Add lists only OAuth-capable providers (Angular `get_oauth_supported_remotes`)
+- Remote-config Re-authenticate runs the interactive / OAuth flow in-dialog (Angular `InteractiveConfigStep`)
+- OAuth helper shows a clickable authorization link with copy (Angular `modals.oauth.*`)
 
 ## Still deepening toward pixel-level Angular parity
 
