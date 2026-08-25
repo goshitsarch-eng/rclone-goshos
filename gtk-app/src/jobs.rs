@@ -1266,10 +1266,7 @@ mod tests {
             running_job(2, "drive", "copy/move", "default"),
         ];
         assert!(job_operation_matches("sync/copy", OperationType::Sync));
-        assert!(job_operation_matches(
-            "operations/copyfile",
-            OperationType::Copy
-        ));
+        assert!(job_operation_matches("rc/copy", OperationType::Copy));
         assert!(!job_operation_matches("job/1", OperationType::Sync));
         assert_eq!(
             find_active_job(&jobs, "drive", OperationType::Sync, "nightly").map(|j| j.id),
