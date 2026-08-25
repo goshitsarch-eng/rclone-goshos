@@ -488,6 +488,7 @@ pub struct AlertActionDraft {
     pub extra: String,
     pub body: String,
     pub retry_count: u32,
+    pub provider: String,
 }
 
 pub fn alert_action_config(kind: &str, draft: &AlertActionDraft) -> Value {
@@ -515,6 +516,11 @@ pub fn alert_action_config(kind: &str, draft: &AlertActionDraft) -> Value {
             "apikey": draft.token,
             "phone": draft.extra,
             "gateway_url": draft.url,
+            "provider": if draft.provider == "custom_gateway" {
+                "custom_gateway"
+            } else {
+                "callmebot"
+            },
             "body_template": body,
             "retry_count": retry,
         }),
@@ -540,6 +546,47 @@ pub fn alert_action_config(kind: &str, draft: &AlertActionDraft) -> Value {
             "retry_count": retry,
         }),
         _ => json!({ "body_template": body, "retry_count": retry }),
+    }
+}
+
+pub fn whatsapp_request_url(config: &Value, body: &str) -> Option<String> {
+    let phone = config
+        .get("phone")
+        .and_then(|x| x.as_str())
+        .filter(|s| !s.is_empty())?;
+    let key = config
+        .get("apikey")
+        .and_then(|x| x.as_str())
+        .unwrap_or_default();
+    let provider = config
+        .get("provider")
+        .and_then(|x| x.as_str())
+        .unwrap_or("callmebot");
+    let gateway = config
+        .get("gateway_url")
+        .and_then(|x| x.as_str())
+        .unwrap_or_default()
+        .trim();
+    if provider == "custom_gateway" {
+        if gateway.is_empty() {
+            return None;
+        }
+        Some(format!(
+            "{gateway}{sep}phone={}&text={}&apikey={}",
+            urlencoding::encode(phone),
+            urlencoding::encode(body),
+            urlencoding::encode(key),
+            sep = if gateway.contains('?') { "&" } else { "?" },
+        ))
+    } else if key.is_empty() {
+        None
+    } else {
+        Some(format!(
+            "https://api.callmebot.com/whatsapp.php?phone={}&text={}&apikey={}",
+            urlencoding::encode(phone),
+            urlencoding::encode(body),
+            urlencoding::encode(key)
+        ))
     }
 }
 
@@ -1095,18 +1142,9 @@ fn dispatch_action_once(action: &AlertAction, event: &AlertEvent) -> bool {
                 .is_ok()
         }
         "whatsapp" => {
-            let (Some(phone), Some(key)) = (
-                action.config.get("phone").and_then(|x| x.as_str()),
-                action.config.get("apikey").and_then(|x| x.as_str()),
-            ) else {
+            let Some(url) = whatsapp_request_url(&action.config, &body) else {
                 return false;
             };
-            let url = format!(
-                "https://api.callmebot.com/whatsapp.php?phone={}&text={}&apikey={}",
-                urlencoding::encode(phone),
-                urlencoding::encode(&body),
-                urlencoding::encode(key)
-            );
             ureq::get(&url).call().is_ok()
         }
         "script" => {
@@ -1720,6 +1758,7 @@ mod tests {
             extra: "123".into(),
             body: "{{title}}".into(),
             retry_count: 2,
+            provider: String::new(),
         };
         let webhook = alert_action_config("webhook", &draft);
         assert_eq!(webhook["url"], "https://hooks.example/x");
@@ -1740,6 +1779,28 @@ mod tests {
         );
         assert_eq!(email["smtp_port"], 465);
         assert_eq!(email["to"], "ops@example.com");
+        let wa = alert_action_config(
+            "whatsapp",
+            &AlertActionDraft {
+                url: "https://gw.example/wa".into(),
+                extra: "+1555".into(),
+                token: "key".into(),
+                provider: "custom_gateway".into(),
+                ..Default::default()
+            },
+        );
+        assert_eq!(wa["provider"], "custom_gateway");
+        let url = whatsapp_request_url(&wa, "hi").unwrap();
+        assert!(url.starts_with("https://gw.example/wa?"));
+        assert!(url.contains("phone=%2B1555"));
+        assert!(
+            whatsapp_request_url(&json!({"phone":"+1","apikey":"k"}), "x")
+                .unwrap()
+                .contains("callmebot.com")
+        );
+        assert!(
+            whatsapp_request_url(&json!({"phone":"+1","provider":"custom_gateway"}), "x").is_none()
+        );
     }
 
     #[test]

@@ -244,6 +244,8 @@ This client is the GTK 4 + libadwaita rewrite of the Angular/Tauri desktop UI. I
 - Remote detail: mount/ops/serve status chips, disk-usage bar + retry, live transfers, per-remote automations
 - Operations tab remembers the last sync/copy/move/bisync choice per remote
 - Reset remote settings (keep the rclone remote), show-in-tray toggle, and export prefilled for that remote
+- Detach Main Menu / Flow / Files into a standalone window (Ctrl+Shift+D, titlebar button)
+- WhatsApp alerts: CallMeBot vs custom gateway provider, matching Angular dispatch
 
 ## Still deepening toward pixel-level Angular parity
 
@@ -251,4 +253,4 @@ This client is the GTK 4 + libadwaita rewrite of the Angular/Tauri desktop UI. I
 - Live GUI session against rclone rcd (no display in this environment)
 - Native share portal / Android share intent (Linux uses `--share-intake` + Files banner)
 - Remaining dialogs/Files English labels
-- Detach Main Menu / Flow to standalone windows (Files tabs already detach)
+- Localized cronstrue-quality cron descriptions

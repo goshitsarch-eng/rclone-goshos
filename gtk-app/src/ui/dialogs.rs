@@ -6977,6 +6977,20 @@ fn alert_action_editor(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, existing_id:
     token.set_title("Token");
     let extra = adw::EntryRow::new();
     extra.set_title("Extra");
+    let wa_provider = adw::ComboRow::new();
+    wa_provider.set_title(&ctx.t_or("alerts.action.whatsappProvider", "WhatsApp provider"));
+    wa_provider.set_model(Some(&gtk::StringList::new(&[
+        "CallMeBot",
+        "Custom gateway",
+    ])));
+    if existing
+        .as_ref()
+        .and_then(|a| a.config.get("provider"))
+        .and_then(|x| x.as_str())
+        == Some("custom_gateway")
+    {
+        wa_provider.set_selected(1);
+    }
     let body = adw::EntryRow::new();
     body.set_title("Body template");
     if let Some(action) = &existing {
@@ -7050,6 +7064,7 @@ fn alert_action_editor(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, existing_id:
         let extra = extra.clone();
         let body = body.clone();
         let retries = retries.clone();
+        let wa_provider = wa_provider.clone();
         let existing_id = existing_id.clone();
         let ctx = ctx.clone();
         move || {
@@ -7080,6 +7095,11 @@ fn alert_action_editor(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, existing_id:
                     extra: extra.text().to_string(),
                     body: body.text().to_string(),
                     retry_count: retries.value() as u32,
+                    provider: if wa_provider.selected() == 1 {
+                        "custom_gateway".into()
+                    } else {
+                        "callmebot".into()
+                    },
                 },
             );
             action
@@ -7152,8 +7172,10 @@ fn alert_action_editor(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, existing_id:
         let token = token.clone();
         let extra = extra.clone();
         let body = body.clone();
+        let wa_provider = wa_provider.clone();
         move |selected: &str| match selected {
             "os_toast" => {
+                wa_provider.set_visible(false);
                 url.set_visible(false);
                 method.set_visible(false);
                 token.set_visible(false);
@@ -7162,6 +7184,7 @@ fn alert_action_editor(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, existing_id:
                 body.set_title("Toast body template");
             }
             "webhook" => {
+                wa_provider.set_visible(false);
                 url.set_visible(true);
                 url.set_title("Webhook URL");
                 method.set_visible(true);
@@ -7172,6 +7195,7 @@ fn alert_action_editor(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, existing_id:
                 body.set_title("JSON / body template");
             }
             "telegram" => {
+                wa_provider.set_visible(false);
                 url.set_visible(false);
                 method.set_visible(false);
                 token.set_visible(true);
@@ -7182,10 +7206,12 @@ fn alert_action_editor(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, existing_id:
                 body.set_title("Message template");
             }
             "whatsapp" => {
-                url.set_visible(true);
-                url.set_title("Gateway URL (optional)");
+                wa_provider.set_visible(true);
+                let custom = wa_provider.selected() == 1;
+                url.set_visible(custom);
+                url.set_title("Gateway URL");
                 method.set_visible(false);
-                token.set_visible(true);
+                token.set_visible(!custom);
                 token.set_title("API key");
                 extra.set_visible(true);
                 extra.set_title("Phone number");
@@ -7193,6 +7219,7 @@ fn alert_action_editor(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, existing_id:
                 body.set_title("Message template");
             }
             "script" => {
+                wa_provider.set_visible(false);
                 url.set_visible(false);
                 method.set_visible(false);
                 token.set_visible(false);
@@ -7202,6 +7229,7 @@ fn alert_action_editor(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, existing_id:
                 body.set_title("Stdin template");
             }
             "email" => {
+                wa_provider.set_visible(false);
                 url.set_visible(true);
                 url.set_title("SMTP host");
                 method.set_visible(true);
@@ -7214,6 +7242,7 @@ fn alert_action_editor(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, existing_id:
                 body.set_title("Body template");
             }
             "mqtt" => {
+                wa_provider.set_visible(false);
                 url.set_visible(true);
                 url.set_title("Broker URL");
                 method.set_visible(true);
@@ -7242,10 +7271,22 @@ fn alert_action_editor(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, existing_id:
             sync_fields(selected);
         });
     }
+    {
+        let sync_fields = sync_fields.clone();
+        let kind = kind.clone();
+        wa_provider.connect_selected_notify(move |_| {
+            let selected = ACTION_KINDS
+                .get(kind.selected() as usize)
+                .copied()
+                .unwrap_or("os_toast");
+            sync_fields(selected);
+        });
+    }
     let group = adw::PreferencesGroup::new();
     group.add(&name);
     group.add(&enabled);
     group.add(&kind);
+    group.add(&wa_provider);
     group.add(&url);
     group.add(&method);
     group.add(&token);

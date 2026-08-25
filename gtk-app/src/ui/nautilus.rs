@@ -2996,7 +2996,7 @@ impl NautilusView {
         self.reload();
     }
 
-    fn detach_current_tab(&self) {
+    pub fn detach_current_tab(&self) {
         let Some(win) = self.root.root().and_downcast::<gtk::Window>() else {
             return;
         };

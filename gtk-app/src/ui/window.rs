@@ -166,6 +166,15 @@ pub fn present_main(app: &adw::Application, ctx: AppCtx) {
     menu_btn.set_menu_model(Some(&app_menu(&ctx)));
     header.pack_end(&menu_btn);
 
+    let detach_btn = gtk::Button::from_icon_name("window-new-symbolic");
+    detach_btn.add_css_class("flat");
+    detach_btn.set_tooltip_text(Some(&ctx.t_or(
+        "titlebar.detach",
+        "Detach the current workspace into a new window",
+    )));
+    detach_btn.set_action_name(Some("win.detach-workspace"));
+    header.pack_end(&detach_btn);
+
     let notice_btn = gtk::Button::from_icon_name("dialog-warning-symbolic");
     notice_btn.add_css_class("flat");
     notice_btn.set_visible(false);
@@ -494,6 +503,10 @@ fn app_menu(ctx: &AppCtx) -> gio::Menu {
     views.append(
         Some(&ctx.t_or("titlebar.menu.flowWorkspace", "Flow")),
         Some("win.view::flow"),
+    );
+    views.append(
+        Some(&ctx.t_or("titlebar.detach", "Detach workspace")),
+        Some("win.detach-workspace"),
     );
     menu.append_section(None, &views);
 
@@ -944,7 +957,22 @@ fn install_actions(
         );
     }
 
-    let _ = (nautilus, banner);
+    {
+        let app = app.clone();
+        let ctx = ctx.clone();
+        let stack = view_stack.clone();
+        let nautilus = nautilus.clone();
+        add_action(
+            "detach-workspace",
+            Box::new(move || match stack.visible_child_name().as_deref() {
+                Some("nautilus") => nautilus.detach_current_tab(),
+                Some("flow") => open_workspace_window(&app, &ctx, MainView::Flow),
+                _ => open_workspace_window(&app, &ctx, MainView::MainMenu),
+            }),
+        );
+    }
+
+    let _ = banner;
 }
 
 fn install_shortcuts(window: &adw::ApplicationWindow) {
@@ -968,7 +996,46 @@ fn install_shortcuts(window: &adw::ApplicationWindow) {
     add("<Control><Shift>question", "win.shortcuts");
     add("<Control><Shift>m", "win.refresh-mounts");
     add("<Control><Shift>s", "win.refresh-serves");
+    add("<Control><Shift>d", "win.detach-workspace");
     window.add_controller(controller);
+}
+
+fn open_workspace_window(app: &adw::Application, ctx: &AppCtx, view: MainView) {
+    let toast = adw::ToastOverlay::new();
+    let toolbar = adw::ToolbarView::new();
+    let header = adw::HeaderBar::new();
+    let title = match view {
+        MainView::Flow => ctx.t_or("titlebar.menu.flowWorkspace", "Flow"),
+        MainView::Nautilus => ctx.t_or("nautilus.titles.files", "Files"),
+        MainView::MainMenu => ctx.t_or(
+            "settings.general.default_view.options.main_menu",
+            "Main Menu",
+        ),
+    };
+    match view {
+        MainView::Flow => {
+            let flow = FlowView::new(ctx.clone(), toast.clone());
+            toast.set_child(Some(&flow.root));
+            flow.refresh();
+        }
+        MainView::Nautilus => {
+            let files = NautilusView::new(ctx.clone(), toast.clone());
+            toast.set_child(Some(&files.root));
+        }
+        MainView::MainMenu => {
+            let dash = Dashboard::new(ctx.clone(), toast.clone());
+            toast.set_child(Some(&dash.root));
+            dash.refresh();
+        }
+    }
+    toolbar.add_top_bar(&header);
+    toolbar.set_content(Some(&toast));
+    let window = adw::ApplicationWindow::new(app);
+    window.set_title(Some(&title));
+    window.set_default_width(1100);
+    window.set_default_height(760);
+    window.set_content(Some(&toolbar));
+    window.present();
 }
 
 fn apply_nav(
