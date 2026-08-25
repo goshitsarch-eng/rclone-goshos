@@ -586,11 +586,9 @@ fn apply_existing_meta(
     op_flags: &Rc<RefCell<Vec<(OperationType, adw::SwitchRow, adw::EntryRow, adw::EntryRow)>>>,
 ) {
     tray.set_active(meta.show_on_tray);
-    if let Some((_, dest)) = profile_src_dst(meta, OperationType::Mount) {
-        if let Some(dest) = dest {
-            if !dest.is_empty() {
-                mount.set_text(&dest);
-            }
+    if let Some(dest) = profile_src_dst(meta, OperationType::Mount).1 {
+        if !dest.is_empty() {
+            mount.set_text(&dest);
         }
     }
     for op in [

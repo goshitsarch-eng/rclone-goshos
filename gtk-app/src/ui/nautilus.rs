@@ -179,7 +179,8 @@ impl NautilusView {
         let right_scroll = gtk::ScrolledWindow::new();
         right_scroll.set_vexpand(true);
         right_scroll.set_child(Some(&right_stack));
-        right_scroll.set_visible(ctx.settings.borrow().nautilus.split_enabled);
+        let split_on = ctx.settings.borrow().nautilus.split_enabled;
+        right_scroll.set_visible(split_on);
         let paned = gtk::Paned::new(gtk::Orientation::Horizontal);
         paned.set_start_child(Some(&files_scroll));
         paned.set_end_child(Some(&right_scroll));
@@ -277,7 +278,7 @@ impl NautilusView {
             redo: Rc::new(RefCell::new(vec![])),
             tab_bar,
             next_tab_id: Rc::new(RefCell::new(2)),
-            split_enabled: Rc::new(RefCell::new(ctx.settings.borrow().nautilus.split_enabled)),
+            split_enabled: Rc::new(RefCell::new(split_on)),
             paned,
             right_scroll,
             ops,
