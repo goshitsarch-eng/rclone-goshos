@@ -29,6 +29,7 @@ pub struct Dashboard {
     panel_host: Rc<RefCell<Option<gtk::Box>>>,
     detail_host: Rc<RefCell<Option<gtk::Box>>>,
     detail_page: Rc<RefCell<String>>,
+    detail_sig: Rc<RefCell<String>>,
 }
 
 impl Dashboard {
@@ -118,6 +119,7 @@ impl Dashboard {
             panel_host: Rc::new(RefCell::new(None)),
             detail_host: Rc::new(RefCell::new(None)),
             detail_page: Rc::new(RefCell::new("monitoring".into())),
+            detail_sig: Rc::new(RefCell::new(String::new())),
         };
 
         let mut group_anchor: Option<gtk::ToggleButton> = None;
@@ -200,6 +202,7 @@ impl Dashboard {
     }
 
     pub fn navigate(&self, tab: AppTab, remote: Option<&str>) {
+        self.detail_sig.borrow_mut().clear();
         *self.ctx.selected_remote.borrow_mut() =
             remote.filter(|s| !s.is_empty()).map(|s| s.to_string());
         *self.tab.borrow_mut() = tab;
@@ -215,14 +218,52 @@ impl Dashboard {
     }
 
     pub fn refresh(&self) {
+        self.detail_sig.borrow_mut().clear();
+        self.refresh_inner();
+    }
+
+    pub fn poll_refresh(&self) {
+        self.refresh_inner();
+    }
+
+    fn refresh_inner(&self) {
         self.fill_sidebar();
-        if self.ctx.selected_remote.borrow().is_some() {
+        if let Some(name) = self.ctx.selected_remote.borrow().clone() {
             self.content.set_visible_child_name("detail");
-            self.fill_detail();
+            if self.should_rebuild_detail(&name) {
+                self.fill_detail();
+            }
         } else {
+            self.detail_sig.borrow_mut().clear();
             self.content.set_visible_child_name("overview");
             self.fill_overview();
         }
+    }
+
+    fn should_rebuild_detail(&self, name: &str) -> bool {
+        let tab = *self.tab.borrow();
+        let snap = self.ctx.snapshot.borrow();
+        let jobs: String = snap
+            .jobs
+            .iter()
+            .filter(|job| job.remote == name)
+            .map(|job| format!("{}:{}:{:.2}", job.id, job.status, job.progress))
+            .collect::<Vec<_>>()
+            .join(",");
+        let sig = format!(
+            "{name}:{:?}:{jobs}:m{}:s{}:{}",
+            tab,
+            snap.mounts.len(),
+            snap.serves.len(),
+            self.detail_page.borrow().as_str(),
+        );
+        drop(snap);
+        let mut prev = self.detail_sig.borrow_mut();
+        if *prev == sig {
+            return false;
+        }
+        *prev = sig;
+        true
     }
 
     fn fill_sidebar(&self) {

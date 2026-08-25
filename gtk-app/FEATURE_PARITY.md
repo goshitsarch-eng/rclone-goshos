@@ -421,6 +421,7 @@ This client is the GTK 4 + libadwaita rewrite of the Angular/Tauri desktop UI. I
 - Dashboard remote overflow menu uses `home.options.*` (Show in Tray, View Logs, Clone, Export, Reset, Delete)
 - Flow Quick Run Monitoring/Configuration tab selection survives runtime refresh
 - Remaining dialog OK buttons use `common.ok`
+- Dashboard poll no longer rebuilds remote detail unless jobs, mounts, serves, tab, or remote change, so Monitoring/Configuration and the overflow menu stay clickable
 
 ## Still deepening toward pixel-level Angular parity
 
