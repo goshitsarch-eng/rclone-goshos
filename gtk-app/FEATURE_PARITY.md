@@ -746,3 +746,6 @@ This client is the GTK 4 + libadwaita desktop UI. It talks to a local `rclone rc
 - Live GUI: `--about rclone` opens the About Rclone tab (`v1.60.1-DEV · Beta`, Go, PID, Memory, Cache)
 - Live GUI: testdrive folder ⋮ / right-click shows Open, Remove empty folders, Copy Path (no Open native / Share)
 - Live GUI: testdrive `a.txt` menu shows Open, Open native, Share, Copy Path, Copy/Cut, Rename, Compress, Delete
+- Create wizard uses Angular’s 16-step sidebar (Remote + 11 operations + filter / VFS / backend / runtime) with Back / Next / Create
+- Quick Add stays two steps (Remote + Operations) with Back from the operations page
+- Sidebar steps stay locked until the remote name is valid; interactive OAuth hides the sidebar
