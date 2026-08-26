@@ -804,3 +804,6 @@ This client is the GTK 4 + libadwaita desktop UI. It talks to a local `rclone rc
 - Delete hides destination; live job src/dst win over configured paths; mount usage only while mounted
 - Live GUI: Flow `gui-qr-copy` Monitoring expander shows Source `testdrive:Photos`, Destination `testdrive:verify-qr`, Dry run, Start Copy; collapse reveals header Start/Stop
 - Live GUI: testdrive Operations Copy expanders `gui-copy-test` / `gui-copy-nightly` still show Source/Destination, Dry run, and Start Copy
+- Operation-control serve paths match Angular: `TYPE at addr` (or Default), destination is display-only, empty source is Not configured; SAF mounts use `saf://remote`
+- Live GUI: testdrive Serve expander shows Serving **Not configured**, Accessible via **HTTP at Default**, Start Serve (no folder-open on dest)
+- Live GUI: guilocal Serve expander shows Serving `guilocal:`, Accessible via **HTTP at Default**
