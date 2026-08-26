@@ -541,6 +541,11 @@ This client is the GTK 4 + libadwaita desktop UI. It talks to a local `rclone rc
 - StatusNotifier tray registers `org.kde.StatusNotifierItem-<pid>-1` on the session bus when tray is enabled
 - Language change rebuilds the main window chrome (and reopens Preferences) so titles, menus, and workspace labels switch immediately
 - Files list/grid rows have a ⋮ menu button that opens the same context menu as right-click / Shift+F10
+- Live GUI: language switch English ↔ Türkçe rebuilds chrome (Dosyalar / Tercihler)
+- Live GUI: file viewer opens testdrive Photos/README.txt
+- Live GUI: testdrive Unmount + remount (`Unmounted /home/ubuntu/rclone-manager/testdrive` / `Successfully started Mount`)
+- Live GUI: testdrive Show in Tray ON
+- Live GUI: Flow New Quick Run editor opens
 - Unmount matches alias remotes and `…/{remote}` mount points (not only `remote:` RC fs names)
 - Mount/unmount fall back to `fusermount3 -u` for leftover FUSE from a previous rcd
 
