@@ -1,6 +1,5 @@
 //! Cron + filesystem-watch automations built from saved profiles and quick runs.
 
-use crate::jobs::start_profile;
 use crate::operations::OperationType;
 use crate::rclone::RcClient;
 use crate::store::{AppStore, ProfileConfig, QuickRun};
@@ -24,8 +23,15 @@ pub struct AutomationRecord {
     pub watch_delay: u64,
     pub watch_changed_only: bool,
     pub sources: Vec<String>,
+    pub destinations: Vec<String>,
     pub next_run: Option<DateTime<Utc>>,
     pub last_run: Option<DateTime<Utc>>,
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct WatchPending {
+    pub last_change: Option<std::time::Instant>,
+    pub paths: std::collections::HashSet<String>,
 }
 
 pub fn local_watch_sources(store: &AppStore) -> Vec<String> {
@@ -86,15 +92,16 @@ fn record_from_profile(
     cfg: &ProfileConfig,
     last_run: Option<DateTime<Utc>>,
 ) -> AutomationRecord {
-    let (src, _) = crate::store::quick_run_paths(&cfg.rclone, operation);
-    let sources = src
-        .map(|s| {
-            s.split(", ")
-                .filter(|p| !p.is_empty())
-                .map(|p| p.to_string())
-                .collect()
-        })
-        .unwrap_or_default();
+    let (src, dst) = crate::store::quick_run_paths(&cfg.rclone, operation);
+    let mut sources = split_paths(src);
+    let destinations = split_paths(dst);
+    if operation == OperationType::Bisync {
+        for path in &destinations {
+            if is_local_watch_path(path) && !sources.iter().any(|s| s == path) {
+                sources.push(path.clone());
+            }
+        }
+    }
     AutomationRecord {
         next_run: if cfg.app.cron_enabled {
             next_cron_run(&cfg.app.cron_expression, Utc::now())
@@ -113,7 +120,19 @@ fn record_from_profile(
         watch_delay: cfg.app.watch_delay,
         watch_changed_only: cfg.app.watch_changed_only,
         sources,
+        destinations,
     }
+}
+
+fn split_paths(joined: Option<String>) -> Vec<String> {
+    joined
+        .map(|s| {
+            s.split(", ")
+                .filter(|p| !p.is_empty())
+                .map(|p| p.to_string())
+                .collect()
+        })
+        .unwrap_or_default()
 }
 
 fn record_from_quick(qr: &QuickRun, last_run: Option<DateTime<Utc>>) -> AutomationRecord {
@@ -204,11 +223,106 @@ pub fn watch_triggered(
     triggered
 }
 
+pub fn note_watch_change(
+    pending: &mut WatchPending,
+    paths: impl IntoIterator<Item = String>,
+) -> bool {
+    let mut any = false;
+    for path in paths {
+        if path.is_empty() {
+            continue;
+        }
+        pending.paths.insert(path);
+        any = true;
+    }
+    if any {
+        pending.last_change = Some(std::time::Instant::now());
+    }
+    any
+}
+
+pub fn watch_ready(pending: &WatchPending, delay_secs: u64, now: std::time::Instant) -> bool {
+    let Some(last) = pending.last_change else {
+        return false;
+    };
+    !pending.paths.is_empty()
+        && now.duration_since(last) >= std::time::Duration::from_secs(delay_secs)
+}
+
+/// Join a rclone remote or local root with a relative subdirectory.
+pub fn build_full_path(root: &str, rel: &str) -> String {
+    let clean = rel.trim_start_matches('/');
+    if clean.is_empty() {
+        return root.to_string();
+    }
+    if root.ends_with(':') {
+        let is_drive_letter =
+            root.len() == 2 && root.starts_with(|c: char| c.is_ascii_alphabetic());
+        if is_drive_letter {
+            format!("{root}/{clean}")
+        } else {
+            format!("{root}{clean}")
+        }
+    } else {
+        format!("{}/{clean}", root.trim_end_matches('/'))
+    }
+}
+
+/// Map changed local paths to `(src, dst)` pairs (Tauri `compute_scoped_targets`).
+pub fn compute_scoped_targets(
+    src_paths: &[String],
+    dst_paths: &[String],
+    changed_paths: &std::collections::HashSet<String>,
+) -> Vec<(String, String)> {
+    if changed_paths.is_empty() || src_paths.is_empty() {
+        return Vec::new();
+    }
+    let default_dst = dst_paths.first().cloned().unwrap_or_default();
+    let mut scoped_pairs = std::collections::HashSet::new();
+    for changed in changed_paths {
+        let changed_path = Path::new(changed);
+        let Some((idx, src_root)) = src_paths
+            .iter()
+            .enumerate()
+            .find(|(_, src)| changed_path.starts_with(src.as_str()) || changed == *src)
+        else {
+            continue;
+        };
+        let src_root_path = Path::new(src_root);
+        let rel_path = changed_path
+            .strip_prefix(src_root_path)
+            .unwrap_or(Path::new(""));
+        let rel_dir = if changed_path.is_dir() || changed.ends_with('/') {
+            rel_path.to_string_lossy().into_owned()
+        } else {
+            rel_path
+                .parent()
+                .map(|p| p.to_string_lossy().into_owned())
+                .unwrap_or_default()
+        };
+        let rel_dir = rel_dir.replace('\\', "/").trim_matches('/').to_string();
+        let target_dst_root = dst_paths.get(idx).unwrap_or(&default_dst);
+        let (scoped_src, scoped_dst) = if rel_dir.is_empty() {
+            (src_root.clone(), target_dst_root.clone())
+        } else {
+            (
+                build_full_path(src_root, &rel_dir),
+                build_full_path(target_dst_root, &rel_dir),
+            )
+        };
+        scoped_pairs.insert((scoped_src, scoped_dst));
+    }
+    let mut result: Vec<(String, String)> = scoped_pairs.into_iter().collect();
+    result.sort();
+    result
+}
+
 pub fn fire(
     client: &RcClient,
     store: &mut AppStore,
     record: &AutomationRecord,
     now: DateTime<Utc>,
+    scoped: Option<&[(String, String)]>,
 ) -> Result<String, String> {
     let profile = if let Some(qr_id) = record.id.strip_prefix("quick:") {
         store
@@ -227,13 +341,14 @@ pub fn fire(
             .ok_or_else(|| "profile missing".to_string())?
     };
     let meta = store.remotes.get(&record.remote).cloned();
-    let result = start_profile(
+    let result = crate::jobs::start_profile_ex(
         client,
         &record.remote,
         record.operation,
         &profile,
         meta.as_ref(),
         "automation",
+        scoped,
     )?;
     crate::jobs::remember_started(
         &mut store.job_meta,
@@ -327,5 +442,49 @@ mod tests {
         seen.insert(path.clone(), 1);
         std::fs::write(dir.path().join("child.txt"), "changed").unwrap();
         assert!(watch_triggered(&[path], &mut seen, true));
+    }
+
+    #[test]
+    fn scoped_targets_map_child_file_to_parent_dir() {
+        let src = vec!["/tmp/docs".into()];
+        let dst = vec!["testdrive:out".into()];
+        let mut changed = std::collections::HashSet::new();
+        changed.insert("/tmp/docs/Photos/IMG.jpg".into());
+        assert_eq!(
+            compute_scoped_targets(&src, &dst, &changed),
+            vec![("/tmp/docs/Photos".into(), "testdrive:out/Photos".into())]
+        );
+    }
+
+    #[test]
+    fn scoped_targets_ignore_unrelated_paths() {
+        let src = vec!["/tmp/docs".into()];
+        let dst = vec!["testdrive:out".into()];
+        let mut changed = std::collections::HashSet::new();
+        changed.insert("/tmp/other/file.txt".into());
+        assert!(compute_scoped_targets(&src, &dst, &changed).is_empty());
+    }
+
+    #[test]
+    fn watch_ready_respects_debounce_delay() {
+        let mut pending = WatchPending::default();
+        assert!(!watch_ready(&pending, 0, std::time::Instant::now()));
+        note_watch_change(&mut pending, ["/tmp/docs/a.txt".into()]);
+        assert!(watch_ready(&pending, 0, std::time::Instant::now()));
+        pending.last_change = Some(std::time::Instant::now());
+        assert!(!watch_ready(&pending, 5, std::time::Instant::now()));
+        pending.last_change = Some(std::time::Instant::now() - std::time::Duration::from_secs(6));
+        assert!(watch_ready(&pending, 5, std::time::Instant::now()));
+    }
+
+    #[test]
+    fn build_full_path_joins_remote_and_local() {
+        assert_eq!(build_full_path("testdrive:", "Photos"), "testdrive:Photos");
+        assert_eq!(
+            build_full_path("testdrive:out", "Photos"),
+            "testdrive:out/Photos"
+        );
+        assert_eq!(build_full_path("/tmp/docs", "Photos"), "/tmp/docs/Photos");
+        assert_eq!(build_full_path("C:", "Users"), "C:/Users");
     }
 }

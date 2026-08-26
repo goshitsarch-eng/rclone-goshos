@@ -574,3 +574,6 @@ This client is the GTK 4 + libadwaita desktop UI. It talks to a local `rclone rc
 - Live GUI: Files testdrive toolbar **Add to File Manager Menu** writes Nautilus/KIO/Nemo send-to entries; **Remove** deletes them
 - Send-to toasts use `nautilus.notifications.sendToAdded` / `sendToRemoved` (with `tf_or` English fallback)
 - Live GUI: Send-to toast reads `Added 'testdrive' to File Manager menu`
+- Watch automations debounce from the last change (`watch_delay`) and pass scoped `(src, dst)` pairs when “changed only” is on
+- Sync / Bisync / Check start rejects file sources with the same directory-only error as Tauri
+- Files row ⋮ opens the full listing context menu (Share, Send-to, archive, star) instead of the short Selection actions list

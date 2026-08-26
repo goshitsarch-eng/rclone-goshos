@@ -564,6 +564,7 @@ impl FlowView {
                                             &mut store,
                                             &record,
                                             chrono::Utc::now(),
+                                            None,
                                         ) {
                                             Ok(_) => toast.add_toast(adw::Toast::new(&ctx.tf(
                                                 "notification.title.jobStarted",

@@ -61,12 +61,20 @@ impl WatchHub {
 
 /// True when any watched source is the dirty path or an ancestor/descendant of it.
 pub fn dirty_matches(sources: &[String], dirty: &HashSet<String>) -> bool {
-    sources.iter().any(|src| {
-        if src.is_empty() {
-            return false;
-        }
-        dirty.iter().any(|path| paths_overlap(src, path))
-    })
+    !dirty_for_sources(sources, dirty).is_empty()
+}
+
+/// Dirty paths that overlap any automation source (used for scoped watch jobs).
+pub fn dirty_for_sources(sources: &[String], dirty: &HashSet<String>) -> HashSet<String> {
+    dirty
+        .iter()
+        .filter(|path| {
+            sources
+                .iter()
+                .any(|src| !src.is_empty() && paths_overlap(src, path))
+        })
+        .cloned()
+        .collect()
 }
 
 pub fn paths_overlap(a: &str, b: &str) -> bool {
@@ -98,5 +106,8 @@ mod tests {
         assert!(dirty_matches(&["/home/me/Photos".into()], &dirty));
         assert!(!dirty_matches(&["drive:Photos".into()], &dirty));
         assert!(!dirty_matches(&["".into()], &dirty));
+        let scoped = dirty_for_sources(&["/home/me/Photos".into()], &dirty);
+        assert_eq!(scoped.len(), 1);
+        assert!(scoped.contains("/home/me/Photos/IMG_1.jpg"));
     }
 }

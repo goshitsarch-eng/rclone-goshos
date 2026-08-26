@@ -555,6 +555,7 @@ mod tests {
             watch_delay: 0,
             watch_changed_only: false,
             sources: vec![],
+            destinations: vec![],
             next_run: None,
             last_run: None,
         };

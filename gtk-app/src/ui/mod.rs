@@ -44,6 +44,7 @@ pub struct AppCtx {
     pub shutdown_prompt_open: Rc<Cell<bool>>,
     pub inhibitor: Rc<RefCell<PowerInhibitor>>,
     pub watch_mtimes: Rc<RefCell<HashMap<String, u64>>>,
+    pub pending_watch: Rc<RefCell<HashMap<String, crate::automation::WatchPending>>>,
     pub watch_hub: Rc<RefCell<crate::watch::WatchHub>>,
     pub fsinfo_cache: Rc<RefCell<HashMap<String, crate::rclone::FsInfo>>>,
     pub pending_picker: Rc<RefCell<Option<crate::picker::PickerRequest>>>,
@@ -91,6 +92,7 @@ impl AppCtx {
             shutdown_prompt_open: Rc::new(Cell::new(false)),
             inhibitor: Rc::new(RefCell::new(PowerInhibitor::new())),
             watch_mtimes: Rc::new(RefCell::new(HashMap::new())),
+            pending_watch: Rc::new(RefCell::new(HashMap::new())),
             watch_hub: Rc::new(RefCell::new(crate::watch::WatchHub::new())),
             fsinfo_cache: Rc::new(RefCell::new(HashMap::new())),
             pending_picker: Rc::new(RefCell::new(None)),
@@ -921,32 +923,57 @@ impl AppCtx {
         let records = crate::automation::collect(&self.store.borrow());
         let dirty = self.watch_hub.borrow().consume_dirty();
         let now = chrono::Utc::now();
+        let tick_now = std::time::Instant::now();
         let mut fired = false;
         let mut mtimes = self.watch_mtimes.borrow_mut();
+        let mut pending_watch = self.pending_watch.borrow_mut();
         for record in records {
             if self.store.borrow().is_automation_paused(&record.id) {
                 continue;
             }
             let due_cron = record.cron_enabled
                 && crate::automation::cron_is_due(&record.cron, record.last_run, now);
-            let mut due_watch = record.watch_enabled
-                && (crate::automation::watch_triggered(
+            if record.watch_enabled {
+                let matching = crate::watch::dirty_for_sources(&record.sources, &dirty);
+                let mtime_hit = crate::automation::watch_triggered(
                     &record.sources,
                     &mut mtimes,
                     record.watch_changed_only,
-                ) || crate::watch::dirty_matches(&record.sources, &dirty));
-            if due_watch {
-                if let Some(last) = record.last_run {
-                    if record.watch_delay > 0
-                        && (now - last).num_seconds() < record.watch_delay as i64
-                    {
-                        due_watch = false;
-                    }
+                );
+                if !matching.is_empty() || mtime_hit {
+                    let paths = if matching.is_empty() {
+                        record.sources.clone()
+                    } else {
+                        matching.into_iter().collect()
+                    };
+                    crate::automation::note_watch_change(
+                        pending_watch.entry(record.id.clone()).or_default(),
+                        paths,
+                    );
                 }
             }
+            let due_watch = record.watch_enabled
+                && pending_watch.get(&record.id).is_some_and(|pending| {
+                    crate::automation::watch_ready(pending, record.watch_delay, tick_now)
+                });
             if due_cron || due_watch {
+                let scoped = if due_watch
+                    && record.watch_changed_only
+                    && record.operation != crate::operations::OperationType::Bisync
+                {
+                    pending_watch.get(&record.id).map(|pending| {
+                        crate::automation::compute_scoped_targets(
+                            &record.sources,
+                            &record.destinations,
+                            &pending.paths,
+                        )
+                    })
+                } else {
+                    None
+                };
+                let scoped_ref = scoped.as_deref().filter(|pairs| !pairs.is_empty());
                 let mut store = self.store.borrow_mut();
-                match crate::automation::fire(&client, &mut store, &record, now) {
+                match crate::automation::fire(&client, &mut store, &record, now, scoped_ref) {
                     Ok(id) => {
                         log::info!("automation {} started {id}", record.name);
                         store.record_event(crate::alerts::automation_event(
@@ -970,8 +997,12 @@ impl AppCtx {
                         fired = true;
                     }
                 }
+                if due_watch {
+                    pending_watch.remove(&record.id);
+                }
             }
         }
+        drop(pending_watch);
         drop(mtimes);
         if fired {
             self.persist();

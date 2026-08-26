@@ -1272,9 +1272,7 @@ impl NautilusView {
         more.add_css_class("circular");
         more.set_can_target(true);
         more.set_tooltip_text(Some(
-            &self
-                .ctx
-                .t_or("nautilus.contextMenu.selectionActions", "Selection actions"),
+            &self.ctx.t_or("nautilus.contextMenu.moreActions", "Actions"),
         ));
         more.set_widget_name(&format!("file-menu-{name}"));
         let claim = gtk::GestureClick::new();
@@ -1287,9 +1285,10 @@ impl NautilusView {
         {
             let view = self.clone();
             let name = name.to_string();
+            let target = more.clone();
             more.connect_clicked(move |_| {
                 view.ensure_name_selected(&name, primary);
-                view.actions_btn.popup();
+                view.popup_context_at(&target, 12.0, 16.0);
             });
         }
         more

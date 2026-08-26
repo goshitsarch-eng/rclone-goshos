@@ -927,6 +927,36 @@ pub fn start_profile(
     meta: Option<&RemoteMeta>,
     origin: &str,
 ) -> Result<String, String> {
+    start_profile_ex(client, remote, op, profile, meta, origin, None)
+}
+
+pub fn directory_only_source_error(
+    op: OperationType,
+    source: &str,
+    is_dir: bool,
+) -> Option<String> {
+    if matches!(
+        op,
+        OperationType::Sync | OperationType::Bisync | OperationType::Check
+    ) && !is_dir
+    {
+        Some(format!(
+            "{op:?} only supports directories, not files: {source}"
+        ))
+    } else {
+        None
+    }
+}
+
+pub fn start_profile_ex(
+    client: &RcClient,
+    remote: &str,
+    op: OperationType,
+    profile: &ProfileConfig,
+    meta: Option<&RemoteMeta>,
+    origin: &str,
+    scoped: Option<&[(String, String)]>,
+) -> Result<String, String> {
     let mut rclone = flatten_rclone(&profile.rclone);
     apply_helper_options(&mut rclone, profile, meta);
     if let Some(obj) = rclone.as_object_mut() {
@@ -966,8 +996,25 @@ pub fn start_profile(
                 .collect()
         })
         .unwrap_or_default();
+    let pairs: Vec<(String, String)> = if op != OperationType::Bisync {
+        if let Some(scoped) = scoped.filter(|pairs| !pairs.is_empty()) {
+            scoped.to_vec()
+        } else {
+            sources
+                .iter()
+                .cloned()
+                .map(|source| (source, dest.clone()))
+                .collect()
+        }
+    } else {
+        sources
+            .iter()
+            .cloned()
+            .map(|source| (source, dest.clone()))
+            .collect()
+    };
     let mut ids = Vec::new();
-    for (index, source) in sources.into_iter().enumerate() {
+    for (index, (source, pair_dest)) in pairs.into_iter().enumerate() {
         let mut item = rclone.clone();
         if op == OperationType::Copyurl {
             if let Some(name) = filenames
@@ -982,7 +1029,10 @@ pub fn start_profile(
             }
         }
         let is_dir = source_is_directory(Some(client), &source);
-        let request = build_job_params_ex(op, remote, &source, &dest, &item, Some(is_dir))?;
+        if let Some(err) = directory_only_source_error(op, &source, is_dir) {
+            return Err(err);
+        }
+        let request = build_job_params_ex(op, remote, &source, &pair_dest, &item, Some(is_dir))?;
         ids.push(start_request(client, &request).map_err(|e| e.to_string())?);
     }
     Ok(ids.join(", "))
@@ -2735,6 +2785,24 @@ pub fn rename_serves_profile(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn sync_check_reject_file_sources() {
+        assert_eq!(
+            directory_only_source_error(OperationType::Sync, "testdrive:a.txt", false).as_deref(),
+            Some("Sync only supports directories, not files: testdrive:a.txt")
+        );
+        assert_eq!(
+            directory_only_source_error(OperationType::Check, "/tmp/file.bin", false).as_deref(),
+            Some("Check only supports directories, not files: /tmp/file.bin")
+        );
+        assert!(
+            directory_only_source_error(OperationType::Sync, "testdrive:Photos", true).is_none()
+        );
+        assert!(
+            directory_only_source_error(OperationType::Copy, "testdrive:a.txt", false).is_none()
+        );
+    }
 
     #[test]
     fn file_copy_uses_copyfile() {
