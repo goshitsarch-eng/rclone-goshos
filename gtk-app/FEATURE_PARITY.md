@@ -749,3 +749,6 @@ This client is the GTK 4 + libadwaita desktop UI. It talks to a local `rclone rc
 - Create wizard uses Angular’s 16-step sidebar (Remote + 11 operations + filter / VFS / backend / runtime) with Back / Next / Create
 - Quick Add stays two steps (Remote + Operations) with Back from the operations page
 - Sidebar steps stay locked until the remote name is valid; interactive OAuth hides the sidebar
+- Live GUI: Add New Remote sidebar lists Remote through Crypt Check plus Filter / VFS / Backend / Runtime Remote; Next opens Mount with Back / Next / Create
+- Live GUI: last step is Runtime Remote (typed flags, Back + Create, no Next)
+- Live GUI: Quick Add sidebar is Remote + Operation Options (Optional) with Google Drive fields
