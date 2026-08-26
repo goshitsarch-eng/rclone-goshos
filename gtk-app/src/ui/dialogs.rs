@@ -228,7 +228,7 @@ pub(super) fn settings_panel(
                 row.set_title(&entry.key);
                 row.set_subtitle(&entry.display);
                 if entry.sensitive {
-                    row.set_icon_name("dialog-password-symbolic");
+                    row.set_icon_name(Some("dialog-password-symbolic"));
                     row.set_tooltip_text(Some(
                         &ctx.t_or("detailShared.settings.restricted", "RESTRICTED"),
                     ));
