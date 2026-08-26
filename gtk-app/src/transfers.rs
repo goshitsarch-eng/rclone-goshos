@@ -315,6 +315,65 @@ pub fn can_download_dest(dst: &str, job_type: &str, completed: bool) -> bool {
         && download_target(dst).is_some()
 }
 
+/// Join `remote` + transfer name when rclone omits `srcFs`/`dstFs`.
+pub fn fallback_transfer_path(remote: &str, name: &str) -> Option<String> {
+    let remote = remote.trim();
+    let name = name.trim();
+    if remote.is_empty() || name.is_empty() {
+        return None;
+    }
+    if remote == "local" || remote == "/" {
+        return None;
+    }
+    let fs = if remote.contains(':') {
+        remote.to_string()
+    } else {
+        format!("{remote}:")
+    };
+    Some(join_fs_name(&fs, name))
+}
+
+pub fn has_cloud_remote(path: &str) -> bool {
+    if path.is_empty()
+        || crate::path_kind::is_windows_local_path(path)
+        || crate::path_kind::is_unc_path(path)
+    {
+        return false;
+    }
+    path.contains(':') && remote_name_from_path(path).is_some()
+}
+
+pub fn needs_fallback_actions(src: &str, dst: &str) -> bool {
+    !has_cloud_remote(src) && !has_cloud_remote(dst)
+}
+
+pub fn can_copy_url_fallback(
+    remote: &str,
+    name: &str,
+    job_type: &str,
+    info: Option<&crate::rclone::FsInfo>,
+) -> bool {
+    if is_delete_job(job_type) {
+        return false;
+    }
+    fallback_transfer_path(remote, name)
+        .and_then(|path| remote_name_from_path(&path))
+        .is_some_and(|remote| can_public_link(&remote, info))
+}
+
+pub fn can_download_fallback(remote: &str, name: &str, job_type: &str) -> bool {
+    if is_delete_job(job_type) {
+        return false;
+    }
+    fallback_transfer_path(remote, name).is_some_and(|path| {
+        remote_name_from_path(&path).is_some() && download_target(&path).is_some()
+    })
+}
+
+pub fn can_delete_fallback(remote: &str, name: &str, job_type: &str) -> bool {
+    can_download_fallback(remote, name, job_type)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -412,6 +471,27 @@ mod tests {
         assert!(remote_name_from_path("/tmp/x").is_none());
         assert!(is_move_job("copy/move"));
         assert!(is_delete_job("delete/purge"));
+        assert_eq!(
+            fallback_transfer_path("testdrive", "Photos/a.jpg").as_deref(),
+            Some("testdrive:Photos/a.jpg")
+        );
+        assert_eq!(
+            fallback_transfer_path("testdrive:", "a.jpg").as_deref(),
+            Some("testdrive:a.jpg")
+        );
+        assert!(fallback_transfer_path("local", "a.jpg").is_none());
+        assert!(fallback_transfer_path("testdrive", "").is_none());
+        assert!(needs_fallback_actions("a.jpg", "a.jpg"));
+        assert!(needs_fallback_actions("/tmp/a.jpg", "a.jpg"));
+        assert!(!needs_fallback_actions("drive:a.jpg", "box:a.jpg"));
+        assert!(can_copy_url_fallback("testdrive", "a.jpg", "copy", None));
+        assert!(can_copy_url_fallback("testdrive", "a.jpg", "move", None));
+        assert!(!can_copy_url_fallback("testdrive", "a.jpg", "delete", None));
+        assert!(!can_copy_url_fallback("local", "a.jpg", "copy", None));
+        assert!(can_download_fallback("testdrive", "a.jpg", "sync"));
+        assert!(!can_download_fallback("testdrive", "a.jpg", "delete"));
+        assert!(can_delete_fallback("testdrive", "a.jpg", "copy"));
+        assert!(!can_delete_fallback("/", "a.jpg", "copy"));
     }
 
     #[test]

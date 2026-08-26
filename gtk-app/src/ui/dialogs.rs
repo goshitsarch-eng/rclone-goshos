@@ -8008,6 +8008,7 @@ pub fn job_detail(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, job_id: u64) {
                 &ctx,
                 &dialog,
                 &job.operation,
+                &job.remote,
             );
             append_transfer_rows(
                 &completed,
@@ -8017,6 +8018,7 @@ pub fn job_detail(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, job_id: u64) {
                 &ctx,
                 &dialog,
                 &job.operation,
+                &job.remote,
             );
             let check_source = crate::checks::check_source_from_job(&job.stats, &job.output);
             let results = crate::checks::visible_check_items(
@@ -8102,6 +8104,7 @@ pub(crate) fn transfer_activity_row(
     parsed: &crate::transfers::TransferRow,
     completed: bool,
     job_type: &str,
+    remote_name: &str,
     parent: &impl IsA<gtk::Widget>,
 ) -> gtk::ListBoxRow {
     let wrap = gtk::Box::new(gtk::Orientation::Vertical, 4);
@@ -8148,7 +8151,13 @@ pub(crate) fn transfer_activity_row(
         row.set_tooltip_text(Some(&parsed.error));
     }
     row.add_suffix(&transfer_row_actions(
-        ctx, parent, parsed, job_type, completed, None,
+        ctx,
+        parent,
+        parsed,
+        job_type,
+        completed,
+        remote_name,
+        None,
     ));
     wrap.append(&row);
     if !completed {
@@ -8170,6 +8179,7 @@ fn append_transfer_rows(
     ctx: &AppCtx,
     parent: &adw::Dialog,
     job_type: &str,
+    remote_name: &str,
 ) {
     let empty_title = if active {
         ctx.t_or(
@@ -8211,7 +8221,12 @@ fn append_transfer_rows(
             continue;
         }
         list.append(&transfer_activity_row(
-            ctx, &parsed, !active, job_type, parent,
+            ctx,
+            &parsed,
+            !active,
+            job_type,
+            remote_name,
+            parent,
         ));
         shown += 1;
     }
@@ -8229,6 +8244,7 @@ pub(crate) fn transfer_row_actions(
     parsed: &crate::transfers::TransferRow,
     job_type: &str,
     completed: bool,
+    remote_name: &str,
     on_deleted: Option<Rc<dyn Fn(bool)>>,
 ) -> gtk::Box {
     let actions = gtk::Box::new(gtk::Orientation::Horizontal, 8);
@@ -8241,6 +8257,7 @@ pub(crate) fn transfer_row_actions(
             job_type,
             true,
             true,
+            false,
             on_deleted.clone(),
         ));
     }
@@ -8252,8 +8269,16 @@ pub(crate) fn transfer_row_actions(
             job_type,
             completed,
             false,
-            on_deleted,
+            false,
+            on_deleted.clone(),
         ));
+    }
+    if crate::transfers::needs_fallback_actions(&parsed.src, &parsed.dst) {
+        if let Some(path) = crate::transfers::fallback_transfer_path(remote_name, &parsed.name) {
+            actions.append(&transfer_side_actions(
+                ctx, parent, &path, job_type, true, true, true, on_deleted,
+            ));
+        }
     }
     actions
 }
@@ -8265,27 +8290,34 @@ fn transfer_side_actions(
     job_type: &str,
     allow_dest_ops: bool,
     is_source: bool,
+    is_fallback: bool,
     on_deleted: Option<Rc<dyn Fn(bool)>>,
 ) -> gtk::Box {
     let side = gtk::Box::new(gtk::Orientation::Horizontal, 2);
     side.add_css_class("linked");
     side.set_valign(gtk::Align::Center);
-    let copy_url = if is_source {
-        crate::transfers::can_copy_url_source(path, job_type, path_fs_info(ctx, path).as_ref())
+    let info = path_fs_info(ctx, path);
+    let copy_url = if is_fallback {
+        crate::transfers::remote_name_from_path(path).is_some_and(|remote| {
+            crate::transfers::can_copy_url_fallback(&remote, path, job_type, info.as_ref())
+        })
+    } else if is_source {
+        crate::transfers::can_copy_url_source(path, job_type, info.as_ref())
     } else {
-        crate::transfers::can_copy_url_dest(
-            path,
-            job_type,
-            allow_dest_ops,
-            path_fs_info(ctx, path).as_ref(),
-        )
+        crate::transfers::can_copy_url_dest(path, job_type, allow_dest_ops, info.as_ref())
     };
-    let can_download = if is_source {
+    let can_download = if is_fallback {
+        crate::transfers::remote_name_from_path(path)
+            .is_some_and(|remote| crate::transfers::can_download_fallback(&remote, path, job_type))
+    } else if is_source {
         crate::transfers::can_download_source(path, job_type)
     } else {
         crate::transfers::can_download_dest(path, job_type, allow_dest_ops)
     };
-    let can_delete = if is_source {
+    let can_delete = if is_fallback {
+        crate::transfers::remote_name_from_path(path)
+            .is_some_and(|remote| crate::transfers::can_delete_fallback(&remote, path, job_type))
+    } else if is_source {
         crate::transfers::can_delete_source(job_type) && !path.is_empty()
     } else {
         crate::transfers::can_delete_dest(job_type, allow_dest_ops) && !path.is_empty()
@@ -11511,12 +11543,16 @@ pub(super) fn check_result_row(
             }
         }) as Rc<dyn Fn(bool)>
     };
+    let check_remote = crate::transfers::remote_name_from_path(&item.src_fs)
+        .or_else(|| crate::transfers::remote_name_from_path(&item.dst_fs))
+        .unwrap_or_default();
     row.add_suffix(&transfer_row_actions(
         ctx,
         parent,
         &parsed,
         "copy",
         true,
+        &check_remote,
         Some(on_deleted),
     ));
     wrap.append(&row);

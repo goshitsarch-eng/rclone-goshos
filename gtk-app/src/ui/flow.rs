@@ -990,6 +990,7 @@ impl FlowView {
                 for item in arr {
                     rows.push((
                         job.operation.clone(),
+                        job.remote.clone(),
                         crate::transfers::parse_transfer_row(item),
                         false,
                     ));
@@ -1005,6 +1006,7 @@ impl FlowView {
                 for item in source {
                     rows.push((
                         job.operation.clone(),
+                        job.remote.clone(),
                         crate::transfers::parse_completed_transfer_row(item),
                         true,
                     ));
@@ -1057,8 +1059,14 @@ impl FlowView {
             });
         }
         host.append(&search);
-        let active_count = rows.iter().filter(|(_, _, completed)| !*completed).count();
-        let done_count = rows.iter().filter(|(_, _, completed)| *completed).count();
+        let active_count = rows
+            .iter()
+            .filter(|(_, _, _, completed)| !*completed)
+            .count();
+        let done_count = rows
+            .iter()
+            .filter(|(_, _, _, completed)| *completed)
+            .count();
         if active_count > 0 && done_count > 0 {
             let tabs = gtk::Box::new(gtk::Orientation::Horizontal, 0);
             tabs.add_css_class("linked");
@@ -1124,7 +1132,7 @@ impl FlowView {
         let tab = self.transfer_tab.borrow().clone();
         let list = gtk::ListBox::new();
         list.add_css_class("boxed-list");
-        for (operation, row, completed) in rows {
+        for (operation, remote, row, completed) in rows {
             if tab == "active" && completed {
                 continue;
             }
@@ -1142,6 +1150,7 @@ impl FlowView {
                 &row,
                 completed,
                 &operation,
+                &remote,
                 &self.toast,
             ));
         }

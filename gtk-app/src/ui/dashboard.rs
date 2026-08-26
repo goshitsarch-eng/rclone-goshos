@@ -3503,6 +3503,7 @@ impl Dashboard {
                 for item in arr {
                     rows.push((
                         job.operation.clone(),
+                        job.remote.clone(),
                         crate::transfers::parse_transfer_row(item),
                         false,
                     ));
@@ -3518,6 +3519,7 @@ impl Dashboard {
                 for item in source {
                     rows.push((
                         job.operation.clone(),
+                        job.remote.clone(),
                         crate::transfers::parse_completed_transfer_row(item),
                         true,
                     ));
@@ -3571,8 +3573,14 @@ impl Dashboard {
             });
         }
         self.detail_box().append(&search);
-        let active_count = rows.iter().filter(|(_, _, completed)| !*completed).count();
-        let done_count = rows.iter().filter(|(_, _, completed)| *completed).count();
+        let active_count = rows
+            .iter()
+            .filter(|(_, _, _, completed)| !*completed)
+            .count();
+        let done_count = rows
+            .iter()
+            .filter(|(_, _, _, completed)| *completed)
+            .count();
         if active_count > 0 && done_count > 0 {
             let tabs = gtk::Box::new(gtk::Orientation::Horizontal, 0);
             tabs.add_css_class("linked");
@@ -3686,7 +3694,7 @@ impl Dashboard {
         let tab = self.transfer_tab.borrow().clone();
         let list = gtk::ListBox::new();
         list.add_css_class("boxed-list");
-        for (operation, row, completed) in rows {
+        for (operation, remote, row, completed) in rows {
             if tab == "active" && completed {
                 continue;
             }
@@ -3704,6 +3712,7 @@ impl Dashboard {
                 &row,
                 completed,
                 &operation,
+                &remote,
                 &self.toast,
             ));
         }
