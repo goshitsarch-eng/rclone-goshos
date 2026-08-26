@@ -277,7 +277,7 @@ pub fn present_standalone(
             req.data
                 .get("page")
                 .and_then(|v| v.as_str())
-                .unwrap_or("details"),
+                .unwrap_or("home"),
         ),
         "logs" => logs(
             &window,
@@ -1181,8 +1181,93 @@ fn about_rclone_page(
     page.upcast()
 }
 
+fn about_nav_page(tag: &str, title: &str, child: &impl IsA<gtk::Widget>) -> adw::NavigationPage {
+    let scroll = gtk::ScrolledWindow::new();
+    scroll.set_vexpand(true);
+    scroll.set_hexpand(true);
+    scroll.set_policy(gtk::PolicyType::Never, gtk::PolicyType::Automatic);
+    scroll.set_child(Some(child));
+    let toolbar = adw::ToolbarView::new();
+    toolbar.add_top_bar(&adw::HeaderBar::new());
+    toolbar.set_content(Some(&scroll));
+    adw::NavigationPage::builder()
+        .tag(tag)
+        .title(title)
+        .child(&toolbar)
+        .build()
+}
+
+fn about_nav_row(
+    ctx: &AppCtx,
+    nav: &adw::NavigationView,
+    item: crate::updater::AboutHomeItem,
+    badge: bool,
+) -> adw::ActionRow {
+    let row = adw::ActionRow::new();
+    row.set_title(&ctx.t_or(item.i18n_key, item.fallback));
+    row.set_activatable(true);
+    if badge {
+        let mark = gtk::Label::new(Some("!"));
+        mark.add_css_class("accent");
+        mark.add_css_class("heading");
+        row.add_suffix(&mark);
+    }
+    row.add_suffix(&gtk::Image::from_icon_name("go-next-symbolic"));
+    let nav = nav.clone();
+    row.connect_activated(move |_| {
+        nav.push_by_tag(item.tag);
+    });
+    row
+}
+
+fn about_home_page(ctx: &AppCtx, nav: &adw::NavigationView, version: &str) -> gtk::Widget {
+    let page = gtk::Box::new(gtk::Orientation::Vertical, 16);
+    page.set_margin_top(20);
+    page.set_margin_start(16);
+    page.set_margin_end(16);
+    page.set_margin_bottom(16);
+    let title = gtk::Label::new(Some(&ctx.t_or("modals.about.appName", "Rclone Manager")));
+    title.add_css_class("title-1");
+    title.set_justify(gtk::Justification::Center);
+    let comments = gtk::Label::new(Some(&format!(
+        "{} · {} · rclone {version}",
+        ctx.t_or("modals.about.toolkit", "GTK 4 + libadwaita"),
+        env!("CARGO_PKG_VERSION")
+    )));
+    comments.set_wrap(true);
+    comments.set_justify(gtk::Justification::Center);
+    comments.add_css_class("dim-label");
+    page.append(&title);
+    page.append(&comments);
+    let app_badge = ctx.settings.borrow().runtime.app_restart_required
+        || ctx
+            .updates
+            .borrow()
+            .app
+            .as_ref()
+            .is_some_and(|update| update.available);
+    let rclone_badge = ctx.settings.borrow().runtime.rclone_restart_required
+        || ctx
+            .updates
+            .borrow()
+            .rclone
+            .as_ref()
+            .is_some_and(|update| update.available);
+    let nav_group = adw::PreferencesGroup::new();
+    for item in crate::updater::about_home_nav() {
+        let badge = match item.tag {
+            "about-app" => app_badge,
+            "about-rclone" => rclone_badge,
+            _ => false,
+        };
+        nav_group.add(&about_nav_row(ctx, nav, *item, badge));
+    }
+    page.append(&nav_group);
+    page.upcast()
+}
+
 pub fn about(parent: &impl IsA<gtk::Widget>, ctx: AppCtx) {
-    about_open(parent, ctx, "details");
+    about_open(parent, ctx, "home");
 }
 
 pub fn about_open(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, page: &str) {
@@ -1220,8 +1305,13 @@ pub fn about_open(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, page: &str) {
     dialog.set_title(&ctx.t_or("modals.about.title", "About"));
     dialog.set_content_width(680);
     dialog.set_content_height(620);
-    let stack = adw::ViewStack::new();
+    let nav = adw::NavigationView::new();
     let toast = adw::ToastOverlay::new();
+    nav.add(&about_nav_page(
+        "home",
+        &ctx.t_or("modals.about.title", "About"),
+        &about_home_page(&ctx, &nav, &version),
+    ));
 
     let details = gtk::Box::new(gtk::Orientation::Vertical, 12);
     details.set_margin_top(16);
@@ -1267,7 +1357,7 @@ pub fn about_open(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, page: &str) {
     details.append(&site);
     details.append(&issues);
     let wiki = gtk::LinkButton::with_label(
-        "https://github.com/Zarestia-Dev/rclone-manager/wiki",
+        "https://hakanismail.info/zarestia/rclone-manager/docs",
         &ctx.t_or("modals.about.wiki", "Wiki Page"),
     );
     let rclone_site = gtk::LinkButton::with_label(
@@ -1322,21 +1412,21 @@ pub fn about_open(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, page: &str) {
         notes.connect_clicked(move |_| whats_new(&parent, ctx.clone(), "app"));
         details.append(&notes);
     }
-    stack.add_titled(
-        &details,
-        Some("details"),
+    nav.add(&about_nav_page(
+        "details",
         &ctx.t_or("modals.about.details", "Details"),
-    );
-    stack.add_titled(
-        &about_app_page(parent, &ctx, &dialog, &toast),
-        Some("about-app"),
+        &details,
+    ));
+    nav.add(&about_nav_page(
+        "about-app",
         &ctx.t_or("modals.about.aboutApp", "About App"),
-    );
-    stack.add_titled(
-        &about_rclone_page(parent, &ctx, &dialog, &toast),
-        Some("about-rclone"),
+        &about_app_page(parent, &ctx, &dialog, &toast),
+    ));
+    nav.add(&about_nav_page(
+        "about-rclone",
         &ctx.t_or("modals.about.aboutRclone", "About Rclone"),
-    );
+        &about_rclone_page(parent, &ctx, &dialog, &toast),
+    ));
 
     let credits = gtk::Box::new(gtk::Orientation::Vertical, 8);
     credits.set_margin_top(16);
@@ -1359,11 +1449,11 @@ pub fn about_open(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, page: &str) {
     ack.add(&ack_row);
     credits.append(&team);
     credits.append(&ack);
-    stack.add_titled(
-        &credits,
-        Some("credits"),
+    nav.add(&about_nav_page(
+        "credits",
         &ctx.t_or("modals.about.credits", "Credits"),
-    );
+        &credits,
+    ));
 
     let legal = gtk::Box::new(gtk::Orientation::Vertical, 8);
     legal.set_margin_top(16);
@@ -1404,11 +1494,11 @@ pub fn about_open(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, page: &str) {
     legal.append(&license);
     legal.append(&third);
     legal.append(&gpl);
-    stack.add_titled(
-        &legal,
-        Some("legal"),
+    nav.add(&about_nav_page(
+        "legal",
         &ctx.t_or("modals.about.legal", "Legal"),
-    );
+        &legal,
+    ));
 
     let system = gtk::Box::new(gtk::Orientation::Vertical, 8);
     system.set_margin_top(16);
@@ -1494,22 +1584,16 @@ pub fn about_open(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, page: &str) {
         };
         system.append(&gtk::LinkButton::with_label(url, &label));
     }
-    stack.add_titled(
-        &system,
-        Some("system"),
+    nav.add(&about_nav_page(
+        "system",
         &ctx.t_or("generalOverview.panels.system", "System"),
-    );
-
-    let switcher = adw::ViewSwitcher::new();
-    switcher.set_stack(Some(&stack));
-    switcher.set_policy(adw::ViewSwitcherPolicy::Wide);
-    stack.set_visible_child_name(crate::updater::about_visible_page(page));
-    let toolbar = adw::ToolbarView::new();
-    let header = adw::HeaderBar::new();
-    header.set_title_widget(Some(&switcher));
-    toolbar.add_top_bar(&header);
-    toolbar.set_content(Some(&stack));
-    toast.set_child(Some(&toolbar));
+        &system,
+    ));
+    let requested = crate::updater::about_visible_page(page);
+    if requested != "home" {
+        nav.push_by_tag(requested);
+    }
+    toast.set_child(Some(&nav));
     dialog.set_child(Some(&toast));
     present_window_or_dialog(parent, &ctx, &dialog);
 }

@@ -536,11 +536,50 @@ pub fn about_visible_page(requested: &str) -> &'static str {
     match requested {
         "about-app" | "app" => "about-app",
         "about-rclone" | "rclone" => "about-rclone",
+        "details" => "details",
         "credits" => "credits",
         "legal" => "legal",
         "system" => "system",
-        _ => "details",
+        _ => "home",
     }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct AboutHomeItem {
+    pub tag: &'static str,
+    pub i18n_key: &'static str,
+    pub fallback: &'static str,
+}
+
+/// Angular about-modal home list: Details, About Rclone, About App, Credits, Legal.
+pub fn about_home_nav() -> &'static [AboutHomeItem] {
+    &[
+        AboutHomeItem {
+            tag: "details",
+            i18n_key: "modals.about.details",
+            fallback: "Details",
+        },
+        AboutHomeItem {
+            tag: "about-rclone",
+            i18n_key: "modals.about.aboutRclone",
+            fallback: "About Rclone",
+        },
+        AboutHomeItem {
+            tag: "about-app",
+            i18n_key: "modals.about.aboutApp",
+            fallback: "About App",
+        },
+        AboutHomeItem {
+            tag: "credits",
+            i18n_key: "modals.about.credits",
+            fallback: "Credits",
+        },
+        AboutHomeItem {
+            tag: "legal",
+            i18n_key: "modals.about.legal",
+            fallback: "Legal",
+        },
+    ]
 }
 
 pub fn filter_skipped(info: Option<UpdateInfo>, skipped: &[String]) -> Option<UpdateInfo> {
@@ -802,9 +841,20 @@ mod tests {
         assert_eq!(about_visible_page("credits"), "credits");
         assert_eq!(about_visible_page("legal"), "legal");
         assert_eq!(about_visible_page("system"), "system");
-        assert_eq!(about_visible_page(""), "details");
+        assert_eq!(about_visible_page(""), "home");
+        assert_eq!(about_visible_page("home"), "home");
         assert_eq!(about_visible_page("details"), "details");
-        assert_eq!(about_visible_page("unknown"), "details");
+        assert_eq!(about_visible_page("unknown"), "home");
+    }
+
+    #[test]
+    fn about_home_nav_matches_angular_order() {
+        let tags: Vec<&str> = about_home_nav().iter().map(|item| item.tag).collect();
+        assert_eq!(
+            tags,
+            vec!["details", "about-rclone", "about-app", "credits", "legal",]
+        );
+        assert!(!tags.contains(&"system"));
     }
 
     #[test]

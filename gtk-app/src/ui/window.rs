@@ -2317,7 +2317,7 @@ fn apply_nav(
             }
         }
         NavTarget::About { page } => {
-            dialogs::about_open(window, ctx.clone(), page.as_deref().unwrap_or("details"))
+            dialogs::about_open(window, ctx.clone(), page.as_deref().unwrap_or("home"))
         }
         NavTarget::Logs { remote } => dialogs::logs(window, ctx.clone(), remote),
         NavTarget::Shortcuts => dialogs::shortcuts(window, ctx),
