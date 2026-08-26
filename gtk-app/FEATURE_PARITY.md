@@ -807,3 +807,5 @@ This client is the GTK 4 + libadwaita desktop UI. It talks to a local `rclone rc
 - Operation-control serve paths match Angular: `TYPE at addr` (or Default), destination is display-only, empty source is Not configured; SAF mounts use `saf://remote`
 - Live GUI: testdrive Serve expander shows Serving **Not configured**, Accessible via **HTTP at Default**, Start Serve (no folder-open on dest)
 - Live GUI: guilocal Serve expander shows Serving `guilocal:`, Accessible via **HTTP at Default**
+- `transfer_action_paths` returns only `{remote}:{name}` when rclone omits `srcFs`/`dstFs`, so name-only completed rows show one action cluster (Open / Copy path / Download / Delete) instead of src + dst + fallback
+- Live GUI: job/22718 completed `Photos/README.txt` (7 B) shows one action cluster; Copy URL stays hidden on alias remotes (no PublicLink); Download opens Save a File with `README.txt` (cancelled)
