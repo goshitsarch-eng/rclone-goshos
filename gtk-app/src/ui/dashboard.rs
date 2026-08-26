@@ -2428,14 +2428,15 @@ impl Dashboard {
             for pname in names {
                 self.append_settings_groups(name, op, &pname, true);
             }
-            return;
+        } else {
+            self.append_settings_groups(
+                name,
+                op,
+                names.first().map(String::as_str).unwrap_or(selected),
+                false,
+            );
         }
-        self.append_settings_groups(
-            name,
-            op,
-            names.first().map(String::as_str).unwrap_or(selected),
-            false,
-        );
+        self.append_shared_settings(name, op);
     }
 
     fn append_settings_groups(&self, name: &str, op: OperationType, profile: &str, titled: bool) {
@@ -2520,7 +2521,9 @@ impl Dashboard {
             });
         }
         self.detail_box().append(&edit_op);
+    }
 
+    fn append_shared_settings(&self, name: &str, op: OperationType) {
         self.detail_box().append(&section_label(
             &self
                 .ctx

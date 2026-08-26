@@ -776,3 +776,5 @@ This client is the GTK 4 + libadwaita desktop UI. It talks to a local `rclone rc
 - Transfer rows offer Angular fallback copy-URL / download / delete when rclone omits `srcFs`/`dstFs`, using the job remote + transfer name
 - Operations Configuration / Monitoring / activity / transfers scope to the selected sync op (Check no longer lists Copy profiles or Copy jobs)
 - Live GUI: testdrive Operations Sync/Check/Move show **No saved profiles**; Copy shows **copy / gui-copy-test**; switching back to Copy restores it
+- Operations Monitoring uses Angular profile pills (running / scheduled / idle, add-profile) when an op has more than one profile
+- Configuration lists a settings panel per profile of the selected op (`Copy Settings (name)`)
