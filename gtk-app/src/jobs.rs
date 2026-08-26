@@ -124,13 +124,39 @@ pub fn active_open_paths(
         if let Some(point) = mount_point.filter(|s| !s.trim().is_empty()) {
             push(&mut paths, point);
         } else {
-            push(&mut paths, dst);
+            for part in split_job_paths(dst) {
+                push(&mut paths, &part);
+            }
         }
         return paths;
     }
-    push(&mut paths, src);
-    push(&mut paths, dst);
+    for part in split_job_paths(src) {
+        push(&mut paths, &part);
+    }
+    for part in split_job_paths(dst) {
+        push(&mut paths, &part);
+    }
     paths
+}
+
+/// Angular `isFolderOpeningAction` without op/profile filters.
+pub fn is_folder_opening(opening: &std::collections::HashSet<String>, remote: &str) -> bool {
+    let remote = remote.trim();
+    !remote.is_empty() && opening.contains(remote)
+}
+
+/// Start a folder-open action. Returns false when one is already in flight.
+pub fn begin_folder_open(opening: &mut std::collections::HashSet<String>, remote: &str) -> bool {
+    let remote = remote.trim();
+    if remote.is_empty() || opening.contains(remote) {
+        return false;
+    }
+    opening.insert(remote.to_string());
+    true
+}
+
+pub fn end_folder_open(opening: &mut std::collections::HashSet<String>, remote: &str) {
+    opening.remove(remote.trim());
 }
 
 /// Operations currently running for a remote (mount / serve / jobs).
@@ -1305,6 +1331,27 @@ pub fn job_speed_eta(job: &JobInfo) -> (String, String) {
 }
 
 /// Name + percent/speed subtitle for the Files ops expander.
+pub fn job_error_text(job: &JobInfo) -> Option<String> {
+    job.error
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(|s| s.to_string())
+}
+
+pub fn job_failed_transfers(job: &JobInfo, limit: usize) -> Vec<(String, String)> {
+    let Some(items) = job.completed.as_array() else {
+        return Vec::new();
+    };
+    items
+        .iter()
+        .map(crate::transfers::parse_completed_transfer_row)
+        .filter(|row| !row.error.is_empty())
+        .take(limit)
+        .map(|row| (row.name, row.error))
+        .collect()
+}
+
 pub fn job_transfer_previews(job: &JobInfo, limit: usize) -> Vec<(String, String)> {
     let Some(items) = job.transferring.as_array() else {
         return Vec::new();
@@ -4459,6 +4506,21 @@ mod tests {
         );
         assert!(active_open_paths(OperationType::Sync, "", "—", None).is_empty());
         assert_eq!(
+            active_open_paths(OperationType::Copy, "drive:a, drive:b", "box:out", None),
+            vec![
+                "drive:a".to_string(),
+                "drive:b".to_string(),
+                "box:out".to_string()
+            ]
+        );
+        let mut opening = std::collections::HashSet::new();
+        assert!(begin_folder_open(&mut opening, "testdrive"));
+        assert!(is_folder_opening(&opening, "testdrive"));
+        assert!(!begin_folder_open(&mut opening, "testdrive"));
+        end_folder_open(&mut opening, "testdrive");
+        assert!(!is_folder_opening(&opening, "testdrive"));
+        assert!(!begin_folder_open(&mut opening, ""));
+        assert_eq!(
             split_job_paths("drive:a, drive:b, /tmp/out"),
             vec!["drive:a", "drive:b", "/tmp/out"]
         );
@@ -4755,6 +4817,16 @@ mod tests {
         let previews = job_transfer_previews(&preview, 4);
         assert_eq!(previews[0].0, "a.bin");
         assert!(previews[0].1.contains("40%"));
+        preview.error = Some("  network timeout  ".into());
+        preview.completed = json!([
+            { "name": "ok.txt" },
+            { "name": "bad.txt", "error": "permission denied" }
+        ]);
+        assert_eq!(job_error_text(&preview).as_deref(), Some("network timeout"));
+        assert_eq!(
+            job_failed_transfers(&preview, 8),
+            vec![("bad.txt".into(), "permission denied".into())]
+        );
         assert!((restored.progress - 1.0).abs() < f64::EPSILON);
         assert!(!has_known_start_time(&restored));
         let combined = history_with_meta(&history, &meta);

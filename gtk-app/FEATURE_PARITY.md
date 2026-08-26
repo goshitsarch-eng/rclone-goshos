@@ -810,3 +810,6 @@ This client is the GTK 4 + libadwaita desktop UI. It talks to a local `rclone rc
 - `transfer_action_paths` returns only `{remote}:{name}` when rclone omits `srcFs`/`dstFs`, so name-only completed rows show one action cluster (Open / Copy path / Download / Delete) instead of src + dst + fallback
 - Live GUI: job/22718 completed `Photos/README.txt` (7 B) shows one action cluster; Copy URL stays hidden on alias remotes (no PublicLink); Download opens Save a File with `README.txt` (cancelled)
 - Check/cryptcheck result actions follow Angular `canDo`: hide src on `missing_src`, hide dest on `failed`/`missing_dst`, allow dest delete on checked rows, and use the real job type instead of hardcoding copy
+- Operation-control source Open splits comma-joined or JSON `srcFs` arrays into one Files action per path (destination stays a single Open)
+- Folder-open is guarded per remote like Angular `actionInProgress === 'open'`: a second Open is ignored and Open buttons show a spinner while one is in flight
+- Files operations expanders show Angular job details: source, destination, start time, job error with Copy, and failed completed-transfer rows

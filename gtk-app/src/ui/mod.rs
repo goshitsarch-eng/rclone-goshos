@@ -63,6 +63,7 @@ pub struct AppCtx {
     pub updates: Rc<RefCell<crate::updater::PendingUpdates>>,
     pub last_update_check: Rc<RefCell<Option<std::time::Instant>>>,
     pub action_busy: Rc<RefCell<HashSet<String>>>,
+    pub folder_opening: Rc<RefCell<HashSet<String>>>,
     pub check_status_overrides: Rc<RefCell<HashMap<String, String>>>,
     pub hidden_check_ids: Rc<RefCell<HashSet<String>>>,
     dump_cache: Rc<RefCell<Option<(std::time::Instant, serde_json::Value)>>>,
@@ -123,6 +124,7 @@ impl AppCtx {
             updates: Rc::new(RefCell::new(crate::updater::PendingUpdates::default())),
             last_update_check: Rc::new(RefCell::new(Some(std::time::Instant::now()))),
             action_busy: Rc::new(RefCell::new(HashSet::new())),
+            folder_opening: Rc::new(RefCell::new(HashSet::new())),
             check_status_overrides: Rc::new(RefCell::new(HashMap::new())),
             hidden_check_ids: Rc::new(RefCell::new(HashSet::new())),
             dump_cache: Rc::new(RefCell::new(None)),
@@ -291,7 +293,24 @@ impl AppCtx {
         })
     }
 
+    pub fn is_folder_opening(&self, remote: &str) -> bool {
+        crate::jobs::is_folder_opening(&self.folder_opening.borrow(), remote)
+    }
+
+    pub fn folder_open_guard(&self, remote: &str) -> Option<FolderOpenGuard> {
+        if !crate::jobs::begin_folder_open(&mut self.folder_opening.borrow_mut(), remote) {
+            return None;
+        }
+        Some(FolderOpenGuard {
+            ctx: self.clone(),
+            remote: remote.to_string(),
+        })
+    }
+
     pub fn open_typed_path(&self, current_remote: &str, raw: &str) {
+        let Some(_guard) = self.folder_open_guard(current_remote) else {
+            return;
+        };
         let typed = crate::path_kind::parse_typed_path(raw, current_remote);
         if typed.kind == crate::path_kind::PathKind::Local {
             let host_path = std::path::Path::new(&typed.path);
@@ -1205,6 +1224,17 @@ impl Drop for ActionBusyGuard {
     fn drop(&mut self) {
         self.ctx
             .set_busy(&self.remote, &self.op, &self.profile, false);
+    }
+}
+
+pub struct FolderOpenGuard {
+    ctx: AppCtx,
+    remote: String,
+}
+
+impl Drop for FolderOpenGuard {
+    fn drop(&mut self) {
+        crate::jobs::end_folder_open(&mut self.ctx.folder_opening.borrow_mut(), &self.remote);
     }
 }
 

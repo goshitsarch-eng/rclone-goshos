@@ -3759,10 +3759,18 @@ fn append_open_folder_suffix(row: &adw::ActionRow, ctx: &AppCtx, remote: &str, p
     if paths.is_empty() {
         return;
     }
+    let opening = ctx.is_folder_opening(remote);
+    if opening {
+        let spinner = gtk::Spinner::new();
+        spinner.set_spinning(true);
+        spinner.set_valign(gtk::Align::Center);
+        row.add_suffix(&spinner);
+    }
     if paths.len() == 1 {
         let folder = gtk::Button::from_icon_name("folder-open-symbolic");
         folder.set_valign(gtk::Align::Center);
         folder.set_tooltip_text(Some(&paths[0]));
+        folder.set_sensitive(!opening);
         let ctx = ctx.clone();
         let remote = remote.to_string();
         let path = paths[0].clone();
@@ -3773,6 +3781,7 @@ fn append_open_folder_suffix(row: &adw::ActionRow, ctx: &AppCtx, remote: &str, p
     let btn = gtk::MenuButton::new();
     btn.set_icon_name("folder-open-symbolic");
     btn.set_valign(gtk::Align::Center);
+    btn.set_sensitive(!opening);
     btn.set_tooltip_text(Some(
         &ctx.t_or("overviews.remoteCard.browse", "Browse active folders"),
     ));

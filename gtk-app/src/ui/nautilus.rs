@@ -5191,6 +5191,71 @@ impl NautilusView {
             self.ctx.t_or("modals.jobDetail.fields.eta", "ETA")
         ));
         row.add_row(&speed_row);
+        if !job.src.is_empty() {
+            let source = adw::ActionRow::new();
+            source.set_title(
+                &self
+                    .ctx
+                    .t_or("fileBrowser.operations.details.source", "Source"),
+            );
+            source.set_subtitle(&job.src);
+            row.add_row(&source);
+        }
+        if !job.dst.is_empty() {
+            let dest = adw::ActionRow::new();
+            dest.set_title(
+                &self
+                    .ctx
+                    .t_or("fileBrowser.operations.details.destination", "Destination"),
+            );
+            dest.set_subtitle(&job.dst);
+            row.add_row(&dest);
+        }
+        if crate::jobs::has_known_start_time(job) {
+            let started = adw::ActionRow::new();
+            started.set_title(
+                &self
+                    .ctx
+                    .t_or("fileBrowser.operations.details.startTime", "Start time"),
+            );
+            started.set_subtitle(
+                &job.start_time
+                    .with_timezone(&chrono::Local)
+                    .format("%b %d, %H:%M")
+                    .to_string(),
+            );
+            row.add_row(&started);
+        }
+        if matches!(
+            job.status.as_str(),
+            "failed" | "running" | "Failed" | "Running"
+        ) {
+            if let Some(error) = crate::jobs::job_error_text(job) {
+                let err_row = adw::ActionRow::new();
+                err_row.set_title(&self.ctx.t_or("fileBrowser.operations.failed", "Failed"));
+                err_row.set_subtitle(&error);
+                err_row.add_css_class("error");
+                let copy = gtk::Button::from_icon_name("edit-copy-symbolic");
+                copy.set_valign(gtk::Align::Center);
+                copy.set_tooltip_text(Some(&self.ctx.t_or("common.copy", "Copy")));
+                let error_text = error.clone();
+                copy.connect_clicked(move |_| {
+                    if let Some(display) = gtk::gdk::Display::default() {
+                        display.clipboard().set_text(&error_text);
+                    }
+                });
+                err_row.add_suffix(&copy);
+                row.add_row(&err_row);
+            }
+        }
+        for (name, error) in crate::jobs::job_failed_transfers(job, 8) {
+            let failed = adw::ActionRow::new();
+            failed.set_title(&name);
+            failed.set_subtitle(&error);
+            failed.set_tooltip_text(Some(&error));
+            failed.add_css_class("error");
+            row.add_row(&failed);
+        }
         let previews = crate::jobs::job_transfer_previews(job, 6);
         if previews.is_empty() {
             let empty = adw::ActionRow::new();

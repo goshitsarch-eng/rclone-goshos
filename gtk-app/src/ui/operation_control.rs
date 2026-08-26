@@ -261,23 +261,19 @@ fn path_rows(ctx: &AppCtx, spec: &OperationControlSpec) -> Vec<adw::ActionRow> {
         let row = adw::ActionRow::new();
         row.set_title(&ctx.t_or(title_key, fallback));
         row.set_subtitle(&display);
-        let can_browse = !path.is_empty()
-            && (is_source || spec.dest_browseable)
-            && crate::transfers::browse_for(&path).is_some();
+        let open_paths: Vec<String> = if path.is_empty() {
+            Vec::new()
+        } else if is_source {
+            crate::jobs::split_job_paths(&path)
+        } else {
+            vec![path.clone()]
+        };
+        let can_browse = (is_source || spec.dest_browseable)
+            && open_paths
+                .iter()
+                .any(|item| crate::transfers::browse_for(item).is_some());
         if can_browse {
-            let open = gtk::Button::from_icon_name("folder-open-symbolic");
-            open.set_tooltip_text(Some(&ctx.t_or(
-                "detailShared.pathDisplay.openInExplorer",
-                "Open in file explorer",
-            )));
-            open.set_valign(gtk::Align::Center);
-            let ctx = ctx.clone();
-            let remote = spec.remote_name.clone();
-            let raw = path.clone();
-            open.connect_clicked(move |_| {
-                ctx.open_typed_path(&remote, &raw);
-            });
-            row.add_suffix(&open);
+            append_open_path_suffix(&row, ctx, &spec.remote_name, &open_paths);
         }
         let copy = gtk::Button::from_icon_name("edit-copy-symbolic");
         copy.set_tooltip_text(Some(&ctx.t_or("common.copy", "Copy path")));
@@ -292,6 +288,76 @@ fn path_rows(ctx: &AppCtx, spec: &OperationControlSpec) -> Vec<adw::ActionRow> {
         rows.push(row);
     }
     rows
+}
+
+fn append_open_path_suffix(row: &adw::ActionRow, ctx: &AppCtx, remote: &str, paths: &[String]) {
+    if paths.is_empty() {
+        return;
+    }
+    let opening = ctx.is_folder_opening(remote);
+    if paths.len() == 1 {
+        let open = gtk::Button::from_icon_name("folder-open-symbolic");
+        open.set_tooltip_text(Some(&ctx.t_or(
+            "detailShared.pathDisplay.openInExplorer",
+            "Open in file explorer",
+        )));
+        open.set_valign(gtk::Align::Center);
+        open.add_css_class("flat");
+        open.add_css_class("circular");
+        open.set_sensitive(!opening);
+        if opening {
+            let spinner = gtk::Spinner::new();
+            spinner.set_spinning(true);
+            spinner.set_valign(gtk::Align::Center);
+            row.add_suffix(&spinner);
+        }
+        let ctx = ctx.clone();
+        let rem = remote.to_string();
+        let path = paths[0].clone();
+        open.connect_clicked(move |_| {
+            ctx.open_typed_path(&rem, &path);
+        });
+        row.add_suffix(&open);
+        return;
+    }
+
+    let button = gtk::MenuButton::new();
+    button.set_icon_name("folder-open-symbolic");
+    button.set_valign(gtk::Align::Center);
+    button.set_has_frame(false);
+    button.add_css_class("circular");
+    button.set_tooltip_text(Some(
+        &ctx.t_or("overviews.remoteCard.browse", "Browse active folders"),
+    ));
+    button.set_sensitive(!opening);
+    if opening {
+        let spinner = gtk::Spinner::new();
+        spinner.set_spinning(true);
+        spinner.set_valign(gtk::Align::Center);
+        row.add_suffix(&spinner);
+    }
+    let popover = gtk::Popover::new();
+    let list = gtk::Box::new(gtk::Orientation::Vertical, 4);
+    list.set_margin_top(6);
+    list.set_margin_bottom(6);
+    list.set_margin_start(6);
+    list.set_margin_end(6);
+    for path in paths {
+        let item = gtk::Button::with_label(path);
+        item.set_hexpand(true);
+        let ctx = ctx.clone();
+        let rem = remote.to_string();
+        let path = path.clone();
+        let popover = popover.clone();
+        item.connect_clicked(move |_| {
+            ctx.open_typed_path(&rem, &path);
+            popover.popdown();
+        });
+        list.append(&item);
+    }
+    popover.set_child(Some(&list));
+    button.set_popover(Some(&popover));
+    row.add_suffix(&button);
 }
 
 fn apply_busy(btn: &gtk::Button, busy: bool, ctx: &AppCtx) {

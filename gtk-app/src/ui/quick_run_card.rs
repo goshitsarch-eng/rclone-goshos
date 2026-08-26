@@ -139,9 +139,17 @@ pub fn overview_card(
     actions.append(&edit);
 
     let folders = quick_run_openable_folders(qr);
+    let opening = ctx.is_folder_opening(&qr.remote_name);
+    if opening {
+        let spinner = gtk::Spinner::new();
+        spinner.set_spinning(true);
+        spinner.set_valign(gtk::Align::Center);
+        actions.append(&spinner);
+    }
     if folders.len() == 1 {
         let folder = gtk::Button::from_icon_name("folder-open-symbolic");
         folder.set_tooltip_text(Some(&folders[0].path));
+        folder.set_sensitive(!opening);
         let path = folders[0].path.clone();
         let on_open_path = handlers.on_open_path.clone();
         folder.connect_clicked(move |_| on_open_path(&path));
@@ -149,6 +157,7 @@ pub fn overview_card(
     } else if folders.len() > 1 {
         let btn = gtk::MenuButton::new();
         btn.set_icon_name("folder-open-symbolic");
+        btn.set_sensitive(!opening);
         btn.set_tooltip_text(Some(
             &ctx.t_or("overviews.remoteCard.browse", "Browse active folders"),
         ));
