@@ -785,3 +785,6 @@ This client is the GTK 4 + libadwaita desktop UI. It talks to a local `rclone rc
 - Live GUI: testdrive General **Stop Mount** unmounted `/tmp/rclone-testdrive-mnt` (toast **Unmounted /tmp/rclone-testdrive-mnt**) while rcd `listmounts` was empty; **Start Mount** remounted it
 - General detail shows Angular’s Remote Configuration preview (`settings_list` + Edit Configuration) from `config/dump`
 - Live GUI: testdrive General Remote Configuration lists **2 settings** (`remote` `/tmp/rclone-test-remote`, `type` `alias`) and **Edit Configuration**
+- General and Flow remote detail use Angular’s Jobs panel (type, `#id`, profile, status, progress, dry-run, duration, relative time, stop/delete)
+- Live GUI: testdrive General **Jobs 12** shows `copy #22718` Completed; click opens Job Information; Flow testdrive remote detail lists the same cards
+- Flow transfer activity has Reset stats (running) / Delete from history (finished), matching the dashboard toolbar
