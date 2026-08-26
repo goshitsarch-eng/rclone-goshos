@@ -650,6 +650,9 @@ This client is the GTK 4 + libadwaita desktop UI. It talks to a local `rclone rc
 - `Ctrl+?` opens keyboard shortcuts (same as Angular; `Ctrl+Shift+?` still works)
 - Remote detail Monitoring/Configuration tab is remembered per remote
 - Titlebar / Ctrl+B / Flow peek overlay a detached workspace when the target is not `default_view` (Angular overlay model)
+- Live GUI: titlebar Files with `default_view=main_menu` opens detached `Files` `1082×762` while Remotes stays on the main window
 - Global Logs dialog has a Remote Filter dropdown (All + remotes); `--logs REMOTE` locks the dropdown
+- Live GUI: hamburger/gdbus Logs shows Remote Filter **All** plus testdrive copy/job lines
 - `--backends`, `--rclone-flags`, `--templates`, `--export`, `--repair` and `#/backends|flags|templates|export|repair` open those dialogs
+- Live GUI: `win.backends` via gdbus shows Local `127.0.0.1` + office extra backend and Config Password
 - App update install launches `msiexec` / `open` for Windows MSI/EXE and macOS DMG/PKG instead of replacing the binary
