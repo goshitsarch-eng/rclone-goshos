@@ -730,3 +730,8 @@ This client is the GTK 4 + libadwaita desktop UI. It talks to a local `rclone rc
 - Live GUI: overlay `win.shortcuts` opens Keyboard Shortcuts; search `xyzzy` shows **No results found** / **No options match your search** / **Clear Search**
 - Live GUI: overlay About shows `GTK 4 + libadwaita · 0.3.2 · rclone v1.60.1-DEV`
 - Live GUI: Nautilus shortcuts search `F2` → Rename; `Detach` → Detach Tab
+- Overlay `view` / `toggle-flow` open or focus sibling workspace windows instead of changing the main stack
+- Overlay hamburger registers `win.theme` and `win.quick-run-new`; language reload snapshots and restores overlay specs
+- Detach on Flow/Dashboard overlays is a no-op; Files still detaches the current tab
+- Live GUI: Files overlay `toggle-flow` opens **Flow Workspace** while Remotes stays on the main window; second toggle closes Flow
+- Live GUI: Files detach titles use `Files — Home`; Nautilus sheet search `Undo` / `New Tab`
