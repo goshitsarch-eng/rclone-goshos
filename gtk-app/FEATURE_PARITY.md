@@ -622,3 +622,5 @@ This client is the GTK 4 + libadwaita desktop UI. It talks to a local `rclone rc
 - NetworkManager `Metered` D-Bus watcher applies bandwidth + banner immediately (1s poll fallback)
 - Files toolbar Detach Tab opens the current listing in a new window
 - Files internal drag shows a GTK `DragIcon` ghost with name or “N items”
+- Live GUI: process thread `nm-metered` starts with the app
+- Live GUI: `rclone-manager://nautilus` opens the Files workspace (separate Files window 1222×882)

@@ -299,7 +299,7 @@ fn present_main_with(app: &adw::Application, ctx: AppCtx, hidden: bool) {
     menu_btn.set_menu_model(Some(&app_menu(&ctx)));
     header.pack_end(&menu_btn);
 
-    let detach_btn = gtk::Button::from_icon_name("window-new-symbolic");
+    let detach_btn = gtk::Button::from_icon_name("view-restore-symbolic");
     detach_btn.add_css_class("flat");
     detach_btn.set_tooltip_text(Some(&ctx.t_or(
         "titlebar.detach",

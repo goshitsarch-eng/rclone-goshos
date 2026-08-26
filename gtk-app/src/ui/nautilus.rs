@@ -206,7 +206,7 @@ impl NautilusView {
         toolbar.append(&upload);
         toolbar.append(&new_tab);
         toolbar.append(&split_btn);
-        let detach_btn = gtk::Button::from_icon_name("window-new-symbolic");
+        let detach_btn = gtk::Button::from_icon_name("view-restore-symbolic");
         detach_btn.set_tooltip_text(Some(
             &ctx.t_or("nautilus.contextMenu.detachTab", "Detach Tab"),
         ));
