@@ -528,6 +528,7 @@ This client is the GTK 4 + libadwaita desktop UI. It talks to a local `rclone rc
 - Files toolbar has Copy and Paste buttons next to New Folder
 - Files list selection reads `AdwActionRow` widget names (the row *is* the ListBoxRow); single-click selects, double-click opens
 - Files paste drops into a selected destination folder (unless that folder is the copy source)
+- Live GUI: testdrive Photos folder copy via toolbar Copy/Paste into verify-gui-folder (`sync/copy`, job group `filemanager/…`)
 
 ## Still deepening
 
