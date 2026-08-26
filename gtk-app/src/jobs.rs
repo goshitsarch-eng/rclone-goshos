@@ -956,6 +956,18 @@ pub fn automation_origin(id: &str) -> &'static str {
     }
 }
 
+/// Overview origin chips. `automation` means every scheduled item.
+pub fn automation_matches_filter(id: &str, filter: &str) -> bool {
+    let filter = filter.trim();
+    if filter.is_empty()
+        || filter.eq_ignore_ascii_case("all")
+        || filter.eq_ignore_ascii_case("automation")
+    {
+        return true;
+    }
+    origin_matches(automation_origin(id), filter)
+}
+
 pub fn start_profile(
     client: &RcClient,
     remote: &str,
@@ -3971,6 +3983,13 @@ mod tests {
         assert!(origin_matches("automation", "automation"));
         assert_eq!(automation_origin("quick:abc"), "quickrun");
         assert_eq!(automation_origin("remote:drive:sync:default"), "dashboard");
+        assert!(automation_matches_filter("quick:abc", "automation"));
+        assert!(automation_matches_filter(
+            "remote:drive:sync:default",
+            "all"
+        ));
+        assert!(automation_matches_filter("quick:abc", "quickrun"));
+        assert!(!automation_matches_filter("quick:abc", "dashboard"));
     }
 
     #[test]

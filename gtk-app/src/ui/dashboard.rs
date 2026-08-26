@@ -1576,9 +1576,7 @@ impl Dashboard {
         let filter = self.origin_filter();
         let records: Vec<_> = crate::automation::collect(&self.ctx.store.borrow())
             .into_iter()
-            .filter(|record| {
-                crate::jobs::origin_matches(crate::jobs::automation_origin(&record.id), &filter)
-            })
+            .filter(|record| crate::jobs::automation_matches_filter(&record.id, &filter))
             .collect();
         if records.is_empty() {
             let row = adw::ActionRow::new();

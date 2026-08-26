@@ -538,10 +538,7 @@ impl FlowView {
                     let records: Vec<_> = crate::automation::collect(&self.ctx.store.borrow())
                         .into_iter()
                         .filter(|record| {
-                            crate::jobs::origin_matches(
-                                crate::jobs::automation_origin(&record.id),
-                                &filter,
-                            )
+                            crate::jobs::automation_matches_filter(&record.id, &filter)
                         })
                         .collect();
                     if records.is_empty() {
