@@ -536,6 +536,8 @@ This client is the GTK 4 + libadwaita desktop UI. It talks to a local `rclone rc
 - Live GUI: testdrive Photos Copy to… `verify-copy-to` (`sync/copy`, job 25238 in `job_history`, 3/3 files)
 - Live GUI: Selection actions menu lists Copy to… / Move to… and Copy toasts
 - Live GUI: remotes testdrive (Mounted) + dummyexport, Mount tab, Preferences tray/notifications ON, About, Alerts history
+- Live GUI: testdrive Serve start/stop (`Successfully started Serve` / `Stopped serve 127.0.0.1:35663`)
+- StatusNotifier tray registers `org.kde.StatusNotifierItem-<pid>-1` on the session bus when tray is enabled
 
 ## Still deepening
 
