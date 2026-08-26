@@ -381,6 +381,8 @@ pub fn detail_jobs_panel(
 
     let list = gtk::ListBox::new();
     list.add_css_class("boxed-list");
+    list.set_activate_on_single_click(true);
+    list.set_selection_mode(gtk::SelectionMode::None);
     if jobs.is_empty() {
         let row = adw::ActionRow::new();
         row.set_title(&ctx.t_or("detailShared.jobs.empty", "No jobs found"));
@@ -509,14 +511,20 @@ pub fn detail_jobs_panel(
         let row = gtk::ListBoxRow::new();
         row.set_child(Some(&card));
         row.set_activatable(true);
-        {
-            let ctx = ctx.clone();
-            let job = job.clone();
-            row.connect_activate(move |_| {
-                ctx.request_nav(NavTarget::for_job(&job));
-            });
-        }
         list.append(&row);
+    }
+    {
+        let ctx = ctx.clone();
+        let jobs = jobs.to_vec();
+        list.connect_row_activated(move |_, row| {
+            let index = row.index();
+            if index < 0 {
+                return;
+            }
+            if let Some(job) = jobs.get(index as usize) {
+                ctx.request_nav(NavTarget::for_job(job));
+            }
+        });
     }
     root.append(&list);
     root
