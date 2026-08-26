@@ -1249,22 +1249,28 @@ impl NautilusView {
         widget.add_controller(drag);
     }
 
-    fn item_menu_button(&self, name: &str, primary: bool) -> gtk::Button {
-        let more = gtk::Button::from_icon_name("view-more-symbolic");
+    fn item_menu_button(&self, name: &str, primary: bool) -> gtk::MenuButton {
+        let more = gtk::MenuButton::new();
+        more.set_icon_name("view-more-symbolic");
         more.add_css_class("flat");
         more.add_css_class("circular");
-        more.set_tooltip_text(Some(
-            &self
-                .ctx
-                .t_or("nautilus.contextMenu.selectionActions", "Selection actions"),
-        ));
+        more.set_tooltip_text(Some(&self.ctx.t_or(
+            "nautilus.contextMenu.selectionActions",
+            "Selection actions",
+        )));
         more.set_widget_name(&format!("file-menu-{name}"));
+        let popover = gtk::Popover::new();
+        more.set_popover(Some(&popover));
         {
             let view = self.clone();
             let name = name.to_string();
-            more.connect_clicked(move |btn| {
+            let popover = popover.clone();
+            more.connect_notify_local(Some("active"), move |btn, _| {
+                if !btn.is_active() {
+                    return;
+                }
                 view.ensure_name_selected(&name, primary);
-                view.popup_context_at(btn, 0.0, btn.height().max(24) as f64);
+                popover.set_child(Some(&view.build_context_menu(&popover)));
             });
         }
         more
@@ -4121,6 +4127,15 @@ impl NautilusView {
             })
             .unwrap_or((x.round() as i32, y.round() as i32));
         let popover = gtk::Popover::new();
+        popover.set_child(Some(&self.build_context_menu(&popover)));
+        popover.set_parent(&win);
+        popover.set_has_arrow(true);
+        popover.set_pointing_to(Some(&gtk::gdk::Rectangle::new(px, py, 1, 1)));
+        popover.connect_closed(|popover| popover.unparent());
+        popover.popup();
+    }
+
+    fn build_context_menu(&self, popover: &gtk::Popover) -> gtk::Widget {
         let box_ = gtk::Box::new(gtk::Orientation::Vertical, 4);
         let selected = self.selected_names();
         let current = self.current.borrow().clone();
@@ -4444,12 +4459,7 @@ impl NautilusView {
             stack.add_named(&open_page, Some("open"));
         }
         stack.set_visible_child_name("main");
-        popover.set_child(Some(&stack));
-        popover.set_parent(&win);
-        popover.set_has_arrow(true);
-        popover.set_pointing_to(Some(&gtk::gdk::Rectangle::new(px, py, 1, 1)));
-        popover.connect_closed(|popover| popover.unparent());
-        popover.popup();
+        stack.upcast()
     }
 
     fn selected_is_dir(&self) -> bool {
