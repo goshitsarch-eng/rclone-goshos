@@ -577,3 +577,4 @@ This client is the GTK 4 + libadwaita desktop UI. It talks to a local `rclone rc
 - Watch automations debounce from the last change (`watch_delay`) and pass scoped `(src, dst)` pairs when “changed only” is on
 - Sync / Bisync / Check start rejects file sources with the same directory-only error as Tauri
 - Files row ⋮ opens the full listing context menu (Share, Send-to, archive, star) instead of the short Selection actions list
+- Live GUI: testdrive Files grid still has a hard-to-hit ⋮ target (same as GDK button-3); Shift+F10 / toolbar Selection actions remain the reliable openers in this session
