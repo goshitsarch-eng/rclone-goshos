@@ -788,3 +788,7 @@ This client is the GTK 4 + libadwaita desktop UI. It talks to a local `rclone rc
 - General and Flow remote detail use Angular’s Jobs panel (type, `#id`, profile, status, progress, dry-run, duration, relative time, stop/delete)
 - Live GUI: testdrive General **Jobs 12** shows `copy #22718` Completed; click opens Job Information; Flow testdrive remote detail lists the same cards
 - Flow transfer activity has Reset stats (running) / Delete from history (finished), matching the dashboard toolbar
+- General and Flow render Angular `app-quick-run-card` overview cards (name, op badge, remote link, cron/watch/autostart icons, start/stop, edit, source/destination folder menu)
+- Cards sit after disk usage and before Jobs, matching Angular `general-detail`
+- Live GUI: testdrive General **Quick Runs (1)** shows `gui-qr-copy` Copy · testdrive with cron clock, Start, Edit, and folder popover (Source `testdrive:Photos` / Destination `testdrive:verify-qr`); title opens Flow detail; Edit opens the Quick Run editor (`0 7 * * *`)
+- Settings previews use Angular’s expandable `settings-panel` (count subtitle, app/rclone groups, Edit) instead of a flat ActionRow list

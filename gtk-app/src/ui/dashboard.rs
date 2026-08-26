@@ -2271,7 +2271,6 @@ impl Dashboard {
                 &[("op", op.api_label())],
             )
         };
-        self.detail_box().append(&section_label(&heading));
         let desc_key = format!("dashboard.appDetail.{}Desc", op.as_str());
         let desc = self.ctx.t_or(
             &desc_key,
@@ -2284,7 +2283,7 @@ impl Dashboard {
             label.set_wrap(true);
             self.detail_box().append(&label);
         }
-        if let Some(cfg) = self
+        let value = if let Some(cfg) = self
             .ctx
             .store
             .borrow()
@@ -2292,28 +2291,25 @@ impl Dashboard {
             .get(name)
             .and_then(|meta| meta.get_profile(op, profile))
         {
-            let value = serde_json::to_value(&cfg).unwrap_or(serde_json::json!({}));
-            self.detail_box()
-                .append(&dialogs::settings_list(&self.ctx, &value, 16));
+            serde_json::to_value(&cfg).unwrap_or(serde_json::json!({}))
         } else {
             let dump = self
                 .ctx
                 .client()
                 .and_then(|client| client.dump_config().ok())
                 .unwrap_or(serde_json::json!({}));
-            let params =
-                crate::providers::dump_remote_params(&dump, name).unwrap_or(serde_json::json!({}));
-            self.detail_box()
-                .append(&dialogs::settings_list(&self.ctx, &params, 16));
-        }
-        let edit_op = gtk::Button::with_label(&self.ctx.t_or("common.edit", "Edit"));
-        {
-            let ctx = self.ctx.clone();
-            let remote = name.to_string();
-            let dash = self.clone();
-            let op_key = op.as_str().to_string();
-            let profile = profile.to_string();
-            edit_op.connect_clicked(move |_| {
+            crate::providers::dump_remote_params(&dump, name).unwrap_or(serde_json::json!({}))
+        };
+        let ctx = self.ctx.clone();
+        let remote = name.to_string();
+        let dash = self.clone();
+        let op_key = op.as_str().to_string();
+        let profile = profile.to_string();
+        self.detail_box().append(&dialogs::settings_panel(
+            &self.ctx,
+            &heading,
+            &value,
+            Some(Rc::new(move || {
                 if let Some(win) = dash.root.root().and_downcast::<gtk::Window>() {
                     dialogs::remote_config_open(
                         &win,
@@ -2335,9 +2331,8 @@ impl Dashboard {
                         },
                     );
                 }
-            });
-        }
-        self.detail_box().append(&edit_op);
+            })),
+        ));
     }
 
     fn append_shared_settings(&self, name: &str, op: OperationType) {
@@ -2376,8 +2371,7 @@ impl Dashboard {
             if kind == "vfs" && !op.supports_vfs() {
                 continue;
             }
-            self.detail_box()
-                .append(&section_label(&self.ctx.t_or(title_key, fallback)));
+            let title = self.ctx.t_or(title_key, fallback);
             let value = self
                 .ctx
                 .store
@@ -2389,15 +2383,15 @@ impl Dashboard {
                     meta.helper_profile(kind, &helper)
                 })
                 .unwrap_or(serde_json::json!({}));
-            self.detail_box()
-                .append(&dialogs::settings_list(&self.ctx, &value, 12));
-            let edit = gtk::Button::with_label(&self.ctx.t_or("common.edit", "Edit"));
-            {
-                let ctx = self.ctx.clone();
-                let remote = name.to_string();
-                let dash = self.clone();
-                let step = kind.to_string();
-                edit.connect_clicked(move |_| {
+            let ctx = self.ctx.clone();
+            let remote = name.to_string();
+            let dash = self.clone();
+            let step = kind.to_string();
+            self.detail_box().append(&dialogs::settings_panel(
+                &self.ctx,
+                &title,
+                &value,
+                Some(Rc::new(move || {
                     if let Some(win) = dash.root.root().and_downcast::<gtk::Window>() {
                         super::remote_config::present_with(
                             &win,
@@ -2413,9 +2407,8 @@ impl Dashboard {
                             },
                         );
                     }
-                });
-            }
-            self.detail_box().append(&edit);
+                })),
+            ));
         }
 
         let dump = self
@@ -2424,13 +2417,14 @@ impl Dashboard {
             .and_then(|client| client.dump_config().ok())
             .unwrap_or(serde_json::json!({}));
         if let Some(params) = crate::providers::dump_remote_params(&dump, name) {
-            self.detail_box().append(&section_label(
+            self.detail_box().append(&dialogs::settings_panel(
+                &self.ctx,
                 &self
                     .ctx
                     .t_or("dashboard.appDetail.remoteSettings", "Remote settings"),
+                &params,
+                None,
             ));
-            self.detail_box()
-                .append(&dialogs::settings_list(&self.ctx, &params, 12));
         }
     }
 
@@ -3892,25 +3886,20 @@ impl Dashboard {
     }
 
     fn append_remote_configuration_preview(&self, name: &str) {
-        self.detail_box().append(&section_label(&self.ctx.t_or(
-            "dashboard.generalDetail.remoteConfiguration",
-            "Remote Configuration",
-        )));
         let dump = self.ctx.config_dump();
         let params =
             crate::providers::dump_remote_params(&dump, name).unwrap_or(serde_json::json!({}));
-        self.detail_box()
-            .append(&dialogs::settings_list(&self.ctx, &params, 24));
-        let edit = gtk::Button::with_label(&self.ctx.t_or(
-            "dashboard.generalDetail.editConfiguration",
-            "Edit Configuration",
-        ));
-        edit.add_css_class("suggested-action");
-        {
-            let ctx = self.ctx.clone();
-            let remote = name.to_string();
-            let dash = self.clone();
-            edit.connect_clicked(move |_| {
+        let ctx = self.ctx.clone();
+        let remote = name.to_string();
+        let dash = self.clone();
+        self.detail_box().append(&dialogs::settings_panel(
+            &self.ctx,
+            &self.ctx.t_or(
+                "dashboard.generalDetail.remoteConfiguration",
+                "Remote Configuration",
+            ),
+            &params,
+            Some(Rc::new(move || {
                 if let Some(win) = dash.root.root().and_downcast::<gtk::Window>() {
                     super::remote_config::present_with(
                         &win,
@@ -3926,9 +3915,8 @@ impl Dashboard {
                         },
                     );
                 }
-            });
-        }
-        self.detail_box().append(&edit);
+            })),
+        ));
     }
 }
 

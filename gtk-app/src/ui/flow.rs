@@ -1202,10 +1202,6 @@ impl FlowView {
     }
 
     fn append_settings_panel(&self, name: &str) {
-        self.content.append(&self.heading(&self.ctx.t_or(
-            "dashboard.generalDetail.remoteConfiguration",
-            "Remote Configuration",
-        )));
         let dump = self
             .ctx
             .client()
@@ -1213,19 +1209,19 @@ impl FlowView {
             .unwrap_or(serde_json::json!({}));
         let params =
             crate::providers::dump_remote_params(&dump, name).unwrap_or(serde_json::json!({}));
-        self.content
-            .append(&dialogs::settings_list(&self.ctx, &params, 24));
-        let edit = gtk::Button::with_label(&self.ctx.t_or(
-            "dashboard.generalDetail.editConfiguration",
-            "Edit Configuration",
+        let view = self.clone();
+        let remote = name.to_string();
+        self.content.append(&dialogs::settings_panel(
+            &self.ctx,
+            &self.ctx.t_or(
+                "dashboard.generalDetail.remoteConfiguration",
+                "Remote Configuration",
+            ),
+            &params,
+            Some(Rc::new(move || {
+                view.open_remote_config_step(&remote, "remote")
+            })),
         ));
-        edit.add_css_class("suggested-action");
-        {
-            let view = self.clone();
-            let remote = name.to_string();
-            edit.connect_clicked(move |_| view.open_remote_config_step(&remote, "remote"));
-        }
-        self.content.append(&edit);
     }
 
     fn fill_remote_detail(&self, name: &str) {
@@ -1655,15 +1651,26 @@ impl FlowView {
             });
         }
         configuration.append(&tray);
-        configuration.append(
-            &self.heading(
+        let config_value = serde_json::to_value(&qr.config).unwrap_or(serde_json::json!({}));
+        {
+            let view = self.clone();
+            let qr = qr.clone();
+            configuration.append(&dialogs::settings_panel(
+                &self.ctx,
                 &self
                     .ctx
                     .t_or("flow.quickRun.detail.configuration", "Configuration"),
-            ),
-        );
-        let config_value = serde_json::to_value(&qr.config).unwrap_or(serde_json::json!({}));
-        configuration.append(&dialogs::settings_list(&self.ctx, &config_value, 24));
+                &config_value,
+                Some(Rc::new(move || {
+                    if let Some(win) = view.root.root().and_downcast::<gtk::Window>() {
+                        dialogs::quick_run_editor(&win, view.ctx.clone(), Some(qr.clone()), {
+                            let view = view.clone();
+                            Rc::new(move || view.refresh())
+                        });
+                    }
+                })),
+            ));
+        }
 
         let actions = gtk::Box::new(gtk::Orientation::Horizontal, 8);
         let edit = gtk::Button::with_label(&self.ctx.t_or("common.edit", "Edit"));

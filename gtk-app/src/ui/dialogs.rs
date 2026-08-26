@@ -172,6 +172,87 @@ pub(super) fn settings_list(
     list
 }
 
+/// Angular `app-settings-panel`: expandable groups with optional Edit.
+pub(super) fn settings_panel(
+    ctx: &AppCtx,
+    title: &str,
+    settings: &serde_json::Value,
+    on_edit: Option<Rc<dyn Fn()>>,
+) -> gtk::Widget {
+    let restrict = ctx.settings.borrow().general.restrict;
+    let groups = crate::restrict::grouped_settings(settings, restrict);
+    let count: usize = groups.iter().map(|group| group.entries.len()).sum();
+
+    let expander = adw::ExpanderRow::new();
+    expander.set_title(title);
+    if count == 0 {
+        expander.set_subtitle(&ctx.t_or("detailShared.settings.notConfigured", "Not configured"));
+    } else {
+        expander.set_subtitle(&ctx.tf(
+            "detailShared.settings.metrics",
+            &[("count", &count.to_string())],
+        ));
+    }
+    if let Some(on_edit) = on_edit.clone() {
+        let edit = gtk::Button::from_icon_name("document-edit-symbolic");
+        edit.add_css_class("flat");
+        edit.set_valign(gtk::Align::Center);
+        edit.set_tooltip_text(Some(
+            &ctx.t_or("detailShared.settings.edit", "Edit Settings"),
+        ));
+        edit.connect_clicked(move |_| on_edit());
+        expander.add_suffix(&edit);
+    }
+    if count == 0 {
+        let row = adw::ActionRow::new();
+        row.set_title(&ctx.t_or(
+            "detailShared.settings.noData",
+            "No configuration data available",
+        ));
+        expander.add_row(&row);
+    } else {
+        for group in groups {
+            if !group.category.is_empty() {
+                let head = adw::ActionRow::new();
+                let fallback = group
+                    .category
+                    .rsplit('.')
+                    .next()
+                    .unwrap_or(group.category.as_str());
+                head.set_title(&ctx.t_or(&group.category, fallback));
+                head.set_sensitive(false);
+                expander.add_row(&head);
+            }
+            for entry in group.entries {
+                let row = adw::ActionRow::new();
+                row.set_title(&entry.key);
+                row.set_subtitle(&entry.display);
+                if entry.sensitive {
+                    row.set_icon_name("dialog-password-symbolic");
+                    row.set_tooltip_text(Some(
+                        &ctx.t_or("detailShared.settings.restricted", "RESTRICTED"),
+                    ));
+                }
+                expander.add_row(&row);
+            }
+        }
+    }
+
+    let list = gtk::ListBox::new();
+    list.add_css_class("boxed-list");
+    list.append(&expander);
+    let wrap = gtk::Box::new(gtk::Orientation::Vertical, 8);
+    wrap.append(&list);
+    if let Some(on_edit) = on_edit {
+        let edit =
+            gtk::Button::with_label(&ctx.t_or("detailShared.settings.edit", "Edit Settings"));
+        edit.add_css_class("suggested-action");
+        edit.connect_clicked(move |_| on_edit());
+        wrap.append(&edit);
+    }
+    wrap.upcast()
+}
+
 fn standalone_window_title(ctx: &AppCtx, kind: &str) -> String {
     match kind {
         "preferences" => ctx.t_or("settings.title", "Preferences"),
