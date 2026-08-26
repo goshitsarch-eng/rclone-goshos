@@ -8699,6 +8699,133 @@ fn pdf_panel(path: Option<std::path::PathBuf>, name: &str, ctx: &AppCtx) -> gtk:
     box_
 }
 
+fn build_markdown_preview(source: &str, images: Option<&(AppCtx, String, String)>) -> gtk::Widget {
+    let parts = crate::markdown::preview_parts(source);
+    let has_images = parts
+        .iter()
+        .any(|part| matches!(part, crate::markdown::PreviewPart::Image { .. }));
+    if !has_images {
+        let preview = gtk::TextView::new();
+        preview.set_editable(false);
+        preview.set_wrap_mode(gtk::WrapMode::WordChar);
+        preview.set_hexpand(true);
+        preview
+            .buffer()
+            .set_text(&crate::markdown::to_preview(source));
+        return preview.upcast();
+    }
+    let box_ = gtk::Box::new(gtk::Orientation::Vertical, 8);
+    box_.set_hexpand(true);
+    let mut text_buf = String::new();
+    let flush_text = |text_buf: &mut String, box_: &gtk::Box| {
+        let trimmed = text_buf.trim();
+        if trimmed.is_empty() {
+            text_buf.clear();
+            return;
+        }
+        let view = gtk::TextView::new();
+        view.set_editable(false);
+        view.set_wrap_mode(gtk::WrapMode::WordChar);
+        view.set_hexpand(true);
+        view.buffer().set_text(trimmed);
+        box_.append(&view);
+        text_buf.clear();
+    };
+    for part in parts {
+        match part {
+            crate::markdown::PreviewPart::Text(text) => text_buf.push_str(&text),
+            crate::markdown::PreviewPart::Image { alt, href } => {
+                flush_text(&mut text_buf, &box_);
+                if let Some((ctx, remote, file_path)) = images {
+                    if let Some(path) = materialize_preview_image(ctx, remote, file_path, &href) {
+                        let picture = gtk::Picture::for_filename(&path);
+                        picture.set_can_shrink(true);
+                        picture.set_hexpand(true);
+                        picture.set_content_fit(gtk::ContentFit::Contain);
+                        picture.set_size_request(-1, 220);
+                        if !alt.is_empty() {
+                            picture.set_tooltip_text(Some(&alt));
+                        }
+                        box_.append(&picture);
+                    }
+                }
+                if !alt.is_empty() {
+                    let cap = gtk::Label::new(Some(&alt));
+                    cap.set_xalign(0.0);
+                    cap.add_css_class("dim-label");
+                    cap.set_wrap(true);
+                    box_.append(&cap);
+                }
+            }
+        }
+    }
+    flush_text(&mut text_buf, &box_);
+    box_.upcast()
+}
+
+fn materialize_preview_image(
+    ctx: &AppCtx,
+    remote: &str,
+    file_path: &str,
+    href: &str,
+) -> Option<std::path::PathBuf> {
+    use std::io::Read;
+    match crate::markdown::resolve_preview_source(remote, file_path, href) {
+        crate::markdown::PreviewSource::Path(path) => {
+            let path = std::path::PathBuf::from(path);
+            path.is_file().then_some(path)
+        }
+        crate::markdown::PreviewSource::Url(url) => {
+            let dest = markdown_preview_cache_path("http", &url);
+            if dest.is_file() {
+                return Some(dest);
+            }
+            let resp = ureq::get(&url)
+                .timeout(std::time::Duration::from_secs(8))
+                .call()
+                .ok()?;
+            let mut bytes = Vec::new();
+            resp.into_reader()
+                .take(8_000_000)
+                .read_to_end(&mut bytes)
+                .ok()?;
+            std::fs::write(&dest, bytes).ok()?;
+            Some(dest)
+        }
+        crate::markdown::PreviewSource::RemotePath(path) => {
+            let dest = markdown_preview_cache_path(remote, &path);
+            if dest.is_file() {
+                return Some(dest);
+            }
+            let client = ctx.client()?;
+            let fs = crate::rclone::remote_fs(remote, "");
+            client
+                .copy_file(&fs, &path, "/", &dest.to_string_lossy())
+                .ok()?;
+            dest.is_file().then_some(dest)
+        }
+    }
+}
+
+fn markdown_preview_cache_path(remote: &str, path: &str) -> std::path::PathBuf {
+    use sha2::{Digest, Sha256};
+    let mut hasher = Sha256::new();
+    hasher.update(remote.as_bytes());
+    hasher.update(b"\0");
+    hasher.update(path.as_bytes());
+    let digest = hex_encode(&hasher.finalize());
+    let ext = std::path::Path::new(path)
+        .extension()
+        .and_then(|e| e.to_str())
+        .filter(|e| e.chars().all(|c| c.is_ascii_alphanumeric()))
+        .unwrap_or("img");
+    std::env::temp_dir().join(format!("rclone-md-preview-{digest}.{ext}"))
+}
+
+fn hex_encode(bytes: &[u8]) -> String {
+    bytes.iter().map(|b| format!("{b:02x}")).collect()
+}
+
 fn attach_text_preview(
     parent: &gtk::Box,
     name: &str,
@@ -8706,6 +8833,7 @@ fn attach_text_preview(
     editable: bool,
     save_path: Option<&str>,
     remote_save: Option<(AppCtx, String, String)>,
+    md_images: Option<(AppCtx, String, String)>,
 ) {
     let shown = if text.len() > 200_000 {
         format!("{}\n\n… truncated …", &text[..200_000])
@@ -8721,14 +8849,10 @@ fn attach_text_preview(
     source_scroll.set_vexpand(true);
     source_scroll.set_child(Some(&view));
     if crate::markdown::is_markdown(name) {
-        let preview = gtk::TextView::new();
-        preview.set_editable(false);
-        preview.set_wrap_mode(gtk::WrapMode::WordChar);
-        preview
-            .buffer()
-            .set_text(&crate::markdown::to_preview(&shown));
+        let preview = build_markdown_preview(&shown, md_images.as_ref());
         let preview_scroll = gtk::ScrolledWindow::new();
         preview_scroll.set_vexpand(true);
+        preview_scroll.set_policy(gtk::PolicyType::Never, gtk::PolicyType::Automatic);
         preview_scroll.set_child(Some(&preview));
         let stack = gtk::Stack::new();
         stack.add_named(&source_scroll, Some("source"));
@@ -9486,6 +9610,7 @@ pub fn file_viewer(
                             true,
                             None,
                             Some((ctx.clone(), fs, path.to_string())),
+                            Some((ctx.clone(), remote.to_string(), path.to_string())),
                         );
                         append_markdown_targets(&box_, name, &text, remote, path, &ctx, parent);
                     }
@@ -9556,6 +9681,7 @@ pub fn file_viewer(
                     true,
                     Some(&local.to_string_lossy()),
                     None,
+                    Some((ctx.clone(), remote.to_string(), path.to_string())),
                 );
                 append_markdown_targets(&box_, name, &text, remote, path, &ctx, parent);
             }
