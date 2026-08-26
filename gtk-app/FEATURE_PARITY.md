@@ -815,3 +815,6 @@ This client is the GTK 4 + libadwaita desktop UI. It talks to a local `rclone rc
 - Files operations expanders show Angular job details: source, destination, start time, job error with Copy, and failed completed-transfer rows
 - Live GUI: testdrive Copy `gui-copy-multi` Source `testdrive:Photos, testdrive:` opens a folder menu with `testdrive:Photos` and `testdrive:`
 - Live GUI: Files ops `copy · Failed` #42424 shows Source `testdrive:Photos`, Destination `testdrive:verify-ops`, Start time Aug 26 21:00, Failed `network timeout` with Copy, and `bad.txt` / `permission denied`
+- Remote-config profile rename follows Angular: sync/job profiles cannot be renamed while a job is running; mount/serve rename still cascades into the live mount/serve cache
+- Delete stays blocked for any in-use job/mount/serve profile, with the same in-use tooltip as Angular
+- Dashboard and Flow transfer/check tables page like Angular (`displayLimit` 50 + Show N more) instead of silently dropping rows at 12/40; Job Information lists every check result

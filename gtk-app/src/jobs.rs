@@ -2196,6 +2196,46 @@ impl ProfileUsage {
     }
 }
 
+/// Angular `computeProfileActionState(..., 'rename')`: only sync/job
+/// profiles are blocked while a job is active. Mount/serve stay
+/// renameable so the runtime cache can cascade.
+pub fn profile_rename_blocked(op: Option<OperationType>, usage: &ProfileUsage) -> bool {
+    match op {
+        Some(op) if op.is_sync_type() => usage.jobs > 0,
+        _ => false,
+    }
+}
+
+/// Angular `displayLimit` page size for transfer/check tables.
+pub const ACTIVITY_PAGE: usize = 50;
+
+pub fn activity_visible_end(total: usize, limit: usize) -> usize {
+    total.min(limit.max(1))
+}
+
+pub fn activity_remaining(total: usize, limit: usize) -> usize {
+    total.saturating_sub(activity_visible_end(total, limit))
+}
+
+pub fn rename_mounts_profile(
+    mounts: &mut [MountedRemote],
+    remote: &str,
+    from: &str,
+    to: &str,
+) -> usize {
+    if from.is_empty() || from == to {
+        return 0;
+    }
+    let mut updated = 0;
+    for mount in mounts {
+        if fs_belongs_to_remote(&mount.fs, remote) && mount.profile == from {
+            mount.profile = to.to_string();
+            updated += 1;
+        }
+    }
+    updated
+}
+
 pub fn profile_usage(
     jobs: &[JobInfo],
     mounts: &[MountedRemote],
@@ -4448,6 +4488,49 @@ mod tests {
         );
         assert_eq!(serves[0].profile, "web");
         assert_eq!(serves[1].profile, "public");
+    }
+
+    #[test]
+    fn renames_mount_profiles_for_remote() {
+        let mut mounts = vec![
+            MountedRemote {
+                fs: "drive:".into(),
+                mount_point: "/mnt/drive".into(),
+                profile: "home".into(),
+                ..MountedRemote::default()
+            },
+            MountedRemote {
+                fs: "box:".into(),
+                mount_point: "/mnt/box".into(),
+                profile: "home".into(),
+                ..MountedRemote::default()
+            },
+        ];
+        assert_eq!(
+            rename_mounts_profile(&mut mounts, "drive", "home", "desk"),
+            1
+        );
+        assert_eq!(mounts[0].profile, "desk");
+        assert_eq!(mounts[1].profile, "home");
+        assert_eq!(
+            rename_mounts_profile(&mut mounts, "drive", "home", "desk"),
+            0
+        );
+        let busy = ProfileUsage {
+            jobs: 1,
+            ..ProfileUsage::default()
+        };
+        assert!(profile_rename_blocked(Some(OperationType::Copy), &busy));
+        assert!(!profile_rename_blocked(Some(OperationType::Mount), &busy));
+        assert!(!profile_rename_blocked(None, &busy));
+        assert!(!profile_rename_blocked(
+            Some(OperationType::Copy),
+            &ProfileUsage::default()
+        ));
+        assert_eq!(activity_visible_end(13, 12), 12);
+        assert_eq!(activity_remaining(13, 12), 1);
+        assert_eq!(activity_remaining(12, 50), 0);
+        assert_eq!(activity_visible_end(80, ACTIVITY_PAGE), 50);
     }
 
     #[test]

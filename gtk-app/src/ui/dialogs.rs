@@ -8125,7 +8125,7 @@ pub fn job_detail(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, job_id: u64) {
                     "Checked files will appear here when the job completes",
                 ));
                 completed.append(&heading);
-                for item in results.into_iter().take(40) {
+                for item in results {
                     completed.append(&check_result_row(&ctx, &item, &dialog));
                 }
             }

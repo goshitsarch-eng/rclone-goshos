@@ -1737,61 +1737,91 @@ fn wire_profile_actions(
                         }
                     },
                 ),
-                "rename" => dialogs::prompt(
-                    &parent,
-                    &ctx,
-                    &ctx.t_or("modals.remoteConfig.renameProfile", "Rename profile"),
-                    &ctx.t_or("modals.remoteConfig.newName", "New name"),
-                    &current,
-                    {
-                        let ctx = ctx.clone();
-                        let remote = remote.clone();
-                        let names = names.clone();
-                        let combo = combo.clone();
-                        let selected = selected.clone();
-                        let current = current.clone();
-                        move |name| {
-                            if name.is_empty() {
-                                return;
-                            }
-                            mutate_profiles(&ctx, &remote, op, helper, |meta| {
-                                if let Some(op) = op {
-                                    let _ = meta.rename_profile(op, &current, &name);
-                                } else if let Some(kind) = helper {
-                                    let _ = meta.rename_helper(kind, &current, &name);
+                "rename" => {
+                    let snap = ctx.snapshot.borrow();
+                    let usage = crate::jobs::profile_usage(
+                        &snap.jobs,
+                        &snap.mounts,
+                        &snap.serves,
+                        &remote,
+                        &current,
+                        op,
+                    );
+                    drop(snap);
+                    if crate::jobs::profile_rename_blocked(op, &usage) {
+                        let alert = adw::AlertDialog::new(
+                            Some(&ctx.t_or(
+                                "modals.remoteConfig.profile.inUseWarning",
+                                "Profile is in use",
+                            )),
+                            Some(&usage.summary()),
+                        );
+                        alert.add_response("ok", &ctx.t_or("common.ok", "OK"));
+                        alert.present(Some(&parent));
+                        return;
+                    }
+                    dialogs::prompt(
+                        &parent,
+                        &ctx,
+                        &ctx.t_or("modals.remoteConfig.renameProfile", "Rename profile"),
+                        &ctx.t_or("modals.remoteConfig.newName", "New name"),
+                        &current,
+                        {
+                            let ctx = ctx.clone();
+                            let remote = remote.clone();
+                            let names = names.clone();
+                            let combo = combo.clone();
+                            let selected = selected.clone();
+                            let current = current.clone();
+                            move |name| {
+                                if name.is_empty() {
+                                    return;
                                 }
-                            });
-                            if helper.is_none() {
-                                ctx.store
-                                    .borrow_mut()
-                                    .rename_runtime_profile(&remote, &current, &name);
-                                crate::jobs::rename_jobs_profile(
-                                    &mut ctx.snapshot.borrow_mut().jobs,
-                                    &remote,
-                                    &current,
-                                    &name,
-                                );
-                                crate::jobs::rename_serves_profile(
-                                    &mut ctx.snapshot.borrow_mut().serves,
-                                    &remote,
-                                    &current,
-                                    &name,
-                                );
-                                ctx.persist();
+                                mutate_profiles(&ctx, &remote, op, helper, |meta| {
+                                    if let Some(op) = op {
+                                        let _ = meta.rename_profile(op, &current, &name);
+                                    } else if let Some(kind) = helper {
+                                        let _ = meta.rename_helper(kind, &current, &name);
+                                    }
+                                });
+                                if helper.is_none() {
+                                    ctx.store
+                                        .borrow_mut()
+                                        .rename_runtime_profile(&remote, &current, &name);
+                                    crate::jobs::rename_jobs_profile(
+                                        &mut ctx.snapshot.borrow_mut().jobs,
+                                        &remote,
+                                        &current,
+                                        &name,
+                                    );
+                                    crate::jobs::rename_serves_profile(
+                                        &mut ctx.snapshot.borrow_mut().serves,
+                                        &remote,
+                                        &current,
+                                        &name,
+                                    );
+                                    crate::jobs::rename_mounts_profile(
+                                        &mut ctx.snapshot.borrow_mut().mounts,
+                                        &remote,
+                                        &current,
+                                        &name,
+                                    );
+                                    ctx.persist();
+                                }
+                                if let Some(slot) =
+                                    names.borrow_mut().iter_mut().find(|n| *n == &current)
+                                {
+                                    *slot = name.clone();
+                                }
+                                refresh_combo(&combo, &names.borrow());
+                                if let Some(idx) = names.borrow().iter().position(|n| n == &name) {
+                                    combo.set_selected(idx as u32);
+                                }
+                                *selected.borrow_mut() = name;
                             }
-                            if let Some(slot) =
-                                names.borrow_mut().iter_mut().find(|n| *n == &current)
-                            {
-                                *slot = name.clone();
-                            }
-                            refresh_combo(&combo, &names.borrow());
-                            if let Some(idx) = names.borrow().iter().position(|n| n == &name) {
-                                combo.set_selected(idx as u32);
-                            }
-                            *selected.borrow_mut() = name;
-                        }
-                    },
-                ),
+                        },
+                    );
+                }
                 "delete" => {
                     let snap = ctx.snapshot.borrow();
                     let usage = crate::jobs::profile_usage(
@@ -1838,6 +1868,73 @@ fn wire_profile_actions(
     bind(&switcher.clone, "clone");
     bind(&switcher.rename, "rename");
     bind(&switcher.delete, "delete");
+    apply_profile_action_state(
+        &ctx,
+        remote,
+        op,
+        &selected.borrow(),
+        &switcher.rename,
+        &switcher.delete,
+    );
+    {
+        let ctx = ctx.clone();
+        let remote = remote.to_string();
+        let names = switcher.names.clone();
+        let rename = switcher.rename.clone();
+        let delete = switcher.delete.clone();
+        switcher.combo.connect_selected_notify(move |combo| {
+            let current = names
+                .borrow()
+                .get(combo.selected() as usize)
+                .cloned()
+                .unwrap_or_else(|| "default".into());
+            apply_profile_action_state(&ctx, &remote, op, &current, &rename, &delete);
+        });
+    }
+}
+
+fn apply_profile_action_state(
+    ctx: &AppCtx,
+    remote: &str,
+    op: Option<OperationType>,
+    profile: &str,
+    rename: &gtk::Button,
+    delete: &gtk::Button,
+) {
+    let snap = ctx.snapshot.borrow();
+    let usage =
+        crate::jobs::profile_usage(&snap.jobs, &snap.mounts, &snap.serves, remote, profile, op);
+    drop(snap);
+    let in_use = ctx.tf_or(
+        "modals.remoteConfig.profile.disabledReason.inUse",
+        "Profile is in use by a running {{operation}}. Stop it first.",
+        &[(
+            "operation",
+            &match op {
+                Some(op) if op.is_sync_type() => format!("{} job", op.as_str()),
+                Some(op) => op.as_str().to_string(),
+                None => "profile".into(),
+            },
+        )],
+    );
+    if crate::jobs::profile_rename_blocked(op, &usage) {
+        rename.set_sensitive(false);
+        rename.set_tooltip_text(Some(&in_use));
+    } else {
+        rename.set_sensitive(true);
+        rename.set_tooltip_text(Some(
+            &ctx.t_or("modals.remoteConfig.renameProfile", "Rename profile"),
+        ));
+    }
+    if usage.blocked() {
+        delete.set_sensitive(false);
+        delete.set_tooltip_text(Some(&in_use));
+    } else {
+        delete.set_sensitive(true);
+        delete.set_tooltip_text(Some(
+            &ctx.t_or("modals.remoteConfig.deleteProfile", "Delete profile"),
+        ));
+    }
 }
 
 fn mutate_profiles(

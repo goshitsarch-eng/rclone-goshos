@@ -31,6 +31,7 @@ pub struct Dashboard {
     origin_filter: Rc<RefCell<String>>,
     transfer_query: Rc<RefCell<String>>,
     transfer_tab: Rc<RefCell<String>>,
+    activity_limit: Rc<Cell<usize>>,
     panel_host: Rc<RefCell<Option<gtk::Box>>>,
     detail_host: Rc<RefCell<Option<gtk::Box>>>,
     detail_page: Rc<RefCell<String>>,
@@ -136,6 +137,7 @@ impl Dashboard {
             origin_filter: Rc::new(RefCell::new("all".into())),
             transfer_query: Rc::new(RefCell::new(String::new())),
             transfer_tab: Rc::new(RefCell::new("all".into())),
+            activity_limit: Rc::new(Cell::new(crate::jobs::ACTIVITY_PAGE)),
             panel_host: Rc::new(RefCell::new(None)),
             detail_host: Rc::new(RefCell::new(None)),
             detail_page: Rc::new(RefCell::new("monitoring".into())),
@@ -3346,7 +3348,6 @@ impl Dashboard {
                 }
             }
         }
-        rows.truncate(12);
         let mut check_items = Vec::new();
         for job in &jobs {
             if crate::checks::is_check_operation(&job.operation) {
@@ -3358,7 +3359,6 @@ impl Dashboard {
                 );
             }
         }
-        check_items.truncate(40);
         let has_live_job = jobs
             .iter()
             .any(|job| crate::jobs::job_is_running(job) || crate::jobs::job_is_pending(job));
@@ -3499,10 +3499,16 @@ impl Dashboard {
                 &query,
             );
             if !check_items.is_empty() {
+                let limit = self.activity_limit.get();
+                let end = crate::jobs::activity_visible_end(check_items.len(), limit);
+                let remaining = crate::jobs::activity_remaining(check_items.len(), limit);
                 let list = gtk::ListBox::new();
                 list.add_css_class("boxed-list");
-                for item in check_items {
-                    list.append(&dialogs::check_result_row(&self.ctx, &item, &self.root));
+                for item in &check_items[..end] {
+                    list.append(&dialogs::check_result_row(&self.ctx, item, &self.root));
+                }
+                if remaining > 0 {
+                    list.append(&self.activity_load_more_row(remaining));
                 }
                 self.detail_box().append(&list);
             }
@@ -3512,31 +3518,63 @@ impl Dashboard {
         }
         let query = self.transfer_query.borrow().to_ascii_lowercase();
         let tab = self.transfer_tab.borrow().clone();
+        let filtered: Vec<_> = rows
+            .into_iter()
+            .filter(|(_, _, row, completed)| {
+                if tab == "active" && *completed {
+                    return false;
+                }
+                if tab == "recent" && !*completed {
+                    return false;
+                }
+                if query.is_empty() {
+                    return true;
+                }
+                let hay = format!("{} {} {}", row.name, row.src, row.dst).to_ascii_lowercase();
+                hay.contains(&query)
+            })
+            .collect();
+        let limit = self.activity_limit.get();
+        let end = crate::jobs::activity_visible_end(filtered.len(), limit);
+        let remaining = crate::jobs::activity_remaining(filtered.len(), limit);
         let list = gtk::ListBox::new();
         list.add_css_class("boxed-list");
-        for (operation, remote, row, completed) in rows {
-            if tab == "active" && completed {
-                continue;
-            }
-            if tab == "recent" && !completed {
-                continue;
-            }
-            if !query.is_empty() {
-                let hay = format!("{} {} {}", row.name, row.src, row.dst).to_ascii_lowercase();
-                if !hay.contains(&query) {
-                    continue;
-                }
-            }
+        for (operation, remote, row, completed) in &filtered[..end] {
             list.append(&dialogs::transfer_activity_row(
                 &self.ctx,
-                &row,
-                completed,
-                &operation,
-                &remote,
+                row,
+                *completed,
+                operation,
+                remote,
                 &self.toast,
             ));
         }
+        if remaining > 0 {
+            list.append(&self.activity_load_more_row(remaining));
+        }
         self.detail_box().append(&list);
+    }
+
+    fn activity_load_more_row(&self, remaining: usize) -> adw::ActionRow {
+        let row = adw::ActionRow::new();
+        row.set_title(&self.ctx.tf_or(
+            "nautilus.loadMore",
+            "Show {{count}} more",
+            &[("count", &remaining.to_string())],
+        ));
+        row.set_activatable(true);
+        {
+            let dash = self.clone();
+            row.connect_activated(move |_| {
+                dash.activity_limit.set(
+                    dash.activity_limit
+                        .get()
+                        .saturating_add(crate::jobs::ACTIVITY_PAGE),
+                );
+                dash.refresh();
+            });
+        }
+        row
     }
 
     fn append_quick_run_cards(&self, name: &str) {
