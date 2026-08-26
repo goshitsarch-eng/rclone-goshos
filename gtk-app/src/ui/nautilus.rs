@@ -1226,10 +1226,14 @@ impl NautilusView {
                 if n_press != 1 {
                     return;
                 }
-                if let Some(name) = view.hit_test_name(&host, x, y, grid, primary) {
-                    view.ensure_name_selected(&name, primary);
-                }
-                view.popup_context_at(&host, x, y);
+                let view = view.clone();
+                let host = host.clone();
+                glib::idle_add_local_once(move || {
+                    if let Some(name) = view.hit_test_name(&host, x, y, grid, primary) {
+                        view.ensure_name_selected(&name, primary);
+                    }
+                    view.popup_context_at(&host, x, y);
+                });
             });
         }
         widget.add_controller(gesture);
@@ -1323,12 +1327,20 @@ impl NautilusView {
                 if n_press != 1 {
                     return;
                 }
-                view.ensure_name_selected(&name, primary);
-                view.popup_context_at(&target, x.max(12.0), y.max(16.0));
                 let view = view.clone();
-                glib::timeout_add_local_once(std::time::Duration::from_millis(200), move || {
-                    view.ignore_activate.set(false);
-                    view.skip_lasso.set(false);
+                let name = name.clone();
+                let target = target.clone();
+                glib::idle_add_local_once(move || {
+                    view.ensure_name_selected(&name, primary);
+                    view.popup_context_at(&target, x.max(12.0), y.max(16.0));
+                    let view = view.clone();
+                    glib::timeout_add_local_once(
+                        std::time::Duration::from_millis(200),
+                        move || {
+                            view.ignore_activate.set(false);
+                            view.skip_lasso.set(false);
+                        },
+                    );
                 });
             });
             more.add_controller(claim);
@@ -1354,16 +1366,21 @@ impl NautilusView {
                 let name = name.clone();
                 let target = target.clone();
                 secondary.connect_released(move |_, _, x, y| {
-                    view.ensure_name_selected(&name, primary);
-                    view.popup_context_at(&target, x, y);
                     let view = view.clone();
-                    glib::timeout_add_local_once(
-                        std::time::Duration::from_millis(200),
-                        move || {
-                            view.ignore_activate.set(false);
-                            view.skip_lasso.set(false);
-                        },
-                    );
+                    let name = name.clone();
+                    let target = target.clone();
+                    glib::idle_add_local_once(move || {
+                        view.ensure_name_selected(&name, primary);
+                        view.popup_context_at(&target, x, y);
+                        let view = view.clone();
+                        glib::timeout_add_local_once(
+                            std::time::Duration::from_millis(200),
+                            move || {
+                                view.ignore_activate.set(false);
+                                view.skip_lasso.set(false);
+                            },
+                        );
+                    });
                 });
             }
             more.add_controller(secondary);
@@ -1386,8 +1403,13 @@ impl NautilusView {
             let name = name.clone();
             let target = target.clone();
             gesture.connect_released(move |_, _, x, y| {
-                view.ensure_name_selected(&name, primary);
-                view.popup_context_at(&target, x, y);
+                let view = view.clone();
+                let name = name.clone();
+                let target = target.clone();
+                glib::idle_add_local_once(move || {
+                    view.ensure_name_selected(&name, primary);
+                    view.popup_context_at(&target, x, y);
+                });
             });
         }
         widget.add_controller(gesture);
