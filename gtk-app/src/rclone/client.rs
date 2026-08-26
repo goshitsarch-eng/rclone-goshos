@@ -612,6 +612,54 @@ impl RcClient {
         parse_cat_content(&value).ok_or_else(|| RcError::message("rclone cat returned no content"))
     }
 
+    /// Read a remote file for the viewer. Falls back to `--rc-serve` when
+    /// `operations/cat` is missing (rclone < 1.62).
+    pub fn preview_text(
+        &self,
+        remote: &str,
+        path: &str,
+        count: Option<i64>,
+    ) -> Result<String, RcError> {
+        let fs = remote_fs(remote, "");
+        match self.cat(&fs, path, count) {
+            Ok(text) => Ok(text),
+            Err(err) if looks_missing_endpoint(&err) => {
+                let limit = count.unwrap_or(CAT_PREVIEW_BYTES) as u64;
+                let bytes = self.preview_bytes(remote, path, limit)?;
+                Ok(String::from_utf8_lossy(&bytes).into_owned())
+            }
+            Err(err) => Err(err),
+        }
+    }
+
+    /// Fetch raw bytes via rclone `--rc-serve` (same URL the media viewer uses).
+    pub fn preview_bytes(&self, remote: &str, path: &str, limit: u64) -> Result<Vec<u8>, RcError> {
+        use std::io::Read;
+        let url = self.rc_serve_url(remote, path);
+        if url.is_empty() {
+            return Err(RcError::message("no rc-serve url"));
+        }
+        let mut request = ureq::get(&url).timeout(Duration::from_secs(8));
+        if let (Some(user), Some(pass)) = (&self.user, &self.pass) {
+            request = request.set("Authorization", &basic_auth_header(user, pass));
+        }
+        match request.call() {
+            Ok(resp) => {
+                let mut bytes = Vec::new();
+                resp.into_reader()
+                    .take(limit.max(1))
+                    .read_to_end(&mut bytes)
+                    .map_err(|e| RcError::Http(e.to_string()))?;
+                Ok(bytes)
+            }
+            Err(ureq::Error::Status(code, resp)) => {
+                let text = resp.into_string().unwrap_or_default();
+                Err(RcError::Message(format!("HTTP {code}: {text}")))
+            }
+            Err(e) => Err(RcError::Http(e.to_string())),
+        }
+    }
+
     pub fn stat(&self, fs: &str, remote: &str) -> Result<Option<StatItem>, RcError> {
         let value = self.call("operations/stat", json!({ "fs": fs, "remote": remote }))?;
         Ok(parse_stat(&value))
@@ -2592,6 +2640,9 @@ mod tests {
         assert_eq!(cmd["returnType"], "STREAM");
         assert!(looks_missing_endpoint(&RcError::message(
             "couldn't find method operations/archive"
+        )));
+        assert!(looks_missing_endpoint(&RcError::message(
+            "couldn't find method \"operations/cat\""
         )));
         assert!(!looks_missing_endpoint(&RcError::message("path not found")));
     }

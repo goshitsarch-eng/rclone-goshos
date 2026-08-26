@@ -8794,10 +8794,15 @@ fn materialize_preview_image(
         }
         crate::markdown::PreviewSource::RemotePath(path) => {
             let dest = markdown_preview_cache_path(remote, &path);
-            if dest.is_file() {
+            if dest.is_file() && dest.metadata().ok()?.len() > 32 {
                 return Some(dest);
             }
             let client = ctx.client()?;
+            if let Ok(bytes) = client.preview_bytes(remote, &path, 8_000_000) {
+                if bytes.len() > 32 && std::fs::write(&dest, &bytes).is_ok() {
+                    return Some(dest);
+                }
+            }
             let fs = crate::rclone::remote_fs(remote, "");
             client
                 .copy_file(&fs, &path, "/", &dest.to_string_lossy())
@@ -9592,7 +9597,9 @@ pub fn file_viewer(
         if let Some(client) = ctx.client() {
             let fs = remote_fs(remote, "");
             if matches!(category, crate::operations::FileTypeCategory::Text) {
-                if let Ok(text) = client.cat(&fs, path, Some(crate::rclone::CAT_PREVIEW_BYTES)) {
+                if let Ok(text) =
+                    client.preview_text(remote, path, Some(crate::rclone::CAT_PREVIEW_BYTES))
+                {
                     let text = crate::textfix::repair_text(&text);
                     if crate::textfix::looks_like_binary(&text) {
                         info.set_text(
