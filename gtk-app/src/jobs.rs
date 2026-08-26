@@ -191,15 +191,18 @@ pub fn extra_flags(rclone: &Value) -> Map<String, Value> {
     let skip = [
         "source",
         "srcFs",
+        "srcRemote",
         "path1",
         "fs",
         "dest",
         "dstFs",
+        "dstRemote",
         "path2",
         "mountPoint",
         "url",
         "type",
         "addr",
+        "remote",
         "filenames",
         "format",
         "prefix",
@@ -315,6 +318,159 @@ pub fn default_dest(remote: &str, rclone: &Value, op: OperationType) -> String {
     })
 }
 
+/// Split `remote:path` (or a local path) the way Tauri `parse_fs` does.
+pub fn parse_transfer_fs(path: &str) -> Option<(String, String)> {
+    let trimmed = path.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    let bytes = trimmed.as_bytes();
+    let is_windows_drive =
+        bytes.len() > 2 && bytes[1] == b':' && (bytes[2] == b'\\' || bytes[2] == b'/');
+    if is_windows_drive || trimmed.starts_with('/') {
+        return Some((trimmed.to_string(), String::new()));
+    }
+    let split_idx = trimmed.find(':')?;
+    let base = &trimmed[..=split_idx];
+    let root = &trimmed[split_idx + 1..];
+    if base.starts_with(':') {
+        return None;
+    }
+    if base.len() <= 2 {
+        return Some((trimmed.to_string(), String::new()));
+    }
+    Some((base.to_string(), root.to_string()))
+}
+
+fn split_file_sides(path: &str) -> Option<(String, String)> {
+    let (fs, remote) = parse_transfer_fs(path)?;
+    if !remote.is_empty() {
+        let remote = if fs.ends_with(':') {
+            remote.trim_start_matches('/').to_string()
+        } else {
+            remote
+        };
+        return Some((fs, remote));
+    }
+    let normalized = fs.replace('\\', "/");
+    let (parent, name) = normalized.rsplit_once('/')?;
+    if name.is_empty() {
+        return None;
+    }
+    let parent = if parent.is_empty() {
+        "/".into()
+    } else {
+        parent.to_string()
+    };
+    Some((parent, name.to_string()))
+}
+
+fn dest_file_sides(dest: &str, filename: &str) -> Option<(String, String)> {
+    let (fs, root) = parse_transfer_fs(dest)?;
+    let root = if fs.ends_with(':') {
+        root.trim_start_matches('/').to_string()
+    } else {
+        root
+    };
+    let dst_remote = if root.is_empty() || root.ends_with('/') || root.ends_with('\\') {
+        if root.is_empty() {
+            filename.to_string()
+        } else {
+            format!("{}/{filename}", root.trim_end_matches(['/', '\\']))
+        }
+    } else if source_looks_like_file(&format!("x:{root}")) {
+        root
+    } else {
+        format!("{root}/{filename}")
+    };
+    Some((fs, dst_remote))
+}
+
+/// Heuristic used when `operations/stat` is unavailable.
+pub fn source_looks_like_file(path: &str) -> bool {
+    let trimmed = path.trim();
+    if trimmed.is_empty()
+        || trimmed.ends_with('/')
+        || trimmed.ends_with('\\')
+        || trimmed.ends_with(':')
+    {
+        return false;
+    }
+    let leaf = match parse_transfer_fs(trimmed) {
+        Some((_, remote)) if !remote.is_empty() => remote
+            .rsplit(['/', '\\'])
+            .next()
+            .unwrap_or(&remote)
+            .to_string(),
+        _ => trimmed
+            .replace('\\', "/")
+            .rsplit('/')
+            .next()
+            .unwrap_or(trimmed)
+            .to_string(),
+    };
+    leaf.contains('.') && leaf != "." && leaf != ".."
+}
+
+/// Prefer rclone `operations/stat`; fall back to the path heuristic.
+pub fn source_is_directory(client: Option<&RcClient>, path: &str) -> bool {
+    let trimmed = path.trim();
+    if trimmed.is_empty()
+        || trimmed.ends_with('/')
+        || trimmed.ends_with('\\')
+        || trimmed.ends_with(':')
+    {
+        return true;
+    }
+    if let Some(client) = client {
+        if let Some((fs, remote)) = parse_transfer_fs(trimmed) {
+            match client.stat(&fs, &remote) {
+                Ok(Some(item)) => return item.is_dir,
+                Ok(None) | Err(_) => {}
+            }
+        }
+    }
+    !source_looks_like_file(trimmed)
+}
+
+fn file_transfer_request(
+    op: OperationType,
+    source: &str,
+    dest: &str,
+    mut body: Value,
+) -> Result<JobRequest, String> {
+    let (src_fs, src_remote) = split_file_sides(source)
+        .ok_or_else(|| format!("Could not parse source '{source}' as a file path"))?;
+    if src_remote.is_empty() {
+        return Err(format!("Could not parse source '{source}' as a file path"));
+    }
+    let filename = src_remote
+        .rsplit(['/', '\\'])
+        .next()
+        .unwrap_or(&src_remote)
+        .to_string();
+    let (dst_fs, dst_remote) = dest_file_sides(dest, &filename)
+        .ok_or_else(|| format!("Could not parse destination '{dest}' as a file path"))?;
+    let obj = body.as_object_mut().unwrap();
+    obj.insert("srcFs".into(), json!(src_fs));
+    obj.insert("srcRemote".into(), json!(src_remote));
+    obj.insert("dstFs".into(), json!(dst_fs));
+    obj.insert("dstRemote".into(), json!(dst_remote));
+    let endpoint = match op {
+        OperationType::Copy => "operations/copyfile",
+        OperationType::Move => "operations/movefile",
+        _ => {
+            return Err(format!(
+                "{op} does not support single-file operations/copyfile"
+            ))
+        }
+    };
+    Ok(JobRequest::Async {
+        endpoint,
+        params: body,
+    })
+}
+
 pub fn build_job_params(
     op: OperationType,
     remote: &str,
@@ -322,6 +478,18 @@ pub fn build_job_params(
     dest: &str,
     rclone: &Value,
 ) -> Result<JobRequest, String> {
+    build_job_params_ex(op, remote, source, dest, rclone, None)
+}
+
+pub fn build_job_params_ex(
+    op: OperationType,
+    remote: &str,
+    source: &str,
+    dest: &str,
+    rclone: &Value,
+    is_dir: Option<bool>,
+) -> Result<JobRequest, String> {
+    let is_dir = is_dir.unwrap_or_else(|| !source_looks_like_file(source));
     let flags = extra_flags(rclone);
     let mut body = Value::Object(flags);
     let obj = body.as_object_mut().unwrap();
@@ -378,6 +546,16 @@ pub fn build_job_params(
             })
         }
         OperationType::Delete => {
+            if !is_dir {
+                if let Some((fs, remote_path)) = split_file_sides(source) {
+                    obj.insert("fs".into(), json!(fs));
+                    obj.insert("remote".into(), json!(remote_path));
+                    return Ok(JobRequest::Async {
+                        endpoint: "operations/deletefile",
+                        params: body,
+                    });
+                }
+            }
             obj.insert(
                 "fs".into(),
                 json!(if source.is_empty() {
@@ -506,6 +684,9 @@ pub fn build_job_params(
             if dest.is_empty() && other != OperationType::Delete {
                 return Err(format!("{other} requires a destination path"));
             }
+            if !is_dir && matches!(other, OperationType::Copy | OperationType::Move) {
+                return file_transfer_request(other, source, dest, body);
+            }
             obj.insert("srcFs".into(), json!(source));
             obj.insert("dstFs".into(), json!(dest));
             let endpoint = other
@@ -558,9 +739,26 @@ pub fn start_request(client: &RcClient, request: &JobRequest) -> Result<String, 
                 .archive_create(&crate::rclone::archive_create_opts_from_payload(params))
                 .map(|id| format!("#{id}"))
         }
-        JobRequest::Async { endpoint, params } => client
-            .start_job(endpoint, params.clone())
-            .map(|id| format!("#{id}")),
+        JobRequest::Async { endpoint, params } => {
+            let id = client.start_job(endpoint, params.clone())?;
+            if let Ok(status) = client.job_status(id) {
+                let finished = status
+                    .get("finished")
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(false);
+                if finished {
+                    if let Some(err) = status
+                        .get("error")
+                        .and_then(|v| v.as_str())
+                        .map(str::trim)
+                        .filter(|s| !s.is_empty())
+                    {
+                        return Err(RcError::message(err.to_string()));
+                    }
+                }
+            }
+            Ok(format!("#{id}"))
+        }
         JobRequest::Mount {
             fs,
             mount_point,
@@ -783,7 +981,8 @@ pub fn start_profile(
                 }
             }
         }
-        let request = build_job_params(op, remote, &source, &dest, &item)?;
+        let is_dir = source_is_directory(Some(client), &source);
+        let request = build_job_params_ex(op, remote, &source, &dest, &item, Some(is_dir))?;
         ids.push(start_request(client, &request).map_err(|e| e.to_string())?);
     }
     Ok(ids.join(", "))
@@ -2493,6 +2692,103 @@ pub fn rename_serves_profile(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn file_copy_uses_copyfile() {
+        let req = build_job_params(
+            OperationType::Copy,
+            "testdrive",
+            "testdrive:a.txt",
+            "testdrive:verify-persist2/",
+            &json!({}),
+        )
+        .unwrap();
+        match req {
+            JobRequest::Async { endpoint, params } => {
+                assert_eq!(endpoint, "operations/copyfile");
+                assert_eq!(params["srcFs"], "testdrive:");
+                assert_eq!(params["srcRemote"], "a.txt");
+                assert_eq!(params["dstFs"], "testdrive:");
+                assert_eq!(params["dstRemote"], "verify-persist2/a.txt");
+            }
+            other => panic!("expected copyfile, got {other:?}"),
+        }
+        let moved = build_job_params(
+            OperationType::Move,
+            "src",
+            "src:file.txt",
+            "dst:backup/",
+            &json!({}),
+        )
+        .unwrap();
+        match moved {
+            JobRequest::Async { endpoint, params } => {
+                assert_eq!(endpoint, "operations/movefile");
+                assert_eq!(params["dstRemote"], "backup/file.txt");
+            }
+            other => panic!("expected movefile, got {other:?}"),
+        }
+        let local = build_job_params(
+            OperationType::Copy,
+            "local",
+            "/tmp/rclone-test-remote/a.txt",
+            "testdrive:Inbox/",
+            &json!({}),
+        )
+        .unwrap();
+        match local {
+            JobRequest::Async { endpoint, params } => {
+                assert_eq!(endpoint, "operations/copyfile");
+                assert_eq!(params["srcFs"], "/tmp/rclone-test-remote");
+                assert_eq!(params["srcRemote"], "a.txt");
+                assert_eq!(params["dstRemote"], "Inbox/a.txt");
+            }
+            other => panic!("expected local copyfile, got {other:?}"),
+        }
+        assert!(source_looks_like_file("testdrive:a.txt"));
+        assert!(!source_looks_like_file("testdrive:Photos"));
+        assert!(!source_looks_like_file("testdrive:"));
+        assert_eq!(
+            parse_transfer_fs("testdrive:a.txt"),
+            Some(("testdrive:".into(), "a.txt".into()))
+        );
+    }
+
+    #[test]
+    fn directory_copy_keeps_sync_copy() {
+        let req = build_job_params(
+            OperationType::Copy,
+            "testdrive",
+            "testdrive:Photos",
+            "testdrive:verify-photos/",
+            &json!({}),
+        )
+        .unwrap();
+        match req {
+            JobRequest::Async { endpoint, params } => {
+                assert_eq!(endpoint, "sync/copy");
+                assert_eq!(params["srcFs"], "testdrive:Photos");
+                assert_eq!(params["dstFs"], "testdrive:verify-photos/");
+            }
+            other => panic!("expected sync/copy, got {other:?}"),
+        }
+        let delete_file = build_job_params(
+            OperationType::Delete,
+            "testdrive",
+            "testdrive:a.txt",
+            "",
+            &json!({}),
+        )
+        .unwrap();
+        match delete_file {
+            JobRequest::Async { endpoint, params } => {
+                assert_eq!(endpoint, "operations/deletefile");
+                assert_eq!(params["fs"], "testdrive:");
+                assert_eq!(params["remote"], "a.txt");
+            }
+            other => panic!("expected deletefile, got {other:?}"),
+        }
+    }
 
     #[test]
     fn builds_sync_params() {

@@ -1,9 +1,32 @@
 //! rclone Remote Control HTTP client.
 
 use serde_json::{json, Value};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashSet};
+use std::sync::{Mutex, OnceLock};
 use std::time::Duration;
 use thiserror::Error;
+
+fn missing_rc_methods() -> &'static Mutex<HashSet<String>> {
+    static SET: OnceLock<Mutex<HashSet<String>>> = OnceLock::new();
+    SET.get_or_init(|| Mutex::new(HashSet::new()))
+}
+
+fn missing_method_key(base: &str, endpoint: &str) -> String {
+    format!("{base}\0{endpoint}")
+}
+
+fn is_cached_missing_method(base: &str, endpoint: &str) -> bool {
+    missing_rc_methods()
+        .lock()
+        .map(|set| set.contains(&missing_method_key(base, endpoint)))
+        .unwrap_or(false)
+}
+
+fn cache_missing_method(base: &str, endpoint: &str) {
+    if let Ok(mut set) = missing_rc_methods().lock() {
+        set.insert(missing_method_key(base, endpoint));
+    }
+}
 
 #[derive(Debug, Error)]
 pub enum RcError {
@@ -85,11 +108,13 @@ impl RcClient {
         params: Value,
         timeout: Duration,
     ) -> Result<Value, RcError> {
-        let url = format!(
-            "{}/{}",
-            self.base_url.trim_end_matches('/'),
-            endpoint.trim_start_matches('/')
-        );
+        let endpoint = endpoint.trim_start_matches('/');
+        if is_cached_missing_method(&self.base_url, endpoint) {
+            return Err(RcError::message(format!(
+                "couldn't find method \"{endpoint}\""
+            )));
+        }
+        let url = format!("{}/{}", self.base_url.trim_end_matches('/'), endpoint);
         let mut request = ureq::post(&url)
             .timeout(timeout)
             .set("Content-Type", "application/json");
@@ -119,7 +144,11 @@ impl RcClient {
                             .map(|s| s.to_string())
                     })
                     .unwrap_or(text);
-                Err(RcError::Message(format!("HTTP {code}: {message}")))
+                let err = RcError::Message(format!("HTTP {code}: {message}"));
+                if looks_missing_endpoint(&err) {
+                    cache_missing_method(&self.base_url, endpoint);
+                }
+                Err(err)
             }
             Err(ureq::Error::Transport(t)) => {
                 if t.kind() == ureq::ErrorKind::ConnectionFailed || t.kind() == ureq::ErrorKind::Io
@@ -1973,6 +2002,19 @@ pub fn backend_identity(info: &Value) -> BackendIdentity {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn caches_missing_rc_methods() {
+        cache_missing_method("http://127.0.0.1:9", "job/batch");
+        assert!(is_cached_missing_method("http://127.0.0.1:9", "job/batch"));
+        assert!(!is_cached_missing_method(
+            "http://127.0.0.1:9",
+            "core/version"
+        ));
+        assert!(looks_missing_endpoint(&RcError::message(
+            "HTTP 500: couldn't find method \"job/batch\""
+        )));
+    }
 
     #[test]
     fn parses_mount_points_map_and_array() {

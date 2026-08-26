@@ -38,8 +38,9 @@ impl PrefsSession {
         )));
         banner.set_visible(false);
         let banner_row = adw::ActionRow::new();
-        banner_row
-            .set_title(&ctx.t_or("modals.preferences.saveAndRestart", "Save & Restart Engine"));
+        banner_row.set_title(&glib::markup_escape_text(
+            &ctx.t_or("modals.preferences.saveAndRestart", "Save & Restart Engine"),
+        ));
         banner.add(&banner_row);
         Self {
             ctx,

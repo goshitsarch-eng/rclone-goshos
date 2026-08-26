@@ -6,8 +6,8 @@ use crate::cli_import::{
 };
 use crate::guidance::{operation_banners, BannerKind};
 use crate::jobs::{
-    assemble_rclone, build_job_params, default_dest, default_source, flatten_rclone,
-    job_from_status, merge_template_into, path_list, start_request, SOURCE_KEYS,
+    assemble_rclone, default_dest, default_source, flatten_rclone, job_from_status,
+    merge_template_into, path_list, start_request, SOURCE_KEYS,
 };
 use crate::operations::OperationType;
 use crate::rclone::{
@@ -4166,7 +4166,15 @@ pub fn start_operation(
             let mut ids = Vec::new();
             let mut error = None;
             for source in sources {
-                match build_job_params(op, &remote, &source, &dest, &rclone) {
+                let is_dir = crate::jobs::source_is_directory(Some(&client), &source);
+                match crate::jobs::build_job_params_ex(
+                    op,
+                    &remote,
+                    &source,
+                    &dest,
+                    &rclone,
+                    Some(is_dir),
+                ) {
                     Ok(req) => match start_request(&client, &req) {
                         Ok(id) => ids.push(id),
                         Err(e) => {

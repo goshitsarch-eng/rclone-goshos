@@ -511,6 +511,11 @@ This client is the GTK 4 + libadwaita desktop UI. It talks to a local `rclone rc
 - Host `/proc/mounts` fuse.rclone rows merge into live mounts so alias remotes stay Mounted across rcd restarts
 - Instant rclone 1.60 jobs that vanish from `job/list` finalize as completed, not failed
 - Preferences default-view combo shows translated labels instead of `main_menu`
+- Copy/Move of a single file uses `operations/copyfile` / `movefile` (rclone `sync/copy` rejects file sources)
+- Delete of a single file uses `operations/deletefile`
+- Instant job failures from `job/status` surface immediately instead of looking completed
+- Missing rclone RC methods (`job/batch`, `serve/list`, `core/disks`, …) are cached so 1.60 is not polled for them
+- Preferences “Save & Restart” title escapes `&` for Adwaita markup
 
 ## Still deepening
 
