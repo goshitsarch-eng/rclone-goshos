@@ -302,6 +302,11 @@ pub fn listing_row_name(widget_name: &str, title: &str) -> Option<String> {
     }
 }
 
+/// Whether a pointer position lies inside a widget allocation.
+pub fn point_in_rect(x: f64, y: f64, left: f64, top: f64, width: f64, height: f64) -> bool {
+    x >= left && x <= left + width && y >= top && y <= top + height
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DeleteItem {
     pub fs: String,
@@ -1005,6 +1010,15 @@ mod tests {
         );
         assert_eq!(listing_row_name("GtkListBoxRow", ""), None);
         assert_eq!(listing_row_name("", "a.txt"), Some("a.txt".into()));
+    }
+
+    #[test]
+    fn point_in_rect_includes_edges_and_rejects_outside() {
+        assert!(point_in_rect(10.0, 20.0, 10.0, 20.0, 40.0, 16.0));
+        assert!(point_in_rect(50.0, 36.0, 10.0, 20.0, 40.0, 16.0));
+        assert!(point_in_rect(30.0, 28.0, 10.0, 20.0, 40.0, 16.0));
+        assert!(!point_in_rect(9.0, 28.0, 10.0, 20.0, 40.0, 16.0));
+        assert!(!point_in_rect(30.0, 37.0, 10.0, 20.0, 40.0, 16.0));
     }
 
     #[test]

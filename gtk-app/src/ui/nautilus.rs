@@ -1181,9 +1181,20 @@ impl NautilusView {
     fn attach_file_controllers(&self, widget: &impl IsA<gtk::Widget>, grid: bool, primary: bool) {
         let gesture = gtk::GestureClick::new();
         gesture.set_button(3);
+        gesture.set_propagation_phase(gtk::PropagationPhase::Capture);
         {
             let view = self.clone();
-            gesture.connect_pressed(move |_, _, _, _| view.popup_context());
+            let host = widget.clone().upcast::<gtk::Widget>();
+            gesture.connect_pressed(move |g, n_press, x, y| {
+                if n_press != 1 {
+                    return;
+                }
+                g.set_state(gtk::EventSequenceState::Claimed);
+                if let Some(name) = view.hit_test_name(&host, x, y, grid, primary) {
+                    view.ensure_name_selected(&name, primary);
+                }
+                view.popup_context_at(&host, x, y);
+            });
         }
         widget.add_controller(gesture);
 
@@ -1219,6 +1230,7 @@ impl NautilusView {
         );
 
         let drag = gtk::GestureDrag::new();
+        drag.set_button(1);
         {
             let view = self.clone();
             drag.connect_drag_end(move |g, _, _| {
@@ -2708,6 +2720,66 @@ impl NautilusView {
 
     fn selected_name(&self) -> Option<String> {
         self.selected_names().into_iter().next()
+    }
+
+    fn hit_test_name(
+        &self,
+        container: &gtk::Widget,
+        x: f64,
+        y: f64,
+        grid: bool,
+        primary: bool,
+    ) -> Option<String> {
+        if grid {
+            let flow = if primary {
+                &self.grid
+            } else {
+                &self.grid_right
+            };
+            let mut child = flow.first_child();
+            while let Some(widget) = child {
+                if let Some(bounds) = widget.compute_bounds(container) {
+                    if crate::fileops::point_in_rect(
+                        x,
+                        y,
+                        bounds.x() as f64,
+                        bounds.y() as f64,
+                        bounds.width() as f64,
+                        bounds.height() as f64,
+                    ) {
+                        if let Ok(flow_child) = widget.clone().downcast::<gtk::FlowBoxChild>() {
+                            return flow_child_name(&flow_child);
+                        }
+                    }
+                }
+                child = widget.next_sibling();
+            }
+            return None;
+        }
+        let list = if primary {
+            &self.list
+        } else {
+            &self.list_right
+        };
+        let mut child = list.first_child();
+        while let Some(widget) = child {
+            if let Some(bounds) = widget.compute_bounds(container) {
+                if crate::fileops::point_in_rect(
+                    x,
+                    y,
+                    bounds.x() as f64,
+                    bounds.y() as f64,
+                    bounds.width() as f64,
+                    bounds.height() as f64,
+                ) {
+                    if let Ok(row) = widget.clone().downcast::<gtk::ListBoxRow>() {
+                        return row_name(&row);
+                    }
+                }
+            }
+            child = widget.next_sibling();
+        }
+        None
     }
 
     fn ensure_name_selected(&self, name: &str, primary: bool) {
