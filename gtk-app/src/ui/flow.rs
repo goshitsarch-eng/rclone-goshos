@@ -423,9 +423,10 @@ impl FlowView {
             }
             match id.as_str() {
                 "quickRuns" => {
-                    let list = gtk::ListBox::new();
-                    list.add_css_class("boxed-list");
+                    let cards = gtk::Box::new(gtk::Orientation::Vertical, 8);
                     if runs.is_empty() {
+                        let list = gtk::ListBox::new();
+                        list.add_css_class("boxed-list");
                         let row = adw::ActionRow::new();
                         row.set_title(&self.ctx.t_or("dashboard.quickRuns.empty", "No quick runs"));
                         row.set_subtitle(&self.ctx.t_or(
@@ -433,14 +434,15 @@ impl FlowView {
                             "Create a reusable rclone operation with cron, watcher, or autostart.",
                         ));
                         list.append(&row);
+                        cards.append(&list);
                     }
                     for qr in runs {
-                        list.append(&self.quick_run_overview_card(&qr));
+                        cards.append(&self.quick_run_overview_card(&qr));
                     }
                     self.append_expandable(
                         "quickRuns",
                         &self.ctx.t_or("flow.quickRun.title", "Quick Runs"),
-                        &list,
+                        &cards,
                     );
                 }
                 "jobs" => {
@@ -1304,24 +1306,6 @@ impl FlowView {
         self.content.append(&actions);
         self.append_configuration_links(name);
         self.append_disk_usage(name);
-        self.append_transfer_activity(name, &snap);
-
-        let jobs: Vec<_> = {
-            let store = self.ctx.store.borrow();
-            crate::jobs::merge_overview_jobs(
-                &snap.jobs,
-                &crate::jobs::history_with_meta(&store.job_history, &store.job_meta),
-                name,
-                None,
-                None,
-            )
-        };
-        self.content
-            .append(&job_panels::detail_jobs_panel(&self.ctx, &jobs, {
-                let view = self.clone();
-                move || view.refresh()
-            }));
-        self.append_remote_automations(name);
 
         let qrs: Vec<_> = self
             .ctx
@@ -1343,21 +1327,23 @@ impl FlowView {
             )
         };
         self.content.append(&self.heading(&qr_title));
-        let qlist = gtk::ListBox::new();
-        qlist.add_css_class("boxed-list");
         if qrs.is_empty() {
+            let qlist = gtk::ListBox::new();
+            qlist.add_css_class("boxed-list");
             let row = adw::ActionRow::new();
             row.set_title(&self.ctx.tf(
                 "flow.quickRun.overview.noRunsForRemote",
                 &[("remote", name)],
             ));
             qlist.append(&row);
+            self.content.append(&qlist);
         } else {
-            for qr in qrs {
-                qlist.append(&self.quick_run_overview_card(&qr));
+            let cards = gtk::Box::new(gtk::Orientation::Vertical, 8);
+            for qr in &qrs {
+                cards.append(&self.quick_run_overview_card(qr));
             }
+            self.content.append(&cards);
         }
-        self.content.append(&qlist);
         let add_qr = gtk::Button::with_label(&self.ctx.tf(
             "flow.quickRun.overview.createForRemote",
             &[("remote", name)],
@@ -1380,6 +1366,24 @@ impl FlowView {
             });
         }
         self.content.append(&add_qr);
+
+        let jobs: Vec<_> = {
+            let store = self.ctx.store.borrow();
+            crate::jobs::merge_overview_jobs(
+                &snap.jobs,
+                &crate::jobs::history_with_meta(&store.job_history, &store.job_meta),
+                name,
+                None,
+                None,
+            )
+        };
+        self.content
+            .append(&job_panels::detail_jobs_panel(&self.ctx, &jobs, {
+                let view = self.clone();
+                move || view.refresh()
+            }));
+        self.append_remote_automations(name);
+        self.append_transfer_activity(name, &snap);
         self.append_settings_panel(name);
     }
 
