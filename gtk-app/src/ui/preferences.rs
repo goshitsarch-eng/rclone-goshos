@@ -722,12 +722,6 @@ fn add_language_row(session: &PrefsSession, group: &adw::PreferencesGroup) {
         "Application language",
     ));
     row.set_model(Some(&gtk::StringList::new(&lang_labels)));
-    if let Some(idx) = langs
-        .iter()
-        .position(|l| *l == session.ctx.settings.borrow().general.language)
-    {
-        row.set_selected(idx as u32);
-    }
     {
         let session = session.clone();
         row.connect_selected_notify(move |row| {
@@ -736,11 +730,23 @@ fn add_language_row(session: &PrefsSession, group: &adw::PreferencesGroup) {
             }
             let idx = row.selected() as usize;
             if let Some(code) = langs.get(idx) {
+                let previous = session.ctx.settings.borrow().general.language.clone();
                 session.commit("general.language", json!(code));
                 *session.ctx.i18n.borrow_mut() = crate::i18n::I18n::load(code);
+                if crate::i18n::I18n::language_changed(&previous, code) {
+                    session.ctx.request_reload_ui(true);
+                }
             }
         });
     }
+    session.suppress.set(true);
+    if let Some(idx) = langs
+        .iter()
+        .position(|l| *l == session.ctx.settings.borrow().general.language)
+    {
+        row.set_selected(idx as u32);
+    }
+    session.suppress.set(false);
     let row_reset = row.clone();
     let session_reset = session.clone();
     row.add_suffix(&session.reset_button("general.language", move |value| {
@@ -1136,6 +1142,7 @@ fn add_reset_all(
                 ctx.apply_theme();
                 session.pending.borrow_mut().clear();
                 session.refresh_banner();
+                ctx.request_reload_ui(true);
             });
             alert.present(Some(&parent));
         });

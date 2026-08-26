@@ -72,6 +72,11 @@ impl I18n {
         &self.lang
     }
 
+    /// True when the user picked a different catalog and the chrome should rebuild.
+    pub fn language_changed(previous: &str, next: &str) -> bool {
+        previous != next
+    }
+
     pub fn t(&self, key: &str) -> String {
         self.strings
             .get(key)
@@ -270,6 +275,22 @@ pub fn workspace_root() -> PathBuf {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn language_changed_detects_catalog_switch() {
+        assert!(I18n::language_changed("en-US", "tr-TR"));
+        assert!(!I18n::language_changed("en-US", "en-US"));
+        let en = I18n::load("en-US");
+        let tr = I18n::load("tr-TR");
+        assert_eq!(en.lang(), "en-US");
+        assert_eq!(tr.lang(), "tr-TR");
+        if en.has("settings.general.language.label") && tr.has("settings.general.language.label") {
+            assert_ne!(
+                en.t("settings.general.language.label"),
+                tr.t("settings.general.language.label")
+            );
+        }
+    }
 
     #[test]
     fn flatten_nested_keys() {

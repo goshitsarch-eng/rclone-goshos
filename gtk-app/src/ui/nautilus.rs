@@ -1249,6 +1249,27 @@ impl NautilusView {
         widget.add_controller(drag);
     }
 
+    fn item_menu_button(&self, name: &str, primary: bool) -> gtk::Button {
+        let more = gtk::Button::from_icon_name("view-more-symbolic");
+        more.add_css_class("flat");
+        more.add_css_class("circular");
+        more.set_tooltip_text(Some(
+            &self
+                .ctx
+                .t_or("nautilus.contextMenu.selectionActions", "Selection actions"),
+        ));
+        more.set_widget_name(&format!("file-menu-{name}"));
+        {
+            let view = self.clone();
+            let name = name.to_string();
+            more.connect_clicked(move |btn| {
+                view.ensure_name_selected(&name, primary);
+                view.popup_context_at(btn, 0.0, btn.height().max(24) as f64);
+            });
+        }
+        more
+    }
+
     fn attach_item_context(&self, widget: &impl IsA<gtk::Widget>, name: &str, primary: bool) {
         let gesture = gtk::GestureClick::new();
         gesture.set_button(3);
@@ -2676,13 +2697,14 @@ impl NautilusView {
         modified.set_xalign(1.0);
         row.add_suffix(&size);
         row.add_suffix(&modified);
+        row.add_suffix(&self.item_menu_button(&entry.name, primary));
         row.set_activatable(true);
         self.attach_item_dnd(&row, &entry, tab, primary);
         self.attach_item_context(&row, &entry.name, primary);
         row
     }
 
-    fn entry_tile(&self, entry: DirEntry, tab: &TabState, primary: bool) -> gtk::Box {
+    fn entry_tile(&self, entry: DirEntry, tab: &TabState, primary: bool) -> gtk::Widget {
         let tile = gtk::Box::new(gtk::Orientation::Vertical, 4);
         tile.set_halign(gtk::Align::Center);
         tile.set_valign(gtk::Align::Start);
@@ -2715,7 +2737,14 @@ impl NautilusView {
         }
         self.attach_item_dnd(&tile, &entry, tab, primary);
         self.attach_item_context(&tile, &entry.name, primary);
-        tile
+        let overlay = gtk::Overlay::new();
+        overlay.set_widget_name(&entry.name);
+        overlay.set_child(Some(&tile));
+        let more = self.item_menu_button(&entry.name, primary);
+        more.set_halign(gtk::Align::End);
+        more.set_valign(gtk::Align::Start);
+        overlay.add_overlay(&more);
+        overlay.upcast()
     }
 
     fn selected_name(&self) -> Option<String> {

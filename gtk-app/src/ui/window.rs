@@ -395,13 +395,31 @@ fn present_main_with(app: &adw::Application, ctx: AppCtx, hidden: bool) {
     } else {
         MainView::Nautilus
     };
-    view_stack.set_visible_child_name(default_view.as_str());
+    let restore = ctx.active_workspace.borrow().clone();
+    if !restore.is_empty() && view_stack.child_by_name(&restore).is_some() {
+        view_stack.set_visible_child_name(&restore);
+    } else {
+        view_stack.set_visible_child_name(default_view.as_str());
+    }
+    {
+        let ctx = ctx.clone();
+        let stack = view_stack.clone();
+        view_stack.connect_visible_child_notify(move |_| {
+            if let Some(name) = stack.visible_child_name() {
+                *ctx.active_workspace.borrow_mut() = name.to_string();
+            }
+        });
+    }
 
-    let tray = super::tray::start(&ctx);
+    let tray = super::tray::start_or_reuse(&ctx);
+    let generation = ctx.ui_generation.get();
     {
         let ctx = ctx.clone();
         let conn_btn = conn_btn.clone();
         glib::timeout_add_local(std::time::Duration::from_millis(800), move || {
+            if ctx.ui_generation.get() != generation {
+                return glib::ControlFlow::Break;
+            }
             ctx.refresh_connection();
             sync_connection_button(&ctx, &conn_btn);
             glib::ControlFlow::Break
@@ -412,6 +430,9 @@ fn present_main_with(app: &adw::Application, ctx: AppCtx, hidden: bool) {
         let banner = banner.clone();
         let banner_kind = banner_kind.clone();
         glib::timeout_add_local(std::time::Duration::from_secs(4), move || {
+            if ctx.ui_generation.get() != generation {
+                return glib::ControlFlow::Break;
+            }
             ctx.refresh_updates();
             update_banner(&ctx, &banner, &banner_kind);
             glib::ControlFlow::Break
@@ -434,6 +455,25 @@ fn present_main_with(app: &adw::Application, ctx: AppCtx, hidden: bool) {
         let window_nav = window.clone();
         let toast_nav = toast.clone();
         glib::timeout_add_local(std::time::Duration::from_millis(200), move || {
+            if ctx_nav.ui_generation.get() != generation {
+                return glib::ControlFlow::Break;
+            }
+            if ctx_nav.take_reload() {
+                if let Some(name) = stack_nav.visible_child_name() {
+                    *ctx_nav.active_workspace.borrow_mut() = name.to_string();
+                }
+                let hidden = !window_nav.is_visible();
+                let app = window_nav
+                    .application()
+                    .and_then(|app| app.downcast::<adw::Application>().ok());
+                ctx_nav.bump_generation();
+                ctx_nav.reload_destroy.set(true);
+                window_nav.close();
+                if let Some(app) = app {
+                    present_main_with(&app, ctx_nav.clone(), hidden);
+                }
+                return glib::ControlFlow::Break;
+            }
             if ctx_nav.take_show() {
                 window_nav.set_visible(true);
                 window_nav.present();
@@ -485,6 +525,9 @@ fn present_main_with(app: &adw::Application, ctx: AppCtx, hidden: bool) {
     let loading_poll = loading.clone();
     let first_refresh_done = Rc::new(Cell::new(false));
     glib::timeout_add_local(crate::refresh::BUSY_POLL, move || {
+        if ctx_poll.ui_generation.get() != generation {
+            return glib::ControlFlow::Break;
+        }
         let busy = ctx_poll.runtime_busy();
         let visible = poll_window.is_visible();
         let tick = poll_tick.get();
@@ -524,6 +567,9 @@ fn present_main_with(app: &adw::Application, ctx: AppCtx, hidden: bool) {
     {
         let ctx = ctx.clone();
         window.connect_close_request(move |win| {
+            if ctx.take_reload_destroy() {
+                return glib::Propagation::Proceed;
+            }
             if ctx.settings.borrow().developer.destroy_window_on_close {
                 let window = win.clone();
                 dialogs::confirm_shutdown(win, ctx.clone(), move || {
@@ -541,6 +587,9 @@ fn present_main_with(app: &adw::Application, ctx: AppCtx, hidden: bool) {
     window.present();
     if hidden {
         window.set_visible(false);
+    }
+    if ctx.take_reopen_prefs() {
+        dialogs::preferences(&window, ctx.clone());
     }
 }
 

@@ -539,6 +539,8 @@ This client is the GTK 4 + libadwaita desktop UI. It talks to a local `rclone rc
 - Live GUI: testdrive Serve start/stop (`Successfully started Serve` / `Stopped serve 127.0.0.1:35663`)
 - Live GUI: testdrive Copy start + stop (job 14781, `Successfully started Copy` / `Stopped job #14781`)
 - StatusNotifier tray registers `org.kde.StatusNotifierItem-<pid>-1` on the session bus when tray is enabled
+- Language change rebuilds the main window chrome (and reopens Preferences) so titles, menus, and workspace labels switch immediately
+- Files list/grid rows have a ⋮ menu button that opens the same context menu as right-click / Shift+F10
 
 ## Still deepening
 

@@ -3,8 +3,13 @@ use crate::jobs::{find_active_quick_run, start_profile, stop_profile};
 use crate::operations::OperationType;
 use crate::rclone::remote_fs;
 use crate::tray_menu::{plan_tray, TrayAction, TrayCaption, TrayMenuItem};
+use std::cell::RefCell;
 use std::sync::mpsc::{self, Receiver, Sender};
 use std::sync::{Arc, Mutex};
+
+thread_local! {
+    static TRAY: RefCell<Option<TrayBus>> = const { RefCell::new(None) };
+}
 
 #[derive(Clone)]
 pub struct TrayBus {
@@ -276,6 +281,16 @@ fn localize_plan(ctx: &AppCtx, items: &mut [TrayMenuItem]) {
         }
         localize_plan(ctx, &mut item.children);
     }
+}
+
+pub fn start_or_reuse(ctx: &AppCtx) -> Option<TrayBus> {
+    if let Some(bus) = TRAY.with(|slot| slot.borrow().clone()) {
+        bus.refresh(ctx);
+        return Some(bus);
+    }
+    let bus = start(ctx);
+    TRAY.with(|slot| *slot.borrow_mut() = bus.clone());
+    bus
 }
 
 pub fn start(ctx: &AppCtx) -> Option<TrayBus> {

@@ -36,6 +36,11 @@ pub struct AppCtx {
     pub pending_nav: Rc<RefCell<Option<crate::navigation::NavTarget>>>,
     pub pending_show: Rc<Cell<bool>>,
     pub pending_quit: Rc<Cell<bool>>,
+    pub pending_reload: Rc<Cell<bool>>,
+    pub pending_reopen_prefs: Rc<Cell<bool>>,
+    pub reload_destroy: Rc<Cell<bool>>,
+    pub ui_generation: Rc<Cell<u64>>,
+    pub active_workspace: Rc<RefCell<String>>,
     pub shutdown_prompt_open: Rc<Cell<bool>>,
     pub inhibitor: Rc<RefCell<PowerInhibitor>>,
     pub watch_mtimes: Rc<RefCell<HashMap<String, u64>>>,
@@ -78,6 +83,11 @@ impl AppCtx {
             pending_nav: Rc::new(RefCell::new(None)),
             pending_show: Rc::new(Cell::new(false)),
             pending_quit: Rc::new(Cell::new(false)),
+            pending_reload: Rc::new(Cell::new(false)),
+            pending_reopen_prefs: Rc::new(Cell::new(false)),
+            reload_destroy: Rc::new(Cell::new(false)),
+            ui_generation: Rc::new(Cell::new(0)),
+            active_workspace: Rc::new(RefCell::new(String::new())),
             shutdown_prompt_open: Rc::new(Cell::new(false)),
             inhibitor: Rc::new(RefCell::new(PowerInhibitor::new())),
             watch_mtimes: Rc::new(RefCell::new(HashMap::new())),
@@ -345,6 +355,28 @@ impl AppCtx {
 
     pub fn take_quit(&self) -> bool {
         self.pending_quit.replace(false)
+    }
+
+    pub fn request_reload_ui(&self, reopen_prefs: bool) {
+        self.pending_reopen_prefs.set(reopen_prefs);
+        self.pending_reload.set(true);
+    }
+
+    pub fn take_reload(&self) -> bool {
+        self.pending_reload.replace(false)
+    }
+
+    pub fn take_reopen_prefs(&self) -> bool {
+        self.pending_reopen_prefs.replace(false)
+    }
+
+    pub fn take_reload_destroy(&self) -> bool {
+        self.reload_destroy.replace(false)
+    }
+
+    pub fn bump_generation(&self) {
+        self.ui_generation
+            .set(self.ui_generation.get().wrapping_add(1));
     }
 
     pub fn apply_persisted_options(&self) {
