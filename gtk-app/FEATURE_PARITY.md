@@ -837,3 +837,4 @@ This client is the GTK 4 + libadwaita desktop UI. It talks to a local `rclone rc
 - Sidebar search with no matches shows `sidebar.noRemotesFound` instead of a blank list
 - Embedded file-picker chrome appends the live selection summary (`Select a folder · 2 folders selected`)
 - Sidebar mount/serve badges use `mount.mountedWithProfile` / `mountedMultiple` and `serve.servingWithProfile` / `servingMultiple`
+- Live GUI: custom bandwidth `xyz` stays in the EntryRow across poll ticks with a red invalid outline (Apply stays inactive); applying `2M` updates Saved/Live to 2M
