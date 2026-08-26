@@ -463,11 +463,83 @@ impl FlowView {
                             let paused = self.ctx.store.borrow().is_automation_paused(&record.id);
                             let row = adw::ActionRow::new();
                             row.set_title(&record.name);
-                            row.set_subtitle(&if paused {
-                                self.ctx.t_or("flow.quickRun.status.paused", "paused")
+                            let cron = if record.cron_enabled {
+                                crate::rclone::describe_cron_i18n(
+                                    &record.cron,
+                                    &self.ctx.i18n.borrow(),
+                                )
                             } else {
-                                self.ctx.t_or("flow.quickRun.badges.scheduled", "scheduled")
-                            });
+                                self.ctx.t_or("common.off", "off")
+                            };
+                            let paused_suffix = if paused {
+                                format!(
+                                    " · {}",
+                                    self.ctx.t_or("flow.quickRun.status.paused", "paused")
+                                )
+                            } else {
+                                String::new()
+                            };
+                            row.set_subtitle(&format!(
+                                "{} · {cron}{paused_suffix}",
+                                record.operation
+                            ));
+                            let enabled = gtk::Switch::new();
+                            enabled.set_valign(gtk::Align::Center);
+                            enabled.set_tooltip_text(Some(&self.ctx.t_or(
+                                "generalOverview.automations.pauseResume",
+                                "Pause or resume this automation",
+                            )));
+                            enabled.set_active(!paused);
+                            {
+                                let ctx = self.ctx.clone();
+                                let id = record.id.clone();
+                                let view = self.clone();
+                                enabled.connect_active_notify(move |switch| {
+                                    let mut store = ctx.store.borrow_mut();
+                                    let paused = store.is_automation_paused(&id);
+                                    if switch.is_active() == paused {
+                                        store.toggle_automation_paused(&id);
+                                        drop(store);
+                                        ctx.persist();
+                                        view.refresh();
+                                    }
+                                });
+                            }
+                            let run = gtk::Button::from_icon_name("media-playback-start-symbolic");
+                            run.set_valign(gtk::Align::Center);
+                            run.set_tooltip_text(Some(
+                                &self
+                                    .ctx
+                                    .t_or("generalOverview.automations.runNow", "Run now"),
+                            ));
+                            {
+                                let ctx = self.ctx.clone();
+                                let toast = self.toast.clone();
+                                let record = record.clone();
+                                run.connect_clicked(move |_| {
+                                    if let Some(client) = ctx.client() {
+                                        let mut store = ctx.store.borrow_mut();
+                                        match crate::automation::fire(
+                                            &client,
+                                            &mut store,
+                                            &record,
+                                            chrono::Utc::now(),
+                                        ) {
+                                            Ok(_) => toast.add_toast(adw::Toast::new(&ctx.tf(
+                                                "notification.title.jobStarted",
+                                                &[("type", record.operation.api_label())],
+                                            ))),
+                                            Err(e) => toast.add_toast(adw::Toast::new(
+                                                &ctx.translate_error(&e),
+                                            )),
+                                        }
+                                    }
+                                    ctx.persist();
+                                    ctx.refresh_runtime();
+                                });
+                            }
+                            row.add_suffix(&enabled);
+                            row.add_suffix(&run);
                             {
                                 let ctx = self.ctx.clone();
                                 let id = record.id.clone();
@@ -1048,6 +1120,10 @@ impl FlowView {
             row.set_subtitle(&format!("{} · {schedule}{paused_label}", record.operation));
             let enabled = gtk::Switch::new();
             enabled.set_valign(gtk::Align::Center);
+            enabled.set_tooltip_text(Some(&self.ctx.t_or(
+                "generalOverview.automations.pauseResume",
+                "Pause or resume this automation",
+            )));
             enabled.set_active(!paused);
             {
                 let ctx = self.ctx.clone();

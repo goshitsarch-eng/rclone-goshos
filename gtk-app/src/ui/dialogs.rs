@@ -5610,10 +5610,7 @@ pub fn restore_preview(
     scope.set_title(&ctx.t_or("backup.restore.scope.profile", "Restore Specific Profile"));
     scope.set_model(Some(&gtk::StringList::new(&scope_refs)));
     let as_name = adw::EntryRow::new();
-    as_name.set_title(&ctx.t_or(
-        "backup.restore.restoreAs",
-        "Restore as (optional rename)",
-    ));
+    as_name.set_title(&ctx.t_or("backup.restore.restoreAs", "Restore as (optional rename)"));
     options.add(&password);
     options.add(&scope);
     options.add(&as_name);
@@ -5659,6 +5656,7 @@ pub fn restore_preview(
         let path = path.clone();
         let on_done = on_done.clone();
         let scope_labels = scope_labels.clone();
+        let parent_win = parent.clone().upcast::<gtk::Window>();
         restore.connect_clicked(move |_| {
             let pw = password.text().to_string();
             let pw = if pw.is_empty() {
@@ -5738,6 +5736,12 @@ pub fn restore_preview(
                     }
                     dialog.close();
                     on_done();
+                    if crate::platform::is_standalone_dialog() {
+                        let win = parent_win.clone();
+                        glib::idle_add_local_once(move || {
+                            win.close();
+                        });
+                    }
                 }
                 Err(e) => toast.add_toast(adw::Toast::new(
                     &ctx.tf("backup.restoreFailed", &[("error", &e)]),
