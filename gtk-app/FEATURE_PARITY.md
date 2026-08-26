@@ -639,6 +639,11 @@ This client is the GTK 4 + libadwaita desktop UI. It talks to a local `rclone rc
 - Dashboard General/Mount/Operations/Serve tab persists as `runtime.dashboard_tab`
 - Remote-config deep links honor `?autoAdd=true` / `--auto-add` (GIO boolean flags are not read as strings)
 - `#/logs/{remote}` and `--logs REMOTE` open remote-scoped logs; hamburger **Logs** is `win.logs`
+- Live GUI: Mount tab + testdrive Configuration persist across restart (`runtime.dashboard_tab=mount`, `selected_detail_pages.testdrive=configuration`)
+- Live GUI: `--logs testdrive` opens the logs overlay with testdrive copy/serve lines
+- Live GUI: `Ctrl+?` opens Keyboard Shortcuts (Quit, Preferences, Flags, New Remote)
+- Live GUI: `runtime.rclone_restart_required` shows **Rclone Restart Required** / **Restart Now** ahead of the version-too-old banner
+- Live GUI: `--remote-config testdrive --step mount --auto-add` opens Mount config and the Add profile name prompt
 - Zero-remotes overview shows Quick Add / Detailed Remote CTAs
 - After rclone install, titlebar/banner prompt to restart the engine
 - Updates hides app Install on Flatpak/portable and links Flathub/download page
