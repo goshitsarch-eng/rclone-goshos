@@ -96,6 +96,33 @@ pub fn set_launch_args(args: Vec<String>) {
     *LAUNCH_ARGS.lock().unwrap_or_else(|e| e.into_inner()) = args;
 }
 
+/// Decode one GApplication `options_dict` value without assuming the variant is a string.
+/// Boolean flags such as `--auto-add` panic in glib if they are read as bytestrings first.
+pub fn option_flag_from_variant(
+    name: &str,
+    value: &glib::Variant,
+) -> Option<(String, Option<String>)> {
+    if *value.type_() == *glib::VariantTy::BOOLEAN {
+        return value
+            .get::<bool>()
+            .filter(|on| *on)
+            .map(|_| (name.to_string(), None));
+    }
+    let text = value
+        .str()
+        .map(ToOwned::to_owned)
+        .or_else(|| value.get::<String>())
+        .or_else(|| {
+            value
+                .get::<PathBuf>()
+                .map(|p| p.to_string_lossy().into_owned())
+        })?;
+    Some((
+        name.to_string(),
+        if text.is_empty() { None } else { Some(text) },
+    ))
+}
+
 /// Re-insert GIO-consumed flags so a second instance can deep-link the primary.
 pub fn merge_option_flags(args: &mut Vec<String>, flags: &[(String, Option<String>)]) {
     for (name, value) in flags {
@@ -252,5 +279,26 @@ mod tests {
         let req = crate::platform::parse_dialog_args(&args).expect("dialog request");
         assert_eq!(req.kind, "restore-preview");
         assert_eq!(req.data["path"], "/tmp/rclone-manager-gui-backup.zip");
+    }
+
+    #[test]
+    fn option_flag_reads_bool_before_string() {
+        use glib::prelude::ToVariant;
+        assert_eq!(
+            option_flag_from_variant("auto-add", &true.to_variant()),
+            Some(("auto-add".into(), None))
+        );
+        assert_eq!(
+            option_flag_from_variant("auto-add", &false.to_variant()),
+            None
+        );
+        assert_eq!(
+            option_flag_from_variant("logs", &"testdrive".to_variant()),
+            Some(("logs".into(), Some("testdrive".into())))
+        );
+        assert_eq!(
+            option_flag_from_variant("logs", &"".to_variant()),
+            Some(("logs".into(), None))
+        );
     }
 }

@@ -346,22 +346,8 @@ fn command_line_option_flags(
         let Some(value) = dict.lookup_value(name, None) else {
             continue;
         };
-        if let Some(text) = value
-            .str()
-            .map(|s| s.to_string())
-            .or_else(|| value.get::<String>())
-            .or_else(|| {
-                value
-                    .get::<std::path::PathBuf>()
-                    .map(|p| p.to_string_lossy().into_owned())
-            })
-        {
-            flags.push((
-                (*name).to_string(),
-                if text.is_empty() { None } else { Some(text) },
-            ));
-        } else if value.get::<bool>() == Some(true) {
-            flags.push(((*name).to_string(), None));
+        if let Some(flag) = cli::option_flag_from_variant(name, &value) {
+            flags.push(flag);
         }
     }
     flags
