@@ -1771,11 +1771,6 @@ impl Dashboard {
             self.append_mount_disk_usage(&name, &snap);
         }
 
-        self.detail_box().append(&section_label(
-            &self.ctx.t_or("generalOverview.activity", "Activity"),
-        ));
-        let activity = gtk::ListBox::new();
-        activity.add_css_class("boxed-list");
         let remote_jobs = {
             let store = self.ctx.store.borrow();
             crate::jobs::merge_overview_jobs(
@@ -1786,88 +1781,26 @@ impl Dashboard {
                 scoped_op,
             )
         };
-        if remote_jobs.is_empty() {
-            let row = adw::ActionRow::new();
-            row.set_title(&self.ctx.t_or(
-                "generalOverview.jobs.noRunning",
-                "No active jobs for this remote",
-            ));
-            activity.append(&row);
-        } else {
-            for job in remote_jobs {
-                let row = adw::ActionRow::new();
-                row.set_title(&format!(
-                    "{} · {}",
-                    job.operation,
-                    self.ctx
-                        .t_or(crate::jobs::job_status_key(&job.status), &job.status)
-                ));
-                row.set_subtitle(&format!(
-                    "{:.0}% · {} · {}",
-                    if matches!(job.status.as_str(), "completed" | "failed" | "stopped")
-                        && job.progress <= 0.0
-                    {
-                        100.0
-                    } else {
-                        job.progress * 100.0
-                    },
-                    crate::rclone::format_bytes(
-                        job.stats.get("bytes").and_then(|x| x.as_i64()).unwrap_or(0)
-                    ),
-                    job.profile
-                ));
-                let ctx = self.ctx.clone();
-                let id = job.id;
-                row.connect_activated(move |_| {
-                    ctx.request_nav(NavTarget::Job { id });
-                });
-                if crate::jobs::job_is_running(&job) || crate::jobs::job_is_pending(&job) {
-                    let stop = gtk::Button::from_icon_name("media-playback-stop-symbolic");
-                    stop.set_valign(gtk::Align::Center);
-                    stop.set_tooltip_text(Some(
-                        &self.ctx.t_or("flow.quickRun.actions.stop", "Stop"),
-                    ));
-                    let ctx = self.ctx.clone();
-                    let dash = self.clone();
-                    stop.connect_clicked(move |_| {
-                        if let Some(c) = ctx.client() {
-                            let _ = c.job_stop(id);
-                            ctx.refresh_runtime();
-                            dash.refresh();
-                        }
-                    });
-                    row.add_suffix(&stop);
-                } else {
-                    let delete = gtk::Button::from_icon_name("user-trash-symbolic");
-                    delete.set_valign(gtk::Align::Center);
-                    delete.set_tooltip_text(Some(
-                        &self
-                            .ctx
-                            .t_or("fileBrowser.operations.removeJob", "Remove from history"),
-                    ));
-                    let ctx = self.ctx.clone();
-                    let dash = self.clone();
-                    delete.connect_clicked(move |_| {
-                        ctx.store.borrow_mut().dismiss_job(id);
-                        ctx.persist();
-                        dash.refresh();
-                    });
-                    row.add_suffix(&delete);
-                }
-                activity.append(&row);
-            }
-        }
+        self.detail_box()
+            .append(&job_panels::detail_jobs_panel(&self.ctx, &remote_jobs, {
+                let dash = self.clone();
+                move || dash.refresh()
+            }));
         let remote_serves: Vec<_> = snap
             .serves
             .iter()
             .filter(|s| s.fs.contains(&name))
             .cloned()
             .collect();
-        for serve in remote_serves {
-            let dash = self.clone();
-            activity.append(&serve_card_row(&self.ctx, &serve, move || dash.refresh()));
+        if !remote_serves.is_empty() {
+            let serves = gtk::ListBox::new();
+            serves.add_css_class("boxed-list");
+            for serve in remote_serves {
+                let dash = self.clone();
+                serves.append(&serve_card_row(&self.ctx, &serve, move || dash.refresh()));
+            }
+            self.detail_box().append(&serves);
         }
-        self.detail_box().append(&activity);
         self.append_transfer_activity(&name, &snap, selected_profile.as_deref(), scoped_op);
         if tab == AppTab::General {
             self.append_remote_automations(&name);

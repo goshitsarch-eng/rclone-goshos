@@ -1330,6 +1330,82 @@ pub fn job_status_key(status: &str) -> &'static str {
     }
 }
 
+/// Angular `JobsPanel` row: type, `#id`, profile, progress, dry-run, relative time.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct JobPanelRow {
+    pub operation: String,
+    pub id_label: String,
+    pub profile: String,
+    pub status: String,
+    pub progress_pct: Option<u32>,
+    pub bytes: i64,
+    pub total_bytes: i64,
+    pub dry_run: bool,
+    pub duration_secs: i64,
+    pub relative: Option<(&'static str, i64)>,
+    pub error: String,
+    pub can_stop: bool,
+    pub has_footer: bool,
+}
+
+pub fn job_panel_row(job: &JobInfo, now: DateTime<Utc>) -> JobPanelRow {
+    let bytes = stats_i64(&job.stats, &["bytes"]);
+    let total_bytes = stats_i64(&job.stats, &["totalBytes"]);
+    let is_mount = job.operation.eq_ignore_ascii_case("mount");
+    let progress_pct = if !is_mount && total_bytes > 0 {
+        Some(
+            ((bytes as f64 / total_bytes as f64) * 100.0)
+                .round()
+                .clamp(0.0, 100.0) as u32,
+        )
+    } else {
+        None
+    };
+    let duration_secs = if job.duration > 0.0 {
+        job.duration.round().max(0.0) as i64
+    } else if has_known_start_time(job) {
+        now.signed_duration_since(job.start_time)
+            .num_seconds()
+            .max(0)
+    } else {
+        0
+    };
+    let relative = if has_known_start_time(job) {
+        Some(crate::checks::relative_time_parts(job.start_time, now))
+    } else {
+        None
+    };
+    let error = job
+        .error
+        .clone()
+        .or_else(|| {
+            job.stats
+                .get("lastError")
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string())
+        })
+        .unwrap_or_default();
+    let can_stop = job_is_running(job) || job_is_pending(job);
+    JobPanelRow {
+        operation: job.operation.clone(),
+        id_label: format!("#{}", job.id),
+        profile: job.profile.clone(),
+        status: job.status.clone(),
+        progress_pct,
+        bytes,
+        total_bytes,
+        dry_run: job.dry_run,
+        duration_secs,
+        relative,
+        error,
+        can_stop,
+        has_footer: progress_pct.is_some()
+            || job.dry_run
+            || duration_secs > 0
+            || relative.is_some(),
+    }
+}
+
 pub fn job_origin_key(origin: &str) -> &'static str {
     match origin {
         "dashboard" => "generalOverview.jobs.originDashboard",
@@ -4437,6 +4513,44 @@ mod tests {
             job_origin_key("filemanager"),
             "generalOverview.jobs.originFiles"
         );
+    }
+
+    #[test]
+    fn job_panel_row_matches_angular_rules() {
+        let now = Utc::now();
+        let mut copy = running_job(12, "testdrive", "copy", "gui-copy-test");
+        copy.stats = json!({ "bytes": 512, "totalBytes": 1024 });
+        copy.dry_run = true;
+        copy.start_time = now - chrono::TimeDelta::minutes(3);
+        let row = job_panel_row(&copy, now);
+        assert_eq!(row.id_label, "#12");
+        assert_eq!(row.profile, "gui-copy-test");
+        assert_eq!(row.progress_pct, Some(50));
+        assert_eq!(row.bytes, 512);
+        assert_eq!(row.total_bytes, 1024);
+        assert!(row.dry_run);
+        assert!(row.can_stop);
+        assert!(row.has_footer);
+        assert_eq!(
+            row.relative,
+            Some(("shared.transferActivity.time.minutesAgo", 3))
+        );
+
+        let mut mount = running_job(3, "testdrive", "mount", "default");
+        mount.stats = json!({ "bytes": 10, "totalBytes": 100 });
+        assert!(job_panel_row(&mount, now).progress_pct.is_none());
+
+        let mut done = running_job(4, "testdrive", "sync", "default");
+        done.status = "completed".into();
+        done.stats = json!({});
+        done.duration = 12.0;
+        done.start_time = chrono::DateTime::<Utc>::from_timestamp(0, 0).unwrap_or_default();
+        let idle = job_panel_row(&done, now);
+        assert!(idle.progress_pct.is_none());
+        assert!(!idle.can_stop);
+        assert_eq!(idle.duration_secs, 12);
+        assert!(idle.relative.is_none());
+        assert!(idle.has_footer);
     }
 
     #[test]

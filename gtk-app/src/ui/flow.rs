@@ -1,5 +1,6 @@
 use super::automation_card;
 use super::dialogs;
+use super::job_panels;
 use super::AppCtx;
 use crate::navigation::NavTarget;
 use crate::store::QuickRun;
@@ -1109,6 +1110,54 @@ impl FlowView {
             }
             host.append(&tabs);
         }
+        if let Some(job) = jobs.first() {
+            let toolbar = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+            let running = crate::jobs::job_is_running(job) || crate::jobs::job_is_pending(job);
+            if running {
+                let reset_label = self
+                    .ctx
+                    .t_or("shared.transferActivity.resetStats", "Reset stats");
+                let reset = gtk::Button::with_label(&reset_label);
+                reset.set_tooltip_text(Some(&reset_label));
+                {
+                    let ctx = self.ctx.clone();
+                    let group = if job.group.is_empty() {
+                        format!("job/{}", job.id)
+                    } else {
+                        job.group.clone()
+                    };
+                    let view = self.clone();
+                    reset.connect_clicked(move |_| {
+                        if let Some(client) = ctx.client() {
+                            let _ = client.reset_stats(Some(&group));
+                            ctx.refresh_runtime();
+                            view.refresh();
+                        }
+                    });
+                }
+                toolbar.append(&reset);
+            } else {
+                let delete_label = self
+                    .ctx
+                    .t_or("detailShared.jobs.actions.delete", "Delete from history");
+                let delete = gtk::Button::with_label(&delete_label);
+                delete.add_css_class("destructive-action");
+                delete.set_tooltip_text(Some(&delete_label));
+                {
+                    let ctx = self.ctx.clone();
+                    let id = job.id;
+                    let view = self.clone();
+                    delete.connect_clicked(move |_| {
+                        ctx.store.borrow_mut().dismiss_job(id);
+                        ctx.persist();
+                        ctx.refresh_runtime();
+                        view.refresh();
+                    });
+                }
+                toolbar.append(&delete);
+            }
+            host.append(&toolbar);
+        }
         if !check_items.is_empty() {
             let query = self.transfer_query.borrow().clone();
             let check_items = crate::checks::visible_check_items(
@@ -1289,79 +1338,21 @@ impl FlowView {
         self.append_disk_usage(name);
         self.append_transfer_activity(name, &snap);
 
+        let jobs: Vec<_> = {
+            let store = self.ctx.store.borrow();
+            crate::jobs::merge_overview_jobs(
+                &snap.jobs,
+                &crate::jobs::history_with_meta(&store.job_history, &store.job_meta),
+                name,
+                None,
+                None,
+            )
+        };
         self.content
-            .append(&self.heading(&self.ctx.t_or("generalOverview.activity", "Activity")));
-        let activity = gtk::ListBox::new();
-        activity.add_css_class("boxed-list");
-        let jobs: Vec<_> = snap
-            .jobs
-            .iter()
-            .filter(|j| j.remote == name && crate::jobs::is_overview_job(j))
-            .cloned()
-            .collect();
-        if jobs.is_empty() {
-            let row = adw::ActionRow::new();
-            row.set_title(&self.ctx.t_or(
-                "generalOverview.jobs.noRunning",
-                "No active jobs for this remote",
-            ));
-            activity.append(&row);
-        } else {
-            for job in jobs {
-                let row = adw::ActionRow::new();
-                row.set_title(&format!("{} · {}", job.operation, job.status));
-                row.set_subtitle(&format!(
-                    "{:.0}% · {} · {}",
-                    job.progress * 100.0,
-                    crate::rclone::format_bytes(
-                        job.stats.get("bytes").and_then(|x| x.as_i64()).unwrap_or(0)
-                    ),
-                    job.profile
-                ));
-                let id = job.id;
-                {
-                    let ctx = self.ctx.clone();
-                    row.connect_activated(move |_| {
-                        ctx.request_nav(NavTarget::Job { id });
-                    });
-                }
-                if crate::jobs::job_is_running(&job) || crate::jobs::job_is_pending(&job) {
-                    let stop = gtk::Button::from_icon_name("media-playback-stop-symbolic");
-                    stop.set_valign(gtk::Align::Center);
-                    stop.set_tooltip_text(Some(
-                        &self.ctx.t_or("flow.quickRun.actions.stop", "Stop"),
-                    ));
-                    let ctx = self.ctx.clone();
-                    let view = self.clone();
-                    stop.connect_clicked(move |_| {
-                        if let Some(c) = ctx.client() {
-                            let _ = c.job_stop(id);
-                            ctx.refresh_runtime();
-                            view.refresh();
-                        }
-                    });
-                    row.add_suffix(&stop);
-                } else {
-                    let delete = gtk::Button::from_icon_name("user-trash-symbolic");
-                    delete.set_valign(gtk::Align::Center);
-                    delete.set_tooltip_text(Some(
-                        &self
-                            .ctx
-                            .t_or("fileBrowser.operations.removeJob", "Remove from history"),
-                    ));
-                    let ctx = self.ctx.clone();
-                    let view = self.clone();
-                    delete.connect_clicked(move |_| {
-                        ctx.store.borrow_mut().dismiss_job(id);
-                        ctx.persist();
-                        view.refresh();
-                    });
-                    row.add_suffix(&delete);
-                }
-                activity.append(&row);
-            }
-        }
-        self.content.append(&activity);
+            .append(&job_panels::detail_jobs_panel(&self.ctx, &jobs, {
+                let view = self.clone();
+                move || view.refresh()
+            }));
         self.append_remote_automations(name);
 
         let qrs: Vec<_> = self
