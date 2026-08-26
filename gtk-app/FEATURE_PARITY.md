@@ -795,3 +795,6 @@ This client is the GTK 4 + libadwaita desktop UI. It talks to a local `rclone rc
 - Live GUI: testdrive General **Remote Configuration** expander shows **2 settings** (`remote` `/tmp/rclone-test-remote`, `type` `alias`) and Edit Settings
 - Live GUI: Operations Copy Configuration expanders list **Copy Settings (gui-copy-nightly/test)** with Application Settings + Rclone Options
 - Live GUI: Flow `gui-qr-copy` Configuration expander shows Application Settings + Rclone Options (`srcFs` `testdrive:Photos`, `dstFs` `testdrive:verify-qr`)
+- Job detail drops rclone 1.60 global `core/stats` leftovers that belong to another job (id / `job/<id>` group / foreign src-dst)
+- Flow Quick Run Monitoring resolves the live or last matching job, not only `last_job_id`
+- Live GUI: job/22718 shows copy · testdrive:Photos → testdrive:verify-qr and empty completed (no #14781 / verify-copy-to); job/14781 stays on gui-copy-test / job/14781
