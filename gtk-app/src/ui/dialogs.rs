@@ -8741,17 +8741,29 @@ fn build_markdown_preview(source: &str, images: Option<&(AppCtx, String, String)
                 flush_text(&mut text_buf, &box_);
                 if let Some((ctx, remote, file_path)) = images {
                     if let Some(path) = materialize_preview_image(ctx, remote, file_path, &href) {
-                        let picture = gtk::Picture::for_filename(&path);
-                        picture.set_can_shrink(true);
-                        picture.set_hexpand(true);
-                        picture.set_vexpand(false);
-                        picture.set_valign(gtk::Align::Start);
-                        picture.set_content_fit(gtk::ContentFit::Contain);
-                        picture.set_size_request(320, 200);
-                        if !alt.is_empty() {
-                            picture.set_tooltip_text(Some(&alt));
-                        }
-                        box_.append(&picture);
+                        let image = match gtk::gdk::Texture::from_filename(&path) {
+                            Ok(texture) => {
+                                let picture = gtk::Picture::for_paintable(&texture);
+                                picture.set_can_shrink(true);
+                                picture.set_content_fit(gtk::ContentFit::Contain);
+                                picture.set_size_request(320, 200);
+                                if !alt.is_empty() {
+                                    picture.set_tooltip_text(Some(&alt));
+                                }
+                                picture.upcast::<gtk::Widget>()
+                            }
+                            Err(err) => {
+                                log::warn!("markdown preview image {}: {err}", path.display());
+                                let fallback = gtk::Image::from_file(&path);
+                                fallback.set_pixel_size(180);
+                                fallback.upcast()
+                            }
+                        };
+                        image.set_hexpand(true);
+                        image.set_vexpand(false);
+                        image.set_halign(gtk::Align::Start);
+                        image.set_valign(gtk::Align::Start);
+                        box_.append(&image);
                     }
                 }
                 if !alt.is_empty() {
