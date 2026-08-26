@@ -1289,8 +1289,10 @@ impl NautilusView {
         widget.add_controller(drag);
     }
 
-    fn item_menu_button(&self, name: &str, primary: bool) -> gtk::Button {
-        let more = gtk::Button::from_icon_name("view-more-symbolic");
+    fn item_menu_button(&self, name: &str, primary: bool) -> gtk::MenuButton {
+        let more = gtk::MenuButton::new();
+        more.set_icon_name("view-more-symbolic");
+        more.set_has_frame(false);
         more.add_css_class("flat");
         more.add_css_class("circular");
         more.add_css_class("file-item-menu");
@@ -1304,86 +1306,24 @@ impl NautilusView {
             &self.ctx.t_or("nautilus.contextMenu.moreActions", "Actions"),
         ));
         more.set_widget_name(&crate::fileops::file_item_menu_widget_name(name));
+        let popover = gtk::Popover::new();
+        more.set_popover(Some(&popover));
         {
             let view = self.clone();
             let name = name.to_string();
-            let target = more.clone();
-            let claim = gtk::GestureClick::new();
-            claim.set_button(1);
-            claim.set_exclusive(true);
-            claim.set_propagation_phase(gtk::PropagationPhase::Capture);
-            {
-                let view = view.clone();
-                claim.connect_pressed(move |g, n_press, _, _| {
-                    if n_press != 1 {
-                        return;
-                    }
-                    g.set_state(gtk::EventSequenceState::Claimed);
-                    view.skip_lasso.set(true);
-                    view.ignore_activate.set(true);
-                });
-            }
-            claim.connect_released(move |_, n_press, x, y| {
-                if n_press != 1 {
-                    return;
-                }
-                let view = view.clone();
-                let name = name.clone();
-                let target = target.clone();
-                glib::idle_add_local_once(move || {
-                    view.ensure_name_selected(&name, primary);
-                    view.popup_context_at(&target, x.max(12.0), y.max(16.0));
-                    let view = view.clone();
-                    glib::timeout_add_local_once(
-                        std::time::Duration::from_millis(200),
-                        move || {
-                            view.ignore_activate.set(false);
-                            view.skip_lasso.set(false);
-                        },
-                    );
-                });
+            popover.connect_show(move |p| {
+                view.skip_lasso.set(true);
+                view.ignore_activate.set(true);
+                view.ensure_name_selected(&name, primary);
+                p.set_child(Some(&view.build_context_menu(p)));
             });
-            more.add_controller(claim);
         }
         {
             let view = self.clone();
-            let name = name.to_string();
-            let target = more.clone();
-            let secondary = gtk::GestureClick::new();
-            secondary.set_button(3);
-            secondary.set_exclusive(true);
-            secondary.set_propagation_phase(gtk::PropagationPhase::Capture);
-            {
-                let view = view.clone();
-                secondary.connect_pressed(move |g, _, _, _| {
-                    g.set_state(gtk::EventSequenceState::Claimed);
-                    view.skip_lasso.set(true);
-                    view.ignore_activate.set(true);
-                });
-            }
-            {
-                let view = view.clone();
-                let name = name.clone();
-                let target = target.clone();
-                secondary.connect_released(move |_, _, x, y| {
-                    let view = view.clone();
-                    let name = name.clone();
-                    let target = target.clone();
-                    glib::idle_add_local_once(move || {
-                        view.ensure_name_selected(&name, primary);
-                        view.popup_context_at(&target, x, y);
-                        let view = view.clone();
-                        glib::timeout_add_local_once(
-                            std::time::Duration::from_millis(200),
-                            move || {
-                                view.ignore_activate.set(false);
-                                view.skip_lasso.set(false);
-                            },
-                        );
-                    });
-                });
-            }
-            more.add_controller(secondary);
+            popover.connect_closed(move |_| {
+                view.ignore_activate.set(false);
+                view.skip_lasso.set(false);
+            });
         }
         more
     }
