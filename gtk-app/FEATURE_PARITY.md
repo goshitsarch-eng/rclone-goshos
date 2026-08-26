@@ -743,3 +743,6 @@ This client is the GTK 4 + libadwaita desktop UI. It talks to a local `rclone rc
 - Live GUI: `app_restart_required` banner reads **Restart Required** / **Restart Now**; About App shows the same card and hides Check for Updates
 - Files listing context menu is context-sensitive (empty / file / folder Open submenu / multi), matching Angular
 - About deep links select a page (`#/about/about-rclone`, `--about rclone`); Debug tools include Restart App and GTK Inspector; memory stats include heap/stack/GC counts
+- Live GUI: `--about rclone` opens the About Rclone tab (`v1.60.1-DEV · Beta`, Go, PID, Memory, Cache)
+- Live GUI: testdrive folder ⋮ / right-click shows Open, Remove empty folders, Copy Path (no Open native / Share)
+- Live GUI: testdrive `a.txt` menu shows Open, Open native, Share, Copy Path, Copy/Cut, Rename, Compress, Delete
