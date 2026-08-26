@@ -567,3 +567,6 @@ This client is the GTK 4 + libadwaita desktop UI. It talks to a local `rclone rc
 - Restore preview puts scope / restore-as options above the contents list
 - Live GUI: Detailed Remote created `guilocal` (type=local); Quick Add is OAuth-only
 - Live GUI: Restore Backup preview opens via `--dialog restore-preview` and shows scope options above contents
+- Standalone `--dialog restore-preview` closes the leftover window after a successful restore
+- Flow overview automations have pause/resume and Run now (same controls as the dashboard)
+- Live GUI: Quick Run `gui-qr-copy` cron saved as `0 7 * * *` (Daily at 7:00); sidebar/card show the cron badge
