@@ -554,3 +554,8 @@ This client is the GTK 4 + libadwaita desktop UI. It talks to a local `rclone rc
 - Workflow builder (stub in both apps)
 - Pixel-level layouts vs Angular CSS (non-blocking for functional parity)
 - Files row ⋮ opens the toolbar Selection actions menu (same proven popover)
+- Live GUI: testdrive Photos ⋮ opens Selection actions; Copy toast
+- Live GUI: Flow Quick Run `gui-qr-copy` created and started (copy testdrive:Photos → verify-qr, job 22718, 3/3 files)
+- Live GUI: Export Full Backup → `/tmp/rclone-manager-gui-backup.zip` (`Backup created successfully`)
+- Live GUI: Bandwidth preset 10 MB/s saved as `10M`
+- Wizard provider list pins local/alias/drive/s3/sftp ahead of alphabetical leftovers

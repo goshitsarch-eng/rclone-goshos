@@ -66,8 +66,20 @@ pub fn parse_providers(value: &Value) -> Vec<Provider> {
         .cloned()
         .unwrap_or_default();
     let mut providers: Vec<Provider> = array.iter().filter_map(parse_provider).collect();
-    providers.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
+    providers.sort_by_key(|p| provider_sort_key(&p.name));
     providers
+}
+
+/// Pin everyday backends first so local/sftp are not buried under Amazon Cloud Drive.
+pub fn provider_sort_key(name: &str) -> (usize, String) {
+    const PINNED: &[&str] = &[
+        "local", "alias", "drive", "s3", "dropbox", "onedrive", "sftp", "webdav", "ftp", "crypt",
+    ];
+    let pin = PINNED
+        .iter()
+        .position(|n| *n == name)
+        .unwrap_or(PINNED.len());
+    (pin, name.to_lowercase())
 }
 
 fn parse_provider(value: &Value) -> Option<Provider> {
@@ -346,6 +358,25 @@ mod tests {
         assert_eq!(providers[0].advanced_options().count(), 1);
         assert!(providers[0].options[1].is_password);
         assert_eq!(providers[0].options[2].examples[0].0, "drive");
+    }
+
+    #[test]
+    fn pins_everyday_providers_before_alphabetical() {
+        assert!(provider_sort_key("local") < provider_sort_key("amazon cloud drive"));
+        assert!(provider_sort_key("sftp") < provider_sort_key("b2"));
+        assert!(provider_sort_key("drive") < provider_sort_key("dropbox"));
+        let value = json!({
+            "providers": [
+                {"Name": "b2", "Description": "B2", "Prefix": "b2", "Options": []},
+                {"Name": "local", "Description": "Local", "Prefix": "local", "Options": []},
+                {"Name": "amazon cloud drive", "Description": "ACD", "Prefix": "acd", "Options": []}
+            ]
+        });
+        let names: Vec<_> = parse_providers(&value)
+            .into_iter()
+            .map(|p| p.name)
+            .collect();
+        assert_eq!(names, vec!["local", "amazon cloud drive", "b2"]);
     }
 
     #[test]
