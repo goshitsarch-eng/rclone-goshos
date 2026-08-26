@@ -176,6 +176,74 @@ pub fn status_key(status: AutomationStatus) -> &'static str {
     }
 }
 
+pub fn is_quick_run(id: &str) -> bool {
+    id.starts_with("quick:")
+}
+
+pub fn origin_label_key(id: &str) -> &'static str {
+    if is_quick_run(id) {
+        "generalOverview.jobs.originQuickRun"
+    } else {
+        "generalOverview.jobs.originDashboard"
+    }
+}
+
+pub fn next_run_key(record: &AutomationRecord) -> Option<&'static str> {
+    match record.status {
+        AutomationStatus::Disabled => Some("automation.nextRun.disabled"),
+        AutomationStatus::Stopping => Some("automation.nextRun.stopping"),
+        _ if record.next_run.is_none() => Some("automation.nextRun.notScheduled"),
+        _ => None,
+    }
+}
+
+pub fn format_stamp(when: DateTime<Utc>) -> String {
+    when.with_timezone(&chrono::Local)
+        .format("%Y-%m-%d %H:%M")
+        .to_string()
+}
+
+pub fn next_run_text(record: &AutomationRecord) -> String {
+    record
+        .next_run
+        .map(format_stamp)
+        .unwrap_or_else(|| "—".into())
+}
+
+pub fn last_run_text(record: &AutomationRecord) -> Option<String> {
+    record.last_run.map(format_stamp)
+}
+
+pub fn stat_counts(record: &AutomationRecord) -> (u64, u64, u64, u64) {
+    (
+        record.success_count,
+        record.failure_count,
+        record.stopped_count,
+        record.run_count,
+    )
+}
+
+pub fn path_rows(record: &AutomationRecord) -> Vec<(&'static str, String)> {
+    let mut rows = Vec::new();
+    for path in &record.sources {
+        if !path.is_empty() {
+            rows.push(("dashboard.generalDetail.sourceLabel", path.clone()));
+        }
+    }
+    for path in &record.destinations {
+        if !path.is_empty() {
+            rows.push(("dashboard.generalDetail.destinationLabel", path.clone()));
+        }
+    }
+    rows
+}
+
+pub fn carousel_index(ids: &[String], selected: Option<&str>) -> usize {
+    selected
+        .and_then(|id| ids.iter().position(|item| item == id))
+        .unwrap_or(0)
+}
+
 pub fn lifecycle_stats(record: &AutomationRecord) -> String {
     let mut bits = vec![
         format!("{} ok", record.success_count),
@@ -835,5 +903,65 @@ mod tests {
         assert_eq!(runtime.status, AutomationStatus::Failed);
         assert_eq!(runtime.failure_count, 1);
         assert_eq!(runtime.last_error.as_deref(), Some("network"));
+    }
+
+    fn sample_record() -> AutomationRecord {
+        AutomationRecord {
+            id: "remote:drive:sync:nightly".into(),
+            name: "drive / sync / nightly".into(),
+            remote: "drive".into(),
+            profile: "nightly".into(),
+            operation: OperationType::Sync,
+            cron: "0 2 * * *".into(),
+            cron_enabled: true,
+            watch_enabled: false,
+            watch_delay: 5,
+            watch_changed_only: false,
+            sources: vec!["drive:src".into(), "/tmp/docs".into()],
+            destinations: vec!["/backup".into()],
+            next_run: Some(Utc.with_ymd_and_hms(2026, 8, 27, 2, 0, 0).unwrap()),
+            last_run: Some(Utc.with_ymd_and_hms(2026, 8, 26, 2, 0, 0).unwrap()),
+            status: AutomationStatus::Failed,
+            last_error: Some("quota".into()),
+            current_job_id: None,
+            run_count: 4,
+            success_count: 3,
+            failure_count: 1,
+            stopped_count: 0,
+        }
+    }
+
+    #[test]
+    fn card_helpers_split_stats_paths_and_schedule() {
+        let record = sample_record();
+        assert!(!is_quick_run(&record.id));
+        assert_eq!(
+            origin_label_key("quick:abc"),
+            "generalOverview.jobs.originQuickRun"
+        );
+        assert_eq!(stat_counts(&record), (3, 1, 0, 4));
+        assert_eq!(
+            path_rows(&record),
+            vec![
+                ("dashboard.generalDetail.sourceLabel", "drive:src".into()),
+                ("dashboard.generalDetail.sourceLabel", "/tmp/docs".into()),
+                ("dashboard.generalDetail.destinationLabel", "/backup".into()),
+            ]
+        );
+        assert!(next_run_key(&record).is_none());
+        assert!(next_run_text(&record).contains("2026-08-27"));
+        assert!(last_run_text(&record).unwrap().contains("2026-08-26"));
+        let mut disabled = record.clone();
+        disabled.status = AutomationStatus::Disabled;
+        assert_eq!(next_run_key(&disabled), Some("automation.nextRun.disabled"));
+        let mut idle = record.clone();
+        idle.next_run = None;
+        idle.status = AutomationStatus::Enabled;
+        assert_eq!(next_run_key(&idle), Some("automation.nextRun.notScheduled"));
+        assert_eq!(
+            carousel_index(&["a".into(), "b".into(), "c".into()], Some("b")),
+            1
+        );
+        assert_eq!(carousel_index(&["a".into(), "b".into()], None), 0);
     }
 }

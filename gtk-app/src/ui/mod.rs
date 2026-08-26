@@ -1,3 +1,4 @@
+mod automation_card;
 mod dashboard;
 mod dialogs;
 mod flow;
@@ -34,6 +35,7 @@ pub struct AppCtx {
     pub snapshot: Rc<RefCell<RuntimeSnapshot>>,
     pub selected_remote: Rc<RefCell<Option<String>>>,
     pub selected_quick_run: Rc<RefCell<Option<String>>>,
+    pub selected_automation: Rc<RefCell<Option<String>>>,
     pub pending_browse: Rc<RefCell<Option<(String, String)>>>,
     pub pending_files_overlay: Rc<RefCell<Option<(String, String)>>>,
     pub pending_nav: Rc<RefCell<Option<crate::navigation::NavTarget>>>,
@@ -93,6 +95,7 @@ impl AppCtx {
             snapshot: Rc::new(RefCell::new(RuntimeSnapshot::default())),
             selected_remote: Rc::new(RefCell::new(None)),
             selected_quick_run: Rc::new(RefCell::new(None)),
+            selected_automation: Rc::new(RefCell::new(None)),
             pending_browse: Rc::new(RefCell::new(None)),
             pending_files_overlay: Rc::new(RefCell::new(None)),
             pending_nav: Rc::new(RefCell::new(None)),

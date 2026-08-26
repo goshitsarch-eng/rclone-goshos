@@ -766,3 +766,6 @@ This client is the GTK 4 + libadwaita desktop UI. It talks to a local `rclone rc
 - Live GUI: `--about` opens the About home list (Details / About Rclone / About App / Credits / Legal); `--about rclone` as a second instance opens About Rclone
 - Live GUI: `--preferences` opens Preferences; `--preferences security` opens Security (Not Encrypted); `--logs` opens the logs dialog
 - Automations persist Angular-style lifecycle state (enabled/running/failed, success/fail/stop/run counts, last error, current job) and show it on dashboard and Flow rows
+- The Automations origin chip lists every scheduled item (it previously compared job-origin labels and hid Quick Run automations)
+- Live GUI: Flow Automations row for `gui-qr-copy` shows Failed, 3 ok / 1 fail / 4 runs, and last error `network timeout`
+- Automations use Angular-style cards: compact overview (status, 4 stats, next run) and detailed remote cards (schedule, statistics, paths with Open in Files, last error, running job) with a carousel when a remote has more than one

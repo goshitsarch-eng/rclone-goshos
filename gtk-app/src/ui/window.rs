@@ -2265,6 +2265,7 @@ fn apply_nav(
             }
         }
         NavTarget::Automation { id } => {
+            *ctx.selected_automation.borrow_mut() = Some(id.clone());
             let record = crate::automation::collect(&ctx.store.borrow())
                 .into_iter()
                 .find(|r| r.id == id);

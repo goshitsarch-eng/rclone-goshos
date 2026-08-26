@@ -1,3 +1,4 @@
+use super::automation_card;
 use super::dialogs;
 use super::AppCtx;
 use crate::navigation::NavTarget;
@@ -532,8 +533,6 @@ impl FlowView {
                     );
                 }
                 "automations" => {
-                    let autos = gtk::ListBox::new();
-                    autos.add_css_class("boxed-list");
                     let filter = self.origin_filter.borrow().clone();
                     let records: Vec<_> = crate::automation::collect(&self.ctx.store.borrow())
                         .into_iter()
@@ -541,6 +540,7 @@ impl FlowView {
                             crate::jobs::automation_matches_filter(&record.id, &filter)
                         })
                         .collect();
+                    let host = gtk::Box::new(gtk::Orientation::Vertical, 8);
                     if records.is_empty() {
                         let row = adw::ActionRow::new();
                         row.set_title(
@@ -548,126 +548,22 @@ impl FlowView {
                                 .ctx
                                 .t_or("generalOverview.automations.noScheduled", "No automations"),
                         );
-                        autos.append(&row);
+                        let list = gtk::ListBox::new();
+                        list.add_css_class("boxed-list");
+                        list.append(&row);
+                        host.append(&list);
                     } else {
-                        for record in records.into_iter().take(8) {
-                            let paused = self.ctx.store.borrow().is_automation_paused(&record.id);
-                            let row = adw::ActionRow::new();
-                            row.set_title(&record.name);
-                            let cron = if record.cron_enabled {
-                                crate::rclone::describe_cron_i18n(
-                                    &record.cron,
-                                    &self.ctx.i18n.borrow(),
-                                )
-                            } else {
-                                self.ctx.t_or("common.off", "off")
-                            };
-                            let paused_suffix = if paused {
-                                format!(
-                                    " · {}",
-                                    self.ctx.t_or("flow.quickRun.status.paused", "paused")
-                                )
-                            } else {
-                                String::new()
-                            };
-                            row.set_subtitle(&format!(
-                                "{} · {cron}{paused_suffix} · {} · {}",
-                                record.operation,
-                                self.ctx.t_or(
-                                    crate::automation::status_key(record.status),
-                                    &format!("{:?}", record.status)
-                                ),
-                                crate::automation::lifecycle_stats(&record)
-                            ));
-                            let enabled = gtk::Switch::new();
-                            enabled.set_valign(gtk::Align::Center);
-                            enabled.set_tooltip_text(Some(&self.ctx.t_or(
-                                "generalOverview.automations.pauseResume",
-                                "Pause or resume this automation",
-                            )));
-                            enabled.set_active(!paused);
-                            {
-                                let ctx = self.ctx.clone();
-                                let id = record.id.clone();
-                                enabled.connect_active_notify(move |switch| {
-                                    let mut store = ctx.store.borrow_mut();
-                                    let paused = store.is_automation_paused(&id);
-                                    if switch.is_active() == paused {
-                                        store.toggle_automation_paused(&id);
-                                        drop(store);
-                                        ctx.persist();
-                                    }
-                                });
-                            }
-                            let pause = gtk::Button::with_label(&if paused {
-                                self.ctx.t_or("flow.quickRun.actions.resume", "Resume")
-                            } else {
-                                self.ctx.t_or("flow.quickRun.actions.pause", "Pause")
-                            });
-                            pause.set_valign(gtk::Align::Center);
-                            pause.set_tooltip_text(Some(&self.ctx.t_or(
-                                "generalOverview.automations.pauseResume",
-                                "Pause or resume this automation",
-                            )));
-                            {
-                                let ctx = self.ctx.clone();
-                                let id = record.id.clone();
-                                let view = self.clone();
-                                pause.connect_clicked(move |_| {
-                                    ctx.store.borrow_mut().toggle_automation_paused(&id);
-                                    ctx.persist();
-                                    view.refresh();
-                                });
-                            }
-                            let run = gtk::Button::with_label(
-                                &self
-                                    .ctx
-                                    .t_or("generalOverview.automations.runNow", "Run now"),
-                            );
-                            run.set_valign(gtk::Align::Center);
-                            run.set_tooltip_text(Some(
-                                &self
-                                    .ctx
-                                    .t_or("generalOverview.automations.runNow", "Run now"),
-                            ));
-                            {
-                                let ctx = self.ctx.clone();
-                                let toast = self.toast.clone();
-                                let record = record.clone();
-                                run.connect_clicked(move |_| {
-                                    if let Some(client) = ctx.client() {
-                                        let mut store = ctx.store.borrow_mut();
-                                        match crate::automation::fire(
-                                            &client,
-                                            &mut store,
-                                            &record,
-                                            chrono::Utc::now(),
-                                            None,
-                                        ) {
-                                            Ok(_) => toast.add_toast(adw::Toast::new(&ctx.tf(
-                                                "notification.title.jobStarted",
-                                                &[("type", record.operation.api_label())],
-                                            ))),
-                                            Err(e) => toast.add_toast(adw::Toast::new(
-                                                &ctx.translate_error(&e),
-                                            )),
-                                        }
-                                    }
-                                    ctx.persist();
-                                    ctx.refresh_runtime();
-                                });
-                            }
-                            row.add_suffix(&enabled);
-                            row.add_suffix(&pause);
-                            row.add_suffix(&run);
-                            {
-                                let ctx = self.ctx.clone();
-                                let id = record.id.clone();
-                                row.connect_activated(move |_| {
+                        for record in records {
+                            let ctx = self.ctx.clone();
+                            let id = record.id.clone();
+                            host.append(&automation_card::compact_card(
+                                &self.ctx,
+                                &self.toast,
+                                &record,
+                                Some(Rc::new(move || {
                                     ctx.request_nav(NavTarget::Automation { id: id.clone() });
-                                });
-                            }
-                            autos.append(&row);
+                                })),
+                            ));
                         }
                     }
                     self.append_expandable(
@@ -675,7 +571,7 @@ impl FlowView {
                         &self
                             .ctx
                             .t_or("generalOverview.panels.automations", "Automations"),
-                        &autos,
+                        &host,
                     );
                 }
                 "bandwidth" => self.append_bandwidth_panel(),
@@ -1267,88 +1163,13 @@ impl FlowView {
                     .t_or("dashboard.generalDetail.automations", "Automations"),
             ),
         );
-        let list = gtk::ListBox::new();
-        list.add_css_class("boxed-list");
-        for record in records {
-            let paused = self.ctx.store.borrow().is_automation_paused(&record.id);
-            let row = adw::ActionRow::new();
-            row.set_title(&record.name);
-            let schedule = if record.cron_enabled {
-                crate::rclone::describe_cron_i18n(&record.cron, &self.ctx.i18n.borrow())
-            } else if record.watch_enabled {
-                format!(
-                    "{} {}s{}",
-                    self.ctx
-                        .t_or("automation.monitoring.debounce", "Debounce Delay"),
-                    record.watch_delay,
-                    if record.watch_changed_only {
-                        format!(
-                            " · {}",
-                            self.ctx.t_or(
-                                "automation.monitoring.changedOnlyShort",
-                                "Changed files only",
-                            )
-                        )
-                    } else {
-                        String::new()
-                    }
-                )
-            } else {
-                self.ctx.t_or("common.off", "off")
-            };
-            let paused_label = if paused {
-                format!(
-                    " · {}",
-                    self.ctx.t_or("flow.quickRun.status.paused", "paused")
-                )
-            } else {
-                String::new()
-            };
-            row.set_subtitle(&format!(
-                "{} · {schedule}{paused_label} · {} · {}",
-                record.operation,
-                self.ctx.t_or(
-                    crate::automation::status_key(record.status),
-                    &format!("{:?}", record.status)
-                ),
-                crate::automation::lifecycle_stats(&record)
-            ));
-            let enabled = gtk::Switch::new();
-            enabled.set_valign(gtk::Align::Center);
-            enabled.set_tooltip_text(Some(&self.ctx.t_or(
-                "generalOverview.automations.pauseResume",
-                "Pause or resume this automation",
-            )));
-            enabled.set_active(!paused);
-            {
-                let ctx = self.ctx.clone();
-                let id = record.id.clone();
-                let view = self.clone();
-                enabled.connect_active_notify(move |switch| {
-                    let mut store = ctx.store.borrow_mut();
-                    let paused = store.is_automation_paused(&id);
-                    if switch.is_active() == paused {
-                        store.toggle_automation_paused(&id);
-                        drop(store);
-                        ctx.persist();
-                        view.refresh();
-                    }
-                });
-            }
-            row.add_suffix(&enabled);
-            for path in record.sources.iter().filter(|path| !path.is_empty()) {
-                let folder = gtk::Button::from_icon_name("folder-open-symbolic");
-                folder.set_valign(gtk::Align::Center);
-                folder.set_tooltip_text(Some(path));
-                let ctx = self.ctx.clone();
-                let remote = record.remote.clone();
-                let path = path.clone();
-                folder.connect_clicked(move |_| ctx.open_typed_path(&remote, &path));
-                row.add_suffix(&folder);
-            }
-            list.append(&row);
-        }
-        self.content.append(&list);
+        let selected = self.ctx.selected_automation.borrow().clone();
+        self.content.append(&automation_card::detailed_carousel(
+            &self.ctx,
+            &self.toast,
+            &records,
+            selected.as_deref(),
+        ));
     }
 
     fn append_settings_panel(&self, name: &str) {
