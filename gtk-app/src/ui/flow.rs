@@ -1,6 +1,7 @@
 use super::automation_card;
 use super::dialogs;
 use super::job_panels;
+use super::operation_control;
 use super::quick_run_card;
 use super::AppCtx;
 use crate::navigation::NavTarget;
@@ -1420,98 +1421,85 @@ impl FlowView {
         let monitoring = gtk::Box::new(gtk::Orientation::Vertical, 12);
         let configuration = gtk::Box::new(gtk::Orientation::Vertical, 12);
 
-        let folders = crate::jobs::quick_run_openable_folders(qr);
-        if folders.is_empty() {
-            let paths = adw::ActionRow::new();
-            paths.set_title(&self.ctx.t_or("modals.jobDetail.sections.paths", "Paths"));
-            paths.set_subtitle("— → —");
-            monitoring.append(&paths);
-        } else {
-            for folder in folders {
-                let row = adw::ActionRow::new();
-                row.set_title(&if folder.kind == "source" {
-                    self.ctx.t_or("detailShared.pathDisplay.source", "Source")
-                } else {
-                    self.ctx
-                        .t_or("detailShared.pathDisplay.destination", "Destination")
-                });
-                row.set_subtitle(&folder.path);
-                let open = gtk::Button::from_icon_name("folder-open-symbolic");
-                open.set_valign(gtk::Align::Center);
-                open.set_tooltip_text(Some(&self.ctx.t_or(
-                    "detailShared.pathDisplay.openInExplorer",
-                    "Open in file explorer",
-                )));
-                let ctx = self.ctx.clone();
-                let remote = qr.remote_name.clone();
-                let path = folder.path.clone();
-                open.connect_clicked(move |_| ctx.open_typed_path(&remote, &path));
-                row.add_suffix(&open);
-                monitoring.append(&row);
-            }
-        }
-
-        let dry = adw::SwitchRow::new();
-        dry.set_title(&self.ctx.t_or("dashboard.appDetail.dryRun", "Dry run"));
-        dry.set_active(crate::jobs::is_dry_run(&qr.config.rclone));
+        let snap = self.ctx.snapshot.borrow().clone();
+        let live = crate::jobs::find_active_quick_run(&snap.jobs, qr);
+        let (cfg_src, cfg_dst) = qr.paths();
+        let paths = crate::jobs::operation_control_paths(qr.operation_type, cfg_src, cfg_dst, live);
+        let active = live.is_some();
+        let busy = self
+            .ctx
+            .is_busy(&qr.remote_name, qr.operation_type.as_str(), &qr.id);
+        let spec = operation_control::OperationControlSpec {
+            title: qr.name.clone(),
+            operation: qr.operation_type,
+            remote_name: qr.remote_name.clone(),
+            source: paths.source,
+            destination: paths.destination,
+            hide_destination: paths.hide_destination,
+            dry_run: crate::jobs::is_dry_run(&qr.config.rclone),
+            resync: crate::jobs::is_resync(&qr.config.rclone),
+            active,
+            busy,
+            mount_usage: operation_control::mount_usage_pairs(&self.ctx, &qr.remote_name, &snap),
+        };
         {
-            let ctx = self.ctx.clone();
+            let view = self.clone();
+            let qr = qr.clone();
             let id = qr.id.clone();
-            dry.connect_active_notify(move |row| {
-                if let Some(run) = ctx
-                    .store
-                    .borrow_mut()
-                    .quick_runs
-                    .iter_mut()
-                    .find(|q| q.id == id)
-                {
-                    crate::jobs::apply_session_flags(
-                        &mut run.config.rclone,
-                        row.is_active(),
-                        false,
-                    );
-                    if !row.is_active() {
-                        if let Some(obj) = run.config.rclone.as_object_mut() {
-                            obj.remove("DryRun");
-                            obj.remove("dryRun");
-                        }
-                    }
-                }
-                ctx.persist();
-            });
-        }
-        monitoring.append(&dry);
-
-        if qr.operation_type == crate::operations::OperationType::Bisync {
-            let resync = adw::SwitchRow::new();
-            resync.set_title(&self.ctx.t_or("dashboard.appDetail.resync", "Resync"));
-            resync.set_subtitle(&self.ctx.t_or(
-                "dashboard.appDetail.resyncActive",
-                "Force a bisync resync on the next start",
+            monitoring.append(&operation_control::operation_control(
+                &self.ctx,
+                &spec,
+                operation_control::OperationControlHandlers {
+                    on_start: {
+                        let view = view.clone();
+                        let qr = qr.clone();
+                        Rc::new(move || view.start_run(&qr))
+                    },
+                    on_stop: {
+                        let view = view.clone();
+                        let qr = qr.clone();
+                        Rc::new(move || view.stop_run(&qr))
+                    },
+                    on_dry_run: Some({
+                        let ctx = self.ctx.clone();
+                        let id = id.clone();
+                        Rc::new(move |on| {
+                            if let Some(run) = ctx
+                                .store
+                                .borrow_mut()
+                                .quick_runs
+                                .iter_mut()
+                                .find(|q| q.id == id)
+                            {
+                                crate::jobs::apply_session_flags(&mut run.config.rclone, on, false);
+                                if !on {
+                                    if let Some(obj) = run.config.rclone.as_object_mut() {
+                                        obj.remove("DryRun");
+                                        obj.remove("dryRun");
+                                    }
+                                }
+                            }
+                            ctx.persist();
+                        })
+                    }),
+                    on_resync: Some({
+                        let ctx = self.ctx.clone();
+                        Rc::new(move |on| {
+                            if let Some(run) = ctx
+                                .store
+                                .borrow_mut()
+                                .quick_runs
+                                .iter_mut()
+                                .find(|q| q.id == id)
+                            {
+                                let dry = crate::jobs::is_dry_run(&run.config.rclone);
+                                crate::jobs::apply_session_flags(&mut run.config.rclone, dry, on);
+                            }
+                            ctx.persist();
+                        })
+                    }),
+                },
             ));
-            resync.set_active(crate::jobs::is_resync(&qr.config.rclone));
-            {
-                let ctx = self.ctx.clone();
-                let id = qr.id.clone();
-                resync.connect_active_notify(move |row| {
-                    if let Some(run) = ctx
-                        .store
-                        .borrow_mut()
-                        .quick_runs
-                        .iter_mut()
-                        .find(|q| q.id == id)
-                    {
-                        let dry = crate::jobs::is_dry_run(&run.config.rclone);
-                        crate::jobs::apply_session_flags(
-                            &mut run.config.rclone,
-                            dry,
-                            row.is_active(),
-                        );
-                    }
-                    ctx.persist();
-                });
-            }
-            monitoring.append(&resync);
         }
 
         if qr.config.app.cron_enabled && !qr.config.app.cron_expression.is_empty() {
@@ -1546,24 +1534,6 @@ impl FlowView {
             row.set_subtitle(&subtitle);
             monitoring.append(&row);
         }
-
-        let run_actions = gtk::Box::new(gtk::Orientation::Horizontal, 8);
-        let start = gtk::Button::with_label(&self.ctx.t_or("flow.quickRun.actions.start", "Start"));
-        let stop = gtk::Button::with_label(&self.ctx.t_or("flow.quickRun.actions.stop", "Stop"));
-        start.add_css_class("suggested-action");
-        {
-            let view = self.clone();
-            let qr = qr.clone();
-            start.connect_clicked(move |_| view.start_run(&qr));
-        }
-        {
-            let view = self.clone();
-            let qr = qr.clone();
-            stop.connect_clicked(move |_| view.stop_run(&qr));
-        }
-        run_actions.append(&start);
-        run_actions.append(&stop);
-        monitoring.append(&run_actions);
 
         if let Some(job) = {
             let live = self.ctx.snapshot.borrow().jobs.clone();

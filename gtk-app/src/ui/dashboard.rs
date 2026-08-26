@@ -1,6 +1,7 @@
 use super::automation_card;
 use super::dialogs;
 use super::job_panels;
+use super::operation_control;
 use super::quick_run_card;
 use super::vfs_panel;
 use super::AppCtx;
@@ -3058,280 +3059,89 @@ impl Dashboard {
             self.dry_run.set(dry_on);
             self.resync.set(resync_on);
         }
-        let row = adw::ExpanderRow::new();
-        row.set_title(if profile.is_empty() {
-            "default"
-        } else {
-            profile
-        });
-        row.set_subtitle(op.api_label());
-        if dry_on {
-            row.set_subtitle(&format!(
-                "{} · {}",
-                op.api_label(),
-                self.ctx.t_or("dashboard.appDetail.dryRun", "Dry run")
-            ));
-        }
-        let start = gtk::Button::with_label(&self.ctx.t_or("actions.start", "Start"));
-        start.add_css_class("suggested-action");
-        start.set_valign(gtk::Align::Center);
-        let stop = gtk::Button::with_label(&self.ctx.t_or("actions.stop", "Stop"));
-        stop.add_css_class("destructive-action");
-        stop.set_valign(gtk::Align::Center);
-        start.set_sensitive(!active);
-        stop.set_sensitive(active);
-        mark_action_busy(
-            &start,
-            crate::jobs::action_in_progress(
-                name,
-                op,
-                profile,
-                &snap.jobs,
-                self.ctx.is_busy(name, op.as_str(), profile),
-            ),
-            &self.ctx,
-        );
-        {
-            let ctx = self.ctx.clone();
-            let toast = self.toast.clone();
-            let remote = name.to_string();
-            let profile = profile.to_string();
-            let dry = self.dry_run.clone();
-            let resync = self.resync.clone();
-            let dash = self.clone();
-            start.connect_clicked(move |_| {
-                toggle_profile(&ctx, &remote, op, &profile, &toast, dry.get(), resync.get());
-                dash.refresh();
-            });
-        }
-        {
-            let ctx = self.ctx.clone();
-            let toast = self.toast.clone();
-            let remote = name.to_string();
-            let profile = profile.to_string();
-            let dash = self.clone();
-            stop.connect_clicked(move |_| {
-                toggle_profile(&ctx, &remote, op, &profile, &toast, false, false);
-                dash.refresh();
-            });
-        }
-        row.add_suffix(&start);
-        row.add_suffix(&stop);
-
-        for path_row in self.operation_path_rows(name, op, profile, remote) {
-            row.add_row(&path_row);
-        }
-        if op == OperationType::Mount {
-            for usage in self.mount_usage_rows(name, &snap) {
-                row.add_row(&usage);
-            }
-        }
-        if matches!(
-            op,
-            OperationType::Sync
-                | OperationType::Copy
-                | OperationType::Move
-                | OperationType::Bisync
-                | OperationType::Check
-        ) {
-            let dry = adw::SwitchRow::new();
-            dry.set_title(&self.ctx.t_or("dashboard.appDetail.dryRun", "Dry run"));
-            if dry_on {
-                dry.set_subtitle(&self.ctx.t_or(
-                    "dashboard.appDetail.dryRunActive",
-                    "Start the next operation without writing changes",
-                ));
-            }
-            dry.set_active(dry_on);
-            dry.set_sensitive(!active);
-            {
-                let flag = self.dry_run.clone();
-                let ctx = self.ctx.clone();
-                let remote = name.to_string();
-                let profile = profile.to_string();
-                dry.connect_active_notify(move |row| {
-                    flag.set(row.is_active());
-                    persist_profile_flag(&ctx, &remote, op, &profile, Some(row.is_active()), None);
-                });
-            }
-            row.add_row(&dry);
-            if op == OperationType::Bisync {
-                let resync = adw::SwitchRow::new();
-                resync.set_title(&self.ctx.t_or("dashboard.appDetail.resync", "Resync"));
-                if resync_on {
-                    resync.set_subtitle(&self.ctx.t_or(
-                        "dashboard.appDetail.resyncActive",
-                        "Force a bisync resync on the next start",
-                    ));
-                }
-                resync.set_active(resync_on);
-                resync.set_sensitive(!active);
-                {
-                    let flag = self.resync.clone();
-                    let ctx = self.ctx.clone();
-                    let remote = name.to_string();
-                    let profile = profile.to_string();
-                    resync.connect_active_notify(move |row| {
-                        flag.set(row.is_active());
-                        persist_profile_flag(
-                            &ctx,
-                            &remote,
-                            op,
-                            &profile,
-                            None,
-                            Some(row.is_active()),
-                        );
-                    });
-                }
-                row.add_row(&resync);
-            }
-        }
-        let full = gtk::Button::with_label(&if active {
-            self.ctx
-                .tf("dashboard.appDetail.stop", &[("op", op.api_label())])
-        } else {
-            self.ctx
-                .tf("dashboard.appDetail.start", &[("op", op.api_label())])
-        });
-        if active {
-            full.add_css_class("destructive-action");
-        } else {
-            full.add_css_class("suggested-action");
-        }
-        full.set_hexpand(true);
-        {
-            let ctx = self.ctx.clone();
-            let toast = self.toast.clone();
-            let remote = name.to_string();
-            let profile = profile.to_string();
-            let dry = self.dry_run.clone();
-            let resync = self.resync.clone();
-            let dash = self.clone();
-            full.connect_clicked(move |_| {
-                toggle_profile(&ctx, &remote, op, &profile, &toast, dry.get(), resync.get());
-                dash.refresh();
-            });
-        }
-        let action_row = gtk::ListBoxRow::new();
-        action_row.set_activatable(false);
-        let pad = gtk::Box::new(gtk::Orientation::Vertical, 0);
-        pad.set_margin_top(8);
-        pad.set_margin_bottom(8);
-        pad.set_margin_start(8);
-        pad.set_margin_end(8);
-        pad.append(&full);
-        action_row.set_child(Some(&pad));
-        row.add_row(&action_row);
-        self.detail_box().append(&row);
-    }
-
-    fn operation_path_rows(
-        &self,
-        name: &str,
-        op: OperationType,
-        profile: &str,
-        remote: Option<&crate::store::RemoteInfo>,
-    ) -> Vec<adw::ActionRow> {
-        let snap = self.ctx.snapshot.borrow().clone();
         let live = remote
             .and_then(|remote| crate::jobs::find_active_job(&snap.jobs, &remote.name, op, profile));
-        let (src, dst) = if let Some(job) = live {
-            (
-                (!job.src.is_empty()).then(|| job.src.clone()),
-                (!job.dst.is_empty()).then(|| job.dst.clone()),
-            )
-        } else {
-            self.ctx
-                .store
-                .borrow()
-                .remotes
-                .get(name)
-                .and_then(|meta| meta.get_profile(op, profile))
-                .map(|cfg| crate::store::quick_run_paths(&cfg.rclone, op))
-                .unwrap_or((None, None))
+        let (cfg_src, cfg_dst) = cfg
+            .as_ref()
+            .map(|cfg| crate::store::quick_run_paths(&cfg.rclone, op))
+            .unwrap_or((None, None));
+        let paths = crate::jobs::operation_control_paths(op, cfg_src, cfg_dst, live);
+        let busy = crate::jobs::action_in_progress(
+            name,
+            op,
+            profile,
+            &snap.jobs,
+            self.ctx.is_busy(name, op.as_str(), profile),
+        );
+        let spec = operation_control::OperationControlSpec {
+            title: if profile.is_empty() {
+                "default".into()
+            } else {
+                profile.to_string()
+            },
+            operation: op,
+            remote_name: name.to_string(),
+            source: paths.source,
+            destination: paths.destination,
+            hide_destination: paths.hide_destination,
+            dry_run: dry_on,
+            resync: resync_on,
+            active,
+            busy,
+            mount_usage: operation_control::mount_usage_pairs(&self.ctx, name, &snap),
         };
-        let mut rows = Vec::new();
-        for (title_key, fallback, path) in [
-            (
-                "fileBrowser.operations.details.source",
-                "Source",
-                src.unwrap_or_default(),
-            ),
-            (
-                "fileBrowser.operations.details.destination",
-                "Destination",
-                dst.unwrap_or_default(),
-            ),
-        ] {
-            if path.is_empty() {
-                continue;
-            }
-            let row = adw::ActionRow::new();
-            row.set_title(&self.ctx.t_or(title_key, fallback));
-            row.set_subtitle(&path);
-            if crate::transfers::browse_for(&path).is_some() {
-                let open = gtk::Button::from_icon_name("folder-open-symbolic");
-                open.set_tooltip_text(Some(&self.ctx.t_or("common.browse", "Open in Files")));
-                open.set_valign(gtk::Align::Center);
+        let toast = self.toast.clone();
+        let dry = self.dry_run.clone();
+        let resync = self.resync.clone();
+        let dash = self.clone();
+        let remote_name = name.to_string();
+        let profile_name = profile.to_string();
+        let handlers = operation_control::OperationControlHandlers {
+            on_start: {
                 let ctx = self.ctx.clone();
-                let current = name.to_string();
-                let raw = path.clone();
-                open.connect_clicked(move |_| {
-                    ctx.open_typed_path(&current, &raw);
-                });
-                row.add_suffix(&open);
-            }
-            let copy = gtk::Button::from_icon_name("edit-copy-symbolic");
-            copy.set_tooltip_text(Some(&self.ctx.t_or("common.copy", "Copy path")));
-            copy.set_valign(gtk::Align::Center);
-            let copy_text = path.clone();
-            copy.connect_clicked(move |_| {
-                if let Some(display) = gtk::gdk::Display::default() {
-                    display.clipboard().set_text(&copy_text);
-                }
-            });
-            row.add_suffix(&copy);
-            rows.push(row);
-        }
-        rows
-    }
-
-    fn mount_usage_rows(
-        &self,
-        name: &str,
-        snap: &crate::store::RuntimeSnapshot,
-    ) -> Vec<adw::ActionRow> {
-        let Some(client) = self.ctx.client() else {
-            return Vec::new();
+                let toast = toast.clone();
+                let remote = remote_name.clone();
+                let profile = profile_name.clone();
+                let dry = dry.clone();
+                let resync = resync.clone();
+                let dash = dash.clone();
+                Rc::new(move || {
+                    toggle_profile(&ctx, &remote, op, &profile, &toast, dry.get(), resync.get());
+                    dash.refresh();
+                })
+            },
+            on_stop: {
+                let ctx = self.ctx.clone();
+                let toast = toast.clone();
+                let remote = remote_name.clone();
+                let profile = profile_name.clone();
+                let dash = dash.clone();
+                Rc::new(move || {
+                    toggle_profile(&ctx, &remote, op, &profile, &toast, false, false);
+                    dash.refresh();
+                })
+            },
+            on_dry_run: Some({
+                let ctx = self.ctx.clone();
+                let remote = remote_name.clone();
+                let profile = profile_name.clone();
+                Rc::new(move |on| {
+                    dry.set(on);
+                    persist_profile_flag(&ctx, &remote, op, &profile, Some(on), None);
+                })
+            }),
+            on_resync: Some({
+                let ctx = self.ctx.clone();
+                Rc::new(move |on| {
+                    resync.set(on);
+                    persist_profile_flag(&ctx, &remote_name, op, &profile_name, None, Some(on));
+                })
+            }),
         };
-        snap.mounts
-            .iter()
-            .filter(|item| crate::jobs::fs_belongs_to_remote(&item.fs, name))
-            .filter_map(|mount| {
-                let usage = client.du(Some(&mount.mount_point)).ok()?;
-                let row = adw::ActionRow::new();
-                let title = if mount.profile.is_empty() {
-                    self.ctx
-                        .t_or("dashboard.appDetail.mountDiskUsage", "Mount point usage")
-                } else {
-                    format!(
-                        "{} · {}",
-                        self.ctx
-                            .t_or("dashboard.appDetail.mountDiskUsage", "Mount point usage"),
-                        mount.profile
-                    )
-                };
-                row.set_title(&title);
-                row.set_subtitle(&format!(
-                    "{} · {} used / {} free · {}",
-                    mount.mount_point,
-                    crate::rclone::format_bytes(usage.used),
-                    crate::rclone::format_bytes(usage.free),
-                    crate::rclone::format_bytes(usage.total)
-                ));
-                Some(row)
-            })
-            .collect()
+        self.detail_box()
+            .append(&operation_control::operation_control(
+                &self.ctx, &spec, handlers,
+            ));
     }
 
     fn append_configuration_links(&self, name: &str) {

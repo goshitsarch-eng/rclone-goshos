@@ -6,6 +6,7 @@ mod interactive;
 mod job_panels;
 mod nautilus;
 mod onboarding;
+mod operation_control;
 mod preferences;
 mod quick_run_card;
 mod remote_config;

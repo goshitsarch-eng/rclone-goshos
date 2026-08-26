@@ -2447,6 +2447,59 @@ pub fn find_active_quick_run<'a>(jobs: &'a [JobInfo], qr: &QuickRun) -> Option<&
     })
 }
 
+/// Paths shown in Angular `app-operation-control` (live job wins, delete hides dest).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct OperationControlPaths {
+    pub source: Option<String>,
+    pub destination: Option<String>,
+    pub hide_destination: bool,
+}
+
+pub fn operation_control_paths(
+    op: OperationType,
+    configured_src: Option<String>,
+    configured_dst: Option<String>,
+    live: Option<&JobInfo>,
+) -> OperationControlPaths {
+    let nonempty = |value: Option<String>| value.filter(|s| !s.is_empty());
+    let source = live
+        .and_then(|job| nonempty(Some(job.src.clone())))
+        .or_else(|| nonempty(configured_src));
+    let destination = live
+        .and_then(|job| nonempty(Some(job.dst.clone())))
+        .or_else(|| nonempty(configured_dst));
+    OperationControlPaths {
+        source,
+        destination,
+        hide_destination: op == OperationType::Delete,
+    }
+}
+
+pub fn operation_control_subtitle(op_label: &str, dry_run: bool, dry_label: &str) -> String {
+    if dry_run {
+        format!("{op_label} · {dry_label}")
+    } else {
+        op_label.to_string()
+    }
+}
+
+pub fn operation_shows_session_flags(op: OperationType) -> bool {
+    op.is_sync_type()
+}
+
+pub fn operation_shows_mount_usage(op: OperationType, active: bool, destination: &str) -> bool {
+    op == OperationType::Mount && active && !destination.trim().is_empty()
+}
+
+pub fn operation_control_action_kind(op: OperationType, active: bool) -> &'static str {
+    match (op == OperationType::Mount, active) {
+        (true, false) => "mount",
+        (true, true) => "unmount",
+        (false, false) => "start",
+        (false, true) => "stop",
+    }
+}
+
 pub fn merge_completed_transfers(stats: &mut Value, transferred: &Value) {
     let list = transferred
         .get("transferred")
@@ -4913,5 +4966,65 @@ mod tests {
         assert_eq!(found.id, 9);
         let found = find_quick_run_job(&[], &history, &qr).unwrap();
         assert_eq!(found.id, 22718);
+    }
+
+    #[test]
+    fn operation_control_paths_prefer_live_job_and_hide_delete_dest() {
+        let configured = operation_control_paths(
+            OperationType::Copy,
+            Some("testdrive:Photos".into()),
+            Some("testdrive:verify-qr".into()),
+            None,
+        );
+        assert_eq!(configured.source.as_deref(), Some("testdrive:Photos"));
+        assert_eq!(
+            configured.destination.as_deref(),
+            Some("testdrive:verify-qr")
+        );
+        assert!(!configured.hide_destination);
+
+        let live = sample_job(9, "testdrive:live-src", "testdrive:live-dst");
+        let from_job = operation_control_paths(
+            OperationType::Copy,
+            Some("testdrive:Photos".into()),
+            Some("testdrive:verify-qr".into()),
+            Some(&live),
+        );
+        assert_eq!(from_job.source.as_deref(), Some("testdrive:live-src"));
+        assert_eq!(from_job.destination.as_deref(), Some("testdrive:live-dst"));
+
+        let delete = operation_control_paths(
+            OperationType::Delete,
+            Some("testdrive:Trash".into()),
+            Some("unused".into()),
+            None,
+        );
+        assert!(delete.hide_destination);
+        assert_eq!(delete.source.as_deref(), Some("testdrive:Trash"));
+        assert_eq!(
+            operation_control_subtitle("Copy", true, "Dry run"),
+            "Copy · Dry run"
+        );
+        assert_eq!(operation_control_subtitle("Copy", false, "Dry run"), "Copy");
+        assert!(operation_shows_session_flags(OperationType::Copy));
+        assert!(!operation_shows_session_flags(OperationType::Mount));
+        assert!(operation_shows_mount_usage(
+            OperationType::Mount,
+            true,
+            "/tmp/mnt"
+        ));
+        assert!(!operation_shows_mount_usage(
+            OperationType::Mount,
+            false,
+            "/tmp/mnt"
+        ));
+        assert_eq!(
+            operation_control_action_kind(OperationType::Mount, false),
+            "mount"
+        );
+        assert_eq!(
+            operation_control_action_kind(OperationType::Copy, true),
+            "stop"
+        );
     }
 }
