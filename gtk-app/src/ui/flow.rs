@@ -3,6 +3,7 @@ use super::AppCtx;
 use crate::navigation::NavTarget;
 use crate::store::QuickRun;
 use adw::prelude::*;
+use gtk::glib;
 use gtk::prelude::*;
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -15,6 +16,7 @@ pub struct FlowView {
     sidebar: gtk::ListBox,
     search: gtk::SearchEntry,
     content: gtk::Box,
+    content_scroll: gtk::ScrolledWindow,
     editing_layout: Rc<RefCell<bool>>,
     remote_filter: Rc<RefCell<Option<String>>>,
     selected_flow_remote: Rc<RefCell<Option<String>>>,
@@ -50,7 +52,8 @@ impl FlowView {
         content.set_margin_bottom(16);
         content.set_margin_start(16);
         content.set_margin_end(16);
-        split.set_content(Some(&scrolled(&content)));
+        let content_scroll = scrolled(&content);
+        split.set_content(Some(&content_scroll));
         let stack = adw::ViewStack::new();
         stack.add_titled_with_icon(
             &split,
@@ -92,6 +95,7 @@ impl FlowView {
             sidebar,
             search,
             content,
+            content_scroll,
             editing_layout: Rc::new(RefCell::new(false)),
             remote_filter: Rc::new(RefCell::new(None)),
             selected_flow_remote: Rc::new(RefCell::new(None)),
@@ -140,6 +144,7 @@ impl FlowView {
     }
 
     pub fn refresh(&self) {
+        let scroll_y = self.content_scroll.vadjustment().value();
         while let Some(child) = self.sidebar.first_child() {
             self.sidebar.remove(&child);
         }
@@ -184,6 +189,7 @@ impl FlowView {
                     self.append_sidebar_quick_run(&qr);
                 }
                 self.fill_detail(&qr);
+                self.restore_content_scroll(scroll_y);
                 return;
             }
         }
@@ -192,11 +198,13 @@ impl FlowView {
                 self.append_sidebar_quick_run(item);
             }
             self.fill_remote_detail(&remote);
+            self.restore_content_scroll(scroll_y);
             return;
         }
         if filtered.is_empty() && remote_filter.is_none() {
             self.sidebar.append(&adw::ActionRow::new());
             self.fill_overview(&[]);
+            self.restore_content_scroll(scroll_y);
             return;
         }
 
@@ -204,6 +212,16 @@ impl FlowView {
             self.append_sidebar_quick_run(qr);
         }
         self.fill_overview(&filtered);
+        self.restore_content_scroll(scroll_y);
+    }
+
+    fn restore_content_scroll(&self, y: f64) {
+        let scroll = self.content_scroll.clone();
+        glib::idle_add_local_once(move || {
+            let adj = scroll.vadjustment();
+            let max = (adj.upper() - adj.page_size()).max(0.0);
+            adj.set_value(y.clamp(0.0, max));
+        });
     }
 
     fn append_sidebar_quick_run(&self, qr: &QuickRun) {
@@ -493,7 +511,6 @@ impl FlowView {
                             {
                                 let ctx = self.ctx.clone();
                                 let id = record.id.clone();
-                                let view = self.clone();
                                 enabled.connect_active_notify(move |switch| {
                                     let mut store = ctx.store.borrow_mut();
                                     let paused = store.is_automation_paused(&id);
@@ -501,11 +518,34 @@ impl FlowView {
                                         store.toggle_automation_paused(&id);
                                         drop(store);
                                         ctx.persist();
-                                        view.refresh();
                                     }
                                 });
                             }
-                            let run = gtk::Button::from_icon_name("media-playback-start-symbolic");
+                            let pause = gtk::Button::with_label(&if paused {
+                                self.ctx.t_or("flow.quickRun.actions.resume", "Resume")
+                            } else {
+                                self.ctx.t_or("flow.quickRun.actions.pause", "Pause")
+                            });
+                            pause.set_valign(gtk::Align::Center);
+                            pause.set_tooltip_text(Some(&self.ctx.t_or(
+                                "generalOverview.automations.pauseResume",
+                                "Pause or resume this automation",
+                            )));
+                            {
+                                let ctx = self.ctx.clone();
+                                let id = record.id.clone();
+                                let view = self.clone();
+                                pause.connect_clicked(move |_| {
+                                    ctx.store.borrow_mut().toggle_automation_paused(&id);
+                                    ctx.persist();
+                                    view.refresh();
+                                });
+                            }
+                            let run = gtk::Button::with_label(
+                                &self
+                                    .ctx
+                                    .t_or("generalOverview.automations.runNow", "Run now"),
+                            );
                             run.set_valign(gtk::Align::Center);
                             run.set_tooltip_text(Some(
                                 &self
@@ -539,6 +579,7 @@ impl FlowView {
                                 });
                             }
                             row.add_suffix(&enabled);
+                            row.add_suffix(&pause);
                             row.add_suffix(&run);
                             {
                                 let ctx = self.ctx.clone();

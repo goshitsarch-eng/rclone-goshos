@@ -82,6 +82,7 @@ pub struct NautilusView {
     filter_bar: gtk::Box,
     icon_btn: gtk::Button,
     actions_btn: gtk::MenuButton,
+    send_to_btn: gtk::Button,
 }
 
 impl NautilusView {
@@ -178,8 +179,17 @@ impl NautilusView {
             &ctx.t_or("nautilus.contextMenu.pathOptions", "Path options"),
         ));
         toolbar.append(&reload);
+        let send_to_btn = gtk::Button::with_label(&ctx.t_or(
+            "nautilus.contextMenu.addToSendTo",
+            "Add to File Manager Menu",
+        ));
+        send_to_btn.set_tooltip_text(Some(&ctx.t_or(
+            "nautilus.contextMenu.addToSendTo",
+            "Add to File Manager Menu",
+        )));
         toolbar.append(&path_stack);
         toolbar.append(&path_menu);
+        toolbar.append(&send_to_btn);
         toolbar.append(&new_folder);
         toolbar.append(&copy_btn);
         toolbar.append(&copy_to_btn);
@@ -370,6 +380,7 @@ impl NautilusView {
             filter_bar,
             icon_btn: icon_btn.clone(),
             actions_btn: actions_btn.clone(),
+            send_to_btn: send_to_btn.clone(),
         };
         view.refresh_type_filters();
 
@@ -388,6 +399,10 @@ impl NautilusView {
         {
             let view = view.clone();
             reload.connect_clicked(move |_| view.reload());
+        }
+        {
+            let view = view.clone();
+            send_to_btn.connect_clicked(move |_| view.toggle_send_to());
         }
         {
             let view = view.clone();
@@ -2558,6 +2573,7 @@ impl NautilusView {
         self.refresh_crumbs();
         self.sync_current_tab();
         self.refresh_tabs();
+        self.sync_send_to_button();
         self.reload_ops();
 
         let Some(client) = self.ctx.client() else {
@@ -3555,6 +3571,30 @@ impl NautilusView {
         self.copy_text(&self.formatted_path(None));
     }
 
+    fn sync_send_to_button(&self) {
+        let current = self.current.borrow().clone();
+        let show = current.remote != "local" && !current.starred;
+        self.send_to_btn.set_visible(show);
+        if !show {
+            return;
+        }
+        let registered =
+            crate::platform::is_send_to_registered(&current.remote, Some(&current.path));
+        let label = if registered {
+            self.ctx.t_or(
+                "nautilus.contextMenu.removeFromSendTo",
+                "Remove from File Manager Menu",
+            )
+        } else {
+            self.ctx.t_or(
+                "nautilus.contextMenu.addToSendTo",
+                "Add to File Manager Menu",
+            )
+        };
+        self.send_to_btn.set_label(&label);
+        self.send_to_btn.set_tooltip_text(Some(&label));
+    }
+
     fn toggle_send_to(&self) {
         let current = self.current.borrow().clone();
         let registered =
@@ -3581,6 +3621,7 @@ impl NautilusView {
                     .tf("fileBrowser.errors.sendToFailed", &[("error", &e)]),
             )),
         }
+        self.sync_send_to_button();
     }
 
     fn rename_selected(&self) {
