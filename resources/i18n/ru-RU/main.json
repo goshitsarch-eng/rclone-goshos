@@ -2811,6 +2811,7 @@
       "star": "В избранное / убрать",
       "bookmark": "Закладка",
       "pathOptions": "Path options",
+      "selectionActions": "Действия с выделенным",
       "move": "Move",
       "openNative": "Open native",
       "copyUrl": "Copy URL into folder…",

@@ -2811,6 +2811,7 @@
       "star": "加星 / 取消",
       "bookmark": "书签",
       "pathOptions": "Path options",
+      "selectionActions": "所选项目操作",
       "move": "Move",
       "openNative": "Open native",
       "copyUrl": "Copy URL into folder…",

@@ -137,6 +137,11 @@ impl NautilusView {
         move_to_btn.set_tooltip_text(Some(&ctx.t_or("nautilus.contextMenu.moveTo", "Move to…")));
         let paste_btn = gtk::Button::from_icon_name("edit-paste-symbolic");
         paste_btn.set_tooltip_text(Some(&ctx.t_or("nautilus.contextMenu.paste", "Paste")));
+        let actions_btn = gtk::MenuButton::new();
+        actions_btn.set_icon_name("view-list-bullet-symbolic");
+        actions_btn.set_tooltip_text(Some(
+            &ctx.t_or("nautilus.contextMenu.selectionActions", "Selection actions"),
+        ));
         let upload = gtk::Button::from_icon_name("document-send-symbolic");
         upload.set_tooltip_text(Some(
             &ctx.t_or("nautilus.contextMenu.uploadFiles", "Upload files"),
@@ -179,6 +184,7 @@ impl NautilusView {
         toolbar.append(&copy_to_btn);
         toolbar.append(&move_to_btn);
         toolbar.append(&paste_btn);
+        toolbar.append(&actions_btn);
         toolbar.append(&upload);
         toolbar.append(&new_tab);
         toolbar.append(&split_btn);
@@ -527,6 +533,7 @@ impl NautilusView {
         }
         view.attach_view_options(&sort_btn);
         view.attach_path_options(&path_menu);
+        view.attach_selection_actions(&actions_btn);
         {
             let view = view.clone();
             view.list
@@ -775,6 +782,85 @@ impl NautilusView {
                 "selectall" => view.select_all(),
                 "sendto" => view.toggle_send_to(),
                 "props" => view.properties_selected(),
+                _ => {}
+            });
+            box_.append(&btn);
+        }
+        box_
+    }
+
+    fn attach_selection_actions(&self, button: &gtk::MenuButton) {
+        let popover = gtk::Popover::new();
+        button.set_popover(Some(&popover));
+        let view = self.clone();
+        popover.connect_show(move |popover| {
+            popover.set_child(Some(&view.build_selection_actions()));
+        });
+    }
+
+    fn build_selection_actions(&self) -> gtk::Box {
+        let box_ = gtk::Box::new(gtk::Orientation::Vertical, 4);
+        box_.set_margin_top(8);
+        box_.set_margin_bottom(8);
+        box_.set_margin_start(8);
+        box_.set_margin_end(8);
+        let selected = self.selected_names();
+        let rename_label = if selected.len() > 1 {
+            self.ctx
+                .t_or("nautilus.contextMenu.renameMultiple", "Rename Multiple...")
+        } else {
+            self.ctx.t_or("nautilus.contextMenu.rename", "Rename")
+        };
+        let items = [
+            (self.ctx.t_or("nautilus.contextMenu.open", "Open"), "open"),
+            (self.ctx.t_or("nautilus.contextMenu.copy", "Copy"), "copy"),
+            (self.ctx.t_or("nautilus.contextMenu.cut", "Cut"), "cut"),
+            (
+                self.ctx.t_or("nautilus.contextMenu.copyTo", "Copy to…"),
+                "copyto",
+            ),
+            (
+                self.ctx.t_or("nautilus.contextMenu.moveTo", "Move to…"),
+                "moveto",
+            ),
+            (
+                self.ctx.t_or("nautilus.contextMenu.paste", "Paste"),
+                "paste",
+            ),
+            (rename_label, "rename"),
+            (
+                self.ctx.t_or("nautilus.contextMenu.delete", "Delete"),
+                "delete",
+            ),
+            (
+                self.ctx
+                    .t_or("nautilus.contextMenu.properties", "Properties"),
+                "props",
+            ),
+            (
+                self.ctx.t_or("nautilus.contextMenu.download", "Download…"),
+                "download",
+            ),
+        ];
+        for (label, action) in items {
+            let btn = gtk::Button::with_label(&label);
+            btn.set_halign(gtk::Align::Fill);
+            let view = self.clone();
+            btn.connect_clicked(move |_| match action {
+                "open" => {
+                    if let Some(name) = view.selected_name() {
+                        view.open_name(&name);
+                    }
+                }
+                "copy" => view.cut_or_copy(false),
+                "cut" => view.cut_or_copy(true),
+                "copyto" => view.copy_or_move_to(false),
+                "moveto" => view.copy_or_move_to(true),
+                "paste" => view.paste(),
+                "rename" => view.rename_selected(),
+                "delete" => view.delete_selected(),
+                "props" => view.properties_selected(),
+                "download" => view.download_selected(),
                 _ => {}
             });
             box_.append(&btn);

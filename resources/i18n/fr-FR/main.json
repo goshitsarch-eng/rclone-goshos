@@ -2811,6 +2811,7 @@
       "star": "Étoile / Retirer",
       "bookmark": "Signet",
       "pathOptions": "Path options",
+      "selectionActions": "Actions de sélection",
       "move": "Move",
       "openNative": "Open native",
       "copyUrl": "Copy URL into folder…",

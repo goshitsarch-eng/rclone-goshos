@@ -2811,6 +2811,7 @@
       "star": "Позначити / Зняти",
       "bookmark": "Закладка",
       "pathOptions": "Path options",
+      "selectionActions": "Дії з вибраним",
       "move": "Move",
       "openNative": "Open native",
       "copyUrl": "Copy URL into folder…",

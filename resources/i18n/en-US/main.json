@@ -2811,6 +2811,7 @@
       "star": "Star / Unstar",
       "bookmark": "Bookmark",
       "pathOptions": "Path options",
+      "selectionActions": "Selection actions",
       "move": "Move",
       "openNative": "Open native",
       "copyUrl": "Copy URL into folder…",
