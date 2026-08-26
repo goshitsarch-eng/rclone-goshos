@@ -62,8 +62,14 @@ pub struct AppCtx {
     pub check_status_overrides: Rc<RefCell<HashMap<String, String>>>,
     pub hidden_check_ids: Rc<RefCell<HashSet<String>>>,
     dump_cache: Rc<RefCell<Option<(std::time::Instant, serde_json::Value)>>>,
-    pub overlay_windows: Rc<RefCell<Vec<gtk::Window>>>,
+    pub overlay_windows: Rc<RefCell<Vec<OverlayEntry>>>,
     pub on_overlays_changed: Rc<RefCell<Option<Rc<dyn Fn()>>>>,
+}
+
+#[derive(Clone)]
+pub struct OverlayEntry {
+    pub window: gtk::Window,
+    pub spec: crate::navigation::OverlaySpec,
 }
 
 impl AppCtx {
@@ -136,7 +142,11 @@ impl AppCtx {
         ctx
     }
 
-    pub fn register_overlay(&self, window: &impl IsA<gtk::Window>) {
+    pub fn register_overlay(
+        &self,
+        window: &impl IsA<gtk::Window>,
+        spec: crate::navigation::OverlaySpec,
+    ) {
         let win = window.upcast_ref::<gtk::Window>().clone();
         {
             let ctx = self.clone();
@@ -148,12 +158,19 @@ impl AppCtx {
                 glib::Propagation::Proceed
             });
         }
-        self.overlay_windows.borrow_mut().push(win);
+        self.overlay_windows
+            .borrow_mut()
+            .push(OverlayEntry { window: win, spec });
         self.sync_overlays();
     }
 
     pub fn close_overlays(&self) {
-        let windows: Vec<gtk::Window> = self.overlay_windows.borrow_mut().drain(..).collect();
+        let windows: Vec<gtk::Window> = self
+            .overlay_windows
+            .borrow_mut()
+            .drain(..)
+            .map(|entry| entry.window)
+            .collect();
         for window in windows {
             window.close();
         }
@@ -164,14 +181,41 @@ impl AppCtx {
         self.overlay_windows
             .borrow()
             .iter()
-            .filter(|window| window.is_visible())
+            .filter(|entry| entry.window.is_visible())
             .count()
+    }
+
+    pub fn snapshot_overlay_specs(&self) -> Vec<crate::navigation::OverlaySpec> {
+        self.sync_overlays();
+        self.overlay_windows
+            .borrow()
+            .iter()
+            .filter(|entry| entry.window.is_visible())
+            .map(|entry| entry.spec.clone())
+            .collect()
+    }
+
+    pub fn focus_overlay_kind(&self, kind: crate::navigation::OverlayKind) -> bool {
+        self.sync_overlays();
+        let found = self.overlay_windows.borrow().iter().find_map(|entry| {
+            if entry.spec.kind() == kind && entry.window.is_visible() {
+                Some(entry.window.clone())
+            } else {
+                None
+            }
+        });
+        if let Some(window) = found {
+            window.present();
+            true
+        } else {
+            false
+        }
     }
 
     pub fn sync_overlays(&self) {
         self.overlay_windows
             .borrow_mut()
-            .retain(|window| window.is_visible());
+            .retain(|entry| entry.window.is_visible());
         if let Some(cb) = self.on_overlays_changed.borrow().clone() {
             cb();
         }

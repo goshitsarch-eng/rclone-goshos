@@ -411,6 +411,12 @@ mod tests {
             "modals.about.gnuGpl",
             "modals.about.ackTextGtk",
             "modals.about.leadName",
+            "modals.about.copyVersion",
+            "nautilus.titles.detachedTab",
+            "nautilus.contextMenu.openNewTab",
+            "nautilus.contextMenu.openNewWindow",
+            "nautilus.contextMenu.undo",
+            "nautilus.contextMenu.redo",
         ];
         for lang in SUPPORTED_LANGUAGES {
             let i18n = I18n::load(lang);

@@ -2145,6 +2145,7 @@
       "loadInfoFailed": "Не удалось загрузить информацию о rclone.",
       "license": "Лицензия",
       "toolkit": "GTK 4 + libadwaita",
+      "copyVersion": "Rclone Manager {version} · rclone {rclone}",
       "licenseId": "GPL-3.0-or-later",
       "gnuGpl": "GNU GPL v3",
       "leadName": "Zarestia Dev",
@@ -2674,7 +2675,8 @@
       "fileSystem": "Файловая система",
       "bookmarks": "Закладки",
       "localDisk": "Локальный диск",
-      "pathPlaceholder": "remote:path or /local/path"
+      "pathPlaceholder": "remote:path or /local/path",
+      "detachedTab": "{app} — {title}"
     },
     "bookmarks": {
       "emptyHint": "Закладок нет"

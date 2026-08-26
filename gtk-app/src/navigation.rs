@@ -895,6 +895,64 @@ pub fn workspace_open_plan(default_view: &str, target: &str) -> WorkspaceOpen {
     }
 }
 
+/// Kind of detached workspace window (Files / Flow / Dashboard).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum OverlayKind {
+    Files,
+    Flow,
+    Dashboard,
+}
+
+impl OverlayKind {
+    pub fn as_view(self) -> &'static str {
+        match self {
+            Self::Files => "nautilus",
+            Self::Flow => "flow",
+            Self::Dashboard => "main_menu",
+        }
+    }
+
+    pub fn from_view(name: &str) -> Self {
+        match name {
+            "nautilus" => Self::Files,
+            "flow" => Self::Flow,
+            _ => Self::Dashboard,
+        }
+    }
+}
+
+/// Restorable identity of a detached workspace, used after language reload.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum OverlaySpec {
+    Files { remote: String, path: String },
+    Flow { quick_run: Option<String> },
+    Dashboard { tab: AppTab, remote: Option<String> },
+}
+
+impl OverlaySpec {
+    pub fn kind(&self) -> OverlayKind {
+        match self {
+            Self::Files { .. } => OverlayKind::Files,
+            Self::Flow { .. } => OverlayKind::Flow,
+            Self::Dashboard { .. } => OverlayKind::Dashboard,
+        }
+    }
+
+    pub fn default_for(kind: OverlayKind) -> Self {
+        match kind {
+            OverlayKind::Files => Self::Files {
+                remote: "local".into(),
+                path: String::new(),
+            },
+            OverlayKind::Flow => Self::Flow { quick_run: None },
+            OverlayKind::Dashboard => Self::Dashboard {
+                tab: AppTab::General,
+                remote: None,
+            },
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1683,6 +1741,25 @@ mod tests {
                 },
                 standalone: false,
             })
+        );
+    }
+
+    #[test]
+    fn overlay_kind_roundtrips_view_names() {
+        assert_eq!(OverlayKind::from_view("nautilus"), OverlayKind::Files);
+        assert_eq!(OverlayKind::from_view("flow"), OverlayKind::Flow);
+        assert_eq!(OverlayKind::from_view("main_menu"), OverlayKind::Dashboard);
+        assert_eq!(OverlayKind::Files.as_view(), "nautilus");
+        assert_eq!(
+            OverlaySpec::default_for(OverlayKind::Files).kind(),
+            OverlayKind::Files
+        );
+        assert_eq!(
+            OverlaySpec::Flow {
+                quick_run: Some("gui-qr-copy".into())
+            }
+            .kind(),
+            OverlayKind::Flow
         );
     }
 }

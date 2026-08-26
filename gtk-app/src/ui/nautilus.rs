@@ -4387,10 +4387,11 @@ impl NautilusView {
             return;
         };
         let current = self.current.borrow().clone();
-        let title = format!(
-            "{} — {}",
-            self.ctx.t_or("nautilus.titles.files", "Files"),
-            current.title
+        let files = self.ctx.t_or("nautilus.titles.files", "Files");
+        let title = self.ctx.tf_or(
+            "nautilus.titles.detachedTab",
+            "{app} — {title}",
+            &[("app", &files), ("title", &current.title)],
         );
         super::window::present_files_overlay(
             &app,

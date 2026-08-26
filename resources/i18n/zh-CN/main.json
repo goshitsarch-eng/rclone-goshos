@@ -2145,6 +2145,7 @@
       "loadInfoFailed": "加载 Rclone 信息失败",
       "license": "许可证",
       "toolkit": "GTK 4 + libadwaita",
+      "copyVersion": "Rclone Manager {version} · rclone {rclone}",
       "licenseId": "GPL-3.0-or-later",
       "gnuGpl": "GNU GPL v3",
       "leadName": "Zarestia Dev",
@@ -2674,7 +2675,8 @@
       "fileSystem": "文件系统",
       "bookmarks": "书签",
       "localDisk": "本地磁盘",
-      "pathPlaceholder": "remote:path or /local/path"
+      "pathPlaceholder": "remote:path or /local/path",
+      "detachedTab": "{app} — {title}"
     },
     "bookmarks": {
       "emptyHint": "暂无书签"

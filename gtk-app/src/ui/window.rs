@@ -4,7 +4,7 @@ use super::flow::FlowView;
 use super::nautilus::NautilusView;
 use super::onboarding;
 use super::AppCtx;
-use crate::navigation::NavTarget;
+use crate::navigation::{NavTarget, OverlayKind, OverlaySpec};
 use crate::operations::{AppTab, MainView};
 use crate::rclone::engine::RcloneEngine;
 use adw::prelude::*;
@@ -532,6 +532,8 @@ fn present_main_with(app: &adw::Application, ctx: AppCtx, hidden: bool) {
                 if let Some(name) = stack_nav.visible_child_name() {
                     *ctx_nav.active_workspace.borrow_mut() = name.to_string();
                 }
+                let overlays = ctx_nav.snapshot_overlay_specs();
+                ctx_nav.close_overlays();
                 let hidden = !window_nav.is_visible();
                 let app = window_nav
                     .application()
@@ -541,6 +543,9 @@ fn present_main_with(app: &adw::Application, ctx: AppCtx, hidden: bool) {
                 window_nav.close();
                 if let Some(app) = app {
                     present_main_with(&app, ctx_nav.clone(), hidden);
+                    for spec in overlays {
+                        reopen_overlay(&app, &ctx_nav, spec);
+                    }
                 }
                 return glib::ControlFlow::Break;
             }
@@ -1142,23 +1147,7 @@ fn install_actions(
         );
     }
 
-    let theme_action = gio::SimpleAction::new_stateful(
-        "theme",
-        Some(&glib::VariantTy::STRING),
-        &glib::Variant::from(ctx.settings.borrow().runtime.theme.as_str()),
-    );
-    {
-        let ctx = ctx.clone();
-        theme_action.connect_activate(move |action, value| {
-            if let Some(v) = value.and_then(|v| v.str().map(|s| s.to_string())) {
-                ctx.settings.borrow_mut().runtime.theme = v.clone();
-                ctx.persist();
-                ctx.apply_theme();
-                action.set_state(&glib::Variant::from(v.as_str()));
-            }
-        });
-    }
-    window.add_action(&theme_action);
+    install_theme_action(window, ctx);
 
     let view_action = gio::SimpleAction::new_stateful(
         "view",
@@ -1387,6 +1376,26 @@ fn install_actions(
     let _ = banner;
 }
 
+fn install_theme_action(window: &adw::ApplicationWindow, ctx: &AppCtx) {
+    let theme_action = gio::SimpleAction::new_stateful(
+        "theme",
+        Some(&glib::VariantTy::STRING),
+        &glib::Variant::from(ctx.settings.borrow().runtime.theme.as_str()),
+    );
+    {
+        let ctx = ctx.clone();
+        theme_action.connect_activate(move |action, value| {
+            if let Some(v) = value.and_then(|v| v.str().map(|s| s.to_string())) {
+                ctx.settings.borrow_mut().runtime.theme = v.clone();
+                ctx.persist();
+                ctx.apply_theme();
+                action.set_state(&glib::Variant::from(v.as_str()));
+            }
+        });
+    }
+    window.add_action(&theme_action);
+}
+
 fn install_shortcuts(window: &adw::ApplicationWindow) {
     let controller = gtk::ShortcutController::new();
     controller.set_scope(gtk::ShortcutScope::Global);
@@ -1428,6 +1437,9 @@ fn present_standalone_workspace(app: &adw::Application, ctx: &AppCtx, target: &N
                 &ctx.t_or("titlebar.menu.flowWorkspace", "Flow"),
                 toast,
                 None,
+                OverlaySpec::Flow {
+                    quick_run: quick_run.clone(),
+                },
                 false,
             );
         }
@@ -1446,6 +1458,10 @@ fn present_standalone_workspace(app: &adw::Application, ctx: &AppCtx, target: &N
                 ),
                 toast,
                 None,
+                OverlaySpec::Dashboard {
+                    tab: *tab,
+                    remote: remote.clone(),
+                },
                 false,
             );
         }
@@ -1553,6 +1569,10 @@ fn present_files_overlay_ex(
         title.unwrap_or(&fallback),
         toast,
         Some(files),
+        OverlaySpec::Files {
+            remote: remote.to_string(),
+            path: path.to_string(),
+        },
         register,
     )
 }
@@ -1563,6 +1583,7 @@ fn present_overlay_window(
     title: &str,
     toast: adw::ToastOverlay,
     files: Option<NautilusView>,
+    spec: OverlaySpec,
     register: bool,
 ) -> adw::ApplicationWindow {
     let toolbar = adw::ToolbarView::new();
@@ -1580,11 +1601,11 @@ fn present_overlay_window(
     window.set_default_width(1100);
     window.set_default_height(760);
     window.set_content(Some(&toolbar));
-    install_overlay_actions(&window, ctx, &toast, files);
+    install_overlay_actions(&window, ctx, &toast, spec.clone(), files);
     install_shortcuts(&window);
     window.present();
     if register {
-        ctx.register_overlay(&window);
+        ctx.register_overlay(&window, spec);
     }
     window
 }
@@ -1593,6 +1614,7 @@ fn install_overlay_actions(
     window: &adw::ApplicationWindow,
     ctx: &AppCtx,
     toast: &adw::ToastOverlay,
+    spec: OverlaySpec,
     files: Option<NautilusView>,
 ) {
     let add_action = |name: &str, cb: Box<dyn Fn() + 'static>| {
@@ -1600,6 +1622,7 @@ fn install_overlay_actions(
         action.connect_activate(move |_, _| cb());
         window.add_action(&action);
     };
+    install_theme_action(window, ctx);
     let refresh = {
         let ctx = ctx.clone();
         Rc::new(move || ctx.refresh_runtime())
@@ -1620,6 +1643,17 @@ fn install_overlay_actions(
         add_action(
             "remote-config",
             Box::new(move || dialogs::remote_config(&window, ctx.clone(), None, refresh.clone())),
+        );
+    }
+    {
+        let ctx = ctx.clone();
+        let window = window.clone();
+        let refresh = refresh.clone();
+        add_action(
+            "quick-run-new",
+            Box::new(move || {
+                dialogs::quick_run_editor(&window, ctx.clone(), None, refresh.clone())
+            }),
         );
     }
     {
@@ -1806,38 +1840,49 @@ fn install_overlay_actions(
             }),
         );
     }
+    let kind = spec.kind();
     let view_action = gio::SimpleAction::new_stateful(
         "view",
         Some(&glib::VariantTy::STRING),
-        &glib::Variant::from("nautilus"),
+        &glib::Variant::from(kind.as_view()),
     );
     {
         let ctx = ctx.clone();
         let window = window.clone();
         view_action.connect_activate(move |action, value| {
             if let Some(v) = value.and_then(|v| v.str().map(|s| s.to_string())) {
-                ctx.request_nav(match v.as_str() {
-                    "nautilus" => NavTarget::Files {
-                        remote: String::new(),
-                        path: String::new(),
-                    },
-                    "flow" => NavTarget::Flow { quick_run: None },
-                    _ => NavTarget::Dashboard {
-                        tab: crate::operations::AppTab::General,
-                        remote: None,
-                    },
-                });
+                let target = OverlayKind::from_view(&v);
                 action.set_state(&glib::Variant::from(v.as_str()));
-                let _ = window;
+                if target == kind {
+                    return;
+                }
+                if ctx.focus_overlay_kind(target) {
+                    return;
+                }
+                if let Some(app) = window.application().and_downcast::<adw::Application>() {
+                    reopen_overlay(&app, &ctx, OverlaySpec::default_for(target));
+                }
             }
         });
     }
     window.add_action(&view_action);
     {
         let ctx = ctx.clone();
+        let window = window.clone();
         add_action(
             "toggle-flow",
-            Box::new(move || ctx.request_nav(NavTarget::Flow { quick_run: None })),
+            Box::new(move || {
+                if kind == OverlayKind::Flow {
+                    window.close();
+                    return;
+                }
+                if ctx.focus_overlay_kind(OverlayKind::Flow) {
+                    return;
+                }
+                if let Some(app) = window.application().and_downcast::<adw::Application>() {
+                    reopen_overlay(&app, &ctx, OverlaySpec::default_for(OverlayKind::Flow));
+                }
+            }),
         );
     }
     {
@@ -1990,15 +2035,11 @@ fn install_overlay_actions(
     }
     {
         let files = files.clone();
-        let app = window.application().and_downcast::<adw::Application>();
-        let ctx = ctx.clone();
         add_action(
             "detach-workspace",
             Box::new(move || {
                 if let Some(files) = &files {
                     files.detach_current_tab();
-                } else if let Some(app) = &app {
-                    open_workspace_window(app, &ctx, MainView::Flow);
                 }
             }),
         );
@@ -2006,35 +2047,50 @@ fn install_overlay_actions(
 }
 
 fn open_workspace_window(app: &adw::Application, ctx: &AppCtx, view: MainView) {
+    let spec = match view {
+        MainView::Flow => OverlaySpec::default_for(OverlayKind::Flow),
+        MainView::Nautilus => OverlaySpec::default_for(OverlayKind::Files),
+        MainView::MainMenu => OverlaySpec::default_for(OverlayKind::Dashboard),
+    };
+    reopen_overlay(app, ctx, spec);
+}
+
+fn reopen_overlay(app: &adw::Application, ctx: &AppCtx, spec: OverlaySpec) {
+    if ctx.focus_overlay_kind(spec.kind()) {
+        return;
+    }
     let toast = adw::ToastOverlay::new();
-    let title = match view {
-        MainView::Flow => ctx.t_or("titlebar.menu.flowWorkspace", "Flow"),
-        MainView::Nautilus => ctx.t_or("nautilus.titles.files", "Files"),
-        MainView::MainMenu => ctx.t_or(
+    let title = match &spec {
+        OverlaySpec::Flow { .. } => ctx.t_or("titlebar.menu.flowWorkspace", "Flow"),
+        OverlaySpec::Files { .. } => ctx.t_or("nautilus.titles.files", "Files"),
+        OverlaySpec::Dashboard { .. } => ctx.t_or(
             "settings.general.default_view.options.main_menu",
             "Main Menu",
         ),
     };
-    let files = match view {
-        MainView::Flow => {
+    let files = match &spec {
+        OverlaySpec::Flow { quick_run } => {
             let flow = FlowView::new(ctx.clone(), toast.clone());
             toast.set_child(Some(&flow.root));
             flow.refresh();
+            flow.select_quick_run(quick_run.as_deref());
             None
         }
-        MainView::Nautilus => {
+        OverlaySpec::Files { remote, path } => {
             let files = NautilusView::new(ctx.clone(), toast.clone());
             toast.set_child(Some(&files.root));
+            files.navigate_to(&files_target(remote, path));
             Some(files)
         }
-        MainView::MainMenu => {
+        OverlaySpec::Dashboard { tab, remote } => {
             let dash = Dashboard::new(ctx.clone(), toast.clone());
             toast.set_child(Some(&dash.root));
             dash.refresh();
+            dash.navigate(*tab, remote.as_deref());
             None
         }
     };
-    present_overlay_window(app, ctx, &title, toast, files, true);
+    present_overlay_window(app, ctx, &title, toast, files, spec, true);
 }
 
 fn apply_nav(

@@ -621,9 +621,10 @@ pub fn about(parent: &impl IsA<gtk::Widget>, ctx: AppCtx) {
     let copy_version = gtk::Button::from_icon_name("edit-copy-symbolic");
     copy_version.set_valign(gtk::Align::Center);
     copy_version.set_tooltip_text(Some(&ctx.t_or("common.copy", "Copy")));
-    let copy_text = format!(
-        "Rclone Manager {} · rclone {version}",
-        env!("CARGO_PKG_VERSION")
+    let copy_text = ctx.tf_or(
+        "modals.about.copyVersion",
+        "Rclone Manager {version} · rclone {rclone}",
+        &[("version", env!("CARGO_PKG_VERSION")), ("rclone", &version)],
     );
     copy_version.connect_clicked(move |_| {
         if let Some(display) = gtk::gdk::Display::default() {
@@ -1573,10 +1574,22 @@ pub fn shortcuts_open(parent: &impl IsA<gtk::Widget>, ctx: &AppCtx, nautilus: bo
             ("F2", "nautilus.contextMenu.rename", "Rename"),
             ("Space", "nautilus.contextMenu.open", "Open / Preview"),
             (
+                "Ctrl+Enter",
+                "nautilus.contextMenu.openNewTab",
+                "Open in New Tab",
+            ),
+            (
+                "Shift+Enter",
+                "nautilus.contextMenu.openNewWindow",
+                "Open in New Window",
+            ),
+            (
                 "Ctrl+Shift+D",
                 "nautilus.contextMenu.detachTab",
                 "Detach Tab",
             ),
+            ("Ctrl+Z", "nautilus.contextMenu.undo", "Undo"),
+            ("Ctrl+Shift+Z", "nautilus.contextMenu.redo", "Redo"),
             ("Escape", "shortcuts.actions.closeDialog", "Close Dialog"),
         ][..],
     )];
