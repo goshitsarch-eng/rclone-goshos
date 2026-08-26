@@ -1972,6 +1972,14 @@ fn apply_startup_css() {
            min-height: 48px;\n\
            background-color: alpha(@window_bg_color, 0.82);\n\
            border-radius: 24px;\n\
+         }\n\
+         .path-fade-start {\n\
+           min-width: 28px;\n\
+           background-image: linear-gradient(to right, @window_bg_color, transparent);\n\
+         }\n\
+         .path-fade-end {\n\
+           min-width: 28px;\n\
+           background-image: linear-gradient(to left, @window_bg_color, transparent);\n\
          }",
     );
     if let Some(display) = gtk::gdk::Display::default() {

@@ -3543,7 +3543,11 @@
     "folders": "Folders",
     "maintenance": "Maintenance",
     "relaunch": "Relaunch",
-    "gcStarted": "Garbage collection started"
+    "gcStarted": "Garbage collection started",
+    "rcloneConfig": "rclone yapılandırması",
+    "rcloneCache": "rclone önbelleği",
+    "rcloneTemp": "rclone geçici",
+    "configEncrypted": "rclone.conf şifreli"
   },
   "flow": {
     "title": "Flow",
@@ -3619,6 +3623,7 @@
   },
   "templates": {
     "title": "Şablonlar",
+    "search": "Şablonlarda ara…",
     "presetTitle": "Hazır Ayarlar ve Şablonlar",
     "applyPresets": "Varsayılan Hazır Ayarları Uygula",
     "userTemplates": "Kayıtlı Kullanıcı Şablonları",

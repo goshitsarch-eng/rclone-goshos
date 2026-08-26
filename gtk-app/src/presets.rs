@@ -160,6 +160,31 @@ fn merge_map(target: &Map<String, Value>, source: &Map<String, Value>) -> Map<St
     out
 }
 
+impl PresetValues {
+    /// Categorized JSON used by the template manager (Angular `resolvePresets('')`).
+    pub fn to_template_value(&self) -> Value {
+        let mut obj = Map::new();
+        if !self.vfs.is_empty() {
+            obj.insert("vfs".into(), Value::Object(self.vfs.clone()));
+        }
+        if !self.mount.is_empty() {
+            obj.insert("mount".into(), Value::Object(self.mount.clone()));
+        }
+        if !self.backend.is_empty() {
+            obj.insert("backend".into(), Value::Object(self.backend.clone()));
+        }
+        if !self.remote.is_empty() {
+            obj.insert("remote".into(), Value::Object(self.remote.clone()));
+        }
+        Value::Object(obj)
+    }
+}
+
+/// Base + OS presets only — empty remote type, matching Angular Apply Default Presets.
+pub fn default_template_presets(os: &str) -> Value {
+    resolve_presets("", None, os).to_template_value()
+}
+
 pub fn resolve_presets(remote_type: &str, vendor: Option<&str>, os: &str) -> PresetValues {
     let mut merged = base_preset();
     merged = merge_presets(&merged, &family_preset(storage_family(remote_type)));
@@ -278,6 +303,17 @@ mod tests {
         );
         let mount = meta.get_profile(OperationType::Mount, "default").unwrap();
         assert_eq!(mount.rclone["attr_timeout"], "10s");
+    }
+
+    #[test]
+    fn template_value_omits_empty_categories() {
+        let linux = resolve_presets("", None, "linux").to_template_value();
+        assert_eq!(linux["vfs"]["vfs_cache_mode"], "full");
+        assert_eq!(linux["backend"]["log_level"], "INFO");
+        assert!(linux.get("remote").is_none());
+        let empty_type = default_template_presets("linux");
+        assert_eq!(empty_type["mount"]["attr_timeout"], "10s");
+        assert!(empty_type.get("remote").is_none());
     }
 
     #[test]

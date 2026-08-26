@@ -3543,7 +3543,11 @@
     "folders": "Folders",
     "maintenance": "Maintenance",
     "relaunch": "Relaunch",
-    "gcStarted": "Garbage collection started"
+    "gcStarted": "Garbage collection started",
+    "rcloneConfig": "rclone 配置",
+    "rcloneCache": "rclone 缓存",
+    "rcloneTemp": "rclone 临时目录",
+    "configEncrypted": "rclone.conf 已加密"
   },
   "flow": {
     "title": "Flow",
@@ -3619,6 +3623,7 @@
   },
   "templates": {
     "title": "模板",
+    "search": "搜索模板…",
     "presetTitle": "预设与模板",
     "applyPresets": "应用默认预设",
     "userTemplates": "已保存的用户模板",

@@ -676,3 +676,7 @@ This client is the GTK 4 + libadwaita desktop UI. It talks to a local `rclone rc
 - Mount monitoring lists every mount point for a remote (profile subtitle when set)
 - Export includes a Backend category (`settings` slice + `backend.json` from `options/get`)
 - Export Encrypt switch reveals the zip password and secrets rows; remotes subset is labeled as remotes
+- Restore applies exported `backend.json` via persisted `options/set` (engine restart)
+- Template manager has Save / Manage tabs, search, and Apply Default Presets on capture and edit
+- Debug Info uses i18n for rclone path rows and the encrypted-config flag
+- Files path bar fades at the scroll edges when breadcrumbs overflow

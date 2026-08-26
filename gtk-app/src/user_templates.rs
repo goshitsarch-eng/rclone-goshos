@@ -249,6 +249,41 @@ fn set_path(dest: &mut Value, path: &str, leaf: Value) {
     }
 }
 
+/// Deep-merge `src` into `dest`. Object keys are merged; leaves overwrite when asked.
+pub fn merge_values(dest: &mut Value, src: &Value, overwrite: bool) {
+    match (dest, src) {
+        (Value::Object(dest_map), Value::Object(src_map)) => {
+            for (key, value) in src_map {
+                if let Some(existing) = dest_map.get_mut(key) {
+                    merge_values(existing, value, overwrite);
+                } else {
+                    dest_map.insert(key.clone(), value.clone());
+                }
+            }
+        }
+        (dest, src) if overwrite || dest.is_null() => *dest = src.clone(),
+        _ => {}
+    }
+}
+
+pub fn template_matches_query(template: &UserTemplate, query: &str) -> bool {
+    let needle = query.trim().to_ascii_lowercase();
+    if needle.is_empty() {
+        return true;
+    }
+    if template.name.to_ascii_lowercase().contains(&needle)
+        || template.description.to_ascii_lowercase().contains(&needle)
+    {
+        return true;
+    }
+    flatten_leaf_paths(&template.values)
+        .iter()
+        .any(|(path, value)| {
+            path.to_ascii_lowercase().contains(&needle)
+                || value.to_ascii_lowercase().contains(&needle)
+        })
+}
+
 /// Keep only the selected dotted leaf paths.
 pub fn filter_by_paths(value: &Value, paths: &[String]) -> Value {
     let mut out = json!({});
@@ -433,6 +468,45 @@ mod tests {
         assert!(filtered["main"].get("checkers").is_none());
         assert!(flatten_leaf_paths(&json!({})).is_empty());
         assert!(flatten_leaf_paths(&json!(null)).is_empty());
+    }
+
+    #[test]
+    fn merge_values_overwrites_leaves_and_keeps_siblings() {
+        let mut dest = json!({
+            "vfs": { "vfs_cache_mode": "off", "vfs_read_ahead": "32M" },
+            "filter": { "max_age": "1d" }
+        });
+        merge_values(
+            &mut dest,
+            &json!({
+                "vfs": { "vfs_cache_mode": "full" },
+                "mount": { "attr_timeout": "10s" }
+            }),
+            true,
+        );
+        assert_eq!(dest["vfs"]["vfs_cache_mode"], "full");
+        assert_eq!(dest["vfs"]["vfs_read_ahead"], "32M");
+        assert_eq!(dest["filter"]["max_age"], "1d");
+        assert_eq!(dest["mount"]["attr_timeout"], "10s");
+    }
+
+    #[test]
+    fn template_query_matches_name_description_and_keys() {
+        let template = UserTemplate {
+            id: "1".into(),
+            name: "Fast S3".into(),
+            description: "cache full".into(),
+            icon: "emblem-ok-symbolic".into(),
+            created_at: "t0".into(),
+            updated_at: "t0".into(),
+            values: json!({ "vfs": { "vfs_cache_mode": "full" } }),
+        };
+        assert!(template_matches_query(&template, ""));
+        assert!(template_matches_query(&template, "s3"));
+        assert!(template_matches_query(&template, "CACHE"));
+        assert!(template_matches_query(&template, "vfs_cache"));
+        assert!(template_matches_query(&template, "full"));
+        assert!(!template_matches_query(&template, "mount"));
     }
 
     #[test]

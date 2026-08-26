@@ -63,6 +63,15 @@ pub fn copy_for(from_key: &str, to_key: &str) -> Result<Value, String> {
     Ok(load_for(to_key))
 }
 
+/// Persist a restored `options/get` dump so the next engine start can `options/set` it.
+pub fn import_dump(backend_key: &str, dump: &Value) -> Result<Value, String> {
+    if dump.as_object().is_none() {
+        return Ok(json!({}));
+    }
+    save_for(backend_key, dump)?;
+    Ok(dump.clone())
+}
+
 pub fn apply(client: &RcClient, backend_key: &str) {
     let options = load_for(backend_key);
     if options.as_object().is_some_and(|o| !o.is_empty()) {
@@ -120,5 +129,10 @@ mod tests {
         assert_eq!(copied["local"]["main"]["Transfers"], 8);
         let empty = copy_options(&all, "missing", "office");
         assert_eq!(empty["office"], json!({}));
+    }
+
+    #[test]
+    fn import_dump_rejects_non_objects() {
+        assert_eq!(import_dump("local", &json!("nope")).unwrap(), json!({}));
     }
 }

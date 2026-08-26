@@ -3543,7 +3543,11 @@
     "folders": "Folders",
     "maintenance": "Maintenance",
     "relaunch": "Relaunch",
-    "gcStarted": "Garbage collection started"
+    "gcStarted": "Garbage collection started",
+    "rcloneConfig": "rclone config",
+    "rcloneCache": "rclone cache",
+    "rcloneTemp": "rclone temp",
+    "configEncrypted": "rclone.conf encrypted"
   },
   "flow": {
     "title": "Flow",
@@ -3619,6 +3623,7 @@
   },
   "templates": {
     "title": "Templates",
+    "search": "Search templates…",
     "presetTitle": "Presets & Templates",
     "applyPresets": "Apply Default Presets",
     "userTemplates": "Saved User Templates",

@@ -3543,7 +3543,11 @@
     "folders": "Folders",
     "maintenance": "Maintenance",
     "relaunch": "Relaunch",
-    "gcStarted": "Garbage collection started"
+    "gcStarted": "Garbage collection started",
+    "rcloneConfig": "configuração do rclone",
+    "rcloneCache": "cache do rclone",
+    "rcloneTemp": "temporário do rclone",
+    "configEncrypted": "rclone.conf criptografado"
   },
   "flow": {
     "title": "Flow",
@@ -3619,6 +3623,7 @@
   },
   "templates": {
     "title": "Modelos",
+    "search": "Pesquisar modelos…",
     "presetTitle": "Predefinições e Modelos",
     "applyPresets": "Aplicar Predefinições Padrão",
     "userTemplates": "Modelos Salvos do Usuário",

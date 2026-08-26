@@ -3543,7 +3543,11 @@
     "folders": "Folders",
     "maintenance": "Maintenance",
     "relaunch": "Relaunch",
-    "gcStarted": "Garbage collection started"
+    "gcStarted": "Garbage collection started",
+    "rcloneConfig": "rclone 設定",
+    "rcloneCache": "rclone キャッシュ",
+    "rcloneTemp": "rclone 一時領域",
+    "configEncrypted": "rclone.conf は暗号化済み"
   },
   "flow": {
     "title": "Flow",
@@ -3619,6 +3623,7 @@
   },
   "templates": {
     "title": "テンプレート",
+    "search": "テンプレートを検索…",
     "presetTitle": "プリセットとテンプレート",
     "applyPresets": "デフォルトのプリセットを適用",
     "userTemplates": "保存されたユーザーテンプレート",

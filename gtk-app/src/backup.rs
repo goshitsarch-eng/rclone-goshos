@@ -26,6 +26,7 @@ pub struct BackupAnalysis {
     pub has_settings: bool,
     pub has_store: bool,
     pub has_rclone_config: bool,
+    pub has_backend: bool,
     pub categories: Vec<String>,
 }
 
@@ -76,6 +77,9 @@ impl BackupAnalysis {
         }
         if self.has_rclone_config {
             rows.push(("backup.restore.rcloneConfig.title", "Rclone Configuration"));
+        }
+        if self.has_backend {
+            rows.push(("modals.export.categories.backend.label", "Backend"));
         }
         rows
     }
@@ -410,10 +414,11 @@ pub fn analyze_backup_with_password(
     Ok(BackupAnalysis {
         valid: names
             .iter()
-            .any(|n| n == "settings.json" || n == "store.json"),
+            .any(|n| n == "settings.json" || n == "store.json" || n == "backend.json"),
         has_settings: names.iter().any(|n| n == "settings.json"),
         has_store: names.iter().any(|n| n == "store.json"),
         has_rclone_config: names.iter().any(|n| n == "rclone.json"),
+        has_backend: names.iter().any(|n| n == "backend.json"),
         categories: names,
         manifest,
     })
@@ -498,12 +503,30 @@ pub fn scoped_rclone(dump: Value, profile: Option<&str>, restore_as: Option<&str
         .unwrap_or_else(|| serde_json::json!({}))
 }
 
+#[derive(Debug, Clone, Default)]
+pub struct RestoredBackup {
+    pub settings: Option<AppSettings>,
+    pub store: Option<AppStore>,
+    pub rclone: Option<Value>,
+    pub backend: Option<Value>,
+}
+
 pub fn restore_backup_scoped(
     path: &Path,
     password: Option<&str>,
     profile: Option<&str>,
     restore_as: Option<&str>,
 ) -> Result<(Option<AppSettings>, Option<AppStore>, Option<Value>), String> {
+    let restored = restore_backup_contents(path, password, profile, restore_as)?;
+    Ok((restored.settings, restored.store, restored.rclone))
+}
+
+pub fn restore_backup_contents(
+    path: &Path,
+    password: Option<&str>,
+    profile: Option<&str>,
+    restore_as: Option<&str>,
+) -> Result<RestoredBackup, String> {
     let file = File::open(path).map_err(|e| e.to_string())?;
     let mut archive = ZipArchive::new(file).map_err(|e| e.to_string())?;
     let settings = read_zip_json::<AppSettings>(&mut archive, "settings.json", password);
@@ -511,7 +534,13 @@ pub fn restore_backup_scoped(
         .map(|s| scoped_store(s, profile, restore_as));
     let rclone = read_zip_json::<Value>(&mut archive, "rclone.json", password)
         .map(|d| scoped_rclone(d, profile, restore_as));
-    Ok((settings, store, rclone))
+    let backend = read_zip_json::<Value>(&mut archive, "backend.json", password);
+    Ok(RestoredBackup {
+        settings,
+        store,
+        rclone,
+        backend,
+    })
 }
 
 fn zip_entry<'a>(
@@ -879,6 +908,14 @@ mod tests {
         assert_eq!(merged.core.rclone_additional_flags, vec!["--fast-list"]);
         assert!(includes_file("backend", "backend.json"));
         assert!(!includes_file("backend", "rclone.json"));
+        assert!(analysis.has_backend);
+        assert!(analysis
+            .content_rows()
+            .iter()
+            .any(|(key, _)| *key == "modals.export.categories.backend.label"));
+        let restored = restore_backup_contents(&dest, None, None, None).unwrap();
+        assert!(restored.rclone.is_none());
+        assert_eq!(restored.backend.unwrap()["main"]["transfers"], 8);
     }
 
     #[test]

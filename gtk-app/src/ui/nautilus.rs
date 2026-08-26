@@ -120,6 +120,41 @@ impl NautilusView {
         crumbs_scroll.set_policy(gtk::PolicyType::Automatic, gtk::PolicyType::Never);
         crumbs_scroll.set_child(Some(&crumbs));
         crumbs_scroll.set_hexpand(true);
+        let crumbs_overlay = gtk::Overlay::new();
+        crumbs_overlay.set_hexpand(true);
+        crumbs_overlay.set_child(Some(&crumbs_scroll));
+        let fade_start = gtk::Box::new(gtk::Orientation::Horizontal, 0);
+        fade_start.add_css_class("path-fade-start");
+        fade_start.set_halign(gtk::Align::Start);
+        fade_start.set_valign(gtk::Align::Fill);
+        fade_start.set_can_target(false);
+        fade_start.set_visible(false);
+        let fade_end = gtk::Box::new(gtk::Orientation::Horizontal, 0);
+        fade_end.add_css_class("path-fade-end");
+        fade_end.set_halign(gtk::Align::End);
+        fade_end.set_valign(gtk::Align::Fill);
+        fade_end.set_can_target(false);
+        fade_end.set_visible(false);
+        crumbs_overlay.add_overlay(&fade_start);
+        crumbs_overlay.add_overlay(&fade_end);
+        {
+            let fade_start = fade_start.clone();
+            let fade_end = fade_end.clone();
+            let sync = Rc::new(move |adj: &gtk::Adjustment| {
+                fade_start.set_visible(adj.value() > 1.0);
+                fade_end.set_visible(adj.value() + adj.page_size() + 1.0 < adj.upper());
+            });
+            let adj = crumbs_scroll.hadjustment();
+            adj.connect_value_changed({
+                let sync = sync.clone();
+                move |adj| sync(adj)
+            });
+            adj.connect_notify_local(Some("upper"), {
+                let sync = sync.clone();
+                move |adj, _| sync(adj)
+            });
+            adj.connect_notify_local(Some("page-size"), move |adj, _| sync(adj));
+        }
         let search_entry = gtk::SearchEntry::new();
         search_entry.set_hexpand(true);
         search_entry.set_placeholder_text(Some(
@@ -127,7 +162,7 @@ impl NautilusView {
         ));
         let path_stack = gtk::Stack::new();
         path_stack.set_hexpand(true);
-        path_stack.add_named(&crumbs_scroll, Some("crumbs"));
+        path_stack.add_named(&crumbs_overlay, Some("crumbs"));
         path_stack.add_named(&path_entry, Some("entry"));
         path_stack.add_named(&search_entry, Some("search"));
         path_stack.set_visible_child_name("crumbs");

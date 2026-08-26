@@ -3543,7 +3543,11 @@
     "folders": "Folders",
     "maintenance": "Maintenance",
     "relaunch": "Relaunch",
-    "gcStarted": "Garbage collection started"
+    "gcStarted": "Garbage collection started",
+    "rcloneConfig": "конфіг rclone",
+    "rcloneCache": "кеш rclone",
+    "rcloneTemp": "тимчасові файли rclone",
+    "configEncrypted": "rclone.conf зашифровано"
   },
   "flow": {
     "title": "Flow",
@@ -3619,6 +3623,7 @@
   },
   "templates": {
     "title": "Шаблони",
+    "search": "Пошук шаблонів…",
     "presetTitle": "Пресети та шаблони",
     "applyPresets": "Застосувати типові пресети",
     "userTemplates": "Збережені шаблони користувача",
