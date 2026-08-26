@@ -578,9 +578,9 @@ This client is the GTK 4 + libadwaita desktop UI. It talks to a local `rclone rc
 - Sync / Bisync / Check start rejects file sources with the same directory-only error as Tauri
 - Files row ⋮ opens the full listing context menu (Share, Send-to, archive, star) instead of the short Selection actions list
 - Files grid matches list: single-click selects, double-click opens (`activate_on_single_click=false`)
-- Files ⋮ is a 48px `GtkMenuButton` overlay (`.file-item-menu` / `.file-item-menu-hit`); FlowBox no longer opens on single click
-- Files ⋮ fills the full listing context menu into a stable popover host when shown
+- Files ⋮ is a 48px `GtkButton` overlay (`.file-item-menu` / `.file-item-menu-hit`); FlowBox no longer opens on single click
+- Files listing context popover is a persistent `GtkPopover` parented to the window (or Files root), pointed at the clicked widget after the pointer click finishes
 - Windows autostart writes `HKCU\...\Run` `Rclone Manager` → `"exe" --tray` (PowerShell)
 - macOS autostart writes `~/Library/LaunchAgents/io.github.zarestia_dev.rclone-manager.plist` (`RunAtLoad`, `--tray`)
 - Prevent-sleep: Windows `SetThreadExecutionState(ES_CONTINUOUS|SYSTEM|AWAYMODE)`, macOS `caffeinate -dims`, Linux logind / systemd-inhibit
-- Live GUI: testdrive Files grid still has a hard-to-hit ⋮ target (same as GDK button-3); Shift+F10 / toolbar Selection actions remain the reliable openers in this session
+- Live GUI: testdrive Photos ⋮ is hittable (Actions tooltip + “Photos” selected). The full listing context popover still does not stay open after the click in this desktop

@@ -319,6 +319,14 @@ pub fn is_file_item_menu_widget(widget_name: &str) -> bool {
     widget_name.starts_with("file-menu-")
 }
 
+/// Translate a pointer position from a child widget into its parent.
+pub fn pointing_in_parent(local_x: f64, local_y: f64, parent_x: f64, parent_y: f64) -> (i32, i32) {
+    (
+        (parent_x + local_x).round() as i32,
+        (parent_y + local_y).round() as i32,
+    )
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DeleteItem {
     pub fs: String,
@@ -1040,6 +1048,8 @@ mod tests {
         assert!(is_file_item_menu_widget("file-menu-Photos"));
         assert!(!is_file_item_menu_widget("Photos"));
         assert!(!is_file_item_menu_widget("file-menu"));
+        assert_eq!(pointing_in_parent(24.0, 16.0, 400.0, 300.0), (424, 316));
+        assert_eq!(pointing_in_parent(0.4, 0.6, 10.0, 20.0), (10, 21));
     }
 
     #[test]
