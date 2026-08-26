@@ -8716,6 +8716,7 @@ fn build_markdown_preview(source: &str, images: Option<&(AppCtx, String, String)
     }
     let box_ = gtk::Box::new(gtk::Orientation::Vertical, 8);
     box_.set_hexpand(true);
+    box_.set_valign(gtk::Align::Start);
     let mut text_buf = String::new();
     let flush_text = |text_buf: &mut String, box_: &gtk::Box| {
         let trimmed = text_buf.trim();
@@ -8727,6 +8728,8 @@ fn build_markdown_preview(source: &str, images: Option<&(AppCtx, String, String)
         view.set_editable(false);
         view.set_wrap_mode(gtk::WrapMode::WordChar);
         view.set_hexpand(true);
+        view.set_vexpand(false);
+        view.set_valign(gtk::Align::Start);
         view.buffer().set_text(trimmed);
         box_.append(&view);
         text_buf.clear();
@@ -8741,8 +8744,10 @@ fn build_markdown_preview(source: &str, images: Option<&(AppCtx, String, String)
                         let picture = gtk::Picture::for_filename(&path);
                         picture.set_can_shrink(true);
                         picture.set_hexpand(true);
+                        picture.set_vexpand(false);
+                        picture.set_valign(gtk::Align::Start);
                         picture.set_content_fit(gtk::ContentFit::Contain);
-                        picture.set_size_request(-1, 220);
+                        picture.set_size_request(320, 200);
                         if !alt.is_empty() {
                             picture.set_tooltip_text(Some(&alt));
                         }
@@ -8857,6 +8862,7 @@ fn attach_text_preview(
         let preview = build_markdown_preview(&shown, md_images.as_ref());
         let preview_scroll = gtk::ScrolledWindow::new();
         preview_scroll.set_vexpand(true);
+        preview_scroll.set_min_content_height(280);
         preview_scroll.set_policy(gtk::PolicyType::Never, gtk::PolicyType::Automatic);
         preview_scroll.set_child(Some(&preview));
         let stack = gtk::Stack::new();
