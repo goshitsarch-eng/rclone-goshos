@@ -1,6 +1,7 @@
 use super::automation_card;
 use super::dialogs;
 use super::job_panels;
+use super::quick_run_card;
 use super::AppCtx;
 use crate::navigation::NavTarget;
 use crate::store::QuickRun;
@@ -434,36 +435,7 @@ impl FlowView {
                         list.append(&row);
                     }
                     for qr in runs {
-                        let row = adw::ActionRow::new();
-                        row.set_title(&qr.name);
-                        let mut badges =
-                            vec![qr.operation_type.as_str().to_string(), qr.status.clone()];
-                        if qr.config.app.cron_enabled {
-                            badges.push(self.ctx.t_or("flow.quickRun.badges.cron", "cron"));
-                        }
-                        if qr.config.app.watch_enabled {
-                            badges.push(self.ctx.t_or("flow.quickRun.badges.watcher", "watch"));
-                        }
-                        if qr.config.app.auto_start {
-                            badges
-                                .push(self.ctx.t_or("flow.quickRun.badges.autostart", "autostart"));
-                        }
-                        row.set_subtitle(&format!("{} · {}", qr.remote_name, badges.join(" · ")));
-                        let remote_btn = gtk::Button::with_label(&qr.remote_name);
-                        remote_btn.set_valign(gtk::Align::Center);
-                        remote_btn.set_tooltip_text(Some(
-                            &self
-                                .ctx
-                                .t_or("flow.quickRun.openRemote", "Open remote detail"),
-                        ));
-                        {
-                            let view = self.clone();
-                            let remote = qr.remote_name.clone();
-                            remote_btn.connect_clicked(move |_| view.open_remote_detail(&remote));
-                        }
-                        row.add_suffix(&remote_btn);
-                        self.decorate_quick_run_row(&row, &qr);
-                        list.append(&row);
+                        list.append(&self.quick_run_overview_card(&qr));
                     }
                     self.append_expandable(
                         "quickRuns",
@@ -821,63 +793,59 @@ impl FlowView {
         label
     }
 
-    fn decorate_quick_run_row(&self, row: &adw::ActionRow, qr: &QuickRun) {
-        let start = gtk::Button::from_icon_name("media-playback-start-symbolic");
-        start.set_valign(gtk::Align::Center);
-        start.set_tooltip_text(Some(&self.ctx.t_or("flow.quickRun.actions.start", "Start")));
-        let stop = gtk::Button::from_icon_name("media-playback-stop-symbolic");
-        stop.set_valign(gtk::Align::Center);
-        stop.set_tooltip_text(Some(&self.ctx.t_or("flow.quickRun.actions.stop", "Stop")));
-        let edit = gtk::Button::from_icon_name("document-edit-symbolic");
-        edit.set_valign(gtk::Align::Center);
-        edit.set_tooltip_text(Some(&self.ctx.t_or("common.edit", "Edit")));
+    fn quick_run_overview_card(&self, qr: &QuickRun) -> gtk::Widget {
+        let running =
+            crate::jobs::find_active_quick_run(&self.ctx.snapshot.borrow().jobs, qr).is_some();
         let busy = self
             .ctx
             .is_busy(&qr.remote_name, qr.operation_type.as_str(), &qr.id);
-        start.set_sensitive(!busy);
-        stop.set_sensitive(!busy);
-        {
-            let view = self.clone();
-            let qr = qr.clone();
-            start.connect_clicked(move |_| view.start_run(&qr));
-        }
-        {
-            let view = self.clone();
-            let qr = qr.clone();
-            stop.connect_clicked(move |_| view.stop_run(&qr));
-        }
-        {
-            let view = self.clone();
-            let qr = qr.clone();
-            edit.connect_clicked(move |_| {
-                if let Some(win) = view.root.root().and_downcast::<gtk::Window>() {
-                    dialogs::quick_run_editor(&win, view.ctx.clone(), Some(qr.clone()), {
-                        let view = view.clone();
-                        Rc::new(move || view.refresh())
-                    });
-                }
-            });
-        }
-        row.add_suffix(&start);
-        row.add_suffix(&stop);
-        row.add_suffix(&edit);
-        let (src, dst) = qr.paths();
-        let mut open_paths = Vec::new();
-        if let Some(src) = src {
-            open_paths.extend(crate::jobs::split_job_paths(&src));
-        }
-        if let Some(dst) = dst {
-            open_paths.extend(crate::jobs::split_job_paths(&dst));
-        }
-        for path in open_paths {
-            let folder = gtk::Button::from_icon_name("folder-open-symbolic");
-            folder.set_valign(gtk::Align::Center);
-            folder.set_tooltip_text(Some(&path));
-            let ctx = self.ctx.clone();
-            let remote = qr.remote_name.clone();
-            folder.connect_clicked(move |_| ctx.open_typed_path(&remote, &path));
-            row.add_suffix(&folder);
-        }
+        let view = self.clone();
+        let run = qr.clone();
+        quick_run_card::overview_card(
+            &self.ctx,
+            qr,
+            running,
+            busy,
+            quick_run_card::OverviewHandlers {
+                on_start: Rc::new({
+                    let view = view.clone();
+                    let run = run.clone();
+                    move || view.start_run(&run)
+                }),
+                on_stop: Rc::new({
+                    let view = view.clone();
+                    let run = run.clone();
+                    move || view.stop_run(&run)
+                }),
+                on_edit: Rc::new({
+                    let view = view.clone();
+                    let run = run.clone();
+                    move || {
+                        if let Some(win) = view.root.root().and_downcast::<gtk::Window>() {
+                            dialogs::quick_run_editor(&win, view.ctx.clone(), Some(run.clone()), {
+                                let view = view.clone();
+                                Rc::new(move || view.refresh())
+                            });
+                        }
+                    }
+                }),
+                on_open_remote: Rc::new({
+                    let view = view.clone();
+                    let remote = run.remote_name.clone();
+                    move || view.open_remote_detail(&remote)
+                }),
+                on_open_path: Rc::new({
+                    let ctx = self.ctx.clone();
+                    let remote = run.remote_name.clone();
+                    move |path: &str| ctx.open_typed_path(&remote, path)
+                }),
+                on_select: Some(Rc::new({
+                    let view = view.clone();
+                    let id = run.id.clone();
+                    move || view.select_quick_run(Some(&id))
+                })),
+            },
+        )
     }
 
     fn open_remote_config_step(&self, name: &str, step: &str) {
@@ -1386,26 +1354,7 @@ impl FlowView {
             qlist.append(&row);
         } else {
             for qr in qrs {
-                let row = adw::ActionRow::new();
-                row.set_title(&qr.name);
-                let mut badges = vec![qr.operation_type.as_str().to_string(), qr.status.clone()];
-                if qr.config.app.cron_enabled {
-                    badges.push(self.ctx.t_or("flow.quickRun.badges.cron", "cron"));
-                }
-                if qr.config.app.watch_enabled {
-                    badges.push(self.ctx.t_or("flow.quickRun.badges.watcher", "watch"));
-                }
-                if qr.config.app.auto_start {
-                    badges.push(self.ctx.t_or("flow.quickRun.badges.autostart", "autostart"));
-                }
-                row.set_subtitle(&badges.join(" · "));
-                {
-                    let view = self.clone();
-                    let id = qr.id.clone();
-                    row.connect_activated(move |_| view.select_quick_run(Some(&id)));
-                }
-                self.decorate_quick_run_row(&row, &qr);
-                qlist.append(&row);
+                qlist.append(&self.quick_run_overview_card(&qr));
             }
         }
         self.content.append(&qlist);
@@ -1471,15 +1420,36 @@ impl FlowView {
         let monitoring = gtk::Box::new(gtk::Orientation::Vertical, 12);
         let configuration = gtk::Box::new(gtk::Orientation::Vertical, 12);
 
-        let (src, dst) = qr.paths();
-        let paths = adw::ActionRow::new();
-        paths.set_title(&self.ctx.t_or("modals.jobDetail.sections.paths", "Paths"));
-        paths.set_subtitle(&format!(
-            "{} → {}",
-            src.unwrap_or_else(|| "—".into()),
-            dst.unwrap_or_else(|| "—".into())
-        ));
-        monitoring.append(&paths);
+        let folders = crate::jobs::quick_run_openable_folders(qr);
+        if folders.is_empty() {
+            let paths = adw::ActionRow::new();
+            paths.set_title(&self.ctx.t_or("modals.jobDetail.sections.paths", "Paths"));
+            paths.set_subtitle("— → —");
+            monitoring.append(&paths);
+        } else {
+            for folder in folders {
+                let row = adw::ActionRow::new();
+                row.set_title(&if folder.kind == "source" {
+                    self.ctx.t_or("detailShared.pathDisplay.source", "Source")
+                } else {
+                    self.ctx
+                        .t_or("detailShared.pathDisplay.destination", "Destination")
+                });
+                row.set_subtitle(&folder.path);
+                let open = gtk::Button::from_icon_name("folder-open-symbolic");
+                open.set_valign(gtk::Align::Center);
+                open.set_tooltip_text(Some(&self.ctx.t_or(
+                    "detailShared.pathDisplay.openInExplorer",
+                    "Open in file explorer",
+                )));
+                let ctx = self.ctx.clone();
+                let remote = qr.remote_name.clone();
+                let path = folder.path.clone();
+                open.connect_clicked(move |_| ctx.open_typed_path(&remote, &path));
+                row.add_suffix(&open);
+                monitoring.append(&row);
+            }
+        }
 
         let dry = adw::SwitchRow::new();
         dry.set_title(&self.ctx.t_or("dashboard.appDetail.dryRun", "Dry run"));

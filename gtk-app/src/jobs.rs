@@ -1406,6 +1406,59 @@ pub fn job_panel_row(job: &JobInfo, now: DateTime<Utc>) -> JobPanelRow {
     }
 }
 
+/// Angular `quick-run-card` status pills (cron / watcher / autostart).
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct QuickRunCardBadges {
+    pub cron: bool,
+    pub cron_expression: String,
+    pub watcher: bool,
+    pub watcher_changed_only: bool,
+    pub autostart: bool,
+}
+
+pub fn quick_run_card_badges(qr: &QuickRun) -> QuickRunCardBadges {
+    QuickRunCardBadges {
+        cron: qr.config.app.cron_enabled && !qr.config.app.cron_expression.is_empty(),
+        cron_expression: qr.config.app.cron_expression.clone(),
+        watcher: qr.config.app.watch_enabled,
+        watcher_changed_only: qr.config.app.watch_changed_only,
+        autostart: qr.config.app.auto_start,
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct QuickRunFolder {
+    pub kind: &'static str,
+    pub path: String,
+}
+
+/// Source/destination folders the Angular card can open in Files.
+pub fn quick_run_openable_folders(qr: &QuickRun) -> Vec<QuickRunFolder> {
+    let (src, dst) = qr.paths();
+    let mut out = Vec::new();
+    if let Some(src) = src {
+        for path in split_job_paths(&src) {
+            if !path.is_empty() {
+                out.push(QuickRunFolder {
+                    kind: "source",
+                    path,
+                });
+            }
+        }
+    }
+    if let Some(dst) = dst {
+        for path in split_job_paths(&dst) {
+            if !path.is_empty() {
+                out.push(QuickRunFolder {
+                    kind: "destination",
+                    path,
+                });
+            }
+        }
+    }
+    out
+}
+
 pub fn job_origin_key(origin: &str) -> &'static str {
     match origin {
         "dashboard" => "generalOverview.jobs.originDashboard",
@@ -4551,6 +4604,44 @@ mod tests {
         assert_eq!(idle.duration_secs, 12);
         assert!(idle.relative.is_none());
         assert!(idle.has_footer);
+    }
+
+    #[test]
+    fn quick_run_card_badges_and_openable_folders() {
+        let mut qr = QuickRun::new("Nightly".into(), OperationType::Copy, "testdrive".into());
+        qr.config.rclone = json!({
+            "srcFs": "testdrive:Photos",
+            "dstFs": "testdrive:verify-qr"
+        });
+        qr.config.app.cron_enabled = true;
+        qr.config.app.cron_expression = "0 7 * * *".into();
+        qr.config.app.watch_enabled = true;
+        qr.config.app.watch_changed_only = true;
+        qr.config.app.auto_start = true;
+        let badges = quick_run_card_badges(&qr);
+        assert!(badges.cron);
+        assert_eq!(badges.cron_expression, "0 7 * * *");
+        assert!(badges.watcher);
+        assert!(badges.watcher_changed_only);
+        assert!(badges.autostart);
+        assert_eq!(
+            quick_run_openable_folders(&qr),
+            vec![
+                QuickRunFolder {
+                    kind: "source",
+                    path: "testdrive:Photos".into()
+                },
+                QuickRunFolder {
+                    kind: "destination",
+                    path: "testdrive:verify-qr".into()
+                }
+            ]
+        );
+        qr.config.app.cron_enabled = true;
+        qr.config.app.cron_expression.clear();
+        assert!(!quick_run_card_badges(&qr).cron);
+        qr.config.rclone = json!({});
+        assert!(quick_run_openable_folders(&qr).is_empty());
     }
 
     #[test]

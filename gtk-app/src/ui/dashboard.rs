@@ -1,6 +1,7 @@
 use super::automation_card;
 use super::dialogs;
 use super::job_panels;
+use super::quick_run_card;
 use super::vfs_panel;
 use super::AppCtx;
 use crate::navigation::NavTarget;
@@ -1992,9 +1993,7 @@ impl Dashboard {
                     .ctx
                     .t_or("remote.quickRuns", "Quick Runs for this remote"),
             ));
-            let qlist = gtk::ListBox::new();
-            qlist.add_css_class("boxed-list");
-            for qr in self
+            let qrs: Vec<_> = self
                 .ctx
                 .store
                 .borrow()
@@ -2002,88 +2001,124 @@ impl Dashboard {
                 .iter()
                 .filter(|q| q.remote_name == name)
                 .cloned()
-                .collect::<Vec<_>>()
-            {
+                .collect();
+            if qrs.is_empty() {
                 let row = adw::ActionRow::new();
-                row.set_title(&qr.name);
-                row.set_subtitle(&format!("{} · {}", qr.operation_type, qr.status));
-                let start = gtk::Button::from_icon_name("media-playback-start-symbolic");
-                start.set_valign(gtk::Align::Center);
-                start
-                    .set_tooltip_text(Some(&self.ctx.t_or("flow.quickRun.actions.start", "Start")));
-                let stop = gtk::Button::from_icon_name("media-playback-stop-symbolic");
-                stop.set_valign(gtk::Align::Center);
-                stop.set_tooltip_text(Some(&self.ctx.t_or("flow.quickRun.actions.stop", "Stop")));
-                let edit = gtk::Button::from_icon_name("document-edit-symbolic");
-                edit.set_valign(gtk::Align::Center);
-                edit.set_tooltip_text(Some(&self.ctx.t_or("common.edit", "Edit")));
-                let open = gtk::Button::from_icon_name("folder-symbolic");
-                open.set_valign(gtk::Align::Center);
-                open.set_tooltip_text(Some(&self.ctx.t_or("common.browse", "Browse")));
-                {
+                row.set_title(&self.ctx.t_or("dashboard.quickRuns.empty", "No quick runs"));
+                let empty = gtk::ListBox::new();
+                empty.add_css_class("boxed-list");
+                empty.append(&row);
+                self.detail_box().append(&empty);
+            } else {
+                let cards = gtk::Box::new(gtk::Orientation::Vertical, 8);
+                let qr_jobs = self.ctx.snapshot.borrow().jobs.clone();
+                for qr in qrs {
+                    let running = crate::jobs::find_active_quick_run(&qr_jobs, &qr).is_some();
+                    let busy =
+                        self.ctx
+                            .is_busy(&qr.remote_name, qr.operation_type.as_str(), &qr.id);
                     let ctx = self.ctx.clone();
                     let toast = self.toast.clone();
                     let dash = self.clone();
-                    let qr = qr.clone();
-                    start.connect_clicked(move |_| {
-                        start_quick_run(&ctx, &qr, &toast);
-                        dash.refresh();
-                    });
-                }
-                {
-                    let ctx = self.ctx.clone();
-                    let id = qr.last_job_id;
-                    let qr_id = qr.id.clone();
-                    let dash = self.clone();
-                    stop.connect_clicked(move |_| {
-                        if let (Some(client), Some(jobid)) = (ctx.client(), id) {
-                            let _ = client.job_stop(jobid);
-                        }
-                        if let Some(run) = ctx
-                            .store
-                            .borrow_mut()
-                            .quick_runs
-                            .iter_mut()
-                            .find(|q| q.id == qr_id)
-                        {
-                            run.status = "stopped".into();
-                        }
-                        ctx.persist();
-                        dash.refresh();
-                    });
-                }
-                {
-                    let ctx = self.ctx.clone();
-                    let dash = self.clone();
-                    let qr = qr.clone();
-                    edit.connect_clicked(move |_| {
-                        if let Some(win) = dash.root.root().and_downcast::<gtk::Window>() {
-                            dialogs::quick_run_editor(&win, ctx.clone(), Some(qr.clone()), {
+                    let run = qr.clone();
+                    cards.append(&quick_run_card::overview_card(
+                        &self.ctx,
+                        &qr,
+                        running,
+                        busy,
+                        quick_run_card::OverviewHandlers {
+                            on_start: Rc::new({
+                                let ctx = ctx.clone();
+                                let toast = toast.clone();
                                 let dash = dash.clone();
-                                Rc::new(move || dash.refresh())
-                            });
-                        }
-                    });
+                                let run = run.clone();
+                                move || {
+                                    start_quick_run(&ctx, &run, &toast);
+                                    dash.refresh();
+                                }
+                            }),
+                            on_stop: Rc::new({
+                                let ctx = ctx.clone();
+                                let dash = dash.clone();
+                                let run = run.clone();
+                                move || {
+                                    if let (Some(client), Some(jobid)) =
+                                        (ctx.client(), run.last_job_id)
+                                    {
+                                        let _ = client.job_stop(jobid);
+                                    }
+                                    if let Some(item) = ctx
+                                        .store
+                                        .borrow_mut()
+                                        .quick_runs
+                                        .iter_mut()
+                                        .find(|q| q.id == run.id)
+                                    {
+                                        item.status = "stopped".into();
+                                    }
+                                    ctx.persist();
+                                    dash.refresh();
+                                }
+                            }),
+                            on_edit: Rc::new({
+                                let ctx = ctx.clone();
+                                let dash = dash.clone();
+                                let run = run.clone();
+                                move || {
+                                    if let Some(win) =
+                                        dash.root.root().and_downcast::<gtk::Window>()
+                                    {
+                                        dialogs::quick_run_editor(
+                                            &win,
+                                            ctx.clone(),
+                                            Some(run.clone()),
+                                            {
+                                                let dash = dash.clone();
+                                                Rc::new(move || dash.refresh())
+                                            },
+                                        );
+                                    }
+                                }
+                            }),
+                            on_open_remote: Rc::new({
+                                let ctx = ctx.clone();
+                                let dash = dash.clone();
+                                let remote = run.remote_name.clone();
+                                move || {
+                                    if let Some(win) =
+                                        dash.root.root().and_downcast::<gtk::Window>()
+                                    {
+                                        dialogs::remote_config(
+                                            &win,
+                                            ctx.clone(),
+                                            Some(remote.clone()),
+                                            {
+                                                let dash = dash.clone();
+                                                Rc::new(move || dash.refresh())
+                                            },
+                                        );
+                                    }
+                                }
+                            }),
+                            on_open_path: Rc::new({
+                                let ctx = ctx.clone();
+                                let remote = run.remote_name.clone();
+                                move |path: &str| ctx.open_typed_path(&remote, path)
+                            }),
+                            on_select: Some(Rc::new({
+                                let ctx = ctx.clone();
+                                let id = run.id.clone();
+                                move || {
+                                    ctx.request_nav(NavTarget::Flow {
+                                        quick_run: Some(id.clone()),
+                                    });
+                                }
+                            })),
+                        },
+                    ));
                 }
-                {
-                    let ctx = self.ctx.clone();
-                    let qr = qr.clone();
-                    open.connect_clicked(move |_| {
-                        ctx.browse_quick_run(&qr);
-                    });
-                }
-                row.add_suffix(&open);
-                row.add_suffix(&edit);
-                row.add_suffix(&stop);
-                row.add_suffix(&start);
-                qlist.append(&row);
+                self.detail_box().append(&cards);
             }
-            if qlist.first_child().is_none() {
-                let row = adw::ActionRow::new();
-                row.set_title(&self.ctx.t_or("dashboard.quickRuns.empty", "No quick runs"));
-                qlist.append(&row);
-            }
-            self.detail_box().append(&qlist);
             let add_qr = gtk::Button::with_label(&self.ctx.t_or(
                 "dashboard.quickRuns.createForRemote",
                 "Create quick run for this remote",
