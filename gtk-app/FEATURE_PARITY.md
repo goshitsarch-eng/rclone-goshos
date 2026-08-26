@@ -777,4 +777,6 @@ This client is the GTK 4 + libadwaita desktop UI. It talks to a local `rclone rc
 - Operations Configuration / Monitoring / activity / transfers scope to the selected sync op (Check no longer lists Copy profiles or Copy jobs)
 - Live GUI: testdrive Operations Sync/Check/Move show **No saved profiles**; Copy shows **copy / gui-copy-test**; switching back to Copy restores it
 - Operations Monitoring uses Angular profile pills (running / scheduled / idle, add-profile) when an op has more than one profile
-- Configuration lists a settings panel per profile of the selected op (`Copy Settings (name)`)
+- Configuration lists a settings panel per profile of the selected op (`Copy Settings (name)`), then Shared Settings once
+- Live GUI: testdrive Copy Monitoring shows **Selected Profile** / **2 profiles** pills (`gui-copy-nightly` clock, `gui-copy-test`); selecting test hides Daily at 2:00
+- Live GUI: Configuration lists both Copy Settings panels then Shared Settings once
