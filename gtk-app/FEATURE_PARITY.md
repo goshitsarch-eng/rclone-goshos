@@ -802,3 +802,5 @@ This client is the GTK 4 + libadwaita desktop UI. It talks to a local `rclone rc
 - Live GUI: testdrive General shows Stop Mount / Start Sync / Start Serve, disk usage, `gui-qr-copy`, Jobs 12, then Automations + Remote Configuration; Operations still has Sync/Bisync/Copy/More and Profiles
 - Flow Quick Run Monitoring and dashboard profile start use a shared Angular `app-operation-control` expander (paths, dry-run/resync, header start/stop, full Start/Stop Copy)
 - Delete hides destination; live job src/dst win over configured paths; mount usage only while mounted
+- Live GUI: Flow `gui-qr-copy` Monitoring expander shows Source `testdrive:Photos`, Destination `testdrive:verify-qr`, Dry run, Start Copy; collapse reveals header Start/Stop
+- Live GUI: testdrive Operations Copy expanders `gui-copy-test` / `gui-copy-nightly` still show Source/Destination, Dry run, and Start Copy
