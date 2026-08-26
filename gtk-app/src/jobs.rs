@@ -2453,6 +2453,35 @@ pub struct OperationControlPaths {
     pub source: Option<String>,
     pub destination: Option<String>,
     pub hide_destination: bool,
+    pub dest_browseable: bool,
+}
+
+pub fn serve_accessible_via(rclone: &Value, default_addr: &str) -> String {
+    let flat = flatten_rclone(rclone);
+    let kind = first_path(&flat, &["type"]).unwrap_or_else(|| "http".into());
+    let addr = first_path(&flat, &["addr"]).unwrap_or_else(|| default_addr.to_string());
+    format!("{} at {addr}", kind.to_ascii_uppercase())
+}
+
+pub fn is_saf_mount(rclone: &Value) -> bool {
+    let flat = flatten_rclone(rclone);
+    first_path(&flat, &["mountType"]).as_deref() == Some("saf")
+        || first_path(&flat, &["mountPoint"]).is_some_and(|p| p.starts_with("saf://"))
+}
+
+/// Configured src/dst for Angular `buildControlConfig` (serve addr + SAF mount).
+pub fn operation_control_configured_paths(
+    op: OperationType,
+    rclone: &Value,
+    remote: &str,
+    default_addr: &str,
+) -> (Option<String>, Option<String>) {
+    let (src, dst) = crate::store::quick_run_paths(rclone, op);
+    match op {
+        OperationType::Serve => (src, Some(serve_accessible_via(rclone, default_addr))),
+        OperationType::Mount if is_saf_mount(rclone) => (src, Some(format!("saf://{remote}"))),
+        _ => (src, dst),
+    }
 }
 
 pub fn operation_control_paths(
@@ -2465,13 +2494,17 @@ pub fn operation_control_paths(
     let source = live
         .and_then(|job| nonempty(Some(job.src.clone())))
         .or_else(|| nonempty(configured_src));
-    let destination = live
-        .and_then(|job| nonempty(Some(job.dst.clone())))
-        .or_else(|| nonempty(configured_dst));
+    let destination = if op == OperationType::Serve {
+        nonempty(configured_dst).or_else(|| live.and_then(|job| nonempty(Some(job.dst.clone()))))
+    } else {
+        live.and_then(|job| nonempty(Some(job.dst.clone())))
+            .or_else(|| nonempty(configured_dst))
+    };
     OperationControlPaths {
         source,
         destination,
         hide_destination: op == OperationType::Delete,
+        dest_browseable: op != OperationType::Serve,
     }
 }
 
@@ -4982,6 +5015,7 @@ mod tests {
             Some("testdrive:verify-qr")
         );
         assert!(!configured.hide_destination);
+        assert!(configured.dest_browseable);
 
         let live = sample_job(9, "testdrive:live-src", "testdrive:live-dst");
         let from_job = operation_control_paths(
@@ -5026,5 +5060,34 @@ mod tests {
             operation_control_action_kind(OperationType::Copy, true),
             "stop"
         );
+
+        let serve = operation_control_configured_paths(
+            OperationType::Serve,
+            &json!({ "type": "webdav", "addr": "127.0.0.1:18080", "srcFs": "testdrive:" }),
+            "testdrive",
+            "Default",
+        );
+        assert_eq!(serve.0.as_deref(), Some("testdrive:"));
+        assert_eq!(serve.1.as_deref(), Some("WEBDAV at 127.0.0.1:18080"));
+        let empty_serve = operation_control_configured_paths(
+            OperationType::Serve,
+            &json!({}),
+            "testdrive",
+            "Default",
+        );
+        assert_eq!(empty_serve.1.as_deref(), Some("HTTP at Default"));
+        let serve_paths =
+            operation_control_paths(OperationType::Serve, empty_serve.0, empty_serve.1, None);
+        assert!(!serve_paths.dest_browseable);
+        assert_eq!(serve_paths.destination.as_deref(), Some("HTTP at Default"));
+
+        let saf = operation_control_configured_paths(
+            OperationType::Mount,
+            &json!({ "mountType": "saf", "srcFs": "phone:" }),
+            "phone",
+            "Default",
+        );
+        assert_eq!(saf.1.as_deref(), Some("saf://phone"));
+        assert!(is_saf_mount(&json!({ "mountPoint": "saf://phone" })));
     }
 }

@@ -1423,7 +1423,13 @@ impl FlowView {
 
         let snap = self.ctx.snapshot.borrow().clone();
         let live = crate::jobs::find_active_quick_run(&snap.jobs, qr);
-        let (cfg_src, cfg_dst) = qr.paths();
+        let default_addr = self.ctx.t_or("dashboard.appDetail.default", "Default");
+        let (cfg_src, cfg_dst) = crate::jobs::operation_control_configured_paths(
+            qr.operation_type,
+            &qr.config.rclone,
+            &qr.remote_name,
+            &default_addr,
+        );
         let paths = crate::jobs::operation_control_paths(qr.operation_type, cfg_src, cfg_dst, live);
         let active = live.is_some();
         let busy = self
@@ -1436,6 +1442,7 @@ impl FlowView {
             source: paths.source,
             destination: paths.destination,
             hide_destination: paths.hide_destination,
+            dest_browseable: paths.dest_browseable,
             dry_run: crate::jobs::is_dry_run(&qr.config.rclone),
             resync: crate::jobs::is_resync(&qr.config.rclone),
             active,

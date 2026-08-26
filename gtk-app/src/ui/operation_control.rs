@@ -18,6 +18,7 @@ pub struct OperationControlSpec {
     pub source: Option<String>,
     pub destination: Option<String>,
     pub hide_destination: bool,
+    pub dest_browseable: bool,
     pub dry_run: bool,
     pub resync: bool,
     pub active: bool,
@@ -221,7 +222,7 @@ pub fn operation_control(
 fn path_rows(ctx: &AppCtx, spec: &OperationControlSpec) -> Vec<adw::ActionRow> {
     let serve = spec.operation == OperationType::Serve;
     let mut rows = Vec::new();
-    for (title_key, fallback, path, hidden) in [
+    for (title_key, fallback, path, hidden, is_source) in [
         (
             if serve {
                 "dashboard.appDetail.serving"
@@ -231,6 +232,7 @@ fn path_rows(ctx: &AppCtx, spec: &OperationControlSpec) -> Vec<adw::ActionRow> {
             if serve { "Serving" } else { "Source" },
             spec.source.clone().unwrap_or_default(),
             false,
+            true,
         ),
         (
             if serve {
@@ -245,15 +247,24 @@ fn path_rows(ctx: &AppCtx, spec: &OperationControlSpec) -> Vec<adw::ActionRow> {
             },
             spec.destination.clone().unwrap_or_default(),
             spec.hide_destination,
+            false,
         ),
     ] {
-        if hidden || path.is_empty() {
+        if hidden {
             continue;
         }
+        let display = if path.is_empty() {
+            ctx.t_or("dashboard.appDetail.notConfigured", "Not configured")
+        } else {
+            path.clone()
+        };
         let row = adw::ActionRow::new();
         row.set_title(&ctx.t_or(title_key, fallback));
-        row.set_subtitle(&path);
-        if crate::transfers::browse_for(&path).is_some() {
+        row.set_subtitle(&display);
+        let can_browse = !path.is_empty()
+            && (is_source || spec.dest_browseable)
+            && crate::transfers::browse_for(&path).is_some();
+        if can_browse {
             let open = gtk::Button::from_icon_name("folder-open-symbolic");
             open.set_tooltip_text(Some(&ctx.t_or(
                 "detailShared.pathDisplay.openInExplorer",
@@ -271,7 +282,7 @@ fn path_rows(ctx: &AppCtx, spec: &OperationControlSpec) -> Vec<adw::ActionRow> {
         let copy = gtk::Button::from_icon_name("edit-copy-symbolic");
         copy.set_tooltip_text(Some(&ctx.t_or("common.copy", "Copy path")));
         copy.set_valign(gtk::Align::Center);
-        let copy_text = path.clone();
+        let copy_text = display.clone();
         copy.connect_clicked(move |_| {
             if let Some(display) = gtk::gdk::Display::default() {
                 display.clipboard().set_text(&copy_text);

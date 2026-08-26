@@ -3061,10 +3061,25 @@ impl Dashboard {
         }
         let live = remote
             .and_then(|remote| crate::jobs::find_active_job(&snap.jobs, &remote.name, op, profile));
+        let default_addr = self.ctx.t_or("dashboard.appDetail.default", "Default");
         let (cfg_src, cfg_dst) = cfg
             .as_ref()
-            .map(|cfg| crate::store::quick_run_paths(&cfg.rclone, op))
-            .unwrap_or((None, None));
+            .map(|cfg| {
+                crate::jobs::operation_control_configured_paths(
+                    op,
+                    &cfg.rclone,
+                    name,
+                    &default_addr,
+                )
+            })
+            .unwrap_or_else(|| {
+                crate::jobs::operation_control_configured_paths(
+                    op,
+                    &serde_json::json!({}),
+                    name,
+                    &default_addr,
+                )
+            });
         let paths = crate::jobs::operation_control_paths(op, cfg_src, cfg_dst, live);
         let busy = crate::jobs::action_in_progress(
             name,
@@ -3084,6 +3099,7 @@ impl Dashboard {
             source: paths.source,
             destination: paths.destination,
             hide_destination: paths.hide_destination,
+            dest_browseable: paths.dest_browseable,
             dry_run: dry_on,
             resync: resync_on,
             active,
