@@ -310,7 +310,7 @@ impl NautilusView {
         let ops = gtk::ListBox::new();
         ops.add_css_class("boxed-list");
         let ops_scroll = gtk::ScrolledWindow::new();
-        ops_scroll.set_min_content_height(90);
+        ops_scroll.set_min_content_height(260);
         ops_scroll.set_child(Some(&ops));
 
         let status = gtk::Label::new(Some(&ctx.t_or("common.ready", "Ready")));
