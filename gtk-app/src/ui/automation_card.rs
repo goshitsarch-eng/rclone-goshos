@@ -127,7 +127,7 @@ fn build_card(
     card.set_margin_end(2);
 
     let header = adw::ActionRow::new();
-    header.set_title(&record.profile);
+    header.set_title(&record.name);
     header.set_subtitle(&format!(
         "{} · {} · {}",
         record.remote,

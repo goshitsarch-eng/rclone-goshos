@@ -769,3 +769,4 @@ This client is the GTK 4 + libadwaita desktop UI. It talks to a local `rclone rc
 - The Automations origin chip lists every scheduled item (it previously compared job-origin labels and hid Quick Run automations)
 - Live GUI: Flow Automations row for `gui-qr-copy` shows Failed, 3 ok / 1 fail / 4 runs, and last error `network timeout`
 - Automations use Angular-style cards: compact overview (status, 4 stats, next run) and detailed remote cards (schedule, statistics, paths with Open in Files, last error, running job) with a carousel when a remote has more than one
+- Live GUI: Flow Automations compact card shows **gui-qr-copy**, **Failed**, and stats **3 / 1 / 0 / 4**
