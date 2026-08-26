@@ -1307,15 +1307,22 @@ impl NautilusView {
         ));
         more.set_widget_name(&crate::fileops::file_item_menu_widget_name(name));
         let popover = gtk::Popover::new();
+        let host = gtk::Box::new(gtk::Orientation::Vertical, 0);
+        popover.set_child(Some(&host));
         more.set_popover(Some(&popover));
         {
             let view = self.clone();
             let name = name.to_string();
-            popover.connect_show(move |p| {
+            let host = host.clone();
+            let popover_ref = popover.clone();
+            popover.connect_show(move |_| {
                 view.skip_lasso.set(true);
                 view.ignore_activate.set(true);
                 view.ensure_name_selected(&name, primary);
-                p.set_child(Some(&view.build_context_menu(p)));
+                while let Some(child) = host.first_child() {
+                    host.remove(&child);
+                }
+                host.append(&view.build_context_menu(&popover_ref));
             });
         }
         {
