@@ -1216,11 +1216,16 @@ impl NautilusView {
         {
             let view = self.clone();
             let host = widget.clone().upcast::<gtk::Widget>();
-            gesture.connect_pressed(move |g, n_press, x, y| {
+            gesture.connect_pressed(move |g, n_press, _, _| {
                 if n_press != 1 {
                     return;
                 }
                 g.set_state(gtk::EventSequenceState::Claimed);
+            });
+            gesture.connect_released(move |_, n_press, x, y| {
+                if n_press != 1 {
+                    return;
+                }
                 if let Some(name) = view.hit_test_name(&host, x, y, grid, primary) {
                     view.ensure_name_selected(&name, primary);
                 }
@@ -1303,17 +1308,25 @@ impl NautilusView {
             claim.set_button(1);
             claim.set_exclusive(true);
             claim.set_propagation_phase(gtk::PropagationPhase::Capture);
-            claim.connect_pressed(move |g, n_press, x, y| {
+            {
+                let view = view.clone();
+                claim.connect_pressed(move |g, n_press, _, _| {
+                    if n_press != 1 {
+                        return;
+                    }
+                    g.set_state(gtk::EventSequenceState::Claimed);
+                    view.skip_lasso.set(true);
+                    view.ignore_activate.set(true);
+                });
+            }
+            claim.connect_released(move |_, n_press, x, y| {
                 if n_press != 1 {
                     return;
                 }
-                g.set_state(gtk::EventSequenceState::Claimed);
-                view.skip_lasso.set(true);
-                view.ignore_activate.set(true);
                 view.ensure_name_selected(&name, primary);
                 view.popup_context_at(&target, x.max(12.0), y.max(16.0));
                 let view = view.clone();
-                glib::idle_add_local_once(move || {
+                glib::timeout_add_local_once(std::time::Duration::from_millis(200), move || {
                     view.ignore_activate.set(false);
                     view.skip_lasso.set(false);
                 });
@@ -1328,18 +1341,31 @@ impl NautilusView {
             secondary.set_button(3);
             secondary.set_exclusive(true);
             secondary.set_propagation_phase(gtk::PropagationPhase::Capture);
-            secondary.connect_pressed(move |g, _, x, y| {
-                g.set_state(gtk::EventSequenceState::Claimed);
-                view.skip_lasso.set(true);
-                view.ignore_activate.set(true);
-                view.ensure_name_selected(&name, primary);
-                view.popup_context_at(&target, x, y);
+            {
                 let view = view.clone();
-                glib::idle_add_local_once(move || {
-                    view.ignore_activate.set(false);
-                    view.skip_lasso.set(false);
+                secondary.connect_pressed(move |g, _, _, _| {
+                    g.set_state(gtk::EventSequenceState::Claimed);
+                    view.skip_lasso.set(true);
+                    view.ignore_activate.set(true);
                 });
-            });
+            }
+            {
+                let view = view.clone();
+                let name = name.clone();
+                let target = target.clone();
+                secondary.connect_released(move |_, _, x, y| {
+                    view.ensure_name_selected(&name, primary);
+                    view.popup_context_at(&target, x, y);
+                    let view = view.clone();
+                    glib::timeout_add_local_once(
+                        std::time::Duration::from_millis(200),
+                        move || {
+                            view.ignore_activate.set(false);
+                            view.skip_lasso.set(false);
+                        },
+                    );
+                });
+            }
             more.add_controller(secondary);
         }
         more
@@ -1352,11 +1378,18 @@ impl NautilusView {
         let view = self.clone();
         let name = name.to_string();
         let target = widget.clone().upcast::<gtk::Widget>();
-        gesture.connect_pressed(move |g, _, x, y| {
+        gesture.connect_pressed(move |g, _, _, _| {
             g.set_state(gtk::EventSequenceState::Claimed);
-            view.ensure_name_selected(&name, primary);
-            view.popup_context_at(&target, x, y);
         });
+        {
+            let view = view.clone();
+            let name = name.clone();
+            let target = target.clone();
+            gesture.connect_released(move |_, _, x, y| {
+                view.ensure_name_selected(&name, primary);
+                view.popup_context_at(&target, x, y);
+            });
+        }
         widget.add_controller(gesture);
     }
 
