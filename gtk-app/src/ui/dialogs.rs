@@ -9580,8 +9580,14 @@ pub fn file_viewer(
             }
         });
     }
-    let download =
-        gtk::Button::with_label(&ctx.t_or("fileBrowser.fileViewer.download", "Download"));
+    let download = gtk::Button::with_label(&{
+        let label = ctx.tf("fileBrowser.fileViewer.download", &[("name", name)]);
+        if label.contains("{{") {
+            format!("Download {name}")
+        } else {
+            label
+        }
+    });
     {
         let parent = parent.clone();
         let ctx = ctx.clone();

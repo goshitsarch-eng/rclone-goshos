@@ -825,3 +825,9 @@ This client is the GTK 4 + libadwaita desktop UI. It talks to a local `rclone rc
 - File viewer text falls back to `--rc-serve` when rclone has no `operations/cat` (1.60)
 - Live GUI: testdrive `Photos/README.md` Show Preview embeds orange `photo1.jpg` (First photo) and blue `photo2.jpg` (Second photo) plus Shortcut Targets
 - Live GUI: Flow `gui-qr-copy` Scheduled Task shows Daily at 7:00; editor Your Schedule describes `0 9 15 * 1` as At 9:00, on day 15, on Monday and `0 9,18 * * 1-5` as Weekdays at 9:00 and 18:00, then restores `0 7 * * *`
+- Dashboard and Flow custom bandwidth Apply reject invalid values (`xyz`) with `validators.bandwidth` and keep empty/`off`/`0` as unlimited; Preferences uses the same limit helper
+- Remote-config / Start Operation / Quick Run / helper saves type-check flag editors via `validate_flag_text` and refuse persist on the first invalid field
+- Remote PDF preview uses `--rc-serve` `preview_bytes` into `pdf_panel` (pdftoppm) instead of treating PDF as a non-streamable download-only type
+- Embedded folder pickers honor Angular `FilePickerConfig.multi`: extra selected paths fill Additional source rows on Copy/Sync/Move
+- Live GUI: `--file-viewer testdrive:Photos/preview.pdf` shows Remote PDF preview, 552 B, 1 pages, and rendered page text Remote PDF Preview
+- Live GUI: dashboard Bandwidth Limit presets change Saved/Live limit (1 MB/s → 1M, 10 MB/s → 10M)
