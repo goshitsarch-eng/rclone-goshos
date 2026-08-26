@@ -700,3 +700,7 @@ This client is the GTK 4 + libadwaita desktop UI. It talks to a local `rclone rc
 - Clone Remote / `#/remote-config?cloneFrom=` opens the wizard with dumped fields and a suggested name; rclone.conf is written only on Save
 - Remote-config “Save as template” opens the full capture inspector with that remote preselected
 - Files listings render the first 200 items and offer Show N more (Angular view-pane batch)
+- Live GUI: Templates Manage → Parity Capture Edit shows Visual Inspector (dlna expander, Add Key, 220/220) and JSON Editor (`"dlna"` / `"filter"`)
+- Live GUI: `--clone-from testdrive` opens the wizard with suggested name `testdrive-2` and type alias; store + `rclone listremotes` stay unchanged until Save
+- Live GUI: remote-config testdrive **Save Current Settings as Template** opens the full capture inspector (7/7 remote keys, Visual Inspector)
+- Live GUI: `testdrive:batch250` (250 files) first paint ends at `file-200.txt` with **Show 50 more** and status `250 items`
