@@ -716,3 +716,13 @@ This client is the GTK 4 + libadwaita desktop UI. It talks to a local `rclone rc
 - Live GUI: `--clone-from testdrive` opens the wizard with suggested name `testdrive-2` and type alias; store + `rclone listremotes` stay unchanged until Save
 - Live GUI: remote-config testdrive **Save Current Settings as Template** opens the full capture inspector (7/7 remote keys, Visual Inspector)
 - Live GUI: `testdrive:batch250` (250 files) first paint ends at `file-200.txt` with **Show 50 more** and status `250 items`
+- Detached Files / Flow / Dashboard windows get the application hamburger, global shortcuts, and shared `win.*` actions (Preferences, About, Quit, Ctrl+?)
+- Shortcuts search shows Angular’s empty state (`shared.search.title` / `description` / `action`) when nothing matches
+- Nautilus cheat sheet lists F2 rename, Space preview, and Ctrl+Shift+D detach
+- About Legal / Credits use `modals.about.toolkit`, `licenseId`, `gnuGpl`, `leadName`, and `ackTextGtk`
+- Live GUI: `--shortcuts` shows Global / Application / Quit / Preferences / Flags / Ctrl+Alt+A / Flow
+- Live GUI: `--dialog keyboard-shortcuts --dialog-data '{"nautilus":true}'` shows File Browser (Nautilus) plus Copy / Cut / Paste / F5
+- Live GUI: `--delete-remote testdrive` opens Delete testdrive? (mounts/serves/jobs + quick runs)
+- Live GUI: `--quick-run-editor gui-qr-copy` opens the Quick Run editor (Name / testdrive copy)
+- Live GUI: `--restore-preview` opens Restore Backup (password + Restore Specific Profile)
+- Live GUI: `--export testdrive` opens Export with Type Full Backup and remote testdrive preselected

@@ -1422,10 +1422,13 @@ fn present_standalone_workspace(app: &adw::Application, ctx: &AppCtx, target: &N
             toast.set_child(Some(&flow.root));
             flow.refresh();
             flow.select_quick_run(quick_run.as_deref());
-            present_plain_window(
+            present_overlay_window(
                 app,
+                ctx,
                 &ctx.t_or("titlebar.menu.flowWorkspace", "Flow"),
-                toast.upcast(),
+                toast,
+                None,
+                false,
             );
         }
         NavTarget::Dashboard { tab, remote } => {
@@ -1434,13 +1437,16 @@ fn present_standalone_workspace(app: &adw::Application, ctx: &AppCtx, target: &N
             toast.set_child(Some(&dash.root));
             dash.refresh();
             dash.navigate(*tab, remote.as_deref());
-            present_plain_window(
+            present_overlay_window(
                 app,
+                ctx,
                 &ctx.t_or(
                     "settings.general.default_view.options.main_menu",
                     "Main Menu",
                 ),
-                toast.upcast(),
+                toast,
+                None,
+                false,
             );
         }
         _ => {}
@@ -1482,21 +1488,10 @@ pub fn present_files_at(parent: &impl IsA<gtk::Widget>, ctx: &AppCtx, remote: &s
     let Some(win) = parent.root().and_downcast::<gtk::Window>() else {
         return;
     };
-    let Some(app) = win.application() else {
+    let Some(app) = win.application().and_downcast::<adw::Application>() else {
         return;
     };
-    let toast = adw::ToastOverlay::new();
-    let files = NautilusView::new(ctx.clone(), toast.clone());
-    toast.set_child(Some(&files.root));
-    let target = files_target(remote, path);
-    files.navigate_to(&target);
-    let detached = adw::ApplicationWindow::new(&app);
-    detached.set_title(Some(&ctx.t_or("nautilus.titles.files", "Files")));
-    detached.set_default_width(960);
-    detached.set_default_height(640);
-    detached.set_content(Some(&toast));
-    detached.present();
-    ctx.register_overlay(&detached);
+    present_files_overlay(&app, ctx, remote, path, None);
 }
 
 fn files_target(remote: &str, path: &str) -> String {
@@ -1514,15 +1509,7 @@ fn files_target(remote: &str, path: &str) -> String {
 }
 
 fn present_files_window(app: &adw::Application, ctx: &AppCtx, remote: &str, path: &str) {
-    let toast = adw::ToastOverlay::new();
-    let files = NautilusView::new(ctx.clone(), toast.clone());
-    toast.set_child(Some(&files.root));
-    files.navigate_to(&files_target(remote, path));
-    let window = present_plain_window(
-        app,
-        &ctx.t_or("nautilus.titles.files", "Files"),
-        toast.upcast(),
-    );
+    let window = present_files_overlay_ex(app, ctx, remote, path, None, false);
     {
         let ctx = ctx.clone();
         window.connect_close_request(move |win| {
@@ -1537,27 +1524,489 @@ fn present_files_window(app: &adw::Application, ctx: &AppCtx, remote: &str, path
     }
 }
 
-fn present_plain_window(
+pub fn present_files_overlay(
     app: &adw::Application,
+    ctx: &AppCtx,
+    remote: &str,
+    path: &str,
+    title: Option<&str>,
+) -> adw::ApplicationWindow {
+    present_files_overlay_ex(app, ctx, remote, path, title, true)
+}
+
+fn present_files_overlay_ex(
+    app: &adw::Application,
+    ctx: &AppCtx,
+    remote: &str,
+    path: &str,
+    title: Option<&str>,
+    register: bool,
+) -> adw::ApplicationWindow {
+    let toast = adw::ToastOverlay::new();
+    let files = NautilusView::new(ctx.clone(), toast.clone());
+    toast.set_child(Some(&files.root));
+    files.navigate_to(&files_target(remote, path));
+    let fallback = ctx.t_or("nautilus.titles.files", "Files");
+    present_overlay_window(
+        app,
+        ctx,
+        title.unwrap_or(&fallback),
+        toast,
+        Some(files),
+        register,
+    )
+}
+
+fn present_overlay_window(
+    app: &adw::Application,
+    ctx: &AppCtx,
     title: &str,
-    content: gtk::Widget,
+    toast: adw::ToastOverlay,
+    files: Option<NautilusView>,
+    register: bool,
 ) -> adw::ApplicationWindow {
     let toolbar = adw::ToolbarView::new();
-    toolbar.add_top_bar(&adw::HeaderBar::new());
-    toolbar.set_content(Some(&content));
+    let header = adw::HeaderBar::new();
+    let menu_btn = gtk::MenuButton::builder()
+        .icon_name("open-menu-symbolic")
+        .tooltip_text(&ctx.t_or("titlebar.appMenu", "Application menu"))
+        .menu_model(&app_menu(ctx))
+        .build();
+    header.pack_end(&menu_btn);
+    toolbar.add_top_bar(&header);
+    toolbar.set_content(Some(&toast));
     let window = adw::ApplicationWindow::new(app);
     window.set_title(Some(title));
     window.set_default_width(1100);
     window.set_default_height(760);
     window.set_content(Some(&toolbar));
+    install_overlay_actions(&window, ctx, &toast, files);
+    install_shortcuts(&window);
     window.present();
+    if register {
+        ctx.register_overlay(&window);
+    }
     window
+}
+
+fn install_overlay_actions(
+    window: &adw::ApplicationWindow,
+    ctx: &AppCtx,
+    toast: &adw::ToastOverlay,
+    files: Option<NautilusView>,
+) {
+    let add_action = |name: &str, cb: Box<dyn Fn() + 'static>| {
+        let action = gio::SimpleAction::new(name, None);
+        action.connect_activate(move |_, _| cb());
+        window.add_action(&action);
+    };
+    let refresh = {
+        let ctx = ctx.clone();
+        Rc::new(move || ctx.refresh_runtime())
+    };
+    {
+        let ctx = ctx.clone();
+        let window = window.clone();
+        let refresh = refresh.clone();
+        add_action(
+            "quick-add",
+            Box::new(move || dialogs::quick_add_remote(&window, ctx.clone(), refresh.clone())),
+        );
+    }
+    {
+        let ctx = ctx.clone();
+        let window = window.clone();
+        let refresh = refresh.clone();
+        add_action(
+            "remote-config",
+            Box::new(move || dialogs::remote_config(&window, ctx.clone(), None, refresh.clone())),
+        );
+    }
+    {
+        let ctx = ctx.clone();
+        let window = window.clone();
+        add_action(
+            "preferences",
+            Box::new(move || dialogs::preferences(&window, ctx.clone())),
+        );
+    }
+    {
+        let ctx = ctx.clone();
+        let window = window.clone();
+        add_action(
+            "rclone-flags",
+            Box::new(move || dialogs::rclone_flags(&window, ctx.clone())),
+        );
+    }
+    {
+        let ctx = ctx.clone();
+        let window = window.clone();
+        add_action(
+            "backends",
+            Box::new(move || dialogs::backends(&window, ctx.clone())),
+        );
+    }
+    {
+        let ctx = ctx.clone();
+        let window = window.clone();
+        add_action(
+            "alerts",
+            Box::new(move || dialogs::alerts(&window, ctx.clone())),
+        );
+    }
+    {
+        let ctx = ctx.clone();
+        let window = window.clone();
+        add_action(
+            "logs",
+            Box::new(move || dialogs::logs(&window, ctx.clone(), None)),
+        );
+    }
+    {
+        let ctx = ctx.clone();
+        let window = window.clone();
+        add_action(
+            "shortcuts",
+            Box::new(move || dialogs::shortcuts(&window, &ctx)),
+        );
+    }
+    {
+        let ctx = ctx.clone();
+        let window = window.clone();
+        add_action(
+            "templates",
+            Box::new(move || dialogs::templates(&window, ctx.clone())),
+        );
+    }
+    {
+        let ctx = ctx.clone();
+        let window = window.clone();
+        let toast = toast.clone();
+        add_action(
+            "updates",
+            Box::new(move || dialogs::updates(&window, ctx.clone(), toast.clone())),
+        );
+    }
+    {
+        let ctx = ctx.clone();
+        let window = window.clone();
+        add_action(
+            "whats-new",
+            Box::new(move || dialogs::whats_new(&window, ctx.clone(), "app")),
+        );
+    }
+    {
+        let ctx = ctx.clone();
+        let window = window.clone();
+        let toast = toast.clone();
+        add_action(
+            "install-rclone",
+            Box::new(move || dialogs::install_rclone_update(&window, ctx.clone(), toast.clone())),
+        );
+    }
+    {
+        let ctx = ctx.clone();
+        let window = window.clone();
+        let refresh = refresh.clone();
+        add_action(
+            "item-order",
+            Box::new(move || dialogs::item_order(&window, ctx.clone(), refresh.clone())),
+        );
+    }
+    {
+        let ctx = ctx.clone();
+        let window = window.clone();
+        add_action(
+            "about",
+            Box::new(move || dialogs::about(&window, ctx.clone())),
+        );
+    }
+    {
+        let ctx = ctx.clone();
+        let window = window.clone();
+        let toast = toast.clone();
+        add_action(
+            "export",
+            Box::new(move || dialogs::export_backup(&window, ctx.clone(), toast.clone(), None)),
+        );
+    }
+    {
+        let ctx = ctx.clone();
+        let window = window.clone();
+        let toast = toast.clone();
+        let refresh = refresh.clone();
+        add_action(
+            "import",
+            Box::new(move || {
+                dialogs::import_backup(&window, ctx.clone(), toast.clone(), refresh.clone())
+            }),
+        );
+    }
+    {
+        let ctx = ctx.clone();
+        add_action(
+            "unmount-all",
+            Box::new(move || {
+                if let Some(c) = ctx.client() {
+                    let _ = c.unmount_all();
+                    ctx.refresh_runtime();
+                }
+            }),
+        );
+    }
+    {
+        let ctx = ctx.clone();
+        add_action(
+            "stop-jobs",
+            Box::new(move || {
+                if let Some(c) = ctx.client() {
+                    let ids: Vec<u64> = ctx
+                        .snapshot
+                        .borrow()
+                        .jobs
+                        .iter()
+                        .filter(|job| {
+                            crate::jobs::job_is_running(job) || crate::jobs::job_is_pending(job)
+                        })
+                        .map(|job| job.id)
+                        .collect();
+                    for jobid in ids {
+                        let _ = c.job_stop(jobid);
+                    }
+                    ctx.refresh_runtime();
+                }
+            }),
+        );
+    }
+    {
+        let ctx = ctx.clone();
+        add_action(
+            "stop-serves",
+            Box::new(move || {
+                if let Some(c) = ctx.client() {
+                    let _ = c.serve_stop_all();
+                    ctx.refresh_runtime();
+                }
+            }),
+        );
+    }
+    {
+        let window = window.clone();
+        let ctx = ctx.clone();
+        add_action(
+            "quit",
+            Box::new(move || {
+                let window = window.clone();
+                let closer = window.clone();
+                dialogs::confirm_shutdown(&window, ctx.clone(), move || {
+                    if let Some(app) = closer.application() {
+                        app.quit();
+                    }
+                });
+            }),
+        );
+    }
+    let view_action = gio::SimpleAction::new_stateful(
+        "view",
+        Some(&glib::VariantTy::STRING),
+        &glib::Variant::from("nautilus"),
+    );
+    {
+        let ctx = ctx.clone();
+        let window = window.clone();
+        view_action.connect_activate(move |action, value| {
+            if let Some(v) = value.and_then(|v| v.str().map(|s| s.to_string())) {
+                ctx.request_nav(match v.as_str() {
+                    "nautilus" => NavTarget::Files {
+                        remote: String::new(),
+                        path: String::new(),
+                    },
+                    "flow" => NavTarget::Flow { quick_run: None },
+                    _ => NavTarget::Dashboard {
+                        tab: crate::operations::AppTab::General,
+                        remote: None,
+                    },
+                });
+                action.set_state(&glib::Variant::from(v.as_str()));
+                let _ = window;
+            }
+        });
+    }
+    window.add_action(&view_action);
+    {
+        let ctx = ctx.clone();
+        add_action(
+            "toggle-flow",
+            Box::new(move || ctx.request_nav(NavTarget::Flow { quick_run: None })),
+        );
+    }
+    {
+        let ctx = ctx.clone();
+        let toast = toast.clone();
+        add_action(
+            "refresh-mounts",
+            Box::new(move || match ctx.force_check_mounts() {
+                Ok(_) => toast.add_toast(adw::Toast::new(
+                    &ctx.t_or("shortcuts.mountsRefreshSuccess", "Mounts refreshed"),
+                )),
+                Err(error) => toast.add_toast(adw::Toast::new(&error)),
+            }),
+        );
+    }
+    {
+        let ctx = ctx.clone();
+        let toast = toast.clone();
+        add_action(
+            "refresh-serves",
+            Box::new(move || match ctx.force_check_serves() {
+                Ok(_) => toast.add_toast(adw::Toast::new(
+                    &ctx.t_or("shortcuts.servesRefreshSuccess", "Serves refreshed"),
+                )),
+                Err(error) => toast.add_toast(adw::Toast::new(&error)),
+            }),
+        );
+    }
+    add_action(
+        "open-config",
+        Box::new(|| {
+            let _ = open::that(crate::settings::AppSettings::config_dir());
+        }),
+    );
+    add_action(
+        "open-cache",
+        Box::new(|| {
+            let dir = crate::settings::AppSettings::cache_dir();
+            let _ = std::fs::create_dir_all(&dir);
+            let _ = open::that(dir);
+        }),
+    );
+    add_action(
+        "open-log",
+        Box::new(|| {
+            let _ = open::that(crate::settings::AppSettings::log_path());
+        }),
+    );
+    {
+        let ctx = ctx.clone();
+        let window = window.clone();
+        add_action(
+            "memory",
+            Box::new(move || dialogs::memory_stats(&window, ctx.clone())),
+        );
+    }
+    {
+        let ctx = ctx.clone();
+        let toast = toast.clone();
+        add_action(
+            "gc",
+            Box::new(move || {
+                if let Some(client) = ctx.client() {
+                    match client.gc() {
+                        Ok(_) => toast.add_toast(adw::Toast::new(
+                            &ctx.t_or("developerTools.gcStarted", "Garbage collection started"),
+                        )),
+                        Err(e) => toast.add_toast(adw::Toast::new(&e.to_string())),
+                    }
+                }
+            }),
+        );
+    }
+    {
+        let ctx = ctx.clone();
+        let toast = toast.clone();
+        add_action(
+            "fscache",
+            Box::new(move || {
+                if let Some(client) = ctx.client() {
+                    match client.fscache_clear() {
+                        Ok(_) => toast.add_toast(adw::Toast::new(
+                            &ctx.t_or("modals.about.cacheCleared", "Cache cleared successfully"),
+                        )),
+                        Err(e) => toast.add_toast(adw::Toast::new(&e.to_string())),
+                    }
+                }
+            }),
+        );
+    }
+    {
+        let ctx = ctx.clone();
+        let window = window.clone();
+        add_action(
+            "ping",
+            Box::new(move || {
+                let urls = ctx.settings.borrow().core.connection_check_urls.clone();
+                let results = crate::connection::check_links(&urls, 4);
+                let body = results
+                    .iter()
+                    .map(|r| {
+                        format!(
+                            "{} — {} ({})",
+                            r.url,
+                            if r.ok { "ok" } else { "fail" },
+                            r.detail
+                        )
+                    })
+                    .collect::<Vec<_>>()
+                    .join("\n");
+                let alert = adw::AlertDialog::new(
+                    Some(&crate::connection::summarize(&results)),
+                    Some(&body),
+                );
+                alert.add_response("ok", &ctx.t_or("common.ok", "OK"));
+                alert.present(Some(&window));
+            }),
+        );
+    }
+    {
+        let window = window.clone();
+        let ctx = ctx.clone();
+        add_action(
+            "debug-info",
+            Box::new(move || dialogs::debug_info(&window, ctx.clone())),
+        );
+    }
+    add_action(
+        "inspector",
+        Box::new(|| gtk::Window::set_interactive_debugging(true)),
+    );
+    {
+        let ctx = ctx.clone();
+        add_action("close-overlay", Box::new(move || ctx.close_overlays()));
+    }
+    {
+        let app = window.application();
+        let toast = toast.clone();
+        add_action(
+            "relaunch",
+            Box::new(move || match crate::platform::relaunch() {
+                Ok(()) => {
+                    if let Some(app) = &app {
+                        app.quit();
+                    }
+                }
+                Err(e) => toast.add_toast(adw::Toast::new(&e)),
+            }),
+        );
+    }
+    {
+        let files = files.clone();
+        let app = window.application().and_downcast::<adw::Application>();
+        let ctx = ctx.clone();
+        add_action(
+            "detach-workspace",
+            Box::new(move || {
+                if let Some(files) = &files {
+                    files.detach_current_tab();
+                } else if let Some(app) = &app {
+                    open_workspace_window(app, &ctx, MainView::Flow);
+                }
+            }),
+        );
+    }
 }
 
 fn open_workspace_window(app: &adw::Application, ctx: &AppCtx, view: MainView) {
     let toast = adw::ToastOverlay::new();
-    let toolbar = adw::ToolbarView::new();
-    let header = adw::HeaderBar::new();
     let title = match view {
         MainView::Flow => ctx.t_or("titlebar.menu.flowWorkspace", "Flow"),
         MainView::Nautilus => ctx.t_or("nautilus.titles.files", "Files"),
@@ -1566,31 +2015,26 @@ fn open_workspace_window(app: &adw::Application, ctx: &AppCtx, view: MainView) {
             "Main Menu",
         ),
     };
-    match view {
+    let files = match view {
         MainView::Flow => {
             let flow = FlowView::new(ctx.clone(), toast.clone());
             toast.set_child(Some(&flow.root));
             flow.refresh();
+            None
         }
         MainView::Nautilus => {
             let files = NautilusView::new(ctx.clone(), toast.clone());
             toast.set_child(Some(&files.root));
+            Some(files)
         }
         MainView::MainMenu => {
             let dash = Dashboard::new(ctx.clone(), toast.clone());
             toast.set_child(Some(&dash.root));
             dash.refresh();
+            None
         }
-    }
-    toolbar.add_top_bar(&header);
-    toolbar.set_content(Some(&toast));
-    let window = adw::ApplicationWindow::new(app);
-    window.set_title(Some(&title));
-    window.set_default_width(1100);
-    window.set_default_height(760);
-    window.set_content(Some(&toolbar));
-    window.present();
-    ctx.register_overlay(&window);
+    };
+    present_overlay_window(app, ctx, &title, toast, files, true);
 }
 
 fn apply_nav(

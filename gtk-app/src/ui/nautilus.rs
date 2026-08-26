@@ -2428,19 +2428,11 @@ impl NautilusView {
         let Some(win) = self.root.root().and_downcast::<gtk::Window>() else {
             return;
         };
-        let Some(app) = win.application() else {
+        let Some(app) = win.application().and_downcast::<adw::Application>() else {
             return;
         };
-        let toast = adw::ToastOverlay::new();
-        let view = NautilusView::new(self.ctx.clone(), toast.clone());
-        toast.set_child(Some(&view.root));
-        let detached = adw::ApplicationWindow::new(&app);
-        detached.set_title(Some(&self.ctx.t_or("titlebar.menu.fileBrowser", "Files")));
-        detached.set_default_width(960);
-        detached.set_default_height(640);
-        detached.set_content(Some(&toast));
-        view.navigate_to(target);
-        detached.present();
+        let (remote, path) = split_remote_path(target);
+        super::window::present_files_overlay(&app, &self.ctx, &remote, &path, None);
     }
 
     fn remove_bookmark_path(&self, path: &str) {
@@ -4391,27 +4383,22 @@ impl NautilusView {
         let Some(win) = self.root.root().and_downcast::<gtk::Window>() else {
             return;
         };
-        let Some(app) = win.application() else {
+        let Some(app) = win.application().and_downcast::<adw::Application>() else {
             return;
         };
         let current = self.current.borrow().clone();
-        let toast = adw::ToastOverlay::new();
-        let view = NautilusView::new(self.ctx.clone(), toast.clone());
-        toast.set_child(Some(&view.root));
-        let detached = adw::ApplicationWindow::new(&app);
-        detached.set_title(Some(&format!("Files — {}", current.title)));
-        detached.set_default_width(960);
-        detached.set_default_height(640);
-        detached.set_content(Some(&toast));
-        let target = if current.remote == "local" {
-            current.path.clone()
-        } else if current.path.is_empty() {
-            format!("{}:", current.remote)
-        } else {
-            format!("{}:{}", current.remote, current.path)
-        };
-        view.navigate_to(&target);
-        detached.present();
+        let title = format!(
+            "{} — {}",
+            self.ctx.t_or("nautilus.titles.files", "Files"),
+            current.title
+        );
+        super::window::present_files_overlay(
+            &app,
+            &self.ctx,
+            &current.remote,
+            &current.path,
+            Some(&title),
+        );
         if self.tabs.borrow().len() > 1 {
             self.close_current_tab();
         }

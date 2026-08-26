@@ -607,7 +607,8 @@ pub fn about(parent: &impl IsA<gtk::Widget>, ctx: AppCtx) {
     let title = gtk::Label::new(Some(&ctx.t_or("modals.about.appName", "Rclone Manager")));
     title.add_css_class("title-1");
     let comments = gtk::Label::new(Some(&format!(
-        "GTK 4 + libadwaita · {} · rclone {version}\n{app_update}\n{rclone_update}",
+        "{} · {} · rclone {version}\n{app_update}\n{rclone_update}",
+        ctx.t_or("modals.about.toolkit", "GTK 4 + libadwaita"),
         env!("CARGO_PKG_VERSION")
     )));
     comments.set_wrap(true);
@@ -711,14 +712,14 @@ pub fn about(parent: &impl IsA<gtk::Widget>, ctx: AppCtx) {
     team.set_title(&ctx.t_or("modals.about.devTeam", "Development Team"));
     let lead = adw::ActionRow::new();
     lead.set_title(&ctx.t_or("modals.about.leadDeveloper", "Lead Developer"));
-    lead.set_subtitle("Zarestia Dev");
+    lead.set_subtitle(&ctx.t_or("modals.about.leadName", "Zarestia Dev"));
     team.add(&lead);
     let ack = adw::PreferencesGroup::new();
     ack.set_title(&ctx.t_or("modals.about.acknowledgments", "Acknowledgments"));
     let ack_row = adw::ActionRow::new();
     ack_row.set_title(&ctx.t_or(
-        "modals.about.ackText",
-        "This application relies on the excellent Rclone project for cloud storage management.",
+        "modals.about.ackTextGtk",
+        "This application is built with GTK 4 + libadwaita and relies on the excellent Rclone project for cloud storage management.",
     ));
     ack_row.set_subtitle_lines(4);
     ack.add(&ack_row);
@@ -737,13 +738,14 @@ pub fn about(parent: &impl IsA<gtk::Widget>, ctx: AppCtx) {
     let license = adw::PreferencesGroup::new();
     license.set_title(&ctx.t_or("modals.about.license", "License"));
     let license_row = adw::ActionRow::new();
-    license_row.set_title("GPL-3.0-or-later");
+    license_row.set_title(&ctx.t_or("modals.about.licenseId", "GPL-3.0-or-later"));
     license_row.set_subtitle(&format!(
-        "{} GNU GPL v3 {} {}",
+        "{} {} {} {}",
         ctx.t_or(
             "modals.about.licenseText1",
             "This application is free and open source software distributed under the"
         ),
+        ctx.t_or("modals.about.gnuGpl", "GNU GPL v3"),
         ctx.t_or("modals.about.orLater", "or later."),
         ctx.t_or(
             "modals.about.licenseText2",
@@ -761,8 +763,10 @@ pub fn about(parent: &impl IsA<gtk::Widget>, ctx: AppCtx) {
     ));
     third_row.set_subtitle_lines(4);
     third.add(&third_row);
-    let gpl =
-        gtk::LinkButton::with_label("https://www.gnu.org/licenses/gpl-3.0.html", "GNU GPL v3");
+    let gpl = gtk::LinkButton::with_label(
+        "https://www.gnu.org/licenses/gpl-3.0.html",
+        &ctx.t_or("modals.about.gnuGpl", "GNU GPL v3"),
+    );
     legal.append(&license);
     legal.append(&third);
     legal.append(&gpl);
@@ -1566,6 +1570,13 @@ pub fn shortcuts_open(parent: &impl IsA<gtk::Widget>, ctx: &AppCtx, nautilus: bo
             ("Ctrl+W", "nautilus.contextMenu.closeTab", "Close Tab"),
             ("Ctrl+/", "nautilus.contextMenu.toggleSplit", "Toggle Split"),
             ("Ctrl+I", "nautilus.contextMenu.switchPane", "Switch Pane"),
+            ("F2", "nautilus.contextMenu.rename", "Rename"),
+            ("Space", "nautilus.contextMenu.open", "Open / Preview"),
+            (
+                "Ctrl+Shift+D",
+                "nautilus.contextMenu.detachTab",
+                "Detach Tab",
+            ),
             ("Escape", "shortcuts.actions.closeDialog", "Close Dialog"),
         ][..],
     )];
@@ -1583,29 +1594,21 @@ pub fn shortcuts_open(parent: &impl IsA<gtk::Widget>, ctx: &AppCtx, nautilus: bo
             list.append(&row);
         }
     }
+    let empty = adw::StatusPage::new();
+    empty.set_icon_name(Some("edit-find-symbolic"));
+    empty.set_title(&ctx.t_or("shared.search.title", "No results found"));
+    empty.set_description(Some(
+        &ctx.t_or("shared.search.description", "No options match your search"),
+    ));
+    let clear = gtk::Button::with_label(&ctx.t_or("shared.search.action", "Clear Search"));
+    clear.set_halign(gtk::Align::Center);
     {
-        let list = list.clone();
-        search.connect_search_changed(move |entry| {
-            let query = entry.text().to_lowercase();
-            let mut child = list.first_child();
-            while let Some(widget) = child {
-                let next = widget.next_sibling();
-                if let Ok(row) = widget.downcast::<adw::ActionRow>() {
-                    if row.is_sensitive() {
-                        let hay = format!(
-                            "{} {} {}",
-                            row.title(),
-                            row.subtitle().unwrap_or_default(),
-                            row.widget_name()
-                        )
-                        .to_lowercase();
-                        row.set_visible(query.is_empty() || hay.contains(&query));
-                    }
-                }
-                child = next;
-            }
-        });
+        let search = search.clone();
+        clear.connect_clicked(move |_| search.set_text(""));
     }
+    empty.set_child(Some(&clear));
+    empty.set_visible(false);
+    empty.set_vexpand(true);
     let box_ = gtk::Box::new(gtk::Orientation::Vertical, 8);
     box_.set_margin_start(12);
     box_.set_margin_end(12);
@@ -1615,6 +1618,52 @@ pub fn shortcuts_open(parent: &impl IsA<gtk::Widget>, ctx: &AppCtx, nautilus: bo
     scroll.set_vexpand(true);
     scroll.set_child(Some(&list));
     box_.append(&scroll);
+    box_.append(&empty);
+    {
+        let list = list.clone();
+        let empty = empty.clone();
+        let scroll = scroll.clone();
+        search.connect_search_changed(move |entry| {
+            let query = entry.text().to_string();
+            let mut child = list.first_child();
+            let mut visible_items = 0usize;
+            let mut header: Option<adw::ActionRow> = None;
+            let mut header_has_visible = false;
+            let flush_header = |header: &Option<adw::ActionRow>, has: bool| {
+                if let Some(row) = header {
+                    row.set_visible(query.trim().is_empty() || has);
+                }
+            };
+            while let Some(widget) = child {
+                let next = widget.next_sibling();
+                if let Ok(row) = widget.downcast::<adw::ActionRow>() {
+                    if row.is_sensitive() {
+                        let visible = crate::shortcuts::shortcut_matches(
+                            &query,
+                            &row.title(),
+                            &row.subtitle().unwrap_or_default(),
+                            &row.widget_name(),
+                        );
+                        row.set_visible(visible);
+                        if visible {
+                            visible_items += 1;
+                            header_has_visible = true;
+                        }
+                    } else {
+                        flush_header(&header, header_has_visible);
+                        header = Some(row);
+                        header_has_visible = false;
+                    }
+                }
+                child = next;
+            }
+            flush_header(&header, header_has_visible);
+            let show_empty = crate::shortcuts::shortcut_search_empty(&query, visible_items);
+            empty.set_visible(show_empty);
+            list.set_visible(!show_empty);
+            scroll.set_visible(!show_empty);
+        });
+    }
     dialog.set_child(Some(&box_));
     dialog.present(Some(parent));
 }

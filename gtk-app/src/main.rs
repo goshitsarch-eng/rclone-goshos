@@ -44,6 +44,7 @@ mod repair;
 mod restrict;
 mod security;
 mod settings;
+mod shortcuts;
 mod smtp;
 mod store;
 mod syntax;

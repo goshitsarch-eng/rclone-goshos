@@ -403,6 +403,14 @@ mod tests {
             "nautilus.contextMenu.refresh",
             "generalOverview.panels.jobs",
             "generalOverview.moveUp",
+            "shared.search.title",
+            "shared.search.description",
+            "shared.search.action",
+            "modals.about.toolkit",
+            "modals.about.licenseId",
+            "modals.about.gnuGpl",
+            "modals.about.ackTextGtk",
+            "modals.about.leadName",
         ];
         for lang in SUPPORTED_LANGUAGES {
             let i18n = I18n::load(lang);

@@ -46,6 +46,7 @@ pub mod repair;
 pub mod restrict;
 pub mod security;
 pub mod settings;
+pub mod shortcuts;
 pub mod smtp;
 pub mod store;
 pub mod syntax;
