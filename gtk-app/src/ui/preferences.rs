@@ -1237,120 +1237,309 @@ pub fn rclone_conf_security_group(
     ctx: &AppCtx,
     parent: &impl IsA<gtk::Widget>,
 ) -> adw::PreferencesGroup {
-    let s1 = adw::PreferencesGroup::new();
-    s1.set_title(&ctx.t_or(
-        "modals.backend.security.configPassword",
-        "rclone.conf password",
-    ));
-    let stored = adw::PasswordEntryRow::new();
-    stored.set_title(&ctx.t_or("modals.backend.security.password", "Stored password"));
-    stored.set_text(&crate::keyring::resolve_config_password(
-        &ctx.settings.borrow().core.config_password,
-    ));
-    {
-        let ctx = ctx.clone();
-        stored.connect_changed(move |row| {
-            let mut settings = ctx.settings.borrow_mut();
-            crate::keyring::persist_password_setting(
-                &mut settings.core.config_password,
-                &row.text(),
-            );
-            drop(settings);
-            ctx.persist();
-        });
-    }
-    s1.add(&stored);
-    let keyring_row = adw::ActionRow::new();
-    keyring_row.set_title(&ctx.t_or("modals.backend.security.systemKeychain", "OS keyring"));
-    keyring_row.set_subtitle(&if crate::keyring::load_password().is_some() {
-        ctx.t_or(
-            "modals.backend.security.passwordStoredInKeyring",
-            "rclone.conf password is stored in the system keyring",
-        )
-    } else if ctx.settings.borrow().core.config_password.is_empty() {
-        ctx.t_or(
-            "modals.backend.security.protectCredentials",
-            "No password stored. Saving will prefer the system keyring when available.",
-        )
-    } else {
-        ctx.t_or(
-            "modals.backend.security.credentialsPlainText",
-            "Password is stored in settings.json because the keyring is unavailable",
-        )
-    });
-    s1.add(&keyring_row);
-    let validate = gtk::Button::with_label(&ctx.t_or("common.ok", "Validate"));
+    let outer = adw::PreferencesGroup::new();
+    outer.set_title(&ctx.t_or("modals.backend.security.encrypted", "Security"));
+    let holder = gtk::Box::new(gtk::Orientation::Vertical, 0);
+    outer.add(&holder);
+    let show_keychain_input = Rc::new(Cell::new(false));
+    let rebuild: Rc<RefCell<Rc<dyn Fn()>>> = Rc::new(RefCell::new(Rc::new(|| {})));
     {
         let ctx = ctx.clone();
         let parent = parent.clone();
-        let stored = stored.clone();
-        validate.connect_clicked(move |_| {
-            let binary = ctx.settings.borrow().core.rclone_binary.clone();
-            let client = ctx.client();
-            let msg = match crate::security::validate_password_for(
-                client.as_ref(),
-                &binary,
-                &stored.text(),
-            ) {
-                Ok(()) => "Password accepted".into(),
-                Err(e) => e,
+        let holder = holder.clone();
+        let show_keychain_input = show_keychain_input.clone();
+        let rebuild_fn = rebuild.clone();
+        *rebuild.borrow_mut() = Rc::new(move || {
+            while let Some(child) = holder.first_child() {
+                holder.remove(&child);
+            }
+            let on_changed = {
+                let rebuild = rebuild_fn.clone();
+                Rc::new(move || rebuild.borrow()()) as Rc<dyn Fn()>
             };
-            let alert = adw::AlertDialog::new(
-                Some(&ctx.t_or("modals.backend.security.configPassword", "Config password")),
-                Some(&msg),
-            );
-            alert.add_response("ok", &ctx.t("common.ok"));
-            alert.present(Some(&parent));
+            holder.append(&build_security_inner(
+                &ctx,
+                &parent,
+                show_keychain_input.clone(),
+                on_changed,
+            ));
         });
     }
-    let encrypt = gtk::Button::with_label(
-        &ctx.t_or("modals.backend.security.enableEncryption", "Encrypt config"),
-    );
-    {
-        let ctx = ctx.clone();
-        let parent = parent.clone();
-        let stored = stored.clone();
-        encrypt.connect_clicked(move |_| {
-            let binary = ctx.settings.borrow().core.rclone_binary.clone();
-            let client = ctx.client();
-            let msg =
-                match crate::security::encrypt_config_for(client.as_ref(), &binary, &stored.text())
-                {
-                    Ok(()) => {
-                        ctx.restart_engine();
-                        "rclone.conf encrypted".into()
-                    }
-                    Err(e) => e,
-                };
-            let alert = adw::AlertDialog::new(
-                Some(&ctx.t_or("modals.backend.security.enableEncryption", "Encrypt")),
-                Some(&msg),
-            );
-            alert.add_response("ok", &ctx.t("common.ok"));
-            alert.present(Some(&parent));
-        });
+    rebuild.borrow()();
+    outer
+}
+
+fn build_security_inner(
+    ctx: &AppCtx,
+    parent: &impl IsA<gtk::Widget>,
+    show_keychain_input: Rc<Cell<bool>>,
+    on_changed: Rc<dyn Fn()>,
+) -> gtk::Box {
+    let list = gtk::Box::new(gtk::Orientation::Vertical, 0);
+    list.add_css_class("boxed-list");
+    let stored = ctx.settings.borrow().core.config_password.clone();
+    let has_stored = crate::security::has_stored_password(&stored);
+    let flags = ctx.settings.borrow().core.rclone_additional_flags.clone();
+    let config_path = crate::repair::config_path_from_flags(&flags).map(std::path::PathBuf::from);
+    let encrypted =
+        crate::security::probe_config_encrypted(ctx.client().as_ref(), config_path.as_deref())
+            .unwrap_or(false);
+
+    let status = adw::ActionRow::new();
+    if encrypted {
+        status.set_title(&ctx.t_or("modals.backend.security.encrypted", "Encrypted"));
+        status.set_subtitle(&ctx.t_or(
+            "modals.backend.security.credentialsProtected",
+            "Your credentials are protected",
+        ));
+        status.add_prefix(&gtk::Image::from_icon_name("security-high-symbolic"));
+    } else {
+        status.set_title(&ctx.t_or("modals.backend.security.notEncrypted", "Not Encrypted"));
+        status.set_subtitle(&ctx.t_or(
+            "modals.backend.security.credentialsPlainText",
+            "Credentials stored in plain text",
+        ));
+        status.add_prefix(&gtk::Image::from_icon_name("security-medium-symbolic"));
     }
-    let new_pass = adw::PasswordEntryRow::new();
-    new_pass.set_title(&ctx.t_or(
-        "modals.backend.security.newPassword",
-        "New password (change)",
+    if encrypted && has_stored {
+        let key = gtk::Label::new(Some(&ctx.t_or(
+            "modals.backend.security.passwordStoredInKeyring",
+            "Password stored in system keyring",
+        )));
+        key.add_css_class("dim-label");
+        key.set_wrap(true);
+        key.set_xalign(1.0);
+        status.add_suffix(&key);
+    }
+    list.append(&status);
+
+    if encrypted {
+        append_encrypted_security(
+            &list,
+            ctx,
+            parent,
+            has_stored,
+            show_keychain_input,
+            on_changed,
+        );
+    } else {
+        append_encrypt_form(&list, ctx, parent, on_changed);
+    }
+    list
+}
+
+fn append_encrypted_security(
+    list: &gtk::Box,
+    ctx: &AppCtx,
+    parent: &impl IsA<gtk::Widget>,
+    has_stored: bool,
+    show_keychain_input: Rc<Cell<bool>>,
+    on_changed: Rc<dyn Fn()>,
+) {
+    let keychain = adw::SwitchRow::new();
+    keychain.set_title(&ctx.t_or("modals.backend.security.systemKeychain", "System Keychain"));
+    keychain.set_subtitle(&ctx.t_or(
+        "modals.backend.security.autoUnlock",
+        "Auto-unlock on startup",
     ));
-    s1.add(&new_pass);
-    let change = gtk::Button::with_label(
-        &ctx.t_or("modals.backend.security.changePassword", "Change password"),
-    );
+    keychain.set_active(has_stored || show_keychain_input.get());
     {
         let ctx = ctx.clone();
         let parent = parent.clone();
-        let stored = stored.clone();
+        let show_keychain_input = show_keychain_input.clone();
+        let on_changed = on_changed.clone();
+        keychain.connect_active_notify(move |row| {
+            if row.is_active() {
+                if !crate::security::has_stored_password(
+                    &ctx.settings.borrow().core.config_password,
+                ) {
+                    show_keychain_input.set(true);
+                    on_changed();
+                }
+                return;
+            }
+            show_keychain_input.set(false);
+            let _ = crate::keyring::delete_password();
+            ctx.settings.borrow_mut().core.config_password.clear();
+            ctx.persist();
+            security_alert(
+                parent.upcast_ref(),
+                &ctx,
+                &ctx.t_or("modals.backend.security.systemKeychain", "System Keychain"),
+                &ctx.t_or(
+                    "modals.backend.security.passwordRemoved",
+                    "Password removed from keychain",
+                ),
+            );
+            on_changed();
+        });
+    }
+    list.append(&keychain);
+
+    if show_keychain_input.get() && !has_stored {
+        let key_pass = adw::PasswordEntryRow::new();
+        key_pass.set_title(&ctx.t_or("modals.backend.security.configPassword", "Config Password"));
+        let save = gtk::Button::with_label(
+            &ctx.t_or("modals.backend.security.saveToKeychain", "Save to Keychain"),
+        );
+        save.add_css_class("suggested-action");
+        {
+            let ctx = ctx.clone();
+            let parent = parent.clone();
+            let key_pass = key_pass.clone();
+            let show_keychain_input = show_keychain_input.clone();
+            let on_changed = on_changed.clone();
+            save.connect_clicked(move |_| {
+                let password = key_pass.text().to_string();
+                if password.is_empty() {
+                    security_alert(
+                        parent.upcast_ref(),
+                        &ctx,
+                        &ctx.t_or("modals.backend.security.configPassword", "Config Password"),
+                        &ctx.t_or(
+                            "backendErrors.security.passwordEmpty",
+                            "Password cannot be empty",
+                        ),
+                    );
+                    return;
+                }
+                let binary = ctx.settings.borrow().core.rclone_binary.clone();
+                let client = ctx.client();
+                match crate::security::validate_password_for(client.as_ref(), &binary, &password) {
+                    Ok(()) => {
+                        crate::keyring::persist_password_setting(
+                            &mut ctx.settings.borrow_mut().core.config_password,
+                            &password,
+                        );
+                        ctx.persist();
+                        show_keychain_input.set(false);
+                        security_alert(
+                            parent.upcast_ref(),
+                            &ctx,
+                            &ctx.t_or("modals.backend.security.systemKeychain", "System Keychain"),
+                            &ctx.t_or(
+                                "modals.backend.security.passwordStored",
+                                "Password stored in keychain",
+                            ),
+                        );
+                        on_changed();
+                    }
+                    Err(e) => security_alert(
+                        parent.upcast_ref(),
+                        &ctx,
+                        &ctx.t_or("modals.backend.security.configPassword", "Config Password"),
+                        &e,
+                    ),
+                }
+            });
+        }
+        let cancel = gtk::Button::with_label(&ctx.t_or("common.cancel", "Cancel"));
+        {
+            let show_keychain_input = show_keychain_input.clone();
+            let on_changed = on_changed.clone();
+            cancel.connect_clicked(move |_| {
+                show_keychain_input.set(false);
+                on_changed();
+            });
+        }
+        let actions = adw::ActionRow::new();
+        actions.set_title(&ctx.t_or("modals.backend.security.saveToKeychain", "Save to Keychain"));
+        actions.add_suffix(&cancel);
+        actions.add_suffix(&save);
+        list.append(&key_pass);
+        list.append(&actions);
+    }
+
+    let change = adw::ExpanderRow::new();
+    change.set_title(&ctx.t_or("modals.backend.security.changePassword", "Change Password"));
+    change.set_subtitle(&ctx.t_or(
+        "modals.backend.security.updatePasswordDesc",
+        "Update your encryption password",
+    ));
+    let current = adw::PasswordEntryRow::new();
+    current.set_title(&ctx.t_or(
+        "modals.backend.security.currentPassword",
+        "Current Password",
+    ));
+    let new_pass = adw::PasswordEntryRow::new();
+    new_pass.set_title(&ctx.t_or("modals.backend.security.newPassword", "New Password"));
+    let confirm = adw::PasswordEntryRow::new();
+    confirm.set_title(&ctx.t_or(
+        "modals.backend.security.confirmNewPassword",
+        "Confirm New Password",
+    ));
+    let error = gtk::Label::new(None);
+    error.add_css_class("error");
+    error.set_xalign(0.0);
+    error.set_wrap(true);
+    error.set_margin_start(12);
+    error.set_margin_end(12);
+    let update = gtk::Button::with_label(
+        &ctx.t_or("modals.backend.security.updatePassword", "Update Password"),
+    );
+    update.add_css_class("suggested-action");
+    update.set_sensitive(false);
+    {
+        let ctx = ctx.clone();
+        let current_w = current.clone();
+        let new_pass_w = new_pass.clone();
+        let confirm_w = confirm.clone();
+        let error = error.clone();
+        let update = update.clone();
+        let refresh = Rc::new(move || {
+            match crate::security::validate_change_password_form(
+                &current_w.text(),
+                &new_pass_w.text(),
+                &confirm_w.text(),
+            ) {
+                Ok(()) => {
+                    error.set_text("");
+                    confirm_w.remove_css_class("error");
+                    update.set_sensitive(true);
+                }
+                Err(err) => {
+                    error.set_text(&ctx.t_or(err.i18n_key(), err.as_str()));
+                    if err == crate::security::SecurityFormError::Mismatch {
+                        confirm_w.add_css_class("error");
+                    } else {
+                        confirm_w.remove_css_class("error");
+                    }
+                    update.set_sensitive(false);
+                }
+            }
+        });
+        for row in [&current, &new_pass, &confirm] {
+            let refresh = refresh.clone();
+            row.connect_changed(move |_| refresh());
+        }
+    }
+    {
+        let ctx = ctx.clone();
+        let parent = parent.clone();
+        let current = current.clone();
         let new_pass = new_pass.clone();
-        change.connect_clicked(move |_| {
+        let confirm = confirm.clone();
+        let on_changed = on_changed.clone();
+        update.connect_clicked(move |_| {
+            if let Err(err) = crate::security::validate_change_password_form(
+                &current.text(),
+                &new_pass.text(),
+                &confirm.text(),
+            ) {
+                security_alert(
+                    parent.upcast_ref(),
+                    &ctx,
+                    &ctx.t_or("modals.backend.security.changePassword", "Change Password"),
+                    &ctx.t_or(err.i18n_key(), err.as_str()),
+                );
+                return;
+            }
             let binary = ctx.settings.borrow().core.rclone_binary.clone();
             let client = ctx.client();
-            let msg = match crate::security::change_password_for(
+            match crate::security::change_password_for(
                 client.as_ref(),
                 &binary,
-                &stored.text(),
+                &current.text(),
                 &new_pass.text(),
             ) {
                 Ok(()) => {
@@ -1360,59 +1549,257 @@ pub fn rclone_conf_security_group(
                     );
                     ctx.persist();
                     ctx.restart_engine();
-                    "Password changed".into()
+                    security_alert(
+                        parent.upcast_ref(),
+                        &ctx,
+                        &ctx.t_or("modals.backend.security.changePassword", "Change Password"),
+                        &ctx.t_or(
+                            "modals.backend.security.passwordChanged",
+                            "Password changed",
+                        ),
+                    );
+                    on_changed();
                 }
-                Err(e) => e,
-            };
-            let alert = adw::AlertDialog::new(
-                Some(&ctx.t_or("modals.backend.security.changePassword", "Change password")),
-                Some(&msg),
-            );
-            alert.add_response("ok", &ctx.t("common.ok"));
-            alert.present(Some(&parent));
+                Err(e) => security_alert(
+                    parent.upcast_ref(),
+                    &ctx,
+                    &ctx.t_or("modals.backend.security.changePassword", "Change Password"),
+                    &e,
+                ),
+            }
         });
     }
-    let unencrypt = gtk::Button::with_label(&ctx.t_or(
+    change.add_row(&current);
+    change.add_row(&new_pass);
+    change.add_row(&confirm);
+    let update_row = adw::ActionRow::new();
+    update_row.set_title(&ctx.t_or("modals.backend.security.updatePassword", "Update Password"));
+    update_row.add_suffix(&update);
+    change.add_row(&update_row);
+    list.append(&change);
+    list.append(&error);
+
+    let remove = adw::ExpanderRow::new();
+    remove.set_title(&ctx.t_or(
         "modals.backend.security.removeEncryption",
-        "Remove encryption",
+        "Remove Encryption",
     ));
+    remove.set_subtitle(&ctx.t_or(
+        "modals.backend.security.storePlainText",
+        "Store credentials in plain text",
+    ));
+    let warn = adw::ActionRow::new();
+    warn.set_title(&ctx.t_or(
+        "modals.backend.security.decryptWarning",
+        "This will decrypt your rclone configuration. Your credentials will be visible to anyone with access to your files.",
+    ));
+    warn.add_prefix(&gtk::Image::from_icon_name("dialog-warning-symbolic"));
+    let decrypt_pass = adw::PasswordEntryRow::new();
+    decrypt_pass.set_title(&ctx.t_or(
+        "modals.backend.security.currentPassword",
+        "Current Password",
+    ));
+    let decrypt = gtk::Button::with_label(&ctx.t_or(
+        "modals.backend.security.removeEncryption",
+        "Remove Encryption",
+    ));
+    decrypt.add_css_class("destructive-action");
     {
         let ctx = ctx.clone();
         let parent = parent.clone();
-        let stored = stored.clone();
-        unencrypt.connect_clicked(move |_| {
+        let decrypt_pass = decrypt_pass.clone();
+        decrypt.connect_clicked(move |_| {
+            let password = decrypt_pass.text().to_string();
+            if password.is_empty() {
+                security_alert(
+                    parent.upcast_ref(),
+                    &ctx,
+                    &ctx.t_or(
+                        "modals.backend.security.removeEncryption",
+                        "Remove Encryption",
+                    ),
+                    &ctx.t_or(
+                        "backendErrors.security.passwordEmpty",
+                        "Password cannot be empty",
+                    ),
+                );
+                return;
+            }
             let binary = ctx.settings.borrow().core.rclone_binary.clone();
             let client = ctx.client();
-            let msg = match crate::security::unencrypt_config_for(
-                client.as_ref(),
-                &binary,
-                &stored.text(),
-            ) {
+            match crate::security::unencrypt_config_for(client.as_ref(), &binary, &password) {
                 Ok(()) => {
                     let _ = crate::keyring::delete_password();
                     ctx.settings.borrow_mut().core.config_password.clear();
                     ctx.persist();
                     ctx.restart_engine();
-                    "rclone.conf encryption removed".into()
+                    security_alert(
+                        parent.upcast_ref(),
+                        &ctx,
+                        &ctx.t_or(
+                            "modals.backend.security.removeEncryption",
+                            "Remove Encryption",
+                        ),
+                        &ctx.t_or(
+                            "modals.backend.security.removeEncryption",
+                            "Remove Encryption",
+                        ),
+                    );
+                    on_changed();
                 }
-                Err(e) => e,
-            };
-            let alert = adw::AlertDialog::new(
-                Some(&ctx.t_or("modals.backend.security.removeEncryption", "Unencrypt")),
-                Some(&msg),
-            );
-            alert.add_response("ok", &ctx.t("common.ok"));
-            alert.present(Some(&parent));
+                Err(e) => security_alert(
+                    parent.upcast_ref(),
+                    &ctx,
+                    &ctx.t_or(
+                        "modals.backend.security.removeEncryption",
+                        "Remove Encryption",
+                    ),
+                    &e,
+                ),
+            }
         });
     }
-    let sec_row = adw::ActionRow::new();
-    sec_row.set_title(&ctx.t_or("common.moreActions", "Actions"));
-    sec_row.add_suffix(&validate);
-    sec_row.add_suffix(&encrypt);
-    sec_row.add_suffix(&change);
-    sec_row.add_suffix(&unencrypt);
-    s1.add(&sec_row);
-    s1
+    let decrypt_row = adw::ActionRow::new();
+    decrypt_row.add_suffix(&decrypt);
+    remove.add_row(&warn);
+    remove.add_row(&decrypt_pass);
+    remove.add_row(&decrypt_row);
+    list.append(&remove);
+}
+
+fn append_encrypt_form(
+    list: &gtk::Box,
+    ctx: &AppCtx,
+    parent: &impl IsA<gtk::Widget>,
+    on_changed: Rc<dyn Fn()>,
+) {
+    let heading = adw::ActionRow::new();
+    heading.set_title(&ctx.t_or(
+        "modals.backend.security.enableEncryption",
+        "Enable Encryption",
+    ));
+    heading.set_subtitle(&ctx.t_or(
+        "modals.backend.security.protectCredentials",
+        "Protect your credentials with a password",
+    ));
+    heading.add_prefix(&gtk::Image::from_icon_name("dialog-password-symbolic"));
+    let password = adw::PasswordEntryRow::new();
+    password.set_title(&ctx.t_or("modals.backend.security.password", "Password"));
+    let confirm = adw::PasswordEntryRow::new();
+    confirm.set_title(&ctx.t_or(
+        "modals.backend.security.confirmPassword",
+        "Confirm Password",
+    ));
+    let error = gtk::Label::new(None);
+    error.add_css_class("error");
+    error.set_xalign(0.0);
+    error.set_wrap(true);
+    error.set_margin_start(12);
+    error.set_margin_end(12);
+    let enable = gtk::Button::with_label(&ctx.t_or(
+        "modals.backend.security.enableEncryption",
+        "Enable Encryption",
+    ));
+    enable.add_css_class("suggested-action");
+    enable.set_sensitive(false);
+    {
+        let ctx = ctx.clone();
+        let password_w = password.clone();
+        let confirm_w = confirm.clone();
+        let error = error.clone();
+        let enable = enable.clone();
+        let refresh = Rc::new(move || {
+            match crate::security::validate_encrypt_form(&password_w.text(), &confirm_w.text()) {
+                Ok(()) => {
+                    error.set_text("");
+                    confirm_w.remove_css_class("error");
+                    enable.set_sensitive(true);
+                }
+                Err(err) => {
+                    error.set_text(&ctx.t_or(err.i18n_key(), err.as_str()));
+                    if err == crate::security::SecurityFormError::Mismatch {
+                        confirm_w.add_css_class("error");
+                    } else {
+                        confirm_w.remove_css_class("error");
+                    }
+                    enable.set_sensitive(false);
+                }
+            }
+        });
+        for row in [&password, &confirm] {
+            let refresh = refresh.clone();
+            row.connect_changed(move |_| refresh());
+        }
+    }
+    {
+        let ctx = ctx.clone();
+        let parent = parent.clone();
+        let password = password.clone();
+        let confirm = confirm.clone();
+        enable.connect_clicked(move |_| {
+            if let Err(err) =
+                crate::security::validate_encrypt_form(&password.text(), &confirm.text())
+            {
+                security_alert(
+                    parent.upcast_ref(),
+                    &ctx,
+                    &ctx.t_or(
+                        "modals.backend.security.enableEncryption",
+                        "Enable Encryption",
+                    ),
+                    &ctx.t_or(err.i18n_key(), err.as_str()),
+                );
+                return;
+            }
+            let binary = ctx.settings.borrow().core.rclone_binary.clone();
+            let client = ctx.client();
+            match crate::security::encrypt_config_for(client.as_ref(), &binary, &password.text()) {
+                Ok(()) => {
+                    crate::keyring::persist_password_setting(
+                        &mut ctx.settings.borrow_mut().core.config_password,
+                        &password.text(),
+                    );
+                    ctx.persist();
+                    ctx.restart_engine();
+                    security_alert(
+                        parent.upcast_ref(),
+                        &ctx,
+                        &ctx.t_or(
+                            "modals.backend.security.enableEncryption",
+                            "Enable Encryption",
+                        ),
+                        &ctx.t_or(
+                            "backendSuccess.security.encrypted",
+                            "Configuration encrypted successfully",
+                        ),
+                    );
+                    on_changed();
+                }
+                Err(e) => security_alert(
+                    parent.upcast_ref(),
+                    &ctx,
+                    &ctx.t_or(
+                        "modals.backend.security.enableEncryption",
+                        "Enable Encryption",
+                    ),
+                    &e,
+                ),
+            }
+        });
+    }
+    let enable_row = adw::ActionRow::new();
+    enable_row.add_suffix(&enable);
+    list.append(&heading);
+    list.append(&password);
+    list.append(&confirm);
+    list.append(&error);
+    list.append(&enable_row);
+}
+
+fn security_alert(parent: &gtk::Widget, ctx: &AppCtx, title: &str, body: &str) {
+    let alert = adw::AlertDialog::new(Some(title), Some(body));
+    alert.add_response("ok", &ctx.t("common.ok"));
+    alert.present(Some(parent));
 }
 
 fn add_developer_page(

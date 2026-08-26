@@ -2,7 +2,77 @@
 
 use crate::rclone::engine::resolve_rclone_binary;
 use crate::rclone::{RcClient, RcError};
+use std::path::Path;
 use std::process::Command;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SecurityFormError {
+    Empty,
+    TooShort,
+    Mismatch,
+}
+
+impl SecurityFormError {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Empty => "Password cannot be empty",
+            Self::TooShort => "Password must be at least 4 characters",
+            Self::Mismatch => "Passwords do not match",
+        }
+    }
+
+    pub fn i18n_key(self) -> &'static str {
+        match self {
+            Self::Empty => "backendErrors.security.passwordEmpty",
+            Self::TooShort => "backendErrors.security.passwordEmpty",
+            Self::Mismatch => "modals.backend.security.passwordsMismatch",
+        }
+    }
+}
+
+pub fn passwords_match(a: &str, b: &str) -> bool {
+    a == b
+}
+
+pub fn validate_encrypt_form(password: &str, confirm: &str) -> Result<(), SecurityFormError> {
+    if password.is_empty() || confirm.is_empty() {
+        return Err(SecurityFormError::Empty);
+    }
+    if password.chars().count() < 4 {
+        return Err(SecurityFormError::TooShort);
+    }
+    if !passwords_match(password, confirm) {
+        return Err(SecurityFormError::Mismatch);
+    }
+    Ok(())
+}
+
+pub fn validate_change_password_form(
+    current: &str,
+    new_password: &str,
+    confirm: &str,
+) -> Result<(), SecurityFormError> {
+    if current.is_empty() {
+        return Err(SecurityFormError::Empty);
+    }
+    validate_encrypt_form(new_password, confirm)
+}
+
+pub fn has_stored_password(settings_field: &str) -> bool {
+    !settings_field.is_empty() || crate::keyring::load_password().is_some()
+}
+
+pub fn probe_config_encrypted(
+    client: Option<&RcClient>,
+    config_path: Option<&Path>,
+) -> Option<bool> {
+    if let Some(client) = client {
+        if let Ok(flag) = client.config_is_encrypted() {
+            return Some(flag);
+        }
+    }
+    config_path.map(crate::repair::config_file_encrypted)
+}
 
 pub fn octal_escape(input: &str) -> String {
     let mut out = String::new();
@@ -182,5 +252,53 @@ mod tests {
         assert!(encrypt_config("rclone", "abc").is_err());
         assert!(validate_password_for(None, "rclone", "").is_err());
         assert!(encrypt_config_for(None, "rclone", "abc").is_err());
+    }
+
+    #[test]
+    fn encrypt_form_requires_match_and_length() {
+        assert_eq!(
+            validate_encrypt_form("", "secret"),
+            Err(SecurityFormError::Empty)
+        );
+        assert_eq!(
+            validate_encrypt_form("abc", "abc"),
+            Err(SecurityFormError::TooShort)
+        );
+        assert_eq!(
+            validate_encrypt_form("secret", "other"),
+            Err(SecurityFormError::Mismatch)
+        );
+        assert!(validate_encrypt_form("secret", "secret").is_ok());
+        assert!(passwords_match("a", "a"));
+        assert!(!passwords_match("a", "b"));
+    }
+
+    #[test]
+    fn change_password_form_requires_current() {
+        assert_eq!(
+            validate_change_password_form("", "secret", "secret"),
+            Err(SecurityFormError::Empty)
+        );
+        assert_eq!(
+            validate_change_password_form("old", "secret", "nope"),
+            Err(SecurityFormError::Mismatch)
+        );
+        assert!(validate_change_password_form("old", "secret", "secret").is_ok());
+    }
+
+    #[test]
+    fn stored_password_reads_settings_field() {
+        assert!(has_stored_password("secret"));
+        assert!(!has_stored_password(""));
+    }
+
+    #[test]
+    fn probe_encrypted_uses_file_when_offline() {
+        let tmp = std::env::temp_dir().join("rclone-manager-security-probe.conf");
+        std::fs::write(&tmp, "RCLONE_ENCRYPT_V0:\n").unwrap();
+        assert_eq!(probe_config_encrypted(None, Some(&tmp)), Some(true));
+        std::fs::write(&tmp, "[local]\ntype = local\n").unwrap();
+        assert_eq!(probe_config_encrypted(None, Some(&tmp)), Some(false));
+        let _ = std::fs::remove_file(&tmp);
     }
 }
