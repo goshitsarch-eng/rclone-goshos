@@ -219,4 +219,22 @@ mod tests {
         merge_option_flags(&mut args, &[("about".into(), None)]);
         assert_eq!(args.iter().filter(|arg| *arg == "--about").count(), 1);
     }
+
+    #[test]
+    fn merges_dialog_flags_for_restore_preview() {
+        let mut args = vec!["app".into()];
+        merge_option_flags(
+            &mut args,
+            &[
+                ("dialog".into(), Some("restore-preview".into())),
+                (
+                    "dialog-data".into(),
+                    Some(r#"{"path":"/tmp/rclone-manager-gui-backup.zip"}"#.into()),
+                ),
+            ],
+        );
+        let req = crate::platform::parse_dialog_args(&args).expect("dialog request");
+        assert_eq!(req.kind, "restore-preview");
+        assert_eq!(req.data["path"], "/tmp/rclone-manager-gui-backup.zip");
+    }
 }

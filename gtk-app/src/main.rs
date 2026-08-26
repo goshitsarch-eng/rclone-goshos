@@ -290,6 +290,9 @@ fn command_line_option_flags(
         "standalone",
         "tray",
         "hidden",
+        "dialog",
+        "dialog-data",
+        "dialog-result",
     ];
     let dict = cmdline.options_dict();
     let mut flags = Vec::new();

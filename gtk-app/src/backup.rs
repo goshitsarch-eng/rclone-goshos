@@ -609,6 +609,39 @@ mod tests {
     }
 
     #[test]
+    fn restores_gui_backup_zip_as_renamed_remote() {
+        let path = PathBuf::from("/tmp/rclone-manager-gui-backup.zip");
+        if !path.exists() {
+            return;
+        }
+        let (settings, store, rclone) =
+            restore_backup_scoped(&path, None, Some("testdrive"), Some("testdrive2")).unwrap();
+        let store = store.expect("store");
+        assert!(store.remotes.contains_key("testdrive2"));
+        assert!(!store.remotes.contains_key("testdrive"));
+        let dump = rclone.expect("rclone");
+        assert_eq!(dump["testdrive2"]["type"], "alias");
+        assert_eq!(dump["testdrive2"]["remote"], "/tmp/rclone-test-remote");
+        let mut current = AppStore::default();
+        current
+            .remotes
+            .insert("keep".into(), crate::store::RemoteMeta::default());
+        let (_, merged) = apply_restore(
+            &AppSettings::default(),
+            &current,
+            settings,
+            Some(store),
+            "FullBackup",
+            true,
+        );
+        assert!(merged.remotes.contains_key("keep"));
+        assert!(merged.remotes.contains_key("testdrive2"));
+        let params = rclone_create_params(&dump["testdrive2"]);
+        assert!(params.get("type").is_none());
+        assert_eq!(params["remote"], "/tmp/rclone-test-remote");
+    }
+
+    #[test]
     fn scoped_store_rewrites_renamed_remote_paths() {
         let mut store = AppStore::default();
         let mut meta = crate::store::RemoteMeta::default();

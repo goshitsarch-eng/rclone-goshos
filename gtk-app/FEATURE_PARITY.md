@@ -563,3 +563,4 @@ This client is the GTK 4 + libadwaita desktop UI. It talks to a local `rclone rc
 - Files Send-to add/remove toasts use `fileBrowser.messages.sendToAdded` / `sendToRemoved`
 - Detailed Remote wizard title is Remote Configuration; Quick Add keeps its own title
 - Scoped backup restore merges the renamed remote into the live store (does not replace settings)
+- GApplication re-forwards `--dialog` / `--dialog-data` / `--dialog-result` to the running instance
