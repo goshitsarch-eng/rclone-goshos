@@ -592,5 +592,6 @@ This client is the GTK 4 + libadwaita desktop UI. It talks to a local `rclone rc
 - Win/macOS tray helpers flatten `plan_tray` for restart signatures and emit nested NotifyIcon / NSStatusItem menus (per-remote Mount/Unmount/Browse, quick runs)
 - Live GUI: after tray-helper rewrite, testdrive Photos ⋮ still opens the full listing menu (Open / Open native / Copy to…)
 - Linux Send-to writes the Tauri Nautilus Python `MenuProvider` extension (GNOME Files context menu, not only Scripts)
+- Live GUI: testdrive Remove/Add File Manager menu writes `~/.local/share/nautilus-python/extensions/testdrive (RClone Manager).py` (`Nautilus.MenuProvider`, `--send-to-remote testdrive`)
 - Desktop entry includes `Start on Tray`, `application/x-rclone-config`, and localized comments
 - Job stop transitions emit `notification.title.jobStopped` alerts (same keys as Tauri)
