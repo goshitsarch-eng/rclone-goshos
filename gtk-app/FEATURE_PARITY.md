@@ -781,3 +781,7 @@ This client is the GTK 4 + libadwaita desktop UI. It talks to a local `rclone rc
 - Live GUI: testdrive Copy Monitoring shows **Selected Profile** / **2 profiles** pills (`gui-copy-nightly` clock, `gui-copy-test`); selecting test hides Daily at 2:00
 - Live GUI: Configuration lists both Copy Settings panels then Shared Settings once
 - General remote status chips stop an active mount/serve/job (Angular `onToggleAction`); idle chips start a single profile or open Start Operation when several exist
+- Stop Mount resolves alias remotes (`cfg.remote`) and host fuse mounts, then falls back to the profile dest when RC `listmounts` is empty
+- Live GUI: testdrive General **Stop Mount** unmounted `/tmp/rclone-testdrive-mnt` (toast **Unmounted /tmp/rclone-testdrive-mnt**) while rcd `listmounts` was empty; **Start Mount** remounted it
+- General detail shows Angular’s Remote Configuration preview (`settings_list` + Edit Configuration) from `config/dump`
+- Live GUI: testdrive General Remote Configuration lists **2 settings** (`remote` `/tmp/rclone-test-remote`, `type` `alias`) and **Edit Configuration**
