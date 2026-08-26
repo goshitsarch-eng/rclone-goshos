@@ -2175,7 +2175,7 @@ impl Dashboard {
             self.detail_box().append(&add_qr);
         }
 
-        self.append_settings_groups(&name, detail_op, &profile_name);
+        self.append_operation_settings(&name, detail_op, &profile_name);
         if use_tabs {
             *self.detail_host.borrow_mut() = None;
             let stack = adw::ViewStack::new();
@@ -2410,11 +2410,50 @@ impl Dashboard {
         btn
     }
 
-    fn append_settings_groups(&self, name: &str, op: OperationType, profile: &str) {
-        self.detail_box().append(&section_label(&self.ctx.tf(
-            "dashboard.appDetail.settingsLabel",
-            &[("op", op.api_label())],
-        )));
+    fn append_operation_settings(&self, name: &str, op: OperationType, selected: &str) {
+        let names = self
+            .ctx
+            .store
+            .borrow()
+            .remotes
+            .get(name)
+            .map(|meta| meta.profile_names(op))
+            .unwrap_or_default();
+        if names.len() > 1 {
+            self.detail_box().append(&section_label(&self.ctx.tf_or(
+                "dashboard.appDetail.profilesLabel",
+                "{{op}} Profiles",
+                &[("op", op.api_label())],
+            )));
+            for pname in names {
+                self.append_settings_groups(name, op, &pname, true);
+            }
+            return;
+        }
+        self.append_settings_groups(
+            name,
+            op,
+            names.first().map(String::as_str).unwrap_or(selected),
+            false,
+        );
+    }
+
+    fn append_settings_groups(&self, name: &str, op: OperationType, profile: &str, titled: bool) {
+        let heading = if titled {
+            format!(
+                "{} ({profile})",
+                self.ctx.tf(
+                    "dashboard.appDetail.settingsLabel",
+                    &[("op", op.api_label())]
+                )
+            )
+        } else {
+            self.ctx.tf(
+                "dashboard.appDetail.settingsLabel",
+                &[("op", op.api_label())],
+            )
+        };
+        self.detail_box().append(&section_label(&heading));
         let desc_key = format!("dashboard.appDetail.{}Desc", op.as_str());
         let desc = self.ctx.t_or(
             &desc_key,
@@ -2610,34 +2649,142 @@ impl Dashboard {
             .get(name)
             .map(|meta| meta.profile_names(op))
             .unwrap_or_default();
-        if names.is_empty() {
+        if names.len() <= 1 {
             return;
         }
         let selected = self.selected_profile_name(name, op);
-        let row = adw::ComboRow::new();
-        row.set_title(&self.ctx.t_or("remote.profiles", "Profile"));
-        let model_names: Vec<&str> = names.iter().map(String::as_str).collect();
-        row.set_model(Some(&gtk::StringList::new(&model_names)));
-        if let Some(idx) = names.iter().position(|n| n == &selected) {
-            row.set_selected(idx as u32);
-        }
-        {
+        let snap = self.ctx.snapshot.borrow().clone();
+        let header = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+        let title = gtk::Label::new(Some(
+            &self
+                .ctx
+                .t_or("dashboard.appDetail.selectedProfile", "Selected Profile"),
+        ));
+        title.add_css_class("heading");
+        title.set_xalign(0.0);
+        title.set_hexpand(true);
+        let count = gtk::Label::new(Some(&self.ctx.tf_or(
+            "dashboard.appDetail.profilesCount",
+            "{{count}} profiles",
+            &[("count", &names.len().to_string())],
+        )));
+        count.add_css_class("dim-label");
+        header.append(&title);
+        header.append(&count);
+        self.detail_box().append(&header);
+
+        let pills = gtk::Box::new(gtk::Orientation::Horizontal, 6);
+        pills.set_homogeneous(false);
+        let mut group: Option<gtk::ToggleButton> = None;
+        for pname in &names {
+            let cfg = self
+                .ctx
+                .store
+                .borrow()
+                .remotes
+                .get(name)
+                .and_then(|meta| meta.get_profile(op, pname));
+            let active = crate::jobs::profile_is_active(
+                name,
+                op,
+                pname,
+                &snap.jobs,
+                &snap.mounts,
+                &snap.serves,
+            );
+            let status = crate::jobs::profile_pill_status(
+                active,
+                cfg.as_ref().is_some_and(|c| c.app.cron_enabled),
+                cfg.as_ref()
+                    .map(|c| c.app.cron_expression.as_str())
+                    .unwrap_or(""),
+                cfg.as_ref().is_some_and(|c| c.app.watch_enabled),
+            );
+            let watcher_only = crate::jobs::profile_pill_has_watcher(
+                cfg.as_ref().is_some_and(|c| c.app.cron_enabled),
+                cfg.as_ref()
+                    .map(|c| c.app.cron_expression.as_str())
+                    .unwrap_or(""),
+                cfg.as_ref().is_some_and(|c| c.app.watch_enabled),
+            );
+            let btn = gtk::ToggleButton::new();
+            let inner = gtk::Box::new(gtk::Orientation::Horizontal, 4);
+            match status {
+                crate::jobs::ProfilePillStatus::Running => {
+                    inner.append(&gtk::Image::from_icon_name("media-playback-start-symbolic"));
+                    btn.add_css_class("suggested-action");
+                }
+                crate::jobs::ProfilePillStatus::Scheduled if watcher_only => {
+                    inner.append(&gtk::Image::from_icon_name("view-reveal-symbolic"));
+                }
+                crate::jobs::ProfilePillStatus::Scheduled => {
+                    inner.append(&gtk::Image::from_icon_name(
+                        "preferences-system-time-symbolic",
+                    ));
+                }
+                crate::jobs::ProfilePillStatus::Idle => {}
+            }
+            let label = gtk::Label::new(Some(pname));
+            inner.append(&label);
+            btn.set_child(Some(&inner));
+            btn.set_active(pname == &selected);
+            if let Some(first) = &group {
+                btn.set_group(Some(first));
+            } else {
+                group = Some(btn.clone());
+            }
             let ctx = self.ctx.clone();
             let remote = name.to_string();
-            let names = names.clone();
+            let profile = pname.clone();
             let dash = self.clone();
-            row.connect_selected_notify(move |combo| {
-                if let Some(profile) = names.get(combo.selected() as usize) {
-                    ctx.settings.borrow_mut().runtime.selected_profiles.insert(
-                        crate::jobs::selected_profile_key(&remote, op),
-                        profile.clone(),
-                    );
-                    ctx.persist();
-                    dash.refresh();
-                }
+            btn.connect_clicked(move |_| {
+                ctx.settings.borrow_mut().runtime.selected_profiles.insert(
+                    crate::jobs::selected_profile_key(&remote, op),
+                    profile.clone(),
+                );
+                ctx.persist();
+                dash.refresh();
             });
+            pills.append(&btn);
         }
-        self.detail_box().append(&row);
+        let add = gtk::Button::from_icon_name("list-add-symbolic");
+        add.set_tooltip_text(Some(
+            &self
+                .ctx
+                .t_or("dashboard.appDetail.addProfile", "Add Profile"),
+        ));
+        {
+            let dash = self.clone();
+            let remote = name.to_string();
+            add.connect_clicked(move |_| dash.open_add_profile(&remote, op));
+        }
+        pills.append(&add);
+        self.detail_box().append(&pills);
+    }
+
+    fn open_add_profile(&self, remote: &str, op: OperationType) {
+        let Some(win) = self.root.root().and_downcast::<gtk::Window>() else {
+            return;
+        };
+        let ctx = self.ctx.clone();
+        let dash = self.clone();
+        dialogs::remote_config_open(
+            &win,
+            ctx.clone(),
+            Some(remote.to_string()),
+            super::remote_config::RemoteConfigOpen {
+                initial: Some(op.as_str().to_string()),
+                profile: None,
+                auto_add: true,
+                clone_from: None,
+            },
+            {
+                Rc::new(move || {
+                    ctx.refresh_runtime();
+                    dash.refresh();
+                })
+            },
+        );
     }
 
     fn selected_sync_op(&self, name: &str) -> OperationType {

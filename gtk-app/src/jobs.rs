@@ -2811,6 +2811,37 @@ pub fn selected_profile_key(remote: &str, op: OperationType) -> String {
     format!("{remote}:{}", op.as_str())
 }
 
+/// Angular `enrichedProfiles` status: running, scheduled (cron/watch), or idle.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ProfilePillStatus {
+    Running,
+    Scheduled,
+    Idle,
+}
+
+pub fn profile_pill_status(
+    active: bool,
+    cron_enabled: bool,
+    cron_expression: &str,
+    watch_enabled: bool,
+) -> ProfilePillStatus {
+    if active {
+        ProfilePillStatus::Running
+    } else if watch_enabled || (cron_enabled && !cron_expression.is_empty()) {
+        ProfilePillStatus::Scheduled
+    } else {
+        ProfilePillStatus::Idle
+    }
+}
+
+pub fn profile_pill_has_watcher(
+    cron_enabled: bool,
+    cron_expression: &str,
+    watch_enabled: bool,
+) -> bool {
+    watch_enabled && !(cron_enabled && !cron_expression.is_empty())
+}
+
 pub fn rename_serves_profile(
     serves: &mut [ServeItem],
     remote: &str,
@@ -4245,5 +4276,32 @@ mod tests {
             job_origin_key("filemanager"),
             "generalOverview.jobs.originFiles"
         );
+    }
+
+    #[test]
+    fn profile_pill_status_matches_angular() {
+        assert_eq!(
+            profile_pill_status(true, true, "0 7 * * *", true),
+            ProfilePillStatus::Running
+        );
+        assert_eq!(
+            profile_pill_status(false, true, "0 7 * * *", false),
+            ProfilePillStatus::Scheduled
+        );
+        assert_eq!(
+            profile_pill_status(false, false, "", true),
+            ProfilePillStatus::Scheduled
+        );
+        assert_eq!(
+            profile_pill_status(false, true, "", false),
+            ProfilePillStatus::Idle
+        );
+        assert_eq!(
+            profile_pill_status(false, false, "", false),
+            ProfilePillStatus::Idle
+        );
+        assert!(profile_pill_has_watcher(false, "", true));
+        assert!(!profile_pill_has_watcher(true, "0 7 * * *", true));
+        assert!(!profile_pill_has_watcher(true, "0 7 * * *", false));
     }
 }
