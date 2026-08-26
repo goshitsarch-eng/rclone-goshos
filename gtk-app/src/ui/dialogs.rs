@@ -7768,7 +7768,9 @@ pub fn job_detail(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, job_id: u64) {
     scroll.set_vexpand(true);
     scroll.set_policy(gtk::PolicyType::Never, gtk::PolicyType::Automatic);
     scroll.set_child(Some(&box_));
-    dialog.set_child(Some(&scroll));
+    let toast = adw::ToastOverlay::new();
+    toast.set_child(Some(&scroll));
+    dialog.set_child(Some(&toast));
 
     let fill = {
         let ctx = ctx.clone();
@@ -7779,6 +7781,7 @@ pub fn job_detail(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, job_id: u64) {
         let progress = progress.clone();
         let filter = filter.clone();
         let dialog = dialog.clone();
+        let toast = toast.clone();
         let populate_opens = populate_opens.clone();
         let error_view = error_view.clone();
         let error_group = error_group.clone();
@@ -8087,7 +8090,7 @@ pub fn job_detail(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, job_id: u64) {
                 &query,
                 true,
                 &ctx,
-                &dialog,
+                &toast,
                 &job.operation,
                 &job.remote,
             );
@@ -8097,7 +8100,7 @@ pub fn job_detail(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, job_id: u64) {
                 &query,
                 false,
                 &ctx,
-                &dialog,
+                &toast,
                 &job.operation,
                 &job.remote,
             );
@@ -8258,7 +8261,7 @@ fn append_transfer_rows(
     query: &str,
     active: bool,
     ctx: &AppCtx,
-    parent: &adw::Dialog,
+    parent: &impl IsA<gtk::Widget>,
     job_type: &str,
     remote_name: &str,
 ) {
@@ -8432,8 +8435,19 @@ fn transfer_side_actions(
             ));
             link.set_valign(gtk::Align::Center);
             let ctx = ctx.clone();
+            let parent = parent.clone();
+            if is_fallback {
+                link.set_widget_name("transfer-fallback-copy-url");
+            }
             link.connect_clicked(move |_| {
                 let Some(client) = ctx.client() else {
+                    add_action_toast(
+                        &parent,
+                        &ctx.t_or(
+                            "shared.transferActivity.actions.failCopyUrl",
+                            "Failed to generate download URL",
+                        ),
+                    );
                     return;
                 };
                 let full = if rest.is_empty() {
@@ -8444,10 +8458,26 @@ fn transfer_side_actions(
                     format!("{remote}:{rest}")
                 };
                 let (fs, remote_path) = crate::transfers::fs_and_remote(&full);
-                if let Ok(url) = client.public_link(&fs, &remote_path) {
-                    if let Some(display) = gtk::gdk::Display::default() {
-                        display.clipboard().set_text(&url);
+                match client.public_link(&fs, &remote_path) {
+                    Ok(url) => {
+                        if let Some(display) = gtk::gdk::Display::default() {
+                            display.clipboard().set_text(&url);
+                        }
+                        add_action_toast(
+                            &parent,
+                            &ctx.t_or(
+                                "shared.transferActivity.actions.successCopyUrl",
+                                "Download URL copied to clipboard",
+                            ),
+                        );
                     }
+                    Err(_) => add_action_toast(
+                        &parent,
+                        &ctx.t_or(
+                            "shared.transferActivity.actions.failCopyUrl",
+                            "Failed to generate download URL",
+                        ),
+                    ),
                 }
             });
             side.append(&link);
@@ -8460,6 +8490,9 @@ fn transfer_side_actions(
                 &ctx.t_or("shared.transferActivity.actions.download", "Download File"),
             ));
             dl.set_valign(gtk::Align::Center);
+            if is_fallback {
+                dl.set_widget_name("transfer-fallback-download");
+            }
             let ctx = ctx.clone();
             let parent = parent.clone();
             dl.connect_clicked(move |_| {
@@ -8480,6 +8513,9 @@ fn transfer_side_actions(
             ctx.t_or("nautilus.modals.delete.title", "Delete destination")
         }));
         del.set_valign(gtk::Align::Center);
+        if is_fallback {
+            del.set_widget_name("transfer-fallback-delete");
+        }
         let ctx = ctx.clone();
         let parent = parent.clone();
         let path = path.to_string();
@@ -8521,26 +8557,56 @@ pub(crate) fn confirm_delete_path(
     alert.add_response("delete", &ctx.t_or("common.delete", "Delete"));
     alert.set_response_appearance("delete", adw::ResponseAppearance::Destructive);
     let path = path.to_string();
-    alert.connect_response(None, move |_, response| {
-        if response != "delete" {
-            return;
-        }
-        let Some(client) = ctx.client() else {
-            return;
-        };
-        let (fs, remote) = crate::transfers::fs_and_remote(&path);
-        let ok = client
-            .purge(&fs, &remote)
-            .or_else(|_| client.delete_file(&fs, &remote))
-            .is_ok();
-        if ok {
-            if let Some(cb) = &on_done {
-                cb();
+    let parent = parent.clone();
+    alert.connect_response(None, {
+        let parent = parent.clone();
+        move |_, response| {
+            if response != "delete" {
+                return;
             }
+            let Some(client) = ctx.client() else {
+                return;
+            };
+            let (fs, remote) = crate::transfers::fs_and_remote(&path);
+            let ok = client
+                .purge(&fs, &remote)
+                .or_else(|_| client.delete_file(&fs, &remote))
+                .is_ok();
+            if ok {
+                if let Some(cb) = &on_done {
+                    cb();
+                }
+            } else {
+                add_action_toast(
+                    &parent,
+                    &ctx.t_or(
+                        "shared.transferActivity.messages.resolveFailed",
+                        "Failed to delete file",
+                    ),
+                );
+            }
+            ctx.refresh_runtime();
         }
-        ctx.refresh_runtime();
     });
-    alert.present(Some(parent));
+    alert.present(Some(&parent));
+}
+
+fn add_action_toast(parent: &impl IsA<gtk::Widget>, message: &str) {
+    let toast = adw::Toast::new(message);
+    if let Some(overlay) = parent
+        .ancestor(adw::ToastOverlay::static_type())
+        .and_downcast::<adw::ToastOverlay>()
+    {
+        overlay.add_toast(toast);
+        return;
+    }
+    if let Ok(overlay) = parent
+        .clone()
+        .upcast::<gtk::Widget>()
+        .downcast::<adw::ToastOverlay>()
+    {
+        overlay.add_toast(toast);
+    }
 }
 
 fn pdf_panel(path: Option<std::path::PathBuf>, name: &str, ctx: &AppCtx) -> gtk::Box {
@@ -9789,6 +9855,7 @@ pub(crate) fn download_file(
     dialog.set_initial_name(Some(name));
     let remote = remote.to_string();
     let path = path.to_string();
+    let toast_host = parent.clone();
     dialog.save(
         Some(&win),
         None::<gio::Cancellable>.as_ref(),
@@ -9837,8 +9904,24 @@ pub(crate) fn download_file(
                     );
                     ctx.persist();
                     ctx.refresh_runtime();
+                    add_action_toast(
+                        &toast_host,
+                        &ctx.t_or(
+                            "shared.transferActivity.actions.successDownload",
+                            "File downloaded successfully",
+                        ),
+                    );
                 }
-                Err(e) => log::warn!("download failed: {e}"),
+                Err(e) => {
+                    log::warn!("download failed: {e}");
+                    add_action_toast(
+                        &toast_host,
+                        &ctx.t_or(
+                            "shared.transferActivity.actions.failDownload",
+                            "Failed to download file",
+                        ),
+                    );
+                }
             }
         },
     );
