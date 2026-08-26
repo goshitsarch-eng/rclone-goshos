@@ -62,7 +62,7 @@ pub struct NautilusView {
     secondary: Rc<RefCell<TabState>>,
     history: Rc<RefCell<Vec<(String, String)>>>,
     future: Rc<RefCell<Vec<(String, String)>>>,
-    clipboard: Rc<RefCell<Vec<(String, String, bool)>>>,
+    clipboard: Rc<RefCell<Vec<(String, String, bool, bool)>>>,
     pending_drag: Rc<RefCell<Option<Vec<crate::dnd::DragItem>>>>,
     skip_lasso: Rc<Cell<bool>>,
     hover_open: Rc<RefCell<Option<String>>>,
@@ -3400,13 +3400,20 @@ impl NautilusView {
             return;
         }
         let current = self.current.borrow().clone();
+        let listing = self.last_listing.borrow().clone();
         let items = names
             .into_iter()
             .map(|name| {
+                let is_dir = listing
+                    .iter()
+                    .find(|entry| entry.name == name)
+                    .map(|entry| entry.is_dir)
+                    .unwrap_or(false);
                 (
                     current.remote.clone(),
                     join_remote_path(&current.path, &name),
                     cut,
+                    is_dir,
                 )
             })
             .collect();
@@ -3430,7 +3437,7 @@ impl NautilusView {
         let current = self.current.borrow().clone();
         let transfers: Vec<crate::fileops::TransferItem> = items
             .into_iter()
-            .map(|(src_remote, src_path, cut)| {
+            .map(|(src_remote, src_path, cut, is_dir)| {
                 let name = src_path.rsplit('/').next().unwrap_or(&src_path).to_string();
                 let dst_path = join_remote_path(&current.path, &name);
                 let (src_fs, src_remote_path) = fs_remote(&src_remote, &src_path);
@@ -3441,6 +3448,7 @@ impl NautilusView {
                     dst_fs,
                     dst: dst_remote_path,
                     cut,
+                    is_dir,
                 }
             })
             .collect();

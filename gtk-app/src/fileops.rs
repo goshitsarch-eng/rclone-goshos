@@ -154,21 +154,23 @@ impl FileOp {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct TransferItem {
     pub src_fs: String,
     pub src: String,
     pub dst_fs: String,
     pub dst: String,
     pub cut: bool,
+    pub is_dir: bool,
 }
 
 impl TransferItem {
     pub fn endpoint(&self) -> &'static str {
-        if self.cut {
-            "operations/movefile"
-        } else {
-            "operations/copyfile"
+        match (self.cut, self.is_dir) {
+            (true, true) => "sync/move",
+            (false, true) => "sync/copy",
+            (true, false) => "operations/movefile",
+            (false, false) => "operations/copyfile",
         }
     }
 
@@ -196,14 +198,28 @@ pub fn transfer_group_id(origin: &str) -> String {
 }
 
 pub fn transfer_payload(item: &TransferItem, group: &str) -> Value {
-    json!({
-        "srcFs": item.src_fs,
-        "srcRemote": item.src,
-        "dstFs": item.dst_fs,
-        "dstRemote": item.dst,
-        "_async": true,
-        "_group": group,
-    })
+    if item.is_dir {
+        let mut payload = json!({
+            "srcFs": join_fs_path(&item.src_fs, &item.src),
+            "dstFs": join_fs_path(&item.dst_fs, &item.dst),
+            "createEmptySrcDirs": true,
+            "_async": true,
+            "_group": group,
+        });
+        if item.cut {
+            payload["deleteEmptySrcDirs"] = json!(true);
+        }
+        payload
+    } else {
+        json!({
+            "srcFs": item.src_fs,
+            "srcRemote": item.src,
+            "dstFs": item.dst_fs,
+            "dstRemote": item.dst,
+            "_async": true,
+            "_group": group,
+        })
+    }
 }
 
 pub fn start_grouped_transfers(
@@ -437,6 +453,7 @@ pub fn collect_local_upload_items(
                 dst_fs: dest_fs.to_string(),
                 dst: dest,
                 cut: false,
+                is_dir: false,
             });
         }
     }
@@ -467,6 +484,7 @@ fn collect_local_dir(
                 dst_fs: dest_fs.to_string(),
                 dst: dest,
                 cut: false,
+                is_dir: false,
             });
         }
     }
@@ -921,6 +939,7 @@ mod tests {
             dst_fs: "/".into(),
             dst: "Inbox/a.jpg".into(),
             cut: false,
+            is_dir: false,
         };
         let payload = transfer_payload(&item, "filemanager/abc");
         assert_eq!(payload["_group"], "filemanager/abc");
@@ -932,6 +951,27 @@ mod tests {
             ..item.clone()
         };
         assert_eq!(cut.endpoint(), "operations/movefile");
+        let folder = TransferItem {
+            src_fs: "drive:".into(),
+            src: "Photos".into(),
+            dst_fs: "drive:".into(),
+            dst: "Backup/Photos".into(),
+            cut: false,
+            is_dir: true,
+        };
+        assert_eq!(folder.endpoint(), "sync/copy");
+        let folder_payload = transfer_payload(&folder, "filemanager/dir");
+        assert_eq!(folder_payload["srcFs"], "drive:Photos");
+        assert_eq!(folder_payload["dstFs"], "drive:Backup/Photos");
+        assert_eq!(folder_payload["createEmptySrcDirs"], true);
+        assert_eq!(
+            TransferItem {
+                cut: true,
+                ..folder
+            }
+            .endpoint(),
+            "sync/move"
+        );
         assert!(matches!(cut.file_op(), FileOp::Move { .. }));
         assert!(transfer_group_id("filemanager").starts_with("filemanager/"));
     }

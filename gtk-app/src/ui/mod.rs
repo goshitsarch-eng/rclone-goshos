@@ -283,7 +283,12 @@ impl AppCtx {
             if let Some(app) = pending.app.as_ref().filter(|u| u.available) {
                 self.store
                     .borrow_mut()
-                    .record_event(crate::alerts::update_event("app", &app.latest, &app.url));
+                    .record_event(crate::alerts::update_event(
+                        "app",
+                        &app.latest,
+                        &app.url,
+                        &|key, params| self.tf(key, params),
+                    ));
             }
             if let Some(rclone) = pending.rclone.as_ref().filter(|u| u.available) {
                 self.store
@@ -292,6 +297,7 @@ impl AppCtx {
                         "rclone",
                         &rclone.latest,
                         &rclone.url,
+                        &|key, params| self.tf(key, params),
                     ));
             }
             self.persist();
@@ -644,6 +650,17 @@ impl AppCtx {
 
     pub fn refresh_runtime(&self) {
         let Some(client) = self.client() else {
+            let was_online = self.snapshot.borrow().engine_online;
+            self.snapshot.borrow_mut().engine_online = false;
+            if was_online {
+                let event = crate::alerts::engine_event(
+                    false,
+                    "rclone engine is offline",
+                    &|key, params| self.tf(key, params),
+                );
+                self.store.borrow_mut().record_event(event);
+                self.persist();
+            }
             return;
         };
         let dump = self.cached_dump(&client);
@@ -670,8 +687,18 @@ impl AppCtx {
         let previous = self.snapshot.borrow().jobs.clone();
         let previous_mounts = self.snapshot.borrow().mounts.clone();
         let previous_serves = self.snapshot.borrow().serves.clone();
+        let was_online = self.snapshot.borrow().engine_online;
         notify_job_changes(self, &previous, &jobs);
         emit_runtime_alerts(self, &previous_mounts, &mounts, &previous_serves, &serves);
+        if !was_online {
+            self.store
+                .borrow_mut()
+                .record_event(crate::alerts::engine_event(
+                    true,
+                    "rclone engine is online",
+                    &|key, params| self.tf(key, params),
+                ));
+        }
         let mut snap = self.snapshot.borrow_mut();
         snap.remotes = remotes;
         snap.mounts = mounts;
@@ -679,6 +706,7 @@ impl AppCtx {
         snap.stats = stats;
         snap.local_disks = disks;
         snap.jobs = jobs;
+        snap.engine_online = true;
         drop(snap);
         self.apply_effective_bandwidth();
         self.update_power_inhibit();
@@ -836,6 +864,7 @@ impl AppCtx {
                             &record.remote,
                             true,
                             &id,
+                            &|key, params| self.tf(key, params),
                         ));
                         fired = true;
                     }
@@ -846,6 +875,7 @@ impl AppCtx {
                             &record.remote,
                             false,
                             &e,
+                            &|key, params| self.tf(key, params),
                         ));
                         fired = true;
                     }
@@ -962,7 +992,7 @@ fn notify_job_changes(
     current: &[crate::store::JobInfo],
 ) {
     let mut dirty = false;
-    for event in crate::alerts::job_events(previous, current) {
+    for event in crate::alerts::job_events(previous, current, &|key, params| ctx.tf(key, params)) {
         ctx.store.borrow_mut().record_event(event);
         dirty = true;
     }
@@ -1016,7 +1046,9 @@ fn emit_runtime_alerts(
     serves: &[crate::rclone::ServeItem],
 ) {
     let mut dirty = false;
-    for event in crate::alerts::mount_events(previous_mounts, mounts) {
+    for event in
+        crate::alerts::mount_events(previous_mounts, mounts, &|key, params| ctx.tf(key, params))
+    {
         ctx.store.borrow_mut().push_log(
             &event.remote,
             crate::logs::format_now(
@@ -1029,7 +1061,9 @@ fn emit_runtime_alerts(
         ctx.store.borrow_mut().record_event(event);
         dirty = true;
     }
-    for event in crate::alerts::serve_events(previous_serves, serves) {
+    for event in
+        crate::alerts::serve_events(previous_serves, serves, &|key, params| ctx.tf(key, params))
+    {
         ctx.store.borrow_mut().push_log(
             &event.remote,
             crate::logs::format_now(

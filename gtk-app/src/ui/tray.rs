@@ -10,6 +10,7 @@ use std::sync::{Arc, Mutex};
 pub struct TrayBus {
     pub tx: Sender<TrayAction>,
     rx: Arc<Mutex<Receiver<TrayAction>>>,
+    handle: Option<ksni::Handle<StatusIcon>>,
 }
 
 impl TrayBus {
@@ -21,6 +22,20 @@ impl TrayBus {
             handle(ctx, cmd);
         }
     }
+
+    pub fn refresh(&self, ctx: &AppCtx) {
+        let Some(handle) = &self.handle else {
+            return;
+        };
+        let (items, icon_name, title, description, busy) = plan_status(ctx);
+        handle.update(|icon| {
+            icon.items = items;
+            icon.icon_name = icon_name;
+            icon.tooltip_title = title;
+            icon.tooltip_description = description;
+            icon.busy = busy;
+        });
+    }
 }
 
 struct StatusIcon {
@@ -29,11 +44,28 @@ struct StatusIcon {
     icon_name: String,
     tooltip_title: String,
     tooltip_description: String,
+    busy: bool,
 }
 
 impl ksni::Tray for StatusIcon {
+    fn id(&self) -> String {
+        "io.github.zarestia_dev.rclone-manager".into()
+    }
+
+    fn activate(&mut self, _x: i32, _y: i32) {
+        let _ = self.tx.send(TrayAction::ShowWindow);
+    }
+
     fn icon_name(&self) -> String {
         self.icon_name.clone()
+    }
+
+    fn status(&self) -> ksni::Status {
+        if self.busy {
+            ksni::Status::NeedsAttention
+        } else {
+            ksni::Status::Active
+        }
     }
 
     fn title(&self) -> String {
@@ -80,11 +112,74 @@ fn to_ksni(item: &TrayMenuItem) -> ksni::MenuItem<StatusIcon> {
     .into()
 }
 
-fn tray_icon_name(theme: &str) -> &'static str {
-    match theme {
-        "symbolic" | "monochrome_light" | "monochrome_dark" => "folder-remote-symbolic",
-        _ => "folder-remote",
+fn tray_icon_name(theme: &str, busy: bool) -> &'static str {
+    match (theme, busy) {
+        ("symbolic" | "monochrome_light" | "monochrome_dark", true) => "folder-download-symbolic",
+        ("symbolic" | "monochrome_light" | "monochrome_dark", false) => "folder-remote-symbolic",
+        (_, true) => "folder-download",
+        (_, false) => "folder-remote",
     }
+}
+
+fn tray_tooltip(ctx: &AppCtx, busy: bool) -> String {
+    if !busy {
+        return ctx.t_or("tray.tooltipSubtitle", "Remotes, mounts, and transfers");
+    }
+    let snap = ctx.snapshot.borrow();
+    let jobs = snap
+        .jobs
+        .iter()
+        .filter(|job| crate::jobs::job_is_running(job) || crate::jobs::job_is_pending(job))
+        .count();
+    let mounts = snap.mounts.len();
+    let serves = snap.serves.len();
+    drop(snap);
+    let mut parts = Vec::new();
+    if jobs == 1 {
+        parts.push(ctx.t_or("tray.tooltipTask", "1 Job"));
+    } else if jobs > 1 {
+        parts.push(ctx.tf("tray.tooltipTasks", &[("count", &jobs.to_string())]));
+    }
+    if mounts == 1 {
+        parts.push(ctx.t_or("tray.tooltipMount", "1 Mount"));
+    } else if mounts > 1 {
+        parts.push(ctx.tf("tray.tooltipMounts", &[("count", &mounts.to_string())]));
+    }
+    if serves == 1 {
+        parts.push(ctx.t_or("tray.tooltipServe", "1 Serve"));
+    } else if serves > 1 {
+        parts.push(ctx.tf("tray.tooltipServes", &[("count", &serves.to_string())]));
+    }
+    if parts.is_empty() {
+        ctx.t_or("tray.tooltipSubtitle", "Remotes, mounts, and transfers")
+    } else {
+        parts.join(" · ")
+    }
+}
+
+fn plan_status(ctx: &AppCtx) -> (Vec<TrayMenuItem>, String, String, String, bool) {
+    let snap = ctx.snapshot.borrow();
+    let store = ctx.store.borrow();
+    let mut items = plan_tray(
+        &snap.remotes,
+        &store,
+        &snap.jobs,
+        &snap.mounts,
+        &snap.serves,
+        ctx.settings.borrow().core.max_tray_items.max(1),
+    );
+    drop(snap);
+    drop(store);
+    localize_plan(ctx, &mut items);
+    let busy = ctx.runtime_busy();
+    let icon = tray_icon_name(&ctx.settings.borrow().general.tray_icon_theme, busy).into();
+    (
+        items,
+        icon,
+        ctx.t_or("tray.tooltipDefault", "RClone Manager"),
+        tray_tooltip(ctx, busy),
+        busy,
+    )
 }
 
 fn remote_mounts(ctx: &AppCtx, name: &str) -> Vec<String> {
@@ -188,19 +283,7 @@ pub fn start(ctx: &AppCtx) -> Option<TrayBus> {
         return None;
     }
     let (tx, rx) = mpsc::channel();
-    let snap = ctx.snapshot.borrow();
-    let store = ctx.store.borrow();
-    let mut items = plan_tray(
-        &snap.remotes,
-        &store,
-        &snap.jobs,
-        &snap.mounts,
-        &snap.serves,
-        ctx.settings.borrow().core.max_tray_items.max(1),
-    );
-    drop(snap);
-    drop(store);
-    localize_plan(ctx, &mut items);
+    let (items, icon_name, title, description, busy) = plan_status(ctx);
     let remotes = items
         .iter()
         .filter(|i| {
@@ -213,24 +296,27 @@ pub fn start(ctx: &AppCtx) -> Option<TrayBus> {
                 })
         })
         .count();
-    let bus = TrayBus {
-        tx: tx.clone(),
-        rx: Arc::new(Mutex::new(rx)),
-    };
     let icon = StatusIcon {
         tx: tx.clone(),
         items,
-        icon_name: tray_icon_name(&ctx.settings.borrow().general.tray_icon_theme).into(),
-        tooltip_title: ctx.t_or("tray.tooltipDefault", "RClone Manager"),
-        tooltip_description: ctx.t_or("tray.tooltipSubtitle", "Remotes, mounts, and transfers"),
+        icon_name,
+        tooltip_title: title,
+        tooltip_description: description,
+        busy,
     };
+    let service = ksni::TrayService::new(icon);
+    let handle = service.handle();
     std::thread::Builder::new()
         .name("rclone-manager-sni".into())
         .spawn(move || {
-            let service = ksni::TrayService::new(icon);
             let _ = service.run();
         })
         .ok();
+    let bus = TrayBus {
+        tx: tx.clone(),
+        rx: Arc::new(Mutex::new(rx)),
+        handle: Some(handle),
+    };
     log::info!("StatusNotifier tray started ({remotes} remotes)");
     Some(bus)
 }

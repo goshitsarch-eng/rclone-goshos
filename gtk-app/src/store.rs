@@ -890,6 +890,7 @@ pub struct RuntimeSnapshot {
     pub jobs: Vec<JobInfo>,
     pub stats: Value,
     pub local_disks: Vec<String>,
+    pub engine_online: bool,
 }
 
 #[derive(Debug, Clone)]

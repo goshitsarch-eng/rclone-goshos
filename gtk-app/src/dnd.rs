@@ -139,6 +139,7 @@ pub fn transfer_items(items: &[DragItem], dest: &DropDest, move_items: bool) -> 
                 dst_fs,
                 dst,
                 cut: move_items,
+                is_dir: item.is_dir,
             }
         })
         .collect()
@@ -245,6 +246,11 @@ mod tests {
         assert_eq!(transfers[0].dst_fs, "drive:");
         assert_eq!(transfers[0].dst, "Inbox/a.png");
         assert!(transfers[0].cut);
+        assert!(!transfers[0].is_dir);
+        let folder = vec![item("drive", "Photos", true)];
+        let folder_xfer = transfer_items(&folder, &dest, false);
+        assert!(folder_xfer[0].is_dir);
+        assert_eq!(folder_xfer[0].endpoint(), "sync/copy");
         let copy = transfer_items(
             &items,
             &DropDest {

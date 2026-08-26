@@ -516,6 +516,10 @@ This client is the GTK 4 + libadwaita desktop UI. It talks to a local `rclone rc
 - Instant job failures from `job/status` surface immediately instead of looking completed
 - Missing rclone RC methods (`job/batch`, `serve/list`, `core/disks`, …) are cached so 1.60 is not polled for them
 - Preferences “Save & Restart” title escapes `&` for Adwaita markup
+- Files copy/move of folders uses `sync/copy` / `sync/move` (files still use copyfile/movefile)
+- Tray menu and icon refresh on each poll; left-click Show Window; busy icon/tooltip from live jobs/mounts/serves
+- Alert titles/bodies use `notification.title.*` / `notification.body.*` i18n keys
+- Engine online/offline transitions emit alert events
 
 ## Still deepening
 

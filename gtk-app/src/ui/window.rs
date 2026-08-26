@@ -515,6 +515,7 @@ fn present_main_with(app: &adw::Application, ctx: AppCtx, hidden: bool) {
         poll_tick.set(tick.wrapping_add(1));
         if let Some(tray) = &tray {
             tray.drain(&ctx_poll);
+            tray.refresh(&ctx_poll);
         }
         glib::ControlFlow::Continue
     });

@@ -3611,6 +3611,7 @@ mod tests {
             dst_fs: "testdrive:".into(),
             dst: "e.txt".into(),
             cut: false,
+            is_dir: false,
         }];
         let snapshot = transfer_snapshot_from_items(&items);
         let row = crate::transfers::parse_transfer_row(&snapshot[0]);
