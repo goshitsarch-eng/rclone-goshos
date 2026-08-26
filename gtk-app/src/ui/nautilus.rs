@@ -1295,34 +1295,30 @@ impl NautilusView {
             &self.ctx.t_or("nautilus.contextMenu.moreActions", "Actions"),
         ));
         more.set_widget_name(&crate::fileops::file_item_menu_widget_name(name));
-        let claim = gtk::GestureClick::new();
-        claim.set_button(0);
-        claim.set_exclusive(true);
-        claim.set_propagation_phase(gtk::PropagationPhase::Capture);
-        {
-            let view = self.clone();
-            claim.connect_pressed(move |g, _, _, _| {
-                g.set_state(gtk::EventSequenceState::Claimed);
-                view.skip_lasso.set(true);
-                view.ignore_activate.set(true);
-            });
-        }
-        more.add_controller(claim);
         {
             let view = self.clone();
             let name = name.to_string();
             let target = more.clone();
-            more.connect_clicked(move |_| {
+            let claim = gtk::GestureClick::new();
+            claim.set_button(1);
+            claim.set_exclusive(true);
+            claim.set_propagation_phase(gtk::PropagationPhase::Capture);
+            claim.connect_pressed(move |g, n_press, x, y| {
+                if n_press != 1 {
+                    return;
+                }
+                g.set_state(gtk::EventSequenceState::Claimed);
                 view.skip_lasso.set(true);
                 view.ignore_activate.set(true);
                 view.ensure_name_selected(&name, primary);
-                view.popup_context_at(&target, 24.0, 24.0);
+                view.popup_context_at(&target, x.max(12.0), y.max(16.0));
                 let view = view.clone();
                 glib::idle_add_local_once(move || {
                     view.ignore_activate.set(false);
                     view.skip_lasso.set(false);
                 });
             });
+            more.add_controller(claim);
         }
         {
             let view = self.clone();
