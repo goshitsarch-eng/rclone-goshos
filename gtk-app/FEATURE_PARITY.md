@@ -765,3 +765,4 @@ This client is the GTK 4 + libadwaita desktop UI. It talks to a local `rclone rc
 - Bare optional CLI flags (`--about`, `--preferences`, `--logs`, `--templates`, `--export`, `--whats-new`, `--quick-run-editor`, `--standalone`) register as GLib booleans so GIO no longer requires a value; leftover tokens stay after the re-inserted flag
 - Live GUI: `--about` opens the About home list (Details / About Rclone / About App / Credits / Legal); `--about rclone` as a second instance opens About Rclone
 - Live GUI: `--preferences` opens Preferences; `--preferences security` opens Security (Not Encrypted); `--logs` opens the logs dialog
+- Automations persist Angular-style lifecycle state (enabled/running/failed, success/fail/stop/run counts, last error, current job) and show it on dashboard and Flow rows

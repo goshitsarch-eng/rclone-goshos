@@ -1061,6 +1061,13 @@ mod tests {
             destinations: vec![],
             next_run: None,
             last_run: None,
+            status: crate::automation::AutomationStatus::Enabled,
+            last_error: None,
+            current_job_id: None,
+            run_count: 0,
+            success_count: 0,
+            failure_count: 0,
+            stopped_count: 0,
         };
         assert_eq!(
             NavTarget::for_automation(&remote),

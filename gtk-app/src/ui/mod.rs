@@ -1253,6 +1253,10 @@ fn notify_job_changes(
     current: &[crate::store::JobInfo],
 ) {
     let mut dirty = false;
+    if crate::automation::apply_job_transitions(&mut ctx.store.borrow_mut(), previous, current) > 0
+    {
+        dirty = true;
+    }
     for event in crate::alerts::job_events(previous, current, &|key, params| ctx.tf(key, params)) {
         ctx.store.borrow_mut().record_event(event);
         dirty = true;

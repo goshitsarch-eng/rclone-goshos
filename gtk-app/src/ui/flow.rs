@@ -574,8 +574,13 @@ impl FlowView {
                                 String::new()
                             };
                             row.set_subtitle(&format!(
-                                "{} · {cron}{paused_suffix}",
-                                record.operation
+                                "{} · {cron}{paused_suffix} · {} · {}",
+                                record.operation,
+                                self.ctx.t_or(
+                                    crate::automation::status_key(record.status),
+                                    &format!("{:?}", record.status)
+                                ),
+                                crate::automation::lifecycle_stats(&record)
                             ));
                             let enabled = gtk::Switch::new();
                             enabled.set_valign(gtk::Align::Center);
@@ -1302,7 +1307,15 @@ impl FlowView {
             } else {
                 String::new()
             };
-            row.set_subtitle(&format!("{} · {schedule}{paused_label}", record.operation));
+            row.set_subtitle(&format!(
+                "{} · {schedule}{paused_label} · {} · {}",
+                record.operation,
+                self.ctx.t_or(
+                    crate::automation::status_key(record.status),
+                    &format!("{:?}", record.status)
+                ),
+                crate::automation::lifecycle_stats(&record)
+            ));
             let enabled = gtk::Switch::new();
             enabled.set_valign(gtk::Align::Center);
             enabled.set_tooltip_text(Some(&self.ctx.t_or(

@@ -3,6 +3,8 @@
 use crate::operations::OperationType;
 use crate::rclone::RcClient;
 use crate::store::{AppStore, ProfileConfig, QuickRun};
+
+pub use crate::store::{AutomationRuntime, AutomationStatus};
 use chrono::{DateTime, Utc};
 use croner::Cron;
 use serde::{Deserialize, Serialize};
@@ -26,6 +28,20 @@ pub struct AutomationRecord {
     pub destinations: Vec<String>,
     pub next_run: Option<DateTime<Utc>>,
     pub last_run: Option<DateTime<Utc>>,
+    #[serde(default)]
+    pub status: AutomationStatus,
+    #[serde(default)]
+    pub last_error: Option<String>,
+    #[serde(default)]
+    pub current_job_id: Option<String>,
+    #[serde(default)]
+    pub run_count: u64,
+    #[serde(default)]
+    pub success_count: u64,
+    #[serde(default)]
+    pub failure_count: u64,
+    #[serde(default)]
+    pub stopped_count: u64,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -54,17 +70,20 @@ pub fn collect(store: &AppStore) -> Vec<AutomationRecord> {
                     continue;
                 }
                 let id = format!("remote:{remote}:{op_key}:{pname}");
-                out.push(record_from_profile(
-                    id,
-                    format!("{remote} / {op_key} / {pname}"),
-                    remote.clone(),
-                    pname.clone(),
-                    op,
-                    profile,
-                    store
-                        .automation_last_run
-                        .get(&format!("remote:{remote}:{op_key}:{pname}"))
-                        .cloned(),
+                out.push(with_runtime(
+                    record_from_profile(
+                        id,
+                        format!("{remote} / {op_key} / {pname}"),
+                        remote.clone(),
+                        pname.clone(),
+                        op,
+                        profile,
+                        store
+                            .automation_last_run
+                            .get(&format!("remote:{remote}:{op_key}:{pname}"))
+                            .cloned(),
+                    ),
+                    store,
                 ));
             }
         }
@@ -74,9 +93,9 @@ pub fn collect(store: &AppStore) -> Vec<AutomationRecord> {
             continue;
         }
         let id = format!("quick:{}", qr.id);
-        out.push(record_from_quick(
-            qr,
-            store.automation_last_run.get(&id).cloned(),
+        out.push(with_runtime(
+            record_from_quick(qr, store.automation_last_run.get(&id).cloned()),
+            store,
         ));
     }
     out.sort_by(|a, b| a.name.cmp(&b.name));
@@ -121,7 +140,170 @@ fn record_from_profile(
         watch_changed_only: cfg.app.watch_changed_only,
         sources,
         destinations,
+        status: AutomationStatus::Enabled,
+        last_error: None,
+        current_job_id: None,
+        run_count: 0,
+        success_count: 0,
+        failure_count: 0,
+        stopped_count: 0,
     }
+}
+
+fn with_runtime(mut record: AutomationRecord, store: &AppStore) -> AutomationRecord {
+    if let Some(runtime) = store.automation_runtime.get(&record.id) {
+        record.status = runtime.status;
+        record.last_error = runtime.last_error.clone();
+        record.current_job_id = runtime.current_job_id.clone();
+        record.run_count = runtime.run_count;
+        record.success_count = runtime.success_count;
+        record.failure_count = runtime.failure_count;
+        record.stopped_count = runtime.stopped_count;
+    }
+    if store.is_automation_paused(&record.id) && record.status != AutomationStatus::Running {
+        record.status = AutomationStatus::Disabled;
+    }
+    record
+}
+
+pub fn status_key(status: AutomationStatus) -> &'static str {
+    match status {
+        AutomationStatus::Enabled => "automation.status.enabled",
+        AutomationStatus::Disabled => "automation.status.disabled",
+        AutomationStatus::Running => "automation.status.running",
+        AutomationStatus::Failed => "automation.status.failed",
+        AutomationStatus::Stopping => "automation.status.stopping",
+    }
+}
+
+pub fn lifecycle_stats(record: &AutomationRecord) -> String {
+    let mut bits = vec![
+        format!("{} ok", record.success_count),
+        format!("{} fail", record.failure_count),
+        format!("{} runs", record.run_count),
+    ];
+    if record.stopped_count > 0 {
+        bits.insert(2, format!("{} stop", record.stopped_count));
+    }
+    if let Some(job) = record.current_job_id.as_deref().filter(|id| !id.is_empty()) {
+        bits.push(format!("job {job}"));
+    }
+    if let Some(error) = record.last_error.as_deref().filter(|e| !e.is_empty()) {
+        bits.push(format!("error: {error}"));
+    }
+    bits.join(" · ")
+}
+
+pub fn can_run(runtime: &AutomationRuntime) -> bool {
+    matches!(
+        runtime.status,
+        AutomationStatus::Enabled | AutomationStatus::Failed | AutomationStatus::Disabled
+    ) && runtime.current_job_id.is_none()
+}
+
+pub fn mark_starting(runtime: &mut AutomationRuntime) -> Result<(), String> {
+    if !can_run(runtime) {
+        return Err(format!(
+            "Automation cannot start from status {:?}",
+            runtime.status
+        ));
+    }
+    runtime.status = AutomationStatus::Running;
+    runtime.current_job_id = None;
+    runtime.run_count += 1;
+    Ok(())
+}
+
+pub fn mark_running(runtime: &mut AutomationRuntime, job_id: String) {
+    runtime.status = AutomationStatus::Running;
+    runtime.current_job_id = Some(job_id);
+}
+
+pub fn mark_success(runtime: &mut AutomationRuntime) {
+    runtime.last_error = None;
+    runtime.current_job_id = None;
+    runtime.success_count += 1;
+    runtime.status = if runtime.status == AutomationStatus::Stopping {
+        AutomationStatus::Disabled
+    } else {
+        AutomationStatus::Enabled
+    };
+}
+
+pub fn mark_failure(runtime: &mut AutomationRuntime, error: String) {
+    runtime.last_error = Some(error);
+    runtime.current_job_id = None;
+    runtime.failure_count += 1;
+    runtime.status = if runtime.status == AutomationStatus::Stopping {
+        AutomationStatus::Disabled
+    } else {
+        AutomationStatus::Failed
+    };
+}
+
+pub fn mark_stopped(runtime: &mut AutomationRuntime) {
+    runtime.current_job_id = None;
+    runtime.stopped_count += 1;
+    runtime.status = if runtime.status == AutomationStatus::Stopping {
+        AutomationStatus::Disabled
+    } else {
+        AutomationStatus::Enabled
+    };
+}
+
+pub fn automation_id_for_job(
+    job: &crate::store::JobInfo,
+    meta: Option<&crate::store::JobMeta>,
+) -> Option<String> {
+    if let Some(meta) = meta {
+        if meta.origin == "automation" && !meta.quick_run_id.is_empty() {
+            return Some(meta.quick_run_id.clone());
+        }
+    }
+    if job.origin == "automation" && !job.profile.is_empty() && !job.remote.is_empty() {
+        return Some(format!(
+            "remote:{}:{}:{}",
+            job.remote, job.operation, job.profile
+        ));
+    }
+    None
+}
+
+pub fn apply_job_terminal(store: &mut AppStore, job: &crate::store::JobInfo) -> bool {
+    let Some(id) = automation_id_for_job(job, store.job_meta.get(&job.id)) else {
+        return false;
+    };
+    let runtime = store.automation_runtime.entry(id.clone()).or_default();
+    match job.status.as_str() {
+        "completed" => mark_success(runtime),
+        "failed" => mark_failure(
+            runtime,
+            job.error
+                .clone()
+                .unwrap_or_else(|| "rclone job failed".into()),
+        ),
+        "stopped" => mark_stopped(runtime),
+        _ => return false,
+    }
+    store.automation_last_run.insert(id, Utc::now());
+    true
+}
+
+pub fn apply_job_transitions(
+    store: &mut AppStore,
+    previous: &[crate::store::JobInfo],
+    current: &[crate::store::JobInfo],
+) -> usize {
+    let mut updated = 0;
+    for job in current {
+        let was = previous.iter().find(|item| item.id == job.id);
+        let became_terminal = matches!(job.status.as_str(), "completed" | "failed" | "stopped")
+            && was.map(|item| item.status.as_str()) != Some(job.status.as_str());
+        if became_terminal && apply_job_terminal(store, job) {
+            updated += 1;
+        }
+    }
+    updated
 }
 
 fn split_paths(joined: Option<String>) -> Vec<String> {
@@ -341,6 +523,16 @@ pub fn fire(
             .ok_or_else(|| "profile missing".to_string())?
     };
     let meta = store.remotes.get(&record.remote).cloned();
+    {
+        if store.is_automation_paused(&record.id) {
+            return Err("automation paused".into());
+        }
+        let runtime = store
+            .automation_runtime
+            .entry(record.id.clone())
+            .or_default();
+        mark_starting(runtime)?;
+    }
     let result = crate::jobs::start_profile_ex(
         client,
         &record.remote,
@@ -349,14 +541,35 @@ pub fn fire(
         meta.as_ref(),
         "automation",
         scoped,
-    )?;
-    crate::jobs::remember_started(
-        &mut store.job_meta,
-        &result,
-        crate::jobs::job_meta_for(&record.remote, &profile, "automation", "", &record.id),
     );
-    store.automation_last_run.insert(record.id.clone(), now);
-    Ok(result)
+    match result {
+        Ok(result) => {
+            let ids = crate::jobs::parse_started_ids(&result);
+            let runtime = store
+                .automation_runtime
+                .entry(record.id.clone())
+                .or_default();
+            if let Some(id) = ids.first() {
+                mark_running(runtime, id.to_string());
+            }
+            crate::jobs::remember_started(
+                &mut store.job_meta,
+                &result,
+                crate::jobs::job_meta_for(&record.remote, &profile, "automation", "", &record.id),
+            );
+            store.automation_last_run.insert(record.id.clone(), now);
+            Ok(result)
+        }
+        Err(error) => {
+            let runtime = store
+                .automation_runtime
+                .entry(record.id.clone())
+                .or_default();
+            mark_failure(runtime, error.clone());
+            store.automation_last_run.insert(record.id.clone(), now);
+            Err(error)
+        }
+    }
 }
 
 #[cfg(test)]
@@ -486,5 +699,141 @@ mod tests {
         );
         assert_eq!(build_full_path("/tmp/docs", "Photos"), "/tmp/docs/Photos");
         assert_eq!(build_full_path("C:", "Users"), "C:/Users");
+    }
+
+    fn runtime_ready() -> AutomationRuntime {
+        AutomationRuntime {
+            status: AutomationStatus::Enabled,
+            ..AutomationRuntime::default()
+        }
+    }
+
+    #[test]
+    fn marks_success_failure_and_stopped() {
+        let mut runtime = runtime_ready();
+        mark_starting(&mut runtime).unwrap();
+        mark_running(&mut runtime, "42".into());
+        assert_eq!(runtime.status, AutomationStatus::Running);
+        assert_eq!(runtime.current_job_id.as_deref(), Some("42"));
+        assert_eq!(runtime.run_count, 1);
+        mark_success(&mut runtime);
+        assert_eq!(runtime.status, AutomationStatus::Enabled);
+        assert_eq!(runtime.success_count, 1);
+        assert!(runtime.current_job_id.is_none());
+        assert!(runtime.last_error.is_none());
+
+        mark_starting(&mut runtime).unwrap();
+        mark_failure(&mut runtime, "disk full".into());
+        assert_eq!(runtime.status, AutomationStatus::Failed);
+        assert_eq!(runtime.failure_count, 1);
+        assert_eq!(runtime.last_error.as_deref(), Some("disk full"));
+
+        runtime.status = AutomationStatus::Running;
+        mark_stopped(&mut runtime);
+        assert_eq!(runtime.status, AutomationStatus::Enabled);
+        assert_eq!(runtime.stopped_count, 1);
+    }
+
+    #[test]
+    fn refuses_second_start_while_running() {
+        let mut runtime = runtime_ready();
+        mark_starting(&mut runtime).unwrap();
+        assert!(mark_starting(&mut runtime).is_err());
+    }
+
+    #[test]
+    fn stopping_disables_on_terminal() {
+        let mut runtime = runtime_ready();
+        runtime.status = AutomationStatus::Stopping;
+        mark_success(&mut runtime);
+        assert_eq!(runtime.status, AutomationStatus::Disabled);
+
+        runtime.status = AutomationStatus::Stopping;
+        mark_failure(&mut runtime, "no".into());
+        assert_eq!(runtime.status, AutomationStatus::Disabled);
+    }
+
+    #[test]
+    fn collect_merges_runtime_and_pause() {
+        let mut store = AppStore::default();
+        let mut meta = RemoteMeta::default();
+        let mut profiles = HashMap::new();
+        profiles.insert(
+            "nightly".into(),
+            ProfileConfig {
+                name: "nightly".into(),
+                app: AppConfig {
+                    cron_enabled: true,
+                    cron_expression: "0 2 * * *".into(),
+                    ..AppConfig::default()
+                },
+                rclone: json!({ "srcFs": "drive:src", "dstFs": "/tmp" }),
+            },
+        );
+        meta.profiles.insert("sync".into(), profiles);
+        store.remotes.insert("drive".into(), meta);
+        let id = "remote:drive:sync:nightly";
+        store.automation_runtime.insert(
+            id.into(),
+            AutomationRuntime {
+                status: AutomationStatus::Failed,
+                last_error: Some("quota".into()),
+                success_count: 2,
+                failure_count: 1,
+                run_count: 3,
+                ..AutomationRuntime::default()
+            },
+        );
+        let items = collect(&store);
+        assert_eq!(items[0].status, AutomationStatus::Failed);
+        assert_eq!(items[0].failure_count, 1);
+        assert_eq!(items[0].last_error.as_deref(), Some("quota"));
+        store.automation_paused.push(id.into());
+        let paused = collect(&store);
+        assert_eq!(paused[0].status, AutomationStatus::Disabled);
+        assert_eq!(paused[0].failure_count, 1);
+        assert_eq!(paused[0].last_error.as_deref(), Some("quota"));
+    }
+
+    #[test]
+    fn job_completion_updates_runtime() {
+        let mut store = AppStore::default();
+        store.job_meta.insert(
+            9,
+            crate::store::JobMeta {
+                origin: "automation".into(),
+                quick_run_id: "quick:abc".into(),
+                ..crate::store::JobMeta::default()
+            },
+        );
+        let running = crate::store::JobInfo {
+            id: 9,
+            operation: "copy".into(),
+            remote: "drive".into(),
+            profile: "nightly".into(),
+            status: "running".into(),
+            origin: "automation".into(),
+            start_time: Utc::now(),
+            error: None,
+            dry_run: false,
+            src: String::new(),
+            dst: String::new(),
+            group: String::new(),
+            stats: json!({}),
+            transferring: json!([]),
+            duration: 0.0,
+            progress: 0.0,
+            output: json!({}),
+            completed: json!([]),
+            parent_job_id: None,
+        };
+        let mut failed = running.clone();
+        failed.status = "failed".into();
+        failed.error = Some("network".into());
+        assert_eq!(apply_job_transitions(&mut store, &[running], &[failed]), 1);
+        let runtime = &store.automation_runtime["quick:abc"];
+        assert_eq!(runtime.status, AutomationStatus::Failed);
+        assert_eq!(runtime.failure_count, 1);
+        assert_eq!(runtime.last_error.as_deref(), Some("network"));
     }
 }

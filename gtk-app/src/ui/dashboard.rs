@@ -1633,10 +1633,15 @@ impl Dashboard {
                     String::new()
                 };
                 row.set_subtitle(&format!(
-                    "{} · {cron} · {watch} · {} {next}{paused_suffix}",
+                    "{} · {cron} · {watch} · {} {next}{paused_suffix} · {} · {}",
                     record.operation,
                     self.ctx
-                        .t_or("generalOverview.automations.nextRun", "Next Run:")
+                        .t_or("generalOverview.automations.nextRun", "Next Run:"),
+                    self.ctx.t_or(
+                        crate::automation::status_key(record.status),
+                        &format!("{:?}", record.status)
+                    ),
+                    crate::automation::lifecycle_stats(&record)
                 ));
                 let enabled = gtk::Switch::new();
                 enabled.set_valign(gtk::Align::Center);
@@ -3752,7 +3757,7 @@ impl Dashboard {
                 self.ctx.t_or("common.off", "off")
             };
             row.set_subtitle(&format!(
-                "{} · {schedule}{}",
+                "{} · {schedule}{} · {} · {}",
                 record.operation,
                 if paused {
                     format!(
@@ -3762,7 +3767,12 @@ impl Dashboard {
                     )
                 } else {
                     String::new()
-                }
+                },
+                self.ctx.t_or(
+                    crate::automation::status_key(record.status),
+                    &format!("{:?}", record.status)
+                ),
+                crate::automation::lifecycle_stats(&record)
             ));
             let enabled = gtk::Switch::new();
             enabled.set_valign(gtk::Align::Center);

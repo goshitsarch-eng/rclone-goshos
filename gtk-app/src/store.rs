@@ -294,6 +294,35 @@ pub struct JobInfo {
 
 /// Local start-time metadata for a job id (persisted so grouped transfer
 /// snapshots survive restart).
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum AutomationStatus {
+    #[default]
+    Enabled,
+    Disabled,
+    Running,
+    Failed,
+    Stopping,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub struct AutomationRuntime {
+    #[serde(default)]
+    pub status: AutomationStatus,
+    #[serde(default)]
+    pub last_error: Option<String>,
+    #[serde(default)]
+    pub current_job_id: Option<String>,
+    #[serde(default)]
+    pub run_count: u64,
+    #[serde(default)]
+    pub success_count: u64,
+    #[serde(default)]
+    pub failure_count: u64,
+    #[serde(default)]
+    pub stopped_count: u64,
+}
+
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct JobMeta {
     #[serde(default)]
@@ -950,6 +979,8 @@ pub struct AppStore {
     #[serde(default)]
     pub automation_paused: Vec<String>,
     #[serde(default)]
+    pub automation_runtime: HashMap<String, AutomationRuntime>,
+    #[serde(default)]
     pub pending_share_paths: Vec<String>,
     #[serde(default)]
     pub job_meta: HashMap<u64, JobMeta>,
@@ -1275,6 +1306,15 @@ impl AppStore {
                 updated += 1;
             }
         }
+        let runtime_keys: Vec<String> = self.automation_runtime.keys().cloned().collect();
+        for key in runtime_keys {
+            if let Some(next) = rewrite_automation_id(&key, remote, from, to) {
+                if let Some(value) = self.automation_runtime.remove(&key) {
+                    self.automation_runtime.insert(next, value);
+                    updated += 1;
+                }
+            }
+        }
         updated
     }
 
@@ -1297,6 +1337,8 @@ impl AppStore {
             .retain(|id| !markers.iter().any(|m| id.contains(m.as_str())));
         self.automation_last_run
             .retain(|id, _| !markers.iter().any(|m| id.contains(m.as_str())));
+        self.automation_runtime
+            .retain(|id, _| !markers.iter().any(|m| id.contains(m.as_str())));
     }
 
     pub fn apply_delete_remote(&mut self, name: &str) {
@@ -1310,6 +1352,8 @@ impl AppStore {
         self.automation_paused
             .retain(|id| !markers.iter().any(|m| id.contains(m.as_str())));
         self.automation_last_run
+            .retain(|id, _| !markers.iter().any(|m| id.contains(m.as_str())));
+        self.automation_runtime
             .retain(|id, _| !markers.iter().any(|m| id.contains(m.as_str())));
     }
 
@@ -1842,6 +1886,7 @@ pub fn plan_delete_remote(
         .automation_paused
         .iter()
         .chain(store.automation_last_run.keys())
+        .chain(store.automation_runtime.keys())
         .filter(|id| id.contains(&format!("remote:{name}:")) || id.contains(&format!(":{name}:")))
         .cloned()
         .collect();
