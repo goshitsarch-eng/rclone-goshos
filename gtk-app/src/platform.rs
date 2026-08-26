@@ -1,5 +1,6 @@
 //! Linux desktop integrations: autostart, sleep inhibit, Send-to.
 
+use crate::tray_menu::HelperMenuNode;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -297,6 +298,160 @@ func add(_ title: String, _ action: String) {{
     mi.representedObject = action
     mi.target = target
     menu.addItem(mi)
+}}
+{adds}item.menu = menu
+app.run()
+"#
+    )
+}
+
+fn default_helper_nodes() -> Vec<HelperMenuNode> {
+    default_tray_helper_items()
+        .into_iter()
+        .map(|(label, action)| match action {
+            None => HelperMenuNode::Separator,
+            Some(token) => HelperMenuNode::Action { label, token },
+        })
+        .collect()
+}
+
+fn helper_nodes_or_default(nodes: &[HelperMenuNode]) -> Vec<HelperMenuNode> {
+    if nodes.is_empty() {
+        default_helper_nodes()
+    } else {
+        nodes.to_vec()
+    }
+}
+
+fn emit_ps_nodes(
+    parent_items: &str,
+    nodes: &[HelperMenuNode],
+    n: &mut u32,
+    quoted_exe: &str,
+    out: &mut String,
+) {
+    for node in nodes {
+        match node {
+            HelperMenuNode::Separator => out.push_str(&format!(
+                "{parent_items}.Add((New-Object System.Windows.Forms.ToolStripSeparator)) | Out-Null; "
+            )),
+            HelperMenuNode::Action { label, token } => {
+                *n += 1;
+                let id = *n;
+                let quoted_label = powershell_single_quoted(label);
+                let quoted_action = powershell_single_quoted(token);
+                out.push_str(&format!(
+                    "$i{id} = New-Object System.Windows.Forms.ToolStripMenuItem {quoted_label}; \
+                     $i{id}.add_Click({{ Start-Process -FilePath {quoted_exe} -ArgumentList '--tray-action',{quoted_action} }}); \
+                     {parent_items}.Add($i{id}) | Out-Null; "
+                ));
+            }
+            HelperMenuNode::Submenu { label, children } => {
+                *n += 1;
+                let id = *n;
+                let quoted_label = powershell_single_quoted(label);
+                out.push_str(&format!(
+                    "$i{id} = New-Object System.Windows.Forms.ToolStripMenuItem {quoted_label}; \
+                     {parent_items}.Add($i{id}) | Out-Null; "
+                ));
+                emit_ps_nodes(
+                    &format!("$i{id}.DropDownItems"),
+                    children,
+                    n,
+                    quoted_exe,
+                    out,
+                );
+            }
+        }
+    }
+}
+
+/// Nested PowerShell NotifyIcon menu from `plan_tray`.
+pub fn windows_notifyicon_ps1_nodes(exe: &str, nodes: &[HelperMenuNode]) -> String {
+    let quoted = powershell_single_quoted(exe);
+    let mut menu = String::new();
+    let mut n = 0;
+    emit_ps_nodes(
+        "$menu.Items",
+        &helper_nodes_or_default(nodes),
+        &mut n,
+        &quoted,
+        &mut menu,
+    );
+    format!(
+        "Add-Type -AssemblyName System.Windows.Forms; \
+         Add-Type -AssemblyName System.Drawing; \
+         $icon = New-Object System.Windows.Forms.NotifyIcon; \
+         $icon.Text = 'Rclone Manager'; \
+         $icon.Icon = [System.Drawing.SystemIcons]::Application; \
+         $icon.Visible = $true; \
+         $menu = New-Object System.Windows.Forms.ContextMenuStrip; \
+         {menu}\
+         $icon.ContextMenuStrip = $menu; \
+         $icon.add_DoubleClick({{ Start-Process -FilePath {quoted} -ArgumentList '--tray-action','show-window' }}); \
+         $app = New-Object System.Windows.Forms.ApplicationContext; \
+         [System.Windows.Forms.Application]::Run($app)"
+    )
+}
+
+fn emit_swift_nodes(menu_var: &str, nodes: &[HelperMenuNode], n: &mut u32, out: &mut String) {
+    for node in nodes {
+        match node {
+            HelperMenuNode::Separator => {
+                out.push_str(&format!("{menu_var}.addItem(NSMenuItem.separator())\n"));
+            }
+            HelperMenuNode::Action { label, token } => {
+                let title = swift_string_literal(label);
+                let token = swift_string_literal(token);
+                out.push_str(&format!("add(\"{title}\", \"{token}\", {menu_var})\n"));
+            }
+            HelperMenuNode::Submenu { label, children } => {
+                *n += 1;
+                let id = *n;
+                let title = swift_string_literal(label);
+                out.push_str(&format!(
+                    "let m{id} = NSMenu()\n\
+                     let p{id} = NSMenuItem(title: \"{title}\", action: nil, keyEquivalent: \"\")\n\
+                     p{id}.submenu = m{id}\n\
+                     {menu_var}.addItem(p{id})\n"
+                ));
+                emit_swift_nodes(&format!("m{id}"), children, n, out);
+            }
+        }
+    }
+}
+
+/// Nested Swift NSStatusItem menu from `plan_tray`.
+pub fn macos_status_item_swift_nodes(exe: &str, nodes: &[HelperMenuNode]) -> String {
+    let escaped = swift_string_literal(exe);
+    let mut adds = String::new();
+    let mut n = 0;
+    emit_swift_nodes("menu", &helper_nodes_or_default(nodes), &mut n, &mut adds);
+    format!(
+        r#"import Cocoa
+let exe = "{escaped}"
+func run(_ action: String) {{
+    let p = Process()
+    p.executableURL = URL(fileURLWithPath: exe)
+    p.arguments = ["--tray-action", action]
+    try? p.run()
+}}
+class TrayTarget: NSObject {{
+    @objc func runAction(_ sender: NSMenuItem) {{
+        if let action = sender.representedObject as? String {{ run(action) }}
+    }}
+}}
+let app = NSApplication.shared
+app.setActivationPolicy(.accessory)
+let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
+item.button?.title = "R"
+let menu = NSMenu()
+let target = TrayTarget()
+func add(_ title: String, _ action: String, _ dest: NSMenu) {{
+    let mi = NSMenuItem(title: title, action: #selector(TrayTarget.runAction(_:)), keyEquivalent: "")
+    mi.representedObject = action
+    mi.target = target
+    dest.addItem(mi)
 }}
 {adds}item.menu = menu
 app.run()
@@ -1402,6 +1557,19 @@ mod tests {
         let swift = macos_status_item_swift("/opt/rclone-manager-gtk", &dynamic);
         assert!(swift.contains("mount|testdrive|default"));
         assert!(swift.contains("NSMenuItem.separator"));
+        let nodes = vec![crate::tray_menu::HelperMenuNode::Submenu {
+            label: "testdrive".into(),
+            children: vec![crate::tray_menu::HelperMenuNode::Action {
+                label: "Mount · default".into(),
+                token: "mount|testdrive|default".into(),
+            }],
+        }];
+        let nested_ps = windows_notifyicon_ps1_nodes(r"C:\rclone-manager-gtk.exe", &nodes);
+        assert!(nested_ps.contains("DropDownItems"));
+        assert!(nested_ps.contains("mount|testdrive|default"));
+        let nested_swift = macos_status_item_swift_nodes("/opt/rclone-manager-gtk", &nodes);
+        assert!(nested_swift.contains(".submenu"));
+        assert!(nested_swift.contains("mount|testdrive|default"));
     }
 
     #[test]

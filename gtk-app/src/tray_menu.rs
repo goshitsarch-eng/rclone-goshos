@@ -184,6 +184,60 @@ pub fn tray_helper_needs_restart(prev: &str, items: &[(String, Option<String>)])
     tray_helper_signature(items) != prev
 }
 
+/// Nested menu tree for Windows NotifyIcon / macOS NSStatusItem helpers.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum HelperMenuNode {
+    Action {
+        label: String,
+        token: String,
+    },
+    Separator,
+    Submenu {
+        label: String,
+        children: Vec<HelperMenuNode>,
+    },
+}
+
+/// Preserve `plan_tray` nesting (skip disabled / status-only rows).
+pub fn helper_menu_nodes(menu: &[TrayMenuItem]) -> Vec<HelperMenuNode> {
+    let mut out = Vec::new();
+    for item in menu {
+        if !item.children.is_empty() {
+            let children = helper_menu_nodes(&item.children);
+            if !children.is_empty() {
+                out.push(HelperMenuNode::Submenu {
+                    label: item.label.clone(),
+                    children,
+                });
+            }
+            continue;
+        }
+        if item.action.is_none() {
+            if matches!(out.last(), Some(HelperMenuNode::Separator)) {
+                continue;
+            }
+            out.push(HelperMenuNode::Separator);
+            continue;
+        }
+        if !item.enabled || matches!(item.action, Some(TrayAction::Status)) {
+            continue;
+        }
+        if let Some(action) = &item.action {
+            out.push(HelperMenuNode::Action {
+                label: item.label.clone(),
+                token: encode_tray_action(action),
+            });
+        }
+    }
+    while matches!(out.first(), Some(HelperMenuNode::Separator)) {
+        out.remove(0);
+    }
+    while matches!(out.last(), Some(HelperMenuNode::Separator)) {
+        out.pop();
+    }
+    out
+}
+
 pub fn parse_tray_action_args(args: &[String]) -> Option<TrayAction> {
     let mut i = 0;
     while i < args.len() {
@@ -813,5 +867,30 @@ mod tests {
         let swift = crate::platform::macos_status_item_swift("/opt/app", &flat);
         assert!(swift.contains("mount|drive|media"));
         assert!(swift.contains("qr-start|"));
+
+        let nodes = helper_menu_nodes(&plan);
+        assert!(nodes.iter().any(|node| matches!(
+            node,
+            HelperMenuNode::Submenu { label, children }
+                if label.contains("drive")
+                    && children.iter().any(|child| match child {
+                        HelperMenuNode::Submenu { children, .. } => children.iter().any(|leaf| {
+                            matches!(
+                                leaf,
+                                HelperMenuNode::Action { token, .. }
+                                    if token == "mount|drive|media"
+                            )
+                        }),
+                        HelperMenuNode::Action { token, .. } => token == "mount|drive|media",
+                        _ => false,
+                    })
+        )));
+        let nested_ps = crate::platform::windows_notifyicon_ps1_nodes("C:\\app.exe", &nodes);
+        assert!(nested_ps.contains("DropDownItems"));
+        assert!(nested_ps.contains("mount|drive|media"));
+        let nested_swift = crate::platform::macos_status_item_swift_nodes("/opt/app", &nodes);
+        assert!(nested_swift.contains(".submenu"));
+        assert!(nested_swift.contains("mount|drive|media"));
+        assert!(nested_swift.contains("qr-start|"));
     }
 }

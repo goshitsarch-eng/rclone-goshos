@@ -3,8 +3,8 @@ use crate::jobs::{find_active_quick_run, start_profile, stop_profile};
 use crate::operations::OperationType;
 use crate::rclone::remote_fs;
 use crate::tray_menu::{
-    flatten_tray_menu, plan_tray, tray_helper_needs_restart, tray_helper_signature, TrayAction,
-    TrayCaption, TrayMenuItem,
+    flatten_tray_menu, helper_menu_nodes, plan_tray, tray_helper_needs_restart,
+    tray_helper_signature, TrayAction, TrayCaption, TrayMenuItem,
 };
 use std::cell::RefCell;
 use std::path::PathBuf;
@@ -34,23 +34,24 @@ struct NativeTrayHelper {
 
 #[allow(dead_code)]
 impl NativeTrayHelper {
-    fn spawn(exe: PathBuf, items: &[(String, Option<String>)]) -> Option<Self> {
-        let child = spawn_native_helper(&exe, items)?;
+    fn spawn(exe: PathBuf, menu: &[TrayMenuItem]) -> Option<Self> {
+        let child = spawn_native_helper(&exe, menu)?;
         Some(Self {
-            last_sig: Mutex::new(tray_helper_signature(items)),
+            last_sig: Mutex::new(tray_helper_signature(&flatten_tray_menu(menu))),
             child: Mutex::new(Some(child)),
             exe,
         })
     }
 
-    fn sync(&self, items: &[(String, Option<String>)]) {
+    fn sync(&self, menu: &[TrayMenuItem]) {
+        let flat = flatten_tray_menu(menu);
         let Ok(mut last) = self.last_sig.lock() else {
             return;
         };
-        if !tray_helper_needs_restart(&last, items) {
+        if !tray_helper_needs_restart(&last, &flat) {
             return;
         }
-        *last = tray_helper_signature(items);
+        *last = tray_helper_signature(&flat);
         drop(last);
         let Ok(mut slot) = self.child.lock() else {
             return;
@@ -59,8 +60,8 @@ impl NativeTrayHelper {
             let _ = child.kill();
             let _ = child.wait();
         }
-        *slot = spawn_native_helper(&self.exe, items);
-        log::info!("native tray helper restarted ({} items)", items.len());
+        *slot = spawn_native_helper(&self.exe, menu);
+        log::info!("native tray helper restarted ({} items)", flat.len());
     }
 }
 
@@ -87,7 +88,7 @@ impl TrayBus {
             });
         }
         if let Some(native) = &self.native {
-            native.sync(&flatten_tray_menu(&items));
+            native.sync(&items);
         }
     }
 }
@@ -367,31 +368,34 @@ pub fn start_or_reuse(ctx: &AppCtx) -> Option<TrayBus> {
 }
 
 #[allow(dead_code)]
-fn spawn_native_helper(exe: &PathBuf, items: &[(String, Option<String>)]) -> Option<Child> {
+fn spawn_native_helper(exe: &PathBuf, menu: &[TrayMenuItem]) -> Option<Child> {
     #[cfg(target_os = "windows")]
     {
-        return spawn_windows_notifyicon(exe, items);
+        return spawn_windows_notifyicon(exe, menu);
     }
     #[cfg(target_os = "macos")]
     {
-        return spawn_macos_status_item(exe, items);
+        return spawn_macos_status_item(exe, menu);
     }
     #[cfg(not(any(target_os = "windows", target_os = "macos")))]
     {
-        let _ = (exe, items);
+        let _ = (exe, menu);
         None
     }
 }
 
 #[cfg(target_os = "windows")]
-fn spawn_windows_notifyicon(exe: &PathBuf, items: &[(String, Option<String>)]) -> Option<Child> {
+fn spawn_windows_notifyicon(exe: &PathBuf, menu: &[TrayMenuItem]) -> Option<Child> {
     let path = dirs::config_dir()?.join("rclone-manager/tray-notifyicon.ps1");
     if let Some(parent) = path.parent() {
         let _ = std::fs::create_dir_all(parent);
     }
     std::fs::write(
         &path,
-        crate::platform::windows_notifyicon_ps1(&exe.to_string_lossy(), items),
+        crate::platform::windows_notifyicon_ps1_nodes(
+            &exe.to_string_lossy(),
+            &helper_menu_nodes(menu),
+        ),
     )
     .ok()?;
     let ps = if which::which("powershell").is_ok() {
@@ -415,14 +419,17 @@ fn spawn_windows_notifyicon(exe: &PathBuf, items: &[(String, Option<String>)]) -
 }
 
 #[cfg(target_os = "macos")]
-fn spawn_macos_status_item(exe: &PathBuf, items: &[(String, Option<String>)]) -> Option<Child> {
+fn spawn_macos_status_item(exe: &PathBuf, menu: &[TrayMenuItem]) -> Option<Child> {
     let path = dirs::config_dir()?.join("rclone-manager/tray-status-item.swift");
     if let Some(parent) = path.parent() {
         let _ = std::fs::create_dir_all(parent);
     }
     std::fs::write(
         &path,
-        crate::platform::macos_status_item_swift(&exe.to_string_lossy(), items),
+        crate::platform::macos_status_item_swift_nodes(
+            &exe.to_string_lossy(),
+            &helper_menu_nodes(menu),
+        ),
     )
     .ok()?;
     Command::new("swift")
@@ -438,12 +445,11 @@ fn spawn_macos_status_item(exe: &PathBuf, items: &[(String, Option<String>)]) ->
 fn start_native_helper(ctx: &AppCtx) -> Option<TrayBus> {
     let exe = std::env::current_exe().ok()?;
     let (items, ..) = plan_status(ctx);
-    let flat = flatten_tray_menu(&items);
-    let native = NativeTrayHelper::spawn(exe, &flat)?;
+    let native = NativeTrayHelper::spawn(exe, &items)?;
     log::info!(
         "{} tray helper started ({} items)",
         crate::platform::tray_backend(),
-        flat.len()
+        flatten_tray_menu(&items).len()
     );
     let (tx, rx) = mpsc::channel();
     Some(TrayBus {

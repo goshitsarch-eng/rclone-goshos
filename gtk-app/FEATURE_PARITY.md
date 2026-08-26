@@ -28,7 +28,7 @@ This client is the GTK 4 + libadwaita desktop UI. It talks to a local `rclone rc
 - Theme: system / light / dark
 - i18n: en-US, tr-TR, es-ES, zh-CN, fr-FR, uk-UA, ru-RU, pt-BR, ja-JP
 - Native StatusNotifier tray (ksni) with per-remote Mount/Unmount/Browse menus and Show Window restore
-- Windows NotifyIcon / macOS NSStatusItem helpers flatten the same `plan_tray` tree and respawn only on menu-signature changes
+- Windows NotifyIcon / macOS NSStatusItem helpers emit nested `plan_tray` menus and respawn only on menu-signature changes
 - Live job polling from rclone `job/list` + `job/status` + group `core/stats`, with failure alerts
 - Provider list from `config/providers` when adding remotes
 - Live job detail (progress, speed, ETA, transferring list, stop, reset stats)
@@ -589,4 +589,5 @@ This client is the GTK 4 + libadwaita desktop UI. It talks to a local `rclone rc
 - Live GUI: testdrive Photos ⋮ opens the full listing context menu pointed at the row and it stays open (Open / Copy to… under the Photos ⋮)
 - Live GUI: testdrive Photos right-click opens the same scrolled menu (Open in New Tab / Refresh / Copy to…)
 - Tray backends: Linux StatusNotifier (`ksni`), Windows NotifyIcon helper (`--tray-action`), macOS NSStatusItem Swift helper (`--tray-action`)
-- Win/macOS tray helpers flatten `plan_tray` (per-remote Mount/Unmount/Browse, quick runs) and restart only when the encoded menu signature changes
+- Win/macOS tray helpers flatten `plan_tray` for restart signatures and emit nested NotifyIcon / NSStatusItem menus (per-remote Mount/Unmount/Browse, quick runs)
+- Live GUI: after tray-helper rewrite, testdrive Photos ⋮ still opens the full listing menu (Open / Open native / Copy to…)
