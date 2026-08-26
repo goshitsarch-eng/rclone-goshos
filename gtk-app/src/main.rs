@@ -125,6 +125,12 @@ fn register_application_options(app: &adw::Application) {
     );
     add("tray", OptionArg::None, "Start hidden in the tray", None);
     add(
+        "tray-action",
+        OptionArg::String,
+        "Dispatch a tray menu action to the running instance",
+        Some("ACTION"),
+    );
+    add(
         "hidden",
         OptionArg::None,
         "Start with the window hidden",
@@ -289,6 +295,7 @@ fn command_line_option_flags(
         "browse-path",
         "standalone",
         "tray",
+        "tray-action",
         "hidden",
         "dialog",
         "dialog-data",

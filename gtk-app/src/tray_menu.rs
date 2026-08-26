@@ -38,6 +38,95 @@ pub enum TrayAction {
     StopQuickRun(String),
 }
 
+/// CLI token for `--tray-action` (Windows NotifyIcon / macOS NSStatusItem helpers).
+pub fn encode_tray_action(action: &TrayAction) -> String {
+    match action {
+        TrayAction::ShowWindow => "show-window".into(),
+        TrayAction::OpenFiles => "open-files".into(),
+        TrayAction::Quit => "quit".into(),
+        TrayAction::UnmountAll => "unmount-all".into(),
+        TrayAction::StopJobs => "stop-jobs".into(),
+        TrayAction::StopServes => "stop-serves".into(),
+        TrayAction::Status => "status".into(),
+        TrayAction::MountRemote { remote, profile } => {
+            format!("mount|{remote}|{profile}")
+        }
+        TrayAction::UnmountRemote { remote, profile } => {
+            format!("unmount|{remote}|{profile}")
+        }
+        TrayAction::BrowseRemote(remote) => format!("browse|{remote}"),
+        TrayAction::BrowseInApp(remote) => format!("browse-in|{remote}"),
+        TrayAction::StartProfile {
+            remote,
+            op,
+            profile,
+        } => format!("start|{remote}|{op}|{profile}"),
+        TrayAction::StopProfile {
+            remote,
+            op,
+            profile,
+        } => format!("stop|{remote}|{op}|{profile}"),
+        TrayAction::StartQuickRun(id) => format!("qr-start|{id}"),
+        TrayAction::StopQuickRun(id) => format!("qr-stop|{id}"),
+    }
+}
+
+pub fn parse_tray_action(token: &str) -> Option<TrayAction> {
+    let token = token.trim();
+    if token.is_empty() {
+        return None;
+    }
+    let mut parts = token.split('|');
+    let kind = parts.next()?;
+    match kind {
+        "show-window" => Some(TrayAction::ShowWindow),
+        "open-files" => Some(TrayAction::OpenFiles),
+        "quit" => Some(TrayAction::Quit),
+        "unmount-all" => Some(TrayAction::UnmountAll),
+        "stop-jobs" => Some(TrayAction::StopJobs),
+        "stop-serves" => Some(TrayAction::StopServes),
+        "status" => Some(TrayAction::Status),
+        "mount" => Some(TrayAction::MountRemote {
+            remote: parts.next()?.into(),
+            profile: parts.next()?.into(),
+        }),
+        "unmount" => Some(TrayAction::UnmountRemote {
+            remote: parts.next()?.into(),
+            profile: parts.next()?.into(),
+        }),
+        "browse" => Some(TrayAction::BrowseRemote(parts.next()?.into())),
+        "browse-in" => Some(TrayAction::BrowseInApp(parts.next()?.into())),
+        "start" => Some(TrayAction::StartProfile {
+            remote: parts.next()?.into(),
+            op: parts.next()?.into(),
+            profile: parts.next()?.into(),
+        }),
+        "stop" => Some(TrayAction::StopProfile {
+            remote: parts.next()?.into(),
+            op: parts.next()?.into(),
+            profile: parts.next()?.into(),
+        }),
+        "qr-start" => Some(TrayAction::StartQuickRun(parts.next()?.into())),
+        "qr-stop" => Some(TrayAction::StopQuickRun(parts.next()?.into())),
+        _ => None,
+    }
+}
+
+pub fn parse_tray_action_args(args: &[String]) -> Option<TrayAction> {
+    let mut i = 0;
+    while i < args.len() {
+        let arg = args[i].as_str();
+        if let Some(value) = arg.strip_prefix("--tray-action=") {
+            return parse_tray_action(value);
+        }
+        if arg == "--tray-action" {
+            return args.get(i + 1).and_then(|v| parse_tray_action(v));
+        }
+        i += 1;
+    }
+    None
+}
+
 /// ARGB32 (network byte order) pixmap so StatusNotifier hosts can draw the
 /// tray icon when the panel theme has no `folder-remote` name.
 pub fn status_icon_argb(size: i32, busy: bool) -> Vec<u8> {
@@ -567,5 +656,40 @@ mod tests {
         let busy = status_icon_argb(16, true);
         assert_eq!(busy.len(), 16 * 16 * 4);
         assert!(busy.chunks(4).any(|px| px[0] > 200 && px[1] == 0xF5));
+    }
+
+    #[test]
+    fn tray_action_cli_tokens_roundtrip() {
+        let actions = [
+            TrayAction::ShowWindow,
+            TrayAction::OpenFiles,
+            TrayAction::Quit,
+            TrayAction::UnmountAll,
+            TrayAction::StopJobs,
+            TrayAction::StopServes,
+            TrayAction::MountRemote {
+                remote: "testdrive".into(),
+                profile: "default".into(),
+            },
+            TrayAction::StartQuickRun("qr-1".into()),
+        ];
+        for action in actions {
+            let token = encode_tray_action(&action);
+            assert_eq!(parse_tray_action(&token), Some(action));
+        }
+        assert_eq!(
+            parse_tray_action_args(&[
+                "app".into(),
+                "--tray-action".into(),
+                "browse|testdrive".into()
+            ]),
+            Some(TrayAction::BrowseRemote("testdrive".into()))
+        );
+        assert_eq!(
+            parse_tray_action_args(&["app".into(), "--tray-action=quit".into()]),
+            Some(TrayAction::Quit)
+        );
+        assert_eq!(parse_tray_action(""), None);
+        assert_eq!(parse_tray_action("nope"), None);
     }
 }

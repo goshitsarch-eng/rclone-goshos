@@ -61,6 +61,9 @@ fn handle_reentry(app: &adw::Application, ctx: &AppCtx) {
 }
 
 fn apply_launch(app: &adw::Application, ctx: &AppCtx, args: &[String], first: bool) {
+    if let Some(action) = crate::tray_menu::parse_tray_action_args(args) {
+        super::tray::handle(ctx, action);
+    }
     if let Some(send) = crate::platform::parse_send_to_args(args) {
         upload_send_to(ctx, &send);
     }

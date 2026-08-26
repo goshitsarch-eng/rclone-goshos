@@ -318,9 +318,69 @@ pub fn start_or_reuse(ctx: &AppCtx) -> Option<TrayBus> {
     bus
 }
 
+fn empty_bus() -> TrayBus {
+    let (tx, rx) = mpsc::channel();
+    TrayBus {
+        tx,
+        rx: Arc::new(Mutex::new(rx)),
+        handle: None,
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn start_windows_notifyicon() -> Option<TrayBus> {
+    let exe = std::env::current_exe().ok()?;
+    let script = crate::platform::windows_notifyicon_ps1(&exe.to_string_lossy());
+    let ps = if which::which("powershell").is_ok() {
+        "powershell"
+    } else {
+        "pwsh"
+    };
+    std::process::Command::new(ps)
+        .args(["-NoProfile", "-WindowStyle", "Hidden", "-Command", &script])
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .ok()?;
+    log::info!("Windows NotifyIcon tray helper started");
+    Some(empty_bus())
+}
+
+#[cfg(target_os = "macos")]
+fn start_macos_status_item() -> Option<TrayBus> {
+    let exe = std::env::current_exe().ok()?;
+    let path = dirs::config_dir()?.join("rclone-manager/tray-status-item.swift");
+    if let Some(parent) = path.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+    std::fs::write(
+        &path,
+        crate::platform::macos_status_item_swift(&exe.to_string_lossy()),
+    )
+    .ok()?;
+    std::process::Command::new("swift")
+        .arg(&path)
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .ok()?;
+    log::info!("macOS NSStatusItem tray helper started");
+    Some(empty_bus())
+}
+
 pub fn start(ctx: &AppCtx) -> Option<TrayBus> {
     if !ctx.settings.borrow().general.tray_enabled {
         return None;
+    }
+    #[cfg(target_os = "windows")]
+    {
+        return start_windows_notifyicon();
+    }
+    #[cfg(target_os = "macos")]
+    {
+        return start_macos_status_item();
     }
     let (tx, rx) = mpsc::channel();
     let (items, icon_name, title, description, busy) = plan_status(ctx);

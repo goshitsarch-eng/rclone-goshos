@@ -580,9 +580,11 @@ This client is the GTK 4 + libadwaita desktop UI. It talks to a local `rclone rc
 - Files grid matches list: single-click selects, double-click opens (`activate_on_single_click=false`)
 - Files ⋮ is a 48px `GtkButton` overlay (`.file-item-menu` / `.file-item-menu-hit`); FlowBox no longer opens on single click
 - Files listing context menu is a scrolled `GtkBox` (260×420) on a persistent window-parented `GtkPopover` pointed at the clicked ⋮ / row
+- `--tray-action` CLI tokens encode tray menu clicks for Windows NotifyIcon / macOS NSStatusItem helpers
 - Files toolbar Selection actions keeps the short Open/Copy/Cut/Copy to…/Move to…/Paste/rename/delete list
 - Windows autostart writes `HKCU\...\Run` `Rclone Manager` → `"exe" --tray` (PowerShell)
 - macOS autostart writes `~/Library/LaunchAgents/io.github.zarestia_dev.rclone-manager.plist` (`RunAtLoad`, `--tray`)
 - Prevent-sleep: Windows `SetThreadExecutionState(ES_CONTINUOUS|SYSTEM|AWAYMODE)`, macOS `caffeinate -dims`, Linux logind / systemd-inhibit
-- Live GUI: testdrive Photos ⋮ opens the full listing context menu and it stays open (Open / Copy to… / Star / Compress / Share)
+- Live GUI: testdrive Photos ⋮ opens the full listing context menu pointed at the row and it stays open (Open / Copy to… under the Photos ⋮)
 - Live GUI: testdrive Photos right-click opens the same scrolled menu (Open in New Tab / Refresh / Copy to…)
+- Tray backends: Linux StatusNotifier (`ksni`), Windows NotifyIcon helper (`--tray-action`), macOS NSStatusItem Swift helper (`--tray-action`)

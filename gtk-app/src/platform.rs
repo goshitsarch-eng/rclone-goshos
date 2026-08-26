@@ -177,6 +177,99 @@ pub fn autostart_enabled() -> bool {
 
 pub const WINDOWS_RUN_VALUE_NAME: &str = "Rclone Manager";
 
+/// Tray host used on this OS. Linux uses StatusNotifier (`ksni`);
+/// Windows uses a NotifyIcon helper; macOS uses an NSStatusItem helper.
+pub fn tray_backend() -> &'static str {
+    if cfg!(target_os = "windows") {
+        "notifyicon"
+    } else if cfg!(target_os = "macos") {
+        "nsstatusitem"
+    } else {
+        "ksni"
+    }
+}
+
+fn powershell_single_quoted(value: &str) -> String {
+    format!("'{}'", value.replace('\'', "''"))
+}
+
+/// PowerShell NotifyIcon that forwards clicks to `exe --tray-action`.
+pub fn windows_notifyicon_ps1(exe: &str) -> String {
+    let quoted = powershell_single_quoted(exe);
+    let items = [
+        ("Show Window", "show-window"),
+        ("Open Files", "open-files"),
+        ("Unmount All", "unmount-all"),
+        ("Stop All Jobs", "stop-jobs"),
+        ("Stop All Serves", "stop-serves"),
+        ("Quit", "quit"),
+    ];
+    let mut menu = String::new();
+    for (label, action) in items {
+        menu.push_str(&format!(
+            "$item = New-Object System.Windows.Forms.ToolStripMenuItem '{label}'; \
+             $item.add_Click({{ Start-Process -FilePath {quoted} -ArgumentList '--tray-action','{action}' }}); \
+             $menu.Items.Add($item) | Out-Null; "
+        ));
+    }
+    format!(
+        "Add-Type -AssemblyName System.Windows.Forms; \
+         Add-Type -AssemblyName System.Drawing; \
+         $icon = New-Object System.Windows.Forms.NotifyIcon; \
+         $icon.Text = 'Rclone Manager'; \
+         $icon.Icon = [System.Drawing.SystemIcons]::Application; \
+         $icon.Visible = $true; \
+         $menu = New-Object System.Windows.Forms.ContextMenuStrip; \
+         {menu}\
+         $icon.ContextMenuStrip = $menu; \
+         $icon.add_DoubleClick({{ Start-Process -FilePath {quoted} -ArgumentList '--tray-action','show-window' }}); \
+         $app = New-Object System.Windows.Forms.ApplicationContext; \
+         [System.Windows.Forms.Application]::Run($app)"
+    )
+}
+
+/// Swift NSStatusItem helper that forwards clicks to `exe --tray-action`.
+pub fn macos_status_item_swift(exe: &str) -> String {
+    let escaped = exe.replace('\\', "\\\\").replace('"', "\\\"");
+    format!(
+        r#"import Cocoa
+let exe = "{escaped}"
+func run(_ action: String) {{
+    let p = Process()
+    p.executableURL = URL(fileURLWithPath: exe)
+    p.arguments = ["--tray-action", action]
+    try? p.run()
+}}
+let app = NSApplication.shared
+app.setActivationPolicy(.accessory)
+let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
+item.button?.title = "R"
+let menu = NSMenu()
+for (title, action) in [
+    ("Show Window", "show-window"),
+    ("Open Files", "open-files"),
+    ("Unmount All", "unmount-all"),
+    ("Stop All Jobs", "stop-jobs"),
+    ("Stop All Serves", "stop-serves"),
+    ("Quit", "quit"),
+] {{
+    let mi = NSMenuItem(title: title, action: #selector(TrayTarget.runAction(_:)), keyEquivalent: "")
+    mi.representedObject = action
+    menu.addItem(mi)
+}}
+class TrayTarget: NSObject {{
+    @objc func runAction(_ sender: NSMenuItem) {{
+        if let action = sender.representedObject as? String {{ run(action) }}
+    }}
+}}
+let target = TrayTarget()
+for mi in menu.items {{ mi.target = target }}
+item.menu = menu
+app.run()
+"#
+    )
+}
+
 pub fn windows_autostart_command(exe: &str) -> String {
     format!("\"{exe}\" --tray")
 }
@@ -1229,6 +1322,32 @@ mod tests {
         assert!(macos_launch_agent_path()
             .to_string_lossy()
             .contains("Library/LaunchAgents/io.github.zarestia_dev.rclone-manager.plist"));
+    }
+
+    #[test]
+    fn tray_helpers_match_desktop_backends() {
+        assert_eq!(
+            tray_backend(),
+            if cfg!(target_os = "windows") {
+                "notifyicon"
+            } else if cfg!(target_os = "macos") {
+                "nsstatusitem"
+            } else {
+                "ksni"
+            }
+        );
+        let ps = windows_notifyicon_ps1(r"C:\Program Files\rclone-manager-gtk.exe");
+        assert!(ps.contains("System.Windows.Forms.NotifyIcon"));
+        assert!(ps.contains("--tray-action"));
+        assert!(ps.contains("show-window"));
+        assert!(ps.contains("unmount-all"));
+        assert!(ps.contains(r"C:\Program Files\rclone-manager-gtk.exe"));
+        let swift =
+            macos_status_item_swift(r#"/Applications/Rclone "Manager".app/Contents/MacOS/app"#);
+        assert!(swift.contains("NSStatusItem"));
+        assert!(swift.contains("--tray-action"));
+        assert!(swift.contains("open-files"));
+        assert!(swift.contains(r#"\""#));
     }
 
     #[test]

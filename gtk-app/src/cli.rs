@@ -14,6 +14,7 @@ pub struct CliArgs {
     pub logs_dir: Option<PathBuf>,
     pub tray: bool,
     pub hidden: bool,
+    pub tray_action: Option<String>,
 }
 
 impl CliArgs {
@@ -53,6 +54,13 @@ pub fn parse_cli_args(args: &[String]) -> CliArgs {
             parsed.tray = true;
         } else if arg == "--hidden" {
             parsed.hidden = true;
+        } else if let Some(value) = value_of(arg, "--tray-action") {
+            parsed.tray_action = Some(value.to_string());
+        } else if arg == "--tray-action" {
+            i += 1;
+            if let Some(value) = args.get(i) {
+                parsed.tray_action = Some(value.clone());
+            }
         }
         i += 1;
     }
@@ -160,6 +168,14 @@ mod tests {
         assert!(args.tray);
         assert!(!args.hidden);
         assert!(args.start_hidden());
+        let action = parse_cli_args(&["app".into(), "--tray-action".into(), "show-window".into()]);
+        assert_eq!(action.tray_action.as_deref(), Some("show-window"));
+        assert_eq!(
+            parse_cli_args(&["app".into(), "--tray-action=quit".into()])
+                .tray_action
+                .as_deref(),
+            Some("quit")
+        );
     }
 
     #[test]
