@@ -822,3 +822,6 @@ This client is the GTK 4 + libadwaita desktop UI. It talks to a local `rclone rc
 - Live GUI: testdrive Mount profile `default` rename stays enabled while `/tmp/rclone-testdrive-mnt` is mounted (Angular allows mount rename; job-profile rename is what gets blocked)
 - Markdown preview embeds `![alt](path)` and `<img src>` like Angular: relative refs resolve against the current file and load via local path, HTTP, or `operations/copyfile` into a temp cache
 - Cron descriptions no longer fall back to the raw expression; unmatched fields compose a cronstrue-style phrase and new keys are translated in all nine locales
+- File viewer text falls back to `--rc-serve` when rclone has no `operations/cat` (1.60)
+- Live GUI: testdrive `Photos/README.md` Show Preview embeds orange `photo1.jpg` (First photo) and blue `photo2.jpg` (Second photo) plus Shortcut Targets
+- Live GUI: Flow `gui-qr-copy` Scheduled Task shows Daily at 7:00; editor Your Schedule describes `0 9 15 * 1` as At 9:00, on day 15, on Monday and `0 9,18 * * 1-5` as Weekdays at 9:00 and 18:00, then restores `0 7 * * *`
