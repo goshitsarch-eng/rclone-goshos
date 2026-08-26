@@ -3921,6 +3921,18 @@ impl NautilusView {
     }
 
     fn popup_context_at(&self, widget: &impl IsA<gtk::Widget>, x: f64, y: f64) {
+        let Some(win) = self.root.root().and_downcast::<gtk::Window>() else {
+            return;
+        };
+        let (px, py) = widget
+            .compute_bounds(&win)
+            .map(|bounds| {
+                (
+                    bounds.x() as i32 + x.round() as i32,
+                    bounds.y() as i32 + y.round() as i32,
+                )
+            })
+            .unwrap_or((x.round() as i32, y.round() as i32));
         let popover = gtk::Popover::new();
         let box_ = gtk::Box::new(gtk::Orientation::Vertical, 4);
         let selected = self.selected_names();
@@ -4246,14 +4258,9 @@ impl NautilusView {
         }
         stack.set_visible_child_name("main");
         popover.set_child(Some(&stack));
-        popover.set_parent(widget);
+        popover.set_parent(&win);
         popover.set_has_arrow(true);
-        popover.set_pointing_to(Some(&gtk::gdk::Rectangle::new(
-            x.round() as i32,
-            y.round() as i32,
-            1,
-            1,
-        )));
+        popover.set_pointing_to(Some(&gtk::gdk::Rectangle::new(px, py, 1, 1)));
         popover.connect_closed(|popover| popover.unparent());
         popover.popup();
     }

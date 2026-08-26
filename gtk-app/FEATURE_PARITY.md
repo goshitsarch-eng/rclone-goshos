@@ -531,7 +531,8 @@ This client is the GTK 4 + libadwaita desktop UI. It talks to a local `rclone rc
 - Live GUI: testdrive Photos folder copy via toolbar Copy/Paste into verify-gui-folder (`sync/copy`, job group `filemanager/…`)
 - Files transfers persist `job_history` immediately (same as dashboard starts), not only `job_meta`
 - Files Copy to… / Move to… destination picker (toolbar, path menu, context menu, Shift+F10 / Menu)
-- Files right-click context menu is attached to each list/grid item and pointed at the click
+- Files right-click context menu is attached to each list/grid item and pointed at the main window
+- Live GUI: testdrive Photos Copy to… `verify-copy-to` (`sync/copy`, job 25238 in `job_history`, 3/3 files)
 
 ## Still deepening
 
