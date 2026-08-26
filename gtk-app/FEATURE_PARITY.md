@@ -529,6 +529,7 @@ This client is the GTK 4 + libadwaita desktop UI. It talks to a local `rclone rc
 - Files list selection reads `AdwActionRow` widget names (the row *is* the ListBoxRow); single-click selects, double-click opens
 - Files paste drops into a selected destination folder (unless that folder is the copy source)
 - Live GUI: testdrive Photos folder copy via toolbar Copy/Paste into verify-gui-folder (`sync/copy`, job group `filemanager/…`)
+- Files transfers persist `job_history` immediately (same as dashboard starts), not only `job_meta`
 
 ## Still deepening
 

@@ -4393,19 +4393,34 @@ impl NautilusView {
         snapshot: serde_json::Value,
     ) {
         let remote = self.current.borrow().remote.clone();
-        crate::jobs::remember_grouped(
-            &mut self.ctx.store.borrow_mut().job_meta,
-            ids,
-            crate::store::JobMeta {
-                origin: origin.into(),
-                profile: "default".into(),
-                remote,
-                backend: self.ctx.backend_key(),
-                group: group.into(),
-                transfer_snapshot: snapshot,
-                ..Default::default()
-            },
-        );
+        let op = if group.contains("upload") || origin.contains("upload") {
+            "upload"
+        } else if group.contains("delete") {
+            "delete"
+        } else {
+            "copy"
+        };
+        {
+            let mut store = self.ctx.store.borrow_mut();
+            crate::jobs::remember_grouped(
+                &mut store.job_meta,
+                ids,
+                crate::store::JobMeta {
+                    origin: origin.into(),
+                    profile: "default".into(),
+                    remote: remote.clone(),
+                    backend: self.ctx.backend_key(),
+                    group: group.into(),
+                    transfer_snapshot: snapshot.clone(),
+                    ..Default::default()
+                },
+            );
+            for job in
+                crate::jobs::jobs_from_transfer_start(ids, op, &remote, origin, group, &snapshot)
+            {
+                store.remember_job(job);
+            }
+        }
         self.ctx.persist();
     }
 

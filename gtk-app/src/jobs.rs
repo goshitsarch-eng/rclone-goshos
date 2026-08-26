@@ -2226,6 +2226,36 @@ pub fn started_operation_job(
     }
 }
 
+pub fn jobs_from_transfer_start(
+    ids: &[u64],
+    op: &str,
+    remote: &str,
+    origin: &str,
+    group: &str,
+    snapshot: &Value,
+) -> Vec<JobInfo> {
+    let rows = snapshot.as_array();
+    ids.iter()
+        .enumerate()
+        .map(|(index, id)| {
+            let row = rows.and_then(|arr| arr.get(index));
+            let src = row
+                .and_then(|v| v.get("src"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+            let dst = row
+                .and_then(|v| v.get("dst"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+            let mut job = started_operation_job(*id, op, remote, "default", origin, src, dst);
+            if !group.is_empty() {
+                job.group = group.to_string();
+            }
+            job
+        })
+        .collect()
+}
+
 pub fn preparing_progress_stats(
     bytes: u64,
     total_bytes: u64,
@@ -3491,6 +3521,32 @@ mod tests {
         assert_eq!(dest["main"]["transfers"], 8);
         assert_eq!(dest["main"]["checkers"], 2);
         assert_eq!(dest["keep"], true);
+    }
+
+    #[test]
+    fn jobs_from_transfer_start_use_snapshot_paths() {
+        let jobs = jobs_from_transfer_start(
+            &[7, 8],
+            "copy",
+            "testdrive",
+            "filemanager",
+            "filemanager/abc",
+            &json!([
+                { "src": "testdrive:Photos", "dst": "testdrive:verify/Photos" },
+                { "src": "testdrive:a.txt", "dst": "testdrive:verify/a.txt" }
+            ]),
+        );
+        assert_eq!(jobs.len(), 2);
+        assert_eq!(jobs[0].id, 7);
+        assert_eq!(jobs[0].src, "testdrive:Photos");
+        assert_eq!(jobs[0].dst, "testdrive:verify/Photos");
+        assert_eq!(jobs[0].group, "filemanager/abc");
+        assert_eq!(jobs[0].origin, "filemanager");
+        assert_eq!(jobs[0].status, "starting");
+        assert_eq!(jobs[1].src, "testdrive:a.txt");
+        assert!(
+            jobs_from_transfer_start(&[1], "copy", "x", "filemanager", "", &json!([])).len() == 1
+        );
     }
 
     #[test]
