@@ -758,3 +758,7 @@ This client is the GTK 4 + libadwaita desktop UI. It talks to a local `rclone rc
 - Global right-click on window chrome opens Refresh UI / Clear Cache / Open Developer Tools (Angular `DebugService`); editable fields keep the native GTK menu
 - Live GUI: Preferences Security tab title is **Security**; Enable Encryption is grey until passwords match
 - Live GUI: dashboard right-click shows Refresh UI / Clear Cache / Open Developer Tools; Refresh UI toast
+- About uses Angular-style drill-down (home list → Details / About Rclone / About App / Credits / Legal) instead of a six-tab ViewSwitcher
+- Live GUI: `--about home` lists full titles Details, About Rclone, About App, Credits, Legal (no `Abou...` truncation)
+- Live GUI: About Rclone page title is **About Rclone** with v1.60.1-DEV · Beta, Go, PID, Memory, Cache
+- Live GUI: `--about app` opens **About App** (Up to Date, Check for Updates, Release Channel Stable)
