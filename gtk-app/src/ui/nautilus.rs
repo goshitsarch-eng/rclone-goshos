@@ -129,6 +129,10 @@ impl NautilusView {
         new_folder.set_tooltip_text(Some(
             &ctx.t_or("nautilus.contextMenu.newFolder", "New folder"),
         ));
+        let copy_btn = gtk::Button::from_icon_name("edit-copy-symbolic");
+        copy_btn.set_tooltip_text(Some(&ctx.t_or("nautilus.contextMenu.copy", "Copy")));
+        let paste_btn = gtk::Button::from_icon_name("edit-paste-symbolic");
+        paste_btn.set_tooltip_text(Some(&ctx.t_or("nautilus.contextMenu.paste", "Paste")));
         let upload = gtk::Button::from_icon_name("document-send-symbolic");
         upload.set_tooltip_text(Some(
             &ctx.t_or("nautilus.contextMenu.uploadFiles", "Upload files"),
@@ -167,6 +171,8 @@ impl NautilusView {
         toolbar.append(&path_stack);
         toolbar.append(&path_menu);
         toolbar.append(&new_folder);
+        toolbar.append(&copy_btn);
+        toolbar.append(&paste_btn);
         toolbar.append(&upload);
         toolbar.append(&new_tab);
         toolbar.append(&split_btn);
@@ -395,6 +401,14 @@ impl NautilusView {
         {
             let view = view.clone();
             new_folder.connect_clicked(move |_| view.mkdir_prompt());
+        }
+        {
+            let view = view.clone();
+            copy_btn.connect_clicked(move |_| view.cut_or_copy(false));
+        }
+        {
+            let view = view.clone();
+            paste_btn.connect_clicked(move |_| view.paste());
         }
         {
             let view = view.clone();

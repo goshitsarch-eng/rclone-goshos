@@ -525,6 +525,7 @@ This client is the GTK 4 + libadwaita desktop UI. It talks to a local `rclone rc
 - Live mounts keep profile/origin across RC refresh and backend switches (rclone has no profile field)
 - Backends dialog has a Close button and dismisses before reopening after Use/Remove
 - Files copy/cut also writes a recoverable clipboard payload so paste works after a view rebuild
+- Files toolbar has Copy and Paste buttons next to New Folder
 
 ## Still deepening
 
