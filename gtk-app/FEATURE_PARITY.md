@@ -690,3 +690,7 @@ This client is the GTK 4 + libadwaita desktop UI. It talks to a local `rclone rc
 - Deep links and CLI: `#/templates?mode=save`, `#/quick-add`, `#/whats-new-app`, `#/whats-new-rclone`, `#/properties/{remote}/{path}`
 - Job detail shows a copyable monospace error block when a job has an error
 - PDF viewer prev/next tooltips use `fileBrowser.fileViewer.previousPage` / `nextPage` in all locales
+- GIO registers `--quick-add`, `--whats-new[-app|-rclone]`, `--properties`, `--clone-from`, and optional `--templates MODE`
+- `#/remote-config?cloneFrom=` / `--clone-from` clones the source remote and opens its configuration editor
+- Live GUI: Templates New Template shows category expanders, Add Key, Visual Inspector / JSON Editor
+- Live GUI: Alert action kind chips wrap; Webhook shows Header Name/Value + Add header; Discord preset fills Content-Type and JSON body

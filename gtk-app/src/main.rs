@@ -247,11 +247,52 @@ fn register_application_options(app: &adw::Application) {
         None,
     );
     add("flags", OptionArg::None, "Alias for --rclone-flags", None);
-    add(
+    app.add_main_option(
         "templates",
+        0.into(),
+        OptionFlags::OPTIONAL_ARG,
+        OptionArg::String,
+        "Open the Templates dialog, optionally the Save tab",
+        Some("MODE"),
+    );
+    add(
+        "quick-add",
         OptionArg::None,
-        "Open the Templates dialog",
+        "Open the Quick Add remote wizard",
         None,
+    );
+    add("quickadd", OptionArg::None, "Alias for --quick-add", None);
+    app.add_main_option(
+        "whats-new",
+        0.into(),
+        OptionFlags::OPTIONAL_ARG,
+        OptionArg::String,
+        "Open What's New (app or rclone)",
+        Some("KIND"),
+    );
+    add(
+        "whats-new-app",
+        OptionArg::None,
+        "Open app release notes",
+        None,
+    );
+    add(
+        "whats-new-rclone",
+        OptionArg::None,
+        "Open rclone release notes",
+        None,
+    );
+    add(
+        "properties",
+        OptionArg::String,
+        "Open file properties for remote:path",
+        Some("REMOTE:PATH"),
+    );
+    add(
+        "clone-from",
+        OptionArg::String,
+        "Clone a remote into the configuration wizard",
+        Some("REMOTE"),
     );
     add(
         "export",
@@ -346,6 +387,13 @@ fn command_line_option_flags(
         "rclone-flags",
         "flags",
         "templates",
+        "quick-add",
+        "quickadd",
+        "whats-new",
+        "whats-new-app",
+        "whats-new-rclone",
+        "properties",
+        "clone-from",
         "export",
         "repair",
         "remote-config",

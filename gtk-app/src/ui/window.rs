@@ -1730,6 +1730,7 @@ fn apply_nav(
             step,
             profile,
             auto_add,
+            clone_from,
         } => {
             dialogs::remote_config_open(
                 window,
@@ -1743,6 +1744,7 @@ fn apply_nav(
                     initial: step,
                     profile,
                     auto_add,
+                    clone_from,
                 },
                 Rc::new(|| ()),
             );

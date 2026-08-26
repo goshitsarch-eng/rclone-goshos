@@ -276,6 +276,13 @@ pub fn present_standalone(
                     .get("autoAdd")
                     .and_then(|v| v.as_bool())
                     .unwrap_or(false),
+                clone_from: req
+                    .data
+                    .get("cloneFrom")
+                    .or_else(|| req.data.get("clone_from"))
+                    .and_then(|v| v.as_str())
+                    .filter(|s| !s.is_empty())
+                    .map(|s| s.to_string()),
             },
             noop,
         ),
@@ -3774,9 +3781,19 @@ pub fn remote_config_open(
             "remote": existing.clone().unwrap_or_default(),
             "initial": open.initial.clone().unwrap_or_default(),
             "profile": open.profile.clone().unwrap_or_default(),
-            "autoAdd": open.auto_add
+            "autoAdd": open.auto_add,
+            "cloneFrom": open.clone_from.clone().unwrap_or_default()
         }),
     ) {
+        return;
+    }
+    if let Some(source) = open
+        .clone_from
+        .as_deref()
+        .filter(|name| !name.is_empty())
+        .map(|s| s.to_string())
+    {
+        clone_remote(parent, ctx, &source, on_done);
         return;
     }
     if let Some(name) = existing {

@@ -33,6 +33,7 @@ pub struct RemoteConfigOpen {
     pub initial: Option<String>,
     pub profile: Option<String>,
     pub auto_add: bool,
+    pub clone_from: Option<String>,
 }
 
 const HELPERS: &[(&str, &str, &str)] = &[

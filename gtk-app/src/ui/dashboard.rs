@@ -2052,6 +2052,7 @@ impl Dashboard {
                                         initial: Some(op_key.clone()),
                                         profile: Some(pname.clone()),
                                         auto_add: false,
+                                        clone_from: None,
                                     },
                                     {
                                         let dash = dash.clone();
@@ -2102,6 +2103,7 @@ impl Dashboard {
                             ),
                             profile: None,
                             auto_add: true,
+                            clone_from: None,
                         },
                         {
                             let dash = dash.clone();
@@ -2535,6 +2537,7 @@ impl Dashboard {
                             initial: Some(op_key.clone()),
                             profile: Some(profile.clone()),
                             auto_add: false,
+                            clone_from: None,
                         },
                         {
                             let dash = dash.clone();

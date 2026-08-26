@@ -36,6 +36,7 @@ pub enum NavTarget {
         step: Option<String>,
         profile: Option<String>,
         auto_add: bool,
+        clone_from: Option<String>,
     },
     Onboarding,
     About,
@@ -248,6 +249,7 @@ pub fn parse_launch_args(args: &[String], standalone_dialogs: bool) -> Option<La
     let mut config_step = None;
     let mut config_profile = None;
     let mut auto_add = false;
+    let mut clone_from = None;
     for (idx, arg) in args.iter().enumerate() {
         let value = args.get(idx + 1).cloned();
         match arg.as_str() {
@@ -353,6 +355,9 @@ pub fn parse_launch_args(args: &[String], standalone_dialogs: bool) -> Option<La
             "--export" => target = Some(NavTarget::Export),
             "--repair" => target = Some(NavTarget::Repair),
             "--auto-add" => auto_add = true,
+            "--clone-from" | "--cloneFrom" => {
+                clone_from = value.filter(|v| !v.is_empty() && !v.starts_with('-'));
+            }
             "--remote-config" => {
                 if let Some(name) = value.filter(|v| !v.is_empty() && !v.starts_with('-')) {
                     target = Some(NavTarget::RemoteConfig {
@@ -360,6 +365,7 @@ pub fn parse_launch_args(args: &[String], standalone_dialogs: bool) -> Option<La
                         step: None,
                         profile: None,
                         auto_add: false,
+                        clone_from: None,
                     });
                 }
             }
@@ -385,10 +391,22 @@ pub fn parse_launch_args(args: &[String], standalone_dialogs: bool) -> Option<La
             _ => {}
         }
     }
+    if target.is_none() {
+        if let Some(source) = clone_from.clone() {
+            target = Some(NavTarget::RemoteConfig {
+                remote: String::new(),
+                step: None,
+                profile: None,
+                auto_add: false,
+                clone_from: Some(source),
+            });
+        }
+    }
     if let Some(NavTarget::RemoteConfig {
         step,
         profile,
         auto_add: flag,
+        clone_from: existing_clone,
         ..
     }) = target.as_mut()
     {
@@ -400,6 +418,9 @@ pub fn parse_launch_args(args: &[String], standalone_dialogs: bool) -> Option<La
         }
         if auto_add {
             *flag = true;
+        }
+        if existing_clone.is_none() {
+            *existing_clone = clone_from;
         }
     }
     if target.is_none() {
@@ -471,10 +492,17 @@ pub fn parse_route_url(input: &str) -> Option<NavTarget> {
                 .and_then(|page| normalize_prefs_page(&page)),
         }),
         "remote-config" | "remoteconfig" => {
+            let clone_from = query_string(input).and_then(|q| {
+                query_param(&q, "cloneFrom").or_else(|| query_param(&q, "clone-from"))
+            });
             let remote = parts
                 .next()
                 .map(decode_segment)
-                .and_then(|name| nonempty(&name))?;
+                .and_then(|name| nonempty(&name))
+                .unwrap_or_default();
+            if remote.is_empty() && clone_from.is_none() {
+                return None;
+            }
             Some(NavTarget::RemoteConfig {
                 remote,
                 step: parts
@@ -486,6 +514,7 @@ pub fn parse_route_url(input: &str) -> Option<NavTarget> {
                     .map(decode_segment)
                     .and_then(|profile| nonempty(&profile)),
                 auto_add,
+                clone_from,
             })
         }
         "onboarding" => Some(NavTarget::Onboarding),
@@ -856,6 +885,7 @@ mod tests {
                 step: Some("sync".into()),
                 profile: Some("nightly".into()),
                 auto_add: false,
+                clone_from: None,
             })
         );
         assert_eq!(parse_route_url("#/onboarding"), Some(NavTarget::Onboarding));
@@ -892,6 +922,16 @@ mod tests {
                 remote: "testdrive".into(),
                 path: "Photos/README.txt".into(),
                 name: "README.txt".into(),
+            })
+        );
+        assert_eq!(
+            parse_route_url("#/remote-config?cloneFrom=testdrive"),
+            Some(NavTarget::RemoteConfig {
+                remote: String::new(),
+                step: None,
+                profile: None,
+                auto_add: false,
+                clone_from: Some("testdrive".into()),
             })
         );
         assert_eq!(parse_route_url("#/export"), Some(NavTarget::Export));
@@ -1106,6 +1146,7 @@ mod tests {
                     step: Some("sync".into()),
                     profile: Some("nightly".into()),
                     auto_add: false,
+                    clone_from: None,
                 },
                 standalone: false,
             })
@@ -1163,6 +1204,7 @@ mod tests {
                 step: None,
                 profile: None,
                 auto_add: true,
+                clone_from: None,
             })
         );
         assert_eq!(
@@ -1187,6 +1229,7 @@ mod tests {
                     step: None,
                     profile: None,
                     auto_add: true,
+                    clone_from: None,
                 },
                 standalone: false,
             })
@@ -1214,6 +1257,54 @@ mod tests {
             parse_launch_args(&["app".into(), "--rclone-flags".into()], false),
             Some(LaunchRequest {
                 target: NavTarget::Flags,
+                standalone: false,
+            })
+        );
+        assert_eq!(
+            parse_launch_args(
+                &["app".into(), "--clone-from".into(), "testdrive".into()],
+                false
+            ),
+            Some(LaunchRequest {
+                target: NavTarget::RemoteConfig {
+                    remote: String::new(),
+                    step: None,
+                    profile: None,
+                    auto_add: false,
+                    clone_from: Some("testdrive".into()),
+                },
+                standalone: false,
+            })
+        );
+        assert_eq!(
+            parse_launch_args(&["app".into(), "--whats-new-rclone".into()], false),
+            Some(LaunchRequest {
+                target: NavTarget::WhatsNew { rclone: true },
+                standalone: false,
+            })
+        );
+        assert_eq!(
+            parse_launch_args(
+                &[
+                    "app".into(),
+                    "--properties".into(),
+                    "testdrive:Photos".into()
+                ],
+                false
+            ),
+            Some(LaunchRequest {
+                target: NavTarget::Properties {
+                    remote: "testdrive".into(),
+                    path: "Photos".into(),
+                    name: "Photos".into(),
+                },
+                standalone: false,
+            })
+        );
+        assert_eq!(
+            parse_launch_args(&["app".into(), "--quick-add".into()], false),
+            Some(LaunchRequest {
+                target: NavTarget::QuickAdd,
                 standalone: false,
             })
         );
