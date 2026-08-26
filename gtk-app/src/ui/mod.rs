@@ -1267,6 +1267,7 @@ pub(super) fn detail_page_switcher(
     stack: &adw::ViewStack,
     page: &Rc<RefCell<String>>,
     pages: &[(&str, String)],
+    on_change: Option<Rc<dyn Fn(&str)>>,
 ) -> gtk::Box {
     use gtk::prelude::*;
     let row = gtk::Box::new(gtk::Orientation::Horizontal, 0);
@@ -1290,10 +1291,14 @@ pub(super) fn detail_page_switcher(
         let stack = stack.clone();
         let page = page.clone();
         let name = (*name).to_string();
+        let on_change = on_change.clone();
         btn.connect_toggled(move |button| {
             if button.is_active() {
                 *page.borrow_mut() = name.clone();
                 stack.set_visible_child_name(&name);
+                if let Some(cb) = &on_change {
+                    cb(&name);
+                }
             }
         });
         row.append(&btn);

@@ -35,10 +35,13 @@ pub enum NavTarget {
         remote: String,
         step: Option<String>,
         profile: Option<String>,
+        auto_add: bool,
     },
     Onboarding,
     About,
-    Logs,
+    Logs {
+        remote: Option<String>,
+    },
     Shortcuts,
 }
 
@@ -166,6 +169,22 @@ fn query_param(query: &str, key: &str) -> Option<String> {
     None
 }
 
+fn query_flag(query: &str, key: &str) -> bool {
+    for pair in query.split('&') {
+        let (name, value) = match pair.split_once('=') {
+            Some((name, value)) => (name, value),
+            None => (pair, "true"),
+        };
+        if name.eq_ignore_ascii_case(key) {
+            return matches!(
+                value.to_ascii_lowercase().as_str(),
+                "" | "1" | "true" | "yes"
+            );
+        }
+    }
+    false
+}
+
 fn parse_nautilus_segments(rest: &str) -> Option<(String, String)> {
     let rest = rest
         .split(['?', '#'])
@@ -212,6 +231,7 @@ pub fn parse_launch_args(args: &[String], standalone_dialogs: bool) -> Option<La
     let mut target = None;
     let mut config_step = None;
     let mut config_profile = None;
+    let mut auto_add = false;
     for (idx, arg) in args.iter().enumerate() {
         let value = args.get(idx + 1).cloned();
         match arg.as_str() {
@@ -276,14 +296,20 @@ pub fn parse_launch_args(args: &[String], standalone_dialogs: bool) -> Option<La
             }
             "--onboarding" => target = Some(NavTarget::Onboarding),
             "--about" => target = Some(NavTarget::About),
-            "--logs" => target = Some(NavTarget::Logs),
+            "--logs" => {
+                target = Some(NavTarget::Logs {
+                    remote: value.filter(|v| !v.is_empty() && !v.starts_with('-')),
+                });
+            }
             "--shortcuts" => target = Some(NavTarget::Shortcuts),
+            "--auto-add" => auto_add = true,
             "--remote-config" => {
                 if let Some(name) = value.filter(|v| !v.is_empty() && !v.starts_with('-')) {
                     target = Some(NavTarget::RemoteConfig {
                         remote: name,
                         step: None,
                         profile: None,
+                        auto_add: false,
                     });
                 }
             }
@@ -309,12 +335,21 @@ pub fn parse_launch_args(args: &[String], standalone_dialogs: bool) -> Option<La
             _ => {}
         }
     }
-    if let Some(NavTarget::RemoteConfig { step, profile, .. }) = target.as_mut() {
+    if let Some(NavTarget::RemoteConfig {
+        step,
+        profile,
+        auto_add: flag,
+        ..
+    }) = target.as_mut()
+    {
         if step.is_none() {
             *step = config_step;
         }
         if profile.is_none() {
             *profile = config_profile;
+        }
+        if auto_add {
+            *flag = true;
         }
     }
     if target.is_none() {
@@ -343,6 +378,9 @@ pub fn parse_launch_args(args: &[String], standalone_dialogs: bool) -> Option<La
 
 pub fn parse_route_url(input: &str) -> Option<NavTarget> {
     let input = strip_app_scheme(input);
+    let auto_add = query_string(input)
+        .map(|q| query_flag(&q, "autoAdd") || query_flag(&q, "auto_add"))
+        .unwrap_or(false);
     if let Some((remote, path)) = parse_browse_url(input) {
         return Some(NavTarget::Files { remote, path });
     }
@@ -397,11 +435,14 @@ pub fn parse_route_url(input: &str) -> Option<NavTarget> {
                     .next()
                     .map(decode_segment)
                     .and_then(|profile| nonempty(&profile)),
+                auto_add,
             })
         }
         "onboarding" => Some(NavTarget::Onboarding),
         "about" => Some(NavTarget::About),
-        "logs" => Some(NavTarget::Logs),
+        "logs" => Some(NavTarget::Logs {
+            remote: parts.next().map(decode_segment).and_then(|s| nonempty(&s)),
+        }),
         "shortcuts" | "keyboard-shortcuts" => Some(NavTarget::Shortcuts),
         _ => None,
     }
@@ -709,11 +750,15 @@ mod tests {
                 remote: "testdrive".into(),
                 step: Some("sync".into()),
                 profile: Some("nightly".into()),
+                auto_add: false,
             })
         );
         assert_eq!(parse_route_url("#/onboarding"), Some(NavTarget::Onboarding));
         assert_eq!(parse_route_url("#/about"), Some(NavTarget::About));
-        assert_eq!(parse_route_url("#/logs"), Some(NavTarget::Logs));
+        assert_eq!(
+            parse_route_url("#/logs"),
+            Some(NavTarget::Logs { remote: None })
+        );
         assert_eq!(
             parse_route_url("#/keyboard-shortcuts"),
             Some(NavTarget::Shortcuts)
@@ -927,6 +972,7 @@ mod tests {
                     remote: "testdrive".into(),
                     step: Some("sync".into()),
                     profile: Some("nightly".into()),
+                    auto_add: false,
                 },
                 standalone: false,
             })
@@ -953,5 +999,56 @@ mod tests {
         assert!(overlay_files_for_workspace("flow"));
         assert!(!overlay_files_for_workspace("nautilus"));
         assert!(!overlay_files_for_workspace(""));
+    }
+
+    #[test]
+    fn remote_config_auto_add_and_scoped_logs() {
+        assert_eq!(
+            parse_route_url("#/remote-config/testdrive?autoAdd=true"),
+            Some(NavTarget::RemoteConfig {
+                remote: "testdrive".into(),
+                step: None,
+                profile: None,
+                auto_add: true,
+            })
+        );
+        assert_eq!(
+            parse_route_url("#/logs/testdrive"),
+            Some(NavTarget::Logs {
+                remote: Some("testdrive".into()),
+            })
+        );
+        assert_eq!(
+            parse_launch_args(
+                &[
+                    "app".into(),
+                    "--remote-config".into(),
+                    "photos".into(),
+                    "--auto-add".into(),
+                ],
+                false,
+            ),
+            Some(LaunchRequest {
+                target: NavTarget::RemoteConfig {
+                    remote: "photos".into(),
+                    step: None,
+                    profile: None,
+                    auto_add: true,
+                },
+                standalone: false,
+            })
+        );
+        assert_eq!(
+            parse_launch_args(&["app".into(), "--logs".into(), "office".into()], false),
+            Some(LaunchRequest {
+                target: NavTarget::Logs {
+                    remote: Some("office".into()),
+                },
+                standalone: false,
+            })
+        );
+        assert!(query_flag("autoAdd=true&x=1", "autoAdd"));
+        assert!(query_flag("autoAdd", "autoAdd"));
+        assert!(!query_flag("autoAdd=false", "autoAdd"));
     }
 }

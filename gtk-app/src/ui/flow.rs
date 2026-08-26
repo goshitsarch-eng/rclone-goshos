@@ -1796,6 +1796,19 @@ impl FlowView {
         actions.append(&delete);
         configuration.append(&actions);
 
+        let detail_key = format!("quick:{}", qr.id);
+        if let Some(saved) = self
+            .ctx
+            .settings
+            .borrow()
+            .runtime
+            .selected_detail_pages
+            .get(&detail_key)
+        {
+            if saved == "monitoring" || saved == "configuration" {
+                *self.detail_page.borrow_mut() = saved.clone();
+            }
+        }
         let stack = adw::ViewStack::new();
         stack.set_vhomogeneous(false);
         stack.add_titled(
@@ -1827,6 +1840,31 @@ impl FlowView {
                         .t_or("dashboard.appDetail.configuration", "Configuration"),
                 ),
             ],
+            {
+                let ctx = self.ctx.clone();
+                let key = self
+                    .ctx
+                    .selected_quick_run
+                    .borrow()
+                    .clone()
+                    .map(|id| format!("quick:{id}"))
+                    .or_else(|| {
+                        self.selected_flow_remote
+                            .borrow()
+                            .clone()
+                            .map(|remote| format!("remote:{remote}"))
+                    });
+                key.map(|key| {
+                    Rc::new(move |page: &str| {
+                        ctx.settings
+                            .borrow_mut()
+                            .runtime
+                            .selected_detail_pages
+                            .insert(key.clone(), page.to_string());
+                        ctx.persist();
+                    }) as Rc<dyn Fn(&str)>
+                })
+            },
         );
         self.content.append(&switcher);
         self.content.append(&stack);

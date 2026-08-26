@@ -236,6 +236,8 @@ fn takes_value(flag: &str) -> bool {
             | "--serve"
             | "--automation"
             | "--remote-config"
+            | "--auto-add"
+            | "--logs"
             | "--step"
             | "--profile"
             | "--preferences"

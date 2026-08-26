@@ -314,7 +314,11 @@ fn present_main_with(app: &adw::Application, ctx: AppCtx, hidden: bool) {
     {
         let ctx = ctx.clone();
         notice_btn.connect_clicked(move |_| {
-            if ctx.updates.borrow().has_updates() {
+            if ctx.settings.borrow().runtime.rclone_restart_required {
+                ctx.settings.borrow_mut().runtime.rclone_restart_required = false;
+                ctx.persist();
+                ctx.restart_engine();
+            } else if ctx.updates.borrow().has_updates() {
                 ctx.request_nav(NavTarget::Updates);
             } else {
                 ctx.request_nav(NavTarget::Alerts);
@@ -354,6 +358,11 @@ fn present_main_with(app: &adw::Application, ctx: AppCtx, hidden: bool) {
                 update_banner(&ctx, &banner_ref, &banner_kind);
             }
             BannerKind::Update => ctx.request_nav(NavTarget::Updates),
+            BannerKind::RcloneRestart => {
+                ctx.settings.borrow_mut().runtime.rclone_restart_required = false;
+                ctx.persist();
+                ctx.restart_engine();
+            }
             BannerKind::Metered | BannerKind::Development | BannerKind::None => {}
         });
     }
@@ -1276,6 +1285,7 @@ fn install_shortcuts(window: &adw::ApplicationWindow) {
     add("<Control>period", "win.rclone-flags");
     add("<Control><Alt>a", "win.alerts");
     add("<Control><Alt>f", "win.toggle-flow");
+    add("<Control>question", "win.shortcuts");
     add("<Control><Shift>question", "win.shortcuts");
     add("<Control><Shift>m", "win.refresh-mounts");
     add("<Control><Shift>s", "win.refresh-serves");
@@ -1534,6 +1544,7 @@ fn apply_nav(
             remote,
             step,
             profile,
+            auto_add,
         } => {
             dialogs::remote_config_open(
                 window,
@@ -1546,7 +1557,7 @@ fn apply_nav(
                 super::remote_config::RemoteConfigOpen {
                     initial: step,
                     profile,
-                    auto_add: false,
+                    auto_add,
                 },
                 Rc::new(|| ()),
             );
@@ -1557,7 +1568,7 @@ fn apply_nav(
             }
         }
         NavTarget::About => dialogs::about(window, ctx.clone()),
-        NavTarget::Logs => dialogs::logs(window, ctx.clone(), None),
+        NavTarget::Logs { remote } => dialogs::logs(window, ctx.clone(), remote),
         NavTarget::Shortcuts => dialogs::shortcuts(window, ctx),
     }
 }
@@ -1569,6 +1580,7 @@ enum BannerKind {
     Flatpak,
     Metered,
     Update,
+    RcloneRestart,
     Development,
 }
 
@@ -1581,6 +1593,16 @@ fn update_banner(ctx: &AppCtx, banner: &adw::Banner, kind: &Rc<std::cell::RefCel
         ctx.client().as_ref(),
         version.as_deref(),
     );
+    if settings.runtime.rclone_restart_required {
+        banner.set_title(&ctx.t_or(
+            "modals.about.rcloneRestartRequired",
+            "Rclone Restart Required",
+        ));
+        banner.set_button_label(Some(&ctx.t_or("modals.about.restartNow", "Restart Now")));
+        banner.set_revealed(true);
+        *kind.borrow_mut() = BannerKind::RcloneRestart;
+        return;
+    }
     if let Some(issue) = crate::repair::banner_from_issues(&issues) {
         let title =
             if let Some((title_key, detail_key)) = crate::repair::engine_banner_keys(issue.kind) {
@@ -1671,7 +1693,14 @@ fn sync_home_button(ctx: &AppCtx, btn: &gtk::Button) {
 fn sync_notice_button(ctx: &AppCtx, btn: &gtk::Button) {
     let updates = ctx.updates.borrow().clone();
     let alerts = ctx.store.borrow().unacknowledged_alerts();
-    if updates.has_updates() {
+    if ctx.settings.borrow().runtime.rclone_restart_required {
+        btn.set_visible(true);
+        btn.set_icon_name("view-refresh-symbolic");
+        btn.set_tooltip_text(Some(&ctx.t_or(
+            "modals.about.rcloneRestartRequired",
+            "Rclone Restart Required",
+        )));
+    } else if updates.has_updates() {
         btn.set_visible(true);
         btn.set_icon_name("software-update-available-symbolic");
         let tip = match updates.banner_kind() {

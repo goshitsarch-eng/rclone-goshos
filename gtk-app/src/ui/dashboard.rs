@@ -113,11 +113,14 @@ impl Dashboard {
         split.set_content(Some(&content_box));
         root.append(&split);
 
+        let initial_tab =
+            crate::operations::AppTab::parse(&ctx.settings.borrow().runtime.dashboard_tab)
+                .unwrap_or(AppTab::General);
         let dash = Self {
             root,
             ctx: ctx.clone(),
             toast,
-            tab: Rc::new(RefCell::new(AppTab::General)),
+            tab: Rc::new(RefCell::new(initial_tab)),
             tab_buttons: Rc::new(RefCell::new(Vec::new())),
             sidebar_list,
             search,
@@ -152,7 +155,7 @@ impl Dashboard {
             } else {
                 group_anchor = Some(btn.clone());
             }
-            if tab == AppTab::General {
+            if tab == initial_tab {
                 btn.set_active(true);
             }
             dash.tab_buttons.borrow_mut().push((tab, btn.clone()));
@@ -160,6 +163,8 @@ impl Dashboard {
             btn.connect_toggled(move |b| {
                 if b.is_active() {
                     *dash_c.tab.borrow_mut() = tab;
+                    dash_c.ctx.settings.borrow_mut().runtime.dashboard_tab = tab.as_str().into();
+                    dash_c.ctx.persist();
                     dash_c.refresh();
                 }
             });
@@ -226,6 +231,8 @@ impl Dashboard {
         *self.ctx.selected_remote.borrow_mut() =
             remote.filter(|s| !s.is_empty()).map(|s| s.to_string());
         *self.tab.borrow_mut() = tab;
+        self.ctx.settings.borrow_mut().runtime.dashboard_tab = tab.as_str().into();
+        self.ctx.persist();
         for (candidate, btn) in self.tab_buttons.borrow().iter() {
             if *candidate == tab {
                 if !btn.is_active() {
@@ -398,6 +405,31 @@ impl Dashboard {
         }
     }
 
+    fn restore_detail_page(&self, remote: &str) {
+        if let Some(saved) = self
+            .ctx
+            .settings
+            .borrow()
+            .runtime
+            .selected_detail_pages
+            .get(remote)
+        {
+            if saved == "monitoring" || saved == "configuration" {
+                *self.detail_page.borrow_mut() = saved.clone();
+            }
+        }
+    }
+
+    fn persist_detail_page(&self, remote: &str, page: &str) {
+        self.ctx
+            .settings
+            .borrow_mut()
+            .runtime
+            .selected_detail_pages
+            .insert(remote.to_string(), page.to_string());
+        self.ctx.persist();
+    }
+
     fn toggle_sidebar(&self) {
         let next = !self.split.shows_sidebar();
         self.split.set_show_sidebar(next);
@@ -457,6 +489,65 @@ impl Dashboard {
         let tab = *self.tab.borrow();
         let remotes = self.remotes_for_display();
         let snap = self.ctx.snapshot.borrow().clone();
+        if snap.remotes.is_empty() {
+            self.host()
+                .append(&dialogs::backend_switch_button(&self.ctx));
+            let empty = adw::StatusPage::new();
+            empty.set_icon_name(Some("folder-remote-symbolic"));
+            empty.set_title(&self.ctx.t_or("home.emptyState.title", "RClone Manager"));
+            empty.set_description(Some(&self.ctx.t_or(
+                "home.emptyState.description",
+                "Easily manage your Rclone remotes. If you're new to Rclone, use \"Add Quick Remote\" for a fast and simple setup.",
+            )));
+            let actions = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+            actions.set_halign(gtk::Align::Center);
+            let quick = gtk::Button::with_label(
+                &self
+                    .ctx
+                    .t_or("home.emptyState.addQuickRemote", "Add Quick Remote"),
+            );
+            quick.add_css_class("suggested-action");
+            let detailed = gtk::Button::with_label(
+                &self
+                    .ctx
+                    .t_or("home.emptyState.addDetailedRemote", "Add Detailed Remote"),
+            );
+            {
+                let dash = self.clone();
+                let ctx = self.ctx.clone();
+                quick.connect_clicked(move |_| {
+                    if let Some(win) = dash.root.root().and_downcast::<gtk::Window>() {
+                        dialogs::quick_add_remote(&win, ctx.clone(), {
+                            let dash = dash.clone();
+                            Rc::new(move || {
+                                dash.ctx.refresh_runtime();
+                                dash.refresh();
+                            })
+                        });
+                    }
+                });
+            }
+            {
+                let dash = self.clone();
+                let ctx = self.ctx.clone();
+                detailed.connect_clicked(move |_| {
+                    if let Some(win) = dash.root.root().and_downcast::<gtk::Window>() {
+                        dialogs::remote_config(&win, ctx.clone(), None, {
+                            let dash = dash.clone();
+                            Rc::new(move || {
+                                dash.ctx.refresh_runtime();
+                                dash.refresh();
+                            })
+                        });
+                    }
+                });
+            }
+            actions.append(&quick);
+            actions.append(&detailed);
+            empty.set_child(Some(&actions));
+            self.host().append(&empty);
+            return;
+        }
         let title = adw::StatusPage::new();
         title.set_icon_name(Some(tab.icon_name()));
         title.set_title(&self.ctx.t(tab.label_key()));
@@ -1599,6 +1690,7 @@ impl Dashboard {
         let Some(name) = self.ctx.selected_remote.borrow().clone() else {
             return;
         };
+        self.restore_detail_page(&name);
         let snap = self.ctx.snapshot.borrow().clone();
         let remote = snap.remotes.iter().find(|r| r.name == name).cloned();
         let tab = *self.tab.borrow();
@@ -2186,6 +2278,13 @@ impl Dashboard {
                             .t_or("dashboard.appDetail.configuration", "Configuration"),
                     ),
                 ],
+                {
+                    let dash = self.clone();
+                    let remote = name.clone();
+                    Some(Rc::new(move |page: &str| {
+                        dash.persist_detail_page(&remote, page);
+                    }))
+                },
             );
             self.detail_box().append(&switcher);
             self.detail_box().append(&stack);

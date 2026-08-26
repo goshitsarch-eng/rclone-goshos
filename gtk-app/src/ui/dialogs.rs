@@ -969,7 +969,11 @@ pub fn updates(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, toast: adw::ToastOve
             });
         }
         app_row.add_suffix(&notes);
-        if info.download_url.is_some() {
+        let managed = crate::platform::managed_build();
+        if info.download_url.is_some()
+            && crate::platform::update_command(managed).is_none()
+            && crate::platform::update_page_url(managed).is_none()
+        {
             let install = gtk::Button::with_label(&ctx.t_or("common.install", "Install"));
             install.add_css_class("suggested-action");
             install.set_valign(gtk::Align::Center);
@@ -984,6 +988,15 @@ pub fn updates(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, toast: adw::ToastOve
                 });
             }
             app_row.add_suffix(&install);
+        } else if let Some(url) = crate::platform::update_page_url(managed) {
+            let label = if matches!(managed, crate::platform::ManagedBuild::Flatpak) {
+                ctx.t_or("modals.about.openFlathub", "Open Flathub")
+            } else {
+                ctx.t_or("modals.about.downloadPage", "Download Page")
+            };
+            let link = gtk::LinkButton::with_label(url, &label);
+            link.set_valign(gtk::Align::Center);
+            app_row.add_suffix(&link);
         }
         let skip = gtk::Button::with_label(&ctx.t_or("modals.about.skipVersion", "Skip"));
         skip.set_valign(gtk::Align::Center);
@@ -1203,10 +1216,11 @@ fn start_rclone_update(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, toast: adw::
         move |cancel, progress| crate::updater::install_rclone_binary_ex(&dest, cancel, progress),
         |ctx, path, toast| {
             ctx.settings.borrow_mut().core.rclone_binary = path.to_string_lossy().into_owned();
+            ctx.settings.borrow_mut().runtime.rclone_restart_required = true;
             ctx.persist();
             toast.add_toast(adw::Toast::new(&ctx.t_or(
-                "updates.installSuccess",
-                "Update installed. Please restart the app.",
+                "modals.about.rcloneRestartRequired",
+                "Rclone Restart Required",
             )));
         },
     );

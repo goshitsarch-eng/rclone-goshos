@@ -214,7 +214,20 @@ fn register_application_options(app: &adw::Application) {
         None,
     );
     add("about", OptionArg::None, "Open the About dialog", None);
-    add("logs", OptionArg::None, "Open the Logs dialog", None);
+    app.add_main_option(
+        "logs",
+        0.into(),
+        OptionFlags::OPTIONAL_ARG,
+        OptionArg::String,
+        "Open the Logs dialog, optionally scoped to a remote",
+        Some("REMOTE"),
+    );
+    add(
+        "auto-add",
+        OptionArg::None,
+        "Prompt for a new profile in remote-config",
+        None,
+    );
     add(
         "shortcuts",
         OptionArg::None,
@@ -301,6 +314,7 @@ fn command_line_option_flags(
         "onboarding",
         "about",
         "logs",
+        "auto-add",
         "shortcuts",
         "remote-config",
         "step",

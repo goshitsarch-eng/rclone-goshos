@@ -158,6 +158,12 @@ pub struct RuntimeSettings {
     pub dashboard_sidebar_open: bool,
     #[serde(default = "default_true")]
     pub flow_sidebar_open: bool,
+    #[serde(default = "default_dashboard_tab")]
+    pub dashboard_tab: String,
+    #[serde(default)]
+    pub selected_detail_pages: HashMap<String, String>,
+    #[serde(default)]
+    pub rclone_restart_required: bool,
 }
 
 pub fn panel_state_key(scope: &str, id: &str) -> String {
@@ -188,6 +194,10 @@ fn default_true() -> bool {
     true
 }
 
+fn default_dashboard_tab() -> String {
+    "general".into()
+}
+
 impl Default for RuntimeSettings {
     fn default() -> Self {
         Self {
@@ -209,6 +219,9 @@ impl Default for RuntimeSettings {
             panel_open_states: HashMap::new(),
             dashboard_sidebar_open: true,
             flow_sidebar_open: true,
+            dashboard_tab: default_dashboard_tab(),
+            selected_detail_pages: HashMap::new(),
+            rclone_restart_required: false,
         }
     }
 }
@@ -555,6 +568,9 @@ mod tests {
         assert!(loaded.runtime.panel_open_states.is_empty());
         assert!(loaded.runtime.dashboard_sidebar_open);
         assert!(loaded.runtime.flow_sidebar_open);
+        assert_eq!(loaded.runtime.dashboard_tab, "general");
+        assert!(loaded.runtime.selected_detail_pages.is_empty());
+        assert!(!loaded.runtime.rclone_restart_required);
         assert!(panel_is_open(
             &loaded.runtime.panel_open_states,
             "dashboard",
