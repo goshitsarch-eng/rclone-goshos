@@ -203,6 +203,26 @@ pub fn inspect_dest_ex(
     PathStatus::Empty
 }
 
+/// Angular `getPathStatus`: source badges only on bisync local paths.
+pub fn shows_source_status(op: OperationType) -> bool {
+    op == OperationType::Bisync
+}
+
+/// Dest badges for mount (always) and sync/copy/bisync destinations.
+pub fn shows_dest_status(op: OperationType) -> bool {
+    matches!(
+        op,
+        OperationType::Mount | OperationType::Sync | OperationType::Copy | OperationType::Bisync
+    )
+}
+
+/// Angular `mountDestMustBeLocal`: non-empty mount dest that is not a local folder.
+pub fn mount_dest_is_invalid(op: OperationType, path: &str, engine_os: &str) -> bool {
+    op == OperationType::Mount
+        && !path.trim().is_empty()
+        && !crate::path_kind::is_truly_local_path(path, engine_os)
+}
+
 pub fn status_label_key(status: &PathStatus) -> &'static str {
     match status {
         PathStatus::Empty => "remoteConfig.pathStatus.clean",
@@ -351,6 +371,31 @@ mod tests {
         );
         store.remotes.insert(remote.into(), meta);
         store
+    }
+
+    #[test]
+    fn source_and_mount_dest_rules_match_angular() {
+        assert!(shows_source_status(OperationType::Bisync));
+        assert!(!shows_source_status(OperationType::Mount));
+        assert!(!shows_source_status(OperationType::Copy));
+        assert!(shows_dest_status(OperationType::Mount));
+        assert!(shows_dest_status(OperationType::Copy));
+        assert!(!mount_dest_is_invalid(
+            OperationType::Mount,
+            "/tmp/rclone-testdrive-mnt",
+            "linux"
+        ));
+        assert!(mount_dest_is_invalid(
+            OperationType::Mount,
+            "testdrive:Photos",
+            "linux"
+        ));
+        assert!(!mount_dest_is_invalid(
+            OperationType::Copy,
+            "testdrive:x",
+            "linux"
+        ));
+        assert!(!mount_dest_is_invalid(OperationType::Mount, "", "linux"));
     }
 
     #[test]

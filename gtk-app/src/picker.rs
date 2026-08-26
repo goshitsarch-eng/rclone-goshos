@@ -31,6 +31,8 @@ pub struct FilePickerConfig {
     pub allowed_extensions: Vec<String>,
     pub initial_location: Option<String>,
     pub require_empty: bool,
+    /// Remote used for relative typed paths (`Photos` → `remote:Photos`).
+    pub default_remote: String,
 }
 
 impl Default for FilePickerConfig {
@@ -43,6 +45,7 @@ impl Default for FilePickerConfig {
             allowed_extensions: vec![],
             initial_location: None,
             require_empty: false,
+            default_remote: String::new(),
         }
     }
 }
@@ -95,6 +98,16 @@ impl FilePickerConfig {
             multi: true,
             ..Self::folders()
         }
+    }
+
+    pub fn with_remote(mut self, remote: &str) -> Self {
+        if !remote.is_empty() && remote != "local" {
+            self.default_remote = remote.to_string();
+            if self.allowed_remotes.is_empty() {
+                self.allowed_remotes.push(remote.to_string());
+            }
+        }
+        self
     }
 }
 

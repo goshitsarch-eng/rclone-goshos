@@ -703,7 +703,7 @@ fn operation_page(
     let extra_sources: Rc<RefCell<Vec<adw::EntryRow>>> = Rc::new(RefCell::new(Vec::new()));
     if listed.len() > 1 {
         for extra in listed.iter().skip(1) {
-            let row = extra_source_row(&ctx, extra, op != OperationType::Copyurl);
+            let row = extra_source_row(&ctx, extra, op != OperationType::Copyurl, remote);
             extra_sources.borrow_mut().push(row);
         }
     }
@@ -752,14 +752,15 @@ fn operation_page(
             crate::picker::FilePickerConfig::local_mount_folders(),
         );
     } else if op != OperationType::Serve && op != OperationType::Delete {
-        dialogs::attach_path_picker(&ctx, &dst, crate::picker::FilePickerConfig::folders());
+        dialogs::attach_path_picker(
+            &ctx,
+            &dst,
+            crate::picker::FilePickerConfig::folders().with_remote(remote),
+        );
     }
     let dest_status = adw::ActionRow::new();
     dest_status.set_title(&ctx.t_or("remoteConfig.pathStatusTitle", "Path status"));
-    dest_status.set_visible(matches!(
-        op,
-        OperationType::Mount | OperationType::Sync | OperationType::Copy | OperationType::Bisync
-    ));
+    dest_status.set_visible(crate::path_inspection::shows_dest_status(op));
     {
         let dest_status = dest_status.clone();
         let ctx = ctx.clone();
@@ -835,21 +836,55 @@ fn operation_page(
         let ctx = ctx.clone();
         cron.connect_changed(move |row| update_cron_hint(&ctx, row, &cron_hint));
     }
+    let watch_supported = op.is_automatable() && ctx.is_local_backend();
     let watch_enabled = adw::SwitchRow::new();
     watch_enabled.set_title(&ctx.t_or("wizards.appOperation.enableWatch", "Watch local sources"));
-    watch_enabled.set_active(initial.app.watch_enabled);
-    watch_enabled.set_visible(op.is_automatable());
+    watch_enabled.set_subtitle(&ctx.t_or(
+        "wizards.appOperation.watchDescription",
+        "Watch local source directories for file modifications and sync changes automatically.",
+    ));
+    watch_enabled.set_active(initial.app.watch_enabled && watch_supported);
+    watch_enabled.set_visible(watch_supported);
     let watch_delay = adw::EntryRow::new();
     watch_delay.set_title(&ctx.t_or("wizards.appOperation.watchDelay", "Watch delay (seconds)"));
+    watch_delay.set_tooltip_text(Some(&ctx.t_or(
+        "wizards.appOperation.watchDelayHint",
+        "Seconds to wait after a change before starting the job.",
+    )));
     watch_delay.set_text(&initial.app.watch_delay.to_string());
-    watch_delay.set_visible(op.is_automatable());
+    watch_delay.set_visible(watch_supported);
+    let watch_zero = gtk::Label::new(None);
+    watch_zero.add_css_class("dim-label");
+    watch_zero.set_xalign(0.0);
+    watch_zero.set_wrap(true);
+    watch_zero.set_visible(watch_supported);
+    let refresh_watch_zero = {
+        let ctx = ctx.clone();
+        let watch_zero = watch_zero.clone();
+        move |text: &str| {
+            let zero = text.trim().is_empty() || text.trim() == "0";
+            watch_zero.set_text(&if zero {
+                ctx.t_or(
+                    "wizards.appOperation.watchZeroDelayWarning",
+                    "Instant mode (0s) triggers sync immediately on change. For large files or multiple edits, 3–5s is recommended so writes can finish.",
+                )
+            } else {
+                String::new()
+            });
+        }
+    };
+    refresh_watch_zero(&watch_delay.text());
+    {
+        let refresh_watch_zero = refresh_watch_zero.clone();
+        watch_delay.connect_changed(move |row| refresh_watch_zero(&row.text()));
+    }
     let watch_changed = adw::SwitchRow::new();
     watch_changed.set_title(&ctx.t_or(
         "wizards.appOperation.watchChangedOnly",
         "Changed files only",
     ));
     watch_changed.set_active(initial.app.watch_changed_only);
-    watch_changed.set_visible(op.is_automatable());
+    watch_changed.set_visible(watch_supported);
     let (guidance, refresh_guidance) = dialogs::attach_operation_guidance(
         &ctx,
         false,
@@ -907,6 +942,35 @@ fn operation_page(
         identity.add(kind);
     }
     identity.add(&src);
+    let src_status = adw::ActionRow::new();
+    src_status.set_title(&ctx.t_or("remoteConfig.pathStatusTitle", "Path status"));
+    src_status.set_visible(false);
+    if crate::path_inspection::shows_source_status(op) {
+        let src_status = src_status.clone();
+        let ctx = ctx.clone();
+        let remote_name = remote.to_string();
+        let refresh_src = move |path: &str| {
+            let resolved = crate::path_kind::resolve_job_path(path, &remote_name);
+            let local = crate::path_kind::is_truly_local_path(&resolved, &ctx.engine_os());
+            src_status.set_visible(local);
+            if !local {
+                return;
+            }
+            let status = crate::path_inspection::inspect_dest_ex(
+                &ctx.store.borrow(),
+                &resolved,
+                &remote_name,
+                op,
+                &ctx.snapshot.borrow().mounts,
+                ctx.client().as_ref(),
+                &ctx.engine_os(),
+            );
+            src_status.set_subtitle(&super::dialogs::path_status_label(&ctx, &status));
+        };
+        refresh_src(&src.text());
+        src.connect_changed(move |row| refresh_src(&row.text()));
+    }
+    identity.add(&src_status);
     identity.add(&url_filename);
     for (idx, row) in extra_sources.borrow().iter().enumerate() {
         identity.add(row);
@@ -922,8 +986,9 @@ fn operation_page(
         let ctx_add = ctx.clone();
         let refresh_guidance = refresh_guidance.clone();
         let is_copyurl = op == OperationType::Copyurl;
+        let remote_name = remote.to_string();
         add_src.connect_clicked(move |_| {
-            let row = extra_source_row(&ctx_add, "", !is_copyurl);
+            let row = extra_source_row(&ctx_add, "", !is_copyurl, &remote_name);
             {
                 let refresh_guidance = refresh_guidance.clone();
                 row.connect_changed(move |_| refresh_guidance());
@@ -950,7 +1015,8 @@ fn operation_page(
         let src_row = src.clone();
         let refresh_guidance = refresh_guidance.clone();
         let is_copyurl = op == OperationType::Copyurl;
-        let mut cfg = crate::picker::FilePickerConfig::folders();
+        let remote_name = remote.to_string();
+        let mut cfg = crate::picker::FilePickerConfig::folders().with_remote(remote);
         cfg.multi = op.supports_multi_source();
         dialogs::attach_path_picker_with(
             &ctx,
@@ -968,7 +1034,7 @@ fn operation_page(
                     {
                         continue;
                     }
-                    let row = extra_source_row(&ctx_pick, &path, !is_copyurl);
+                    let row = extra_source_row(&ctx_pick, &path, !is_copyurl, &remote_name);
                     {
                         let refresh_guidance = refresh_guidance.clone();
                         row.connect_changed(move |_| refresh_guidance());
@@ -1003,6 +1069,9 @@ fn operation_page(
     automation.add(&cron_preset_row);
     automation.add(&watch_enabled);
     automation.add(&watch_delay);
+    watch_zero.set_margin_start(12);
+    watch_zero.set_margin_end(12);
+    automation.add(&watch_zero);
     automation.add(&watch_changed);
 
     let helpers = adw::PreferencesGroup::new();
@@ -1437,6 +1506,16 @@ fn operation_page(
             } else {
                 crate::path_kind::resolve_job_path(&dst.text(), &remote)
             };
+            if crate::path_inspection::mount_dest_is_invalid(op, &dest, &ctx.engine_os()) {
+                super::dialogs::toast_near(
+                    &dst,
+                    &ctx.t_or(
+                        "wizards.appOperation.mountDestMustBeLocal",
+                        "Mount destination must be a local folder",
+                    ),
+                );
+                return;
+            }
             let rclone = assemble_rclone(op, &sources, &dest, flags);
             let profile = ProfileConfig {
                 name: name.clone(),
@@ -2040,12 +2119,16 @@ fn refresh_combo(combo: &adw::ComboRow, names: &[String]) {
     combo.set_model(Some(&gtk::StringList::new(&refs)));
 }
 
-fn extra_source_row(ctx: &AppCtx, value: &str, pick_folders: bool) -> adw::EntryRow {
+fn extra_source_row(ctx: &AppCtx, value: &str, pick_folders: bool, remote: &str) -> adw::EntryRow {
     let row = adw::EntryRow::new();
     row.set_title(&ctx.t_or("remoteConfig.additionalSource", "Additional source"));
     row.set_text(value);
     if pick_folders {
-        dialogs::attach_path_picker(ctx, &row, crate::picker::FilePickerConfig::folders());
+        dialogs::attach_path_picker(
+            ctx,
+            &row,
+            crate::picker::FilePickerConfig::folders().with_remote(remote),
+        );
     }
     row
 }

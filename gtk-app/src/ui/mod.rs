@@ -673,6 +673,11 @@ impl AppCtx {
         crate::layout::backend_key(&self.settings.borrow().core.active_backend)
     }
 
+    pub fn is_local_backend(&self) -> bool {
+        let active = self.settings.borrow().core.active_backend.clone();
+        active.is_empty() || active == "local"
+    }
+
     /// OS of the active extra RC backend, or this process (`linux` / `windows` / `macos`).
     pub fn engine_os(&self) -> String {
         let active = self.settings.borrow().core.active_backend.clone();

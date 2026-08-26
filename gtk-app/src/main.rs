@@ -32,6 +32,7 @@ mod mqtt;
 mod navigation;
 mod onboarding;
 mod operations;
+mod path_autocomplete;
 mod path_inspection;
 mod path_kind;
 mod picker;

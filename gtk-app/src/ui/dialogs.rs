@@ -4947,7 +4947,11 @@ pub fn start_operation(
             let row = adw::EntryRow::new();
             row.set_title(&ctx.t_or("wizards.appOperation.addSource", "Additional source"));
             row.set_text(extra);
-            attach_path_picker(&ctx, &row, crate::picker::FilePickerConfig::folders());
+            attach_path_picker(
+                &ctx,
+                &row,
+                crate::picker::FilePickerConfig::folders().with_remote(remote),
+            );
             extra_sources.borrow_mut().push(row);
         }
     }
@@ -4985,17 +4989,18 @@ pub fn start_operation(
     } else if op == OperationType::Serve {
         None
     } else {
-        attach_path_picker(&ctx, &dst, crate::picker::FilePickerConfig::folders());
+        attach_path_picker(
+            &ctx,
+            &dst,
+            crate::picker::FilePickerConfig::folders().with_remote(remote),
+        );
         Some(attach_path_kind(&ctx, &dst, remote))
     };
     let dest_status = gtk::Label::new(None);
     dest_status.add_css_class("dim-label");
     dest_status.set_xalign(0.0);
     dest_status.set_wrap(true);
-    dest_status.set_visible(matches!(
-        op,
-        OperationType::Mount | OperationType::Sync | OperationType::Copy | OperationType::Bisync
-    ));
+    dest_status.set_visible(crate::path_inspection::shows_dest_status(op));
     {
         let dest_status = dest_status.clone();
         let ctx = ctx.clone();
@@ -5290,6 +5295,13 @@ pub fn start_operation(
             } else {
                 crate::path_kind::resolve_job_path(&dst.text(), &remote)
             };
+            if crate::path_inspection::mount_dest_is_invalid(op, &dest, &ctx.engine_os()) {
+                toast.add_toast(adw::Toast::new(&ctx.t_or(
+                    "wizards.appOperation.mountDestMustBeLocal",
+                    "Mount destination must be a local folder",
+                )));
+                return;
+            }
             let mut rclone = serde_json::Value::Object(rclone);
             if let Some(meta) = ctx.store.borrow().remotes.get(&remote) {
                 let mut profile = crate::store::ProfileConfig::default();
@@ -5373,6 +5385,41 @@ pub fn start_operation(
         identity.add(kind);
     }
     identity.add(&src);
+    if crate::path_inspection::shows_source_status(op) {
+        let src_status = gtk::Label::new(None);
+        src_status.add_css_class("dim-label");
+        src_status.set_xalign(0.0);
+        src_status.set_wrap(true);
+        let ctx_s = ctx.clone();
+        let remote_s = remote.to_string();
+        let src_status_c = src_status.clone();
+        let refresh_src = move |path: &str| {
+            let resolved = crate::path_kind::resolve_job_path(path, &remote_s);
+            let local = crate::path_kind::is_truly_local_path(&resolved, &ctx_s.engine_os());
+            src_status_c.set_visible(local);
+            if !local {
+                return;
+            }
+            let status = crate::path_inspection::inspect_dest_ex(
+                &ctx_s.store.borrow(),
+                &resolved,
+                &remote_s,
+                op,
+                &ctx_s.snapshot.borrow().mounts,
+                ctx_s.client().as_ref(),
+                &ctx_s.engine_os(),
+            );
+            src_status_c.set_text(&path_status_label(&ctx_s, &status));
+        };
+        refresh_src(&src.text());
+        src.connect_changed(move |row| refresh_src(&row.text()));
+        identity.add(&{
+            let row = adw::ActionRow::new();
+            row.set_title(&ctx.t_or("remoteConfig.pathStatusTitle", "Path check"));
+            row.add_suffix(&src_status);
+            row
+        });
+    }
     for row in extra_sources.borrow().iter() {
         identity.add(row);
     }
@@ -5382,10 +5429,15 @@ pub fn start_operation(
             let extra_sources = extra_sources.clone();
             let identity = identity.clone();
             let ctx = ctx.clone();
+            let remote_name = remote.to_string();
             add_src.connect_clicked(move |_| {
                 let row = adw::EntryRow::new();
                 row.set_title(&ctx.t_or("wizards.appOperation.addSource", "Additional source"));
-                attach_path_picker(&ctx, &row, crate::picker::FilePickerConfig::folders());
+                attach_path_picker(
+                    &ctx,
+                    &row,
+                    crate::picker::FilePickerConfig::folders().with_remote(&remote_name),
+                );
                 identity.add(&row);
                 extra_sources.borrow_mut().push(row);
             });
@@ -5400,7 +5452,8 @@ pub fn start_operation(
         let identity_for_pick = identity.clone();
         let ctx_pick = ctx.clone();
         let src_row = src.clone();
-        let mut cfg = crate::picker::FilePickerConfig::folders();
+        let remote_name = remote.to_string();
+        let mut cfg = crate::picker::FilePickerConfig::folders().with_remote(remote);
         cfg.multi = op.supports_multi_source();
         attach_path_picker_with(
             &ctx,
@@ -5422,7 +5475,11 @@ pub fn start_operation(
                     let row = adw::EntryRow::new();
                     row.set_title(&title);
                     row.set_text(&path);
-                    attach_path_picker(&ctx_pick, &row, crate::picker::FilePickerConfig::folders());
+                    attach_path_picker(
+                        &ctx_pick,
+                        &row,
+                        crate::picker::FilePickerConfig::folders().with_remote(&remote_name),
+                    );
                     identity_for_pick.add(&row);
                     extra_sources.borrow_mut().push(row);
                 }
@@ -5569,6 +5626,7 @@ pub fn quick_run_editor(
     description.set_title(&ctx.t_or("flow.quickRun.editor.description", "Description"));
     let remote = adw::EntryRow::new();
     remote.set_title(&ctx.t_or("flow.quickRun.editor.remote", "Remote"));
+    attach_remote_chooser(&ctx, &remote);
     let src = adw::EntryRow::new();
     src.set_title(&ctx.t_or("fileBrowser.operations.details.source", "Source"));
     let extra_sources: Rc<RefCell<Vec<adw::EntryRow>>> = Rc::new(RefCell::new(Vec::new()));
@@ -5583,7 +5641,6 @@ pub fn quick_run_editor(
         "fileBrowser.operations.details.destination",
         "Destination / mount point",
     ));
-    attach_path_picker(&ctx, &dst, crate::picker::FilePickerConfig::folders());
     let cron = adw::EntryRow::new();
     cron.set_title(&ctx.t_or("flow.quickRun.editor.cron", "Cron expression"));
     let cron_hint = gtk::Label::new(None);
@@ -5613,8 +5670,39 @@ pub fn quick_run_editor(
     auto.set_title(&ctx.t_or("flow.quickRun.badges.autostart", "Auto start"));
     let watch = adw::SwitchRow::new();
     watch.set_title(&ctx.t_or("flow.quickRun.badges.watcher", "Watch enabled"));
+    watch.set_subtitle(&ctx.t_or(
+        "wizards.appOperation.watchDescription",
+        "Watch local source directories for file modifications and sync changes automatically.",
+    ));
     let watch_delay = adw::EntryRow::new();
     watch_delay.set_title(&ctx.t_or("wizards.appOperation.watchDelay", "Watch delay (seconds)"));
+    watch_delay.set_tooltip_text(Some(&ctx.t_or(
+        "wizards.appOperation.watchDelayHint",
+        "Seconds to wait after a change before starting the job.",
+    )));
+    let watch_zero = gtk::Label::new(None);
+    watch_zero.add_css_class("dim-label");
+    watch_zero.set_xalign(0.0);
+    watch_zero.set_wrap(true);
+    watch_zero.set_margin_start(12);
+    watch_zero.set_margin_end(12);
+    {
+        let ctx = ctx.clone();
+        let watch_zero = watch_zero.clone();
+        let refresh_watch_zero = move |text: &str| {
+            let zero = text.trim().is_empty() || text.trim() == "0";
+            watch_zero.set_text(&if zero {
+                ctx.t_or(
+                    "wizards.appOperation.watchZeroDelayWarning",
+                    "Instant mode (0s) triggers sync immediately on change. For large files or multiple edits, 3–5s is recommended so writes can finish.",
+                )
+            } else {
+                String::new()
+            });
+        };
+        refresh_watch_zero(&watch_delay.text());
+        watch_delay.connect_changed(move |row| refresh_watch_zero(&row.text()));
+    }
     let watch_changed = adw::SwitchRow::new();
     watch_changed.set_title(&ctx.t_or(
         "automation.monitoring.changedOnlyShort",
@@ -5662,7 +5750,11 @@ pub fn quick_run_editor(
             let row = adw::EntryRow::new();
             row.set_title(&ctx.t_or("wizards.appOperation.addSource", "Additional source"));
             if !copyurl {
-                attach_path_picker(&ctx, &row, crate::picker::FilePickerConfig::folders());
+                attach_path_picker(
+                    &ctx,
+                    &row,
+                    crate::picker::FilePickerConfig::folders().with_remote(&remote.text()),
+                );
             }
             row.set_text(extra);
             extra_sources.borrow_mut().push(row);
@@ -5807,6 +5899,93 @@ pub fn quick_run_editor(
                 .unwrap_or(OperationType::Sync)
         }) as Rc<dyn Fn() -> OperationType>
     };
+    attach_path_picker(
+        &ctx,
+        &dst,
+        crate::picker::FilePickerConfig::folders().with_remote(&remote.text()),
+    );
+    let dest_status = gtk::Label::new(None);
+    dest_status.add_css_class("dim-label");
+    dest_status.set_xalign(0.0);
+    dest_status.set_wrap(true);
+    dest_status.set_visible(crate::path_inspection::shows_dest_status(initial_op));
+    let dest_status_row = adw::ActionRow::new();
+    dest_status_row.set_title(&ctx.t_or("remoteConfig.pathStatusTitle", "Path check"));
+    dest_status_row.add_suffix(&dest_status);
+    dest_status_row.set_visible(crate::path_inspection::shows_dest_status(initial_op));
+    let refresh_dest_status = {
+        let dest_status = dest_status.clone();
+        let dest_status_row = dest_status_row.clone();
+        let dst = dst.clone();
+        let ctx = ctx.clone();
+        let remote = remote.clone();
+        let current_op = current_op.clone();
+        Rc::new(move || {
+            let op = current_op();
+            dest_status_row.set_visible(crate::path_inspection::shows_dest_status(op));
+            let remote_name = remote.text().to_string();
+            let resolved = crate::path_kind::resolve_job_path(&dst.text(), &remote_name);
+            let status = crate::path_inspection::inspect_dest_ex(
+                &ctx.store.borrow(),
+                &resolved,
+                &remote_name,
+                op,
+                &ctx.snapshot.borrow().mounts,
+                ctx.client().as_ref(),
+                &ctx.engine_os(),
+            );
+            dest_status.set_text(&path_status_label(&ctx, &status));
+        }) as Rc<dyn Fn()>
+    };
+    refresh_dest_status();
+    {
+        let refresh_dest_status = refresh_dest_status.clone();
+        dst.connect_changed(move |_| refresh_dest_status());
+    }
+    let src_status = gtk::Label::new(None);
+    src_status.add_css_class("dim-label");
+    src_status.set_xalign(0.0);
+    src_status.set_wrap(true);
+    let src_status_row = adw::ActionRow::new();
+    src_status_row.set_title(&ctx.t_or("remoteConfig.pathStatusTitle", "Path check"));
+    src_status_row.add_suffix(&src_status);
+    let refresh_src_status = {
+        let ctx = ctx.clone();
+        let remote = remote.clone();
+        let src = src.clone();
+        let src_status = src_status.clone();
+        let src_status_row = src_status_row.clone();
+        let current_op = current_op.clone();
+        Rc::new(move || {
+            let op = current_op();
+            if !crate::path_inspection::shows_source_status(op) {
+                src_status_row.set_visible(false);
+                return;
+            }
+            let remote_name = remote.text().to_string();
+            let resolved = crate::path_kind::resolve_job_path(&src.text(), &remote_name);
+            let local = crate::path_kind::is_truly_local_path(&resolved, &ctx.engine_os());
+            src_status_row.set_visible(local);
+            if !local {
+                return;
+            }
+            let status = crate::path_inspection::inspect_dest_ex(
+                &ctx.store.borrow(),
+                &resolved,
+                &remote_name,
+                op,
+                &ctx.snapshot.borrow().mounts,
+                ctx.client().as_ref(),
+                &ctx.engine_os(),
+            );
+            src_status.set_text(&path_status_label(&ctx, &status));
+        }) as Rc<dyn Fn()>
+    };
+    refresh_src_status();
+    {
+        let refresh_src_status = refresh_src_status.clone();
+        src.connect_changed(move |_| refresh_src_status());
+    }
     let (guidance, refresh_guidance) = attach_operation_guidance(
         &ctx,
         false,
@@ -5819,6 +5998,7 @@ pub fn quick_run_editor(
     group.add(&op_row);
     group.add(&src_kind);
     group.add(&src);
+    group.add(&src_status_row);
     group.add(&url_filename);
     for (idx, row) in extra_sources.borrow().iter().enumerate() {
         group.add(row);
@@ -5832,6 +6012,7 @@ pub fn quick_run_editor(
         let extra_filenames = extra_filenames.clone();
         let group = group.clone();
         let ctx = ctx.clone();
+        let remote = remote.clone();
         let refresh_guidance = refresh_guidance.clone();
         let current_op = current_op.clone();
         add_src.connect_clicked(move |_| {
@@ -5839,7 +6020,11 @@ pub fn quick_run_editor(
             let row = adw::EntryRow::new();
             row.set_title(&ctx.t_or("wizards.appOperation.addSource", "Additional source"));
             if op != OperationType::Copyurl {
-                attach_path_picker(&ctx, &row, crate::picker::FilePickerConfig::folders());
+                attach_path_picker(
+                    &ctx,
+                    &row,
+                    crate::picker::FilePickerConfig::folders().with_remote(&remote.text()),
+                );
             }
             {
                 let refresh_guidance = refresh_guidance.clone();
@@ -5866,9 +6051,10 @@ pub fn quick_run_editor(
         let group_for_pick = group.clone();
         let ctx_pick = ctx.clone();
         let src_row = src.clone();
+        let remote = remote.clone();
         let refresh_guidance = refresh_guidance.clone();
         let current_op = current_op.clone();
-        let mut cfg = crate::picker::FilePickerConfig::folders();
+        let mut cfg = crate::picker::FilePickerConfig::folders().with_remote(&remote.text());
         cfg.multi = initial_op.supports_multi_source();
         attach_path_picker_with(
             &ctx,
@@ -5895,7 +6081,7 @@ pub fn quick_run_editor(
                         attach_path_picker(
                             &ctx_pick,
                             &row,
-                            crate::picker::FilePickerConfig::folders(),
+                            crate::picker::FilePickerConfig::folders().with_remote(&remote.text()),
                         );
                     }
                     {
@@ -5916,12 +6102,21 @@ pub fn quick_run_editor(
     }
     group.add(&dst_kind);
     group.add(&dst);
+    group.add(&dest_status_row);
     group.add(&cron);
     group.add(&cron_presets);
     group.add(&auto);
     group.add(&watch);
     group.add(&watch_delay);
+    group.add(&watch_zero);
     group.add(&watch_changed);
+    {
+        let show = initial_op.is_automatable() && ctx.is_local_backend();
+        watch.set_visible(show);
+        watch_delay.set_visible(show);
+        watch_zero.set_visible(show);
+        watch_changed.set_visible(show);
+    }
     group.add(&tray);
     vfs_profile.set_visible(initial_op.supports_vfs());
     group.add(&vfs_profile);
@@ -6043,6 +6238,13 @@ pub fn quick_run_editor(
         let ctx_titles = ctx.clone();
         let group = group.clone();
         let vfs_profile = vfs_profile.clone();
+        let watch = watch.clone();
+        let watch_delay = watch_delay.clone();
+        let watch_zero = watch_zero.clone();
+        let watch_changed = watch_changed.clone();
+        let dest_status_row = dest_status_row.clone();
+        let refresh_dest_status = refresh_dest_status.clone();
+        let refresh_src_status = refresh_src_status.clone();
         op_row.connect_selected_notify(move |row| {
             let op = OperationType::ALL
                 .get(row.selected() as usize)
@@ -6059,6 +6261,14 @@ pub fn quick_run_editor(
                 op,
                 OperationType::Mount | OperationType::Serve | OperationType::Delete
             ));
+            dest_status_row.set_visible(crate::path_inspection::shows_dest_status(op));
+            refresh_dest_status();
+            refresh_src_status();
+            let show_watch = op.is_automatable() && ctx_titles.is_local_backend();
+            watch.set_visible(show_watch);
+            watch_delay.set_visible(show_watch);
+            watch_zero.set_visible(show_watch);
+            watch_changed.set_visible(show_watch);
             if op == OperationType::Copyurl {
                 while extra_filenames.borrow().len() < extra_sources.borrow().len() {
                     let name = quick_run_filename_row(&ctx_titles, "");
@@ -6297,9 +6507,20 @@ pub fn quick_run_editor(
             qr.name = name.text().to_string();
             qr.description = description.text().to_string();
             qr.remote_name = remote.text().to_string();
+            if qr.remote_name.trim().is_empty() && !ctx.store.borrow().remote_names().is_empty() {
+                toast_near(
+                    &remote,
+                    &ctx.t_or(
+                        "flow.quickRun.editor.selectRemoteFirst",
+                        "Select a remote first",
+                    ),
+                );
+                return;
+            }
             qr.operation_type = op;
             qr.config.app.auto_start = auto.is_active();
-            qr.config.app.watch_enabled = watch.is_active();
+            qr.config.app.watch_enabled =
+                watch.is_active() && op.is_automatable() && ctx.is_local_backend();
             qr.config.app.watch_delay = watch_delay.text().parse().unwrap_or(0);
             qr.config.app.watch_changed_only = watch_changed.is_active();
             qr.config.app.cron_enabled = !expr.is_empty();
@@ -6464,6 +6685,16 @@ pub fn quick_run_editor(
             } else {
                 crate::path_kind::resolve_job_path(&dst.text(), &remote_name)
             };
+            if crate::path_inspection::mount_dest_is_invalid(op, &dest, &ctx.engine_os()) {
+                toast_near(
+                    &dst,
+                    &ctx.t_or(
+                        "wizards.appOperation.mountDestMustBeLocal",
+                        "Mount destination must be a local folder",
+                    ),
+                );
+                return;
+            }
             qr.config.rclone = assemble_rclone(op, &sources, &dest, flags);
             {
                 let mut store = ctx.store.borrow_mut();
@@ -13493,6 +13724,45 @@ pub(crate) fn toast_near(widget: &impl IsA<gtk::Widget>, message: &str) {
     }
 }
 
+fn attach_remote_chooser(ctx: &AppCtx, row: &adw::EntryRow) {
+    let names = ctx.store.borrow().remote_names();
+    if names.is_empty() {
+        row.set_tooltip_text(Some(&ctx.t_or(
+            "flow.quickRun.editor.selectRemoteFirst",
+            "Select a remote first",
+        )));
+        return;
+    }
+    let btn = gtk::MenuButton::new();
+    btn.set_icon_name("go-down-symbolic");
+    btn.set_valign(gtk::Align::Center);
+    btn.set_tooltip_text(Some(&ctx.t_or("flow.quickRun.editor.remote", "Remote")));
+    let pop = gtk::Popover::new();
+    let list = gtk::ListBox::new();
+    list.add_css_class("boxed-list");
+    for name in names {
+        let item = adw::ActionRow::new();
+        item.set_title(&name);
+        item.set_activatable(true);
+        let row_c = row.clone();
+        let pop_c = pop.clone();
+        let picked = name.clone();
+        item.connect_activated(move |_| {
+            row_c.set_text(&picked);
+            pop_c.popdown();
+        });
+        list.append(&item);
+    }
+    let scroll = gtk::ScrolledWindow::new();
+    scroll.set_min_content_height(80);
+    scroll.set_max_content_height(280);
+    scroll.set_propagate_natural_width(true);
+    scroll.set_child(Some(&list));
+    pop.set_child(Some(&scroll));
+    btn.set_popover(Some(&pop));
+    row.add_suffix(&btn);
+}
+
 pub(crate) fn attach_path_picker(
     ctx: &AppCtx,
     row: &adw::EntryRow,
@@ -13512,6 +13782,8 @@ pub(crate) fn attach_path_picker_with(
     btn.set_tooltip_text(Some(&ctx.t_or("common.browse", "Browse")));
     let ctx = ctx.clone();
     let picked = row.clone();
+    let auto_ctx = ctx.clone();
+    let auto_config = config.clone();
     btn.connect_clicked(move |_| {
         let mut config = config.clone();
         if config.initial_location.is_none() && !picked.text().is_empty() {
@@ -13579,6 +13851,159 @@ pub(crate) fn attach_path_picker_with(
         );
     });
     row.add_suffix(&btn);
+    attach_path_autocomplete(&auto_ctx, row, &auto_config);
+}
+
+fn attach_path_autocomplete(
+    ctx: &AppCtx,
+    row: &adw::EntryRow,
+    config: &crate::picker::FilePickerConfig,
+) {
+    let popover = gtk::Popover::new();
+    popover.set_parent(row);
+    popover.set_autohide(true);
+    popover.set_has_arrow(false);
+    popover.set_position(gtk::PositionType::Bottom);
+    let list = gtk::ListBox::new();
+    list.add_css_class("boxed-list");
+    let scroll = gtk::ScrolledWindow::new();
+    scroll.set_min_content_height(80);
+    scroll.set_max_content_height(240);
+    scroll.set_propagate_natural_width(true);
+    scroll.set_child(Some(&list));
+    popover.set_child(Some(&scroll));
+    {
+        let popover = popover.clone();
+        row.connect_destroy(move |_| popover.unparent());
+    }
+    let default_remote = if config.mode == crate::picker::PickerMode::Local {
+        String::new()
+    } else if !config.default_remote.is_empty() {
+        config.default_remote.clone()
+    } else {
+        config.allowed_remotes.first().cloned().unwrap_or_default()
+    };
+    let folders_only = config.selection == crate::picker::PickerSelection::Folders;
+    let applying = Rc::new(Cell::new(false));
+    let generation = Rc::new(Cell::new(0u32));
+    let fill = {
+        let ctx = ctx.clone();
+        let row = row.clone();
+        let list = list.clone();
+        let popover = popover.clone();
+        let applying = applying.clone();
+        let default_remote = default_remote.clone();
+        Rc::new(move || {
+            while let Some(child) = list.first_child() {
+                list.remove(&child);
+            }
+            let query = crate::path_autocomplete::parse_autocomplete_query(
+                &row.text(),
+                &default_remote,
+                &ctx.engine_os(),
+            );
+            if query.can_go_up() {
+                let up = adw::ActionRow::new();
+                up.set_title(&ctx.t_or("wizards.appOperation.upFolder", "Up Folder"));
+                up.set_activatable(true);
+                let parent = query.parent_path.clone();
+                let row = row.clone();
+                let applying = applying.clone();
+                let popover = popover.clone();
+                up.connect_activated(move |_| {
+                    applying.set(true);
+                    row.set_text(&parent);
+                    applying.set(false);
+                    popover.popdown();
+                });
+                list.append(&up);
+            }
+            let entries = if query.is_local
+                && (ctx.engine_os() == std::env::consts::OS || ctx.client().is_none())
+            {
+                crate::path_autocomplete::list_local_entries(
+                    &query.listed_path,
+                    &query.prefix,
+                    folders_only,
+                )
+            } else if let Some(client) = ctx.client() {
+                let (fs, remote) = crate::path_autocomplete::list_target(&query);
+                match client.list_dir(&fs, &remote) {
+                    Ok(listing) => crate::path_autocomplete::entries_from_listing(
+                        &listing,
+                        &query.listed_path,
+                        query.is_local,
+                        &query.prefix,
+                        folders_only,
+                    ),
+                    Err(_) => Vec::new(),
+                }
+            } else {
+                Vec::new()
+            };
+            if entries.is_empty() && !query.can_go_up() {
+                let empty = adw::ActionRow::new();
+                empty.set_activatable(false);
+                empty.set_title(&ctx.t_or(
+                    "wizards.appOperation.noItemsFound",
+                    "No items found in this directory.",
+                ));
+                list.append(&empty);
+            }
+            for entry in entries {
+                let item = adw::ActionRow::new();
+                item.set_title(&entry.name);
+                let subtitle = if entry.is_dir {
+                    ctx.t_or("nautilus.selection.folder", "folder")
+                } else {
+                    ctx.t_or("nautilus.selection.item", "item")
+                };
+                item.set_subtitle(&subtitle);
+                item.set_activatable(true);
+                if entry.is_dir {
+                    item.add_prefix(&gtk::Image::from_icon_name("folder-symbolic"));
+                } else {
+                    item.add_prefix(&gtk::Image::from_icon_name("text-x-generic-symbolic"));
+                }
+                let row = row.clone();
+                let applying = applying.clone();
+                let popover = popover.clone();
+                let path = entry.path.clone();
+                item.connect_activated(move |_| {
+                    applying.set(true);
+                    row.set_text(&path);
+                    applying.set(false);
+                    popover.popdown();
+                });
+                list.append(&item);
+            }
+            if row.text().is_empty() && default_remote.is_empty() && !query.is_local {
+                popover.popdown();
+                return;
+            }
+            popover.popup();
+        })
+    };
+    {
+        let fill = fill.clone();
+        let applying = applying.clone();
+        let generation = generation.clone();
+        row.connect_changed(move |_| {
+            if applying.get() {
+                return;
+            }
+            let next = generation.get().wrapping_add(1);
+            generation.set(next);
+            let fill = fill.clone();
+            let generation = generation.clone();
+            glib::timeout_add_local(std::time::Duration::from_millis(200), move || {
+                if generation.get() == next {
+                    fill();
+                }
+                glib::ControlFlow::Break
+            });
+        });
+    }
 }
 
 pub(crate) fn first_invalid_flag(
