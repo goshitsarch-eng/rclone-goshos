@@ -573,3 +573,4 @@ This client is the GTK 4 + libadwaita desktop UI. It talks to a local `rclone rc
 - Live GUI: Flow Automations **Pause** writes `automation_paused` `quick:050de334-2571-4ead-ac77-1fb23e16b0c6` and shows Resume + paused; **Resume** clears the list
 - Live GUI: Files testdrive toolbar **Add to File Manager Menu** writes Nautilus/KIO/Nemo send-to entries; **Remove** deletes them
 - Send-to toasts use `nautilus.notifications.sendToAdded` / `sendToRemoved` (with `tf_or` English fallback)
+- Live GUI: Send-to toast reads `Added 'testdrive' to File Manager menu`
