@@ -683,4 +683,5 @@ This client is the GTK 4 + libadwaita desktop UI. It talks to a local `rclone rc
 - Live GUI: Templates Save/Manage tabs, search, Apply Default Presets (236 keys including backend.buffer_size)
 - Live GUI: Export Encrypt reveals password + secrets; Type includes Backend
 - Live GUI: hamburger badge shows for the outdated-rclone notice
+- Live GUI: application menu stays open (Export, Templates, Alerts, About); Remotes omitted while on the Remotes workspace
 - Application menu model is not rebuilt on every poll (popover stays open); badge does not steal clicks
