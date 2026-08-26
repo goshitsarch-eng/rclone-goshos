@@ -133,8 +133,10 @@ fn present_ex(
     let dialog = adw::Dialog::new();
     let title = if let Some(name) = existing.as_deref() {
         ctx.tf("modals.remoteConfig.title.edit", &[("target", name)])
+    } else if oauth_only {
+        ctx.t_or("wizards.quickAdd.title", "Quick Add Remote")
     } else {
-        ctx.t_or("wizards.remoteConfig.quickAdd", "Add Remote")
+        ctx.t_or("general.remoteConfig.title.add", "Remote Configuration")
     };
     dialog.set_title(&title);
     dialog.set_content_width(680);

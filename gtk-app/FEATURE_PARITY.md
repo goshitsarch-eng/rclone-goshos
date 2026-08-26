@@ -559,3 +559,6 @@ This client is the GTK 4 + libadwaita desktop UI. It talks to a local `rclone rc
 - Live GUI: Export Full Backup → `/tmp/rclone-manager-gui-backup.zip` (`Backup created successfully`)
 - Live GUI: Bandwidth preset 10 MB/s saved as `10M`
 - Wizard provider list pins local/alias/drive/s3/sftp ahead of alphabetical leftovers
+- StatusNotifier tray includes ARGB32 icon pixmaps so the panel can draw the icon without a theme name
+- Files Send-to add/remove toasts use `fileBrowser.messages.sendToAdded` / `sendToRemoved`
+- Detailed Remote wizard title is Remote Configuration; Quick Add keeps its own title

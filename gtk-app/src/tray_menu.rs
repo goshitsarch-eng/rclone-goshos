@@ -38,6 +38,44 @@ pub enum TrayAction {
     StopQuickRun(String),
 }
 
+/// ARGB32 (network byte order) pixmap so StatusNotifier hosts can draw the
+/// tray icon when the panel theme has no `folder-remote` name.
+pub fn status_icon_argb(size: i32, busy: bool) -> Vec<u8> {
+    let size = size.clamp(16, 64) as usize;
+    let mut data = vec![0u8; size * size * 4];
+    let (r, g, b) = if busy {
+        (0xF5u8, 0x7Cu8, 0x00u8)
+    } else {
+        (0x35u8, 0x84u8, 0xE4u8)
+    };
+    let cx = (size as i32 - 1) as f32 / 2.0;
+    let cy = cx;
+    let outer = size as f32 * 0.42;
+    let inner = size as f32 * 0.18;
+    for y in 0..size {
+        for x in 0..size {
+            let dx = x as f32 - cx;
+            let dy = y as f32 - cy;
+            let dist = (dx * dx + dy * dy).sqrt();
+            let alpha = if dist <= inner {
+                0u8
+            } else if dist <= outer {
+                255
+            } else if dist <= outer + 1.2 {
+                ((1.0 - (dist - outer) / 1.2) * 255.0) as u8
+            } else {
+                0
+            };
+            let i = (y * size + x) * 4;
+            data[i] = alpha;
+            data[i + 1] = r;
+            data[i + 2] = g;
+            data[i + 3] = b;
+        }
+    }
+    data
+}
+
 /// Localized Start/Stop label for a tray Quick Run (do not parse English prefixes).
 pub fn quick_run_action_label(
     start: bool,
@@ -519,5 +557,15 @@ mod tests {
             quick_run_action_label(false, "Nightly", "Başlat", "Durdur"),
             "Durdur Nightly"
         );
+    }
+
+    #[test]
+    fn status_icon_argb_is_network_order_with_visible_pixels() {
+        let idle = status_icon_argb(22, false);
+        assert_eq!(idle.len(), 22 * 22 * 4);
+        assert!(idle.chunks(4).any(|px| px[0] > 200 && px[3] == 0xE4));
+        let busy = status_icon_argb(16, true);
+        assert_eq!(busy.len(), 16 * 16 * 4);
+        assert!(busy.chunks(4).any(|px| px[0] > 200 && px[1] == 0xF5));
     }
 }

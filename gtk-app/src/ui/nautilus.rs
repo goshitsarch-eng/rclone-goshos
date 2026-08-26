@@ -3564,13 +3564,22 @@ impl NautilusView {
         } else {
             crate::platform::register_send_to(&current.remote, Some(&current.path))
         };
+        let path_param = crate::platform::send_to_path_param(Some(&current.path));
+        let params = [
+            ("remote", current.remote.as_str()),
+            ("path", path_param.as_str()),
+        ];
         match result {
-            Ok(_) => self.toast.add_toast(adw::Toast::new(if registered {
-                "Removed Send to shortcut"
+            Ok(_) => self.toast.add_toast(adw::Toast::new(&if registered {
+                self.ctx.tf("fileBrowser.messages.sendToRemoved", &params)
             } else {
-                "Added Send to shortcut"
+                self.ctx.tf("fileBrowser.messages.sendToAdded", &params)
             })),
-            Err(e) => self.toast.add_toast(adw::Toast::new(&e)),
+            Err(e) => self.toast.add_toast(adw::Toast::new(
+                &self
+                    .ctx
+                    .tf("fileBrowser.errors.sendToFailed", &[("error", &e)]),
+            )),
         }
     }
 

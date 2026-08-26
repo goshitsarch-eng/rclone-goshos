@@ -33,6 +33,13 @@ pub fn send_to_display_name(remote: &str, path: Option<&str>) -> String {
     sanitize_name(&format!("{remote}{path_suffix} (RClone Manager)"))
 }
 
+/// Angular `fileBrowser.messages.sendToAdded` interpolates `{{remote}}{{path}}`.
+pub fn send_to_path_param(path: Option<&str>) -> String {
+    path.filter(|p| !p.is_empty() && *p != "/")
+        .map(|p| format!("/{}", p.trim_start_matches('/')))
+        .unwrap_or_default()
+}
+
 fn apply_template(template: &str, replacements: &[(&str, &str)]) -> String {
     let mut content = template.to_string();
     for &(key, value) in replacements {
@@ -1015,6 +1022,9 @@ mod tests {
             send_to_display_name("drive", None),
             "drive (RClone Manager)"
         );
+        assert_eq!(send_to_path_param(Some("Photos/2024")), "/Photos/2024");
+        assert_eq!(send_to_path_param(Some("/")), "");
+        assert_eq!(send_to_path_param(None), "");
     }
 
     #[test]

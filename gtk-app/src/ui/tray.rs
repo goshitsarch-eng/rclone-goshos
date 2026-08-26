@@ -36,6 +36,7 @@ impl TrayBus {
         handle.update(|icon| {
             icon.items = items;
             icon.icon_name = icon_name;
+            icon.icon_pixmap = tray_pixmaps(busy);
             icon.tooltip_title = title;
             icon.tooltip_description = description;
             icon.busy = busy;
@@ -47,6 +48,7 @@ struct StatusIcon {
     tx: Sender<TrayAction>,
     items: Vec<TrayMenuItem>,
     icon_name: String,
+    icon_pixmap: Vec<ksni::Icon>,
     tooltip_title: String,
     tooltip_description: String,
     busy: bool,
@@ -63,6 +65,18 @@ impl ksni::Tray for StatusIcon {
 
     fn icon_name(&self) -> String {
         self.icon_name.clone()
+    }
+
+    fn icon_pixmap(&self) -> Vec<ksni::Icon> {
+        self.icon_pixmap.clone()
+    }
+
+    fn attention_icon_name(&self) -> String {
+        self.icon_name.clone()
+    }
+
+    fn attention_icon_pixmap(&self) -> Vec<ksni::Icon> {
+        self.icon_pixmap.clone()
     }
 
     fn status(&self) -> ksni::Status {
@@ -124,6 +138,17 @@ fn tray_icon_name(theme: &str, busy: bool) -> &'static str {
         (_, true) => "folder-download",
         (_, false) => "folder-remote",
     }
+}
+
+fn tray_pixmaps(busy: bool) -> Vec<ksni::Icon> {
+    [16, 22, 24]
+        .into_iter()
+        .map(|size| ksni::Icon {
+            width: size,
+            height: size,
+            data: crate::tray_menu::status_icon_argb(size, busy),
+        })
+        .collect()
 }
 
 fn tray_tooltip(ctx: &AppCtx, busy: bool) -> String {
@@ -315,6 +340,7 @@ pub fn start(ctx: &AppCtx) -> Option<TrayBus> {
         tx: tx.clone(),
         items,
         icon_name,
+        icon_pixmap: tray_pixmaps(busy),
         tooltip_title: title,
         tooltip_description: description,
         busy,
