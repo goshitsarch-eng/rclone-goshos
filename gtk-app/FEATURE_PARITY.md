@@ -798,3 +798,5 @@ This client is the GTK 4 + libadwaita desktop UI. It talks to a local `rclone rc
 - Job detail drops rclone 1.60 global `core/stats` leftovers that belong to another job (id / `job/<id>` group / foreign src-dst)
 - Flow Quick Run Monitoring resolves the live or last matching job, not only `last_job_id`
 - Live GUI: job/22718 shows copy · testdrive:Photos → testdrive:verify-qr and empty completed (no #14781 / verify-copy-to); job/14781 stays on gui-copy-test / job/14781
+- General remote detail matches Angular `general-detail`: status chips, disk usage, Quick Runs, Jobs, Automations, Remote Configuration (no operation-start grid, Profiles, VFS, or transfer activity)
+- Live GUI: testdrive General shows Stop Mount / Start Sync / Start Serve, disk usage, `gui-qr-copy`, Jobs 12, then Automations + Remote Configuration; Operations still has Sync/Bisync/Copy/More and Profiles
