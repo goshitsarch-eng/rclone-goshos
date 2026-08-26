@@ -12,6 +12,7 @@ mod config_import;
 mod config_steps;
 mod connection;
 mod cron;
+mod debug_menu;
 mod dnd;
 mod fileops;
 mod flags;

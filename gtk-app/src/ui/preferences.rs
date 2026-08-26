@@ -578,7 +578,7 @@ pub fn present_page(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, page: Option<&s
 
     let security = adw::PreferencesPage::new();
     security.set_name(Some("security"));
-    security.set_title(&ctx.t_or("modals.backend.security.encrypted", "Security"));
+    security.set_title(&ctx.t_or("modals.backend.securityTab", "Security"));
     security.set_icon_name(Some("security-high-symbolic"));
     add_security_page(&session, &security, parent);
 
@@ -1238,7 +1238,7 @@ pub fn rclone_conf_security_group(
     parent: &impl IsA<gtk::Widget>,
 ) -> adw::PreferencesGroup {
     let outer = adw::PreferencesGroup::new();
-    outer.set_title(&ctx.t_or("modals.backend.security.encrypted", "Security"));
+    outer.set_title(&ctx.t_or("modals.backend.securityTab", "Security"));
     let holder = gtk::Box::new(gtk::Orientation::Vertical, 0);
     outer.add(&holder);
     let show_keychain_input = Rc::new(Cell::new(false));
@@ -1477,7 +1477,6 @@ fn append_encrypted_security(
     let update = gtk::Button::with_label(
         &ctx.t_or("modals.backend.security.updatePassword", "Update Password"),
     );
-    update.add_css_class("suggested-action");
     update.set_sensitive(false);
     {
         let ctx = ctx.clone();
@@ -1495,6 +1494,7 @@ fn append_encrypted_security(
                 Ok(()) => {
                     error.set_text("");
                     confirm_w.remove_css_class("error");
+                    update.add_css_class("suggested-action");
                     update.set_sensitive(true);
                 }
                 Err(err) => {
@@ -1504,6 +1504,7 @@ fn append_encrypted_security(
                     } else {
                         confirm_w.remove_css_class("error");
                     }
+                    update.remove_css_class("suggested-action");
                     update.set_sensitive(false);
                 }
             }
@@ -1700,7 +1701,6 @@ fn append_encrypt_form(
         "modals.backend.security.enableEncryption",
         "Enable Encryption",
     ));
-    enable.add_css_class("suggested-action");
     enable.set_sensitive(false);
     {
         let ctx = ctx.clone();
@@ -1713,6 +1713,7 @@ fn append_encrypt_form(
                 Ok(()) => {
                     error.set_text("");
                     confirm_w.remove_css_class("error");
+                    enable.add_css_class("suggested-action");
                     enable.set_sensitive(true);
                 }
                 Err(err) => {
@@ -1722,6 +1723,7 @@ fn append_encrypt_form(
                     } else {
                         confirm_w.remove_css_class("error");
                     }
+                    enable.remove_css_class("suggested-action");
                     enable.set_sensitive(false);
                 }
             }

@@ -14,6 +14,7 @@ pub mod config_import;
 pub mod config_steps;
 pub mod connection;
 pub mod cron;
+pub mod debug_menu;
 pub mod dnd;
 pub mod fileops;
 pub mod flags;

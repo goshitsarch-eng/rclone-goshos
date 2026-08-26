@@ -752,3 +752,7 @@ This client is the GTK 4 + libadwaita desktop UI. It talks to a local `rclone rc
 - Live GUI: Add New Remote sidebar lists Remote through Crypt Check plus Filter / VFS / Backend / Runtime Remote; Next opens Mount with Back / Next / Create
 - Live GUI: last step is Runtime Remote (typed flags, Back + Create, no Next)
 - Live GUI: Quick Add sidebar is Remote + Operation Options (Optional) with Google Drive fields
+- rclone.conf Security matches Angular backend-security: Encrypted/Not Encrypted banner, confirm-password, live mismatch, keychain toggle, change/remove expanders
+- Live GUI: Preferences Security shows **Not Encrypted** / Credentials stored in plain text, Password + Confirm Password, disabled Enable Encryption
+- Live GUI: mismatch `secret` / `other` outlines Confirm in red with **Passwords do not match** and keeps Enable Encryption disabled; matching 6-character passwords enable the button (rclone.conf left unencrypted)
+- Global right-click on window chrome opens Refresh UI / Clear Cache / Open Developer Tools (Angular `DebugService`); editable fields keep the native GTK menu

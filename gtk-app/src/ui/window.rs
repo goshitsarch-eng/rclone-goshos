@@ -453,6 +453,7 @@ fn present_main_with(app: &adw::Application, ctx: AppCtx, hidden: bool) {
         &banner,
     );
     install_shortcuts(&window);
+    install_debug_context_menu(&window, &ctx);
 
     let default_view = if ctx.store.borrow().pending_share_paths.is_empty() {
         ctx.settings.borrow().default_view()
@@ -818,6 +819,10 @@ fn app_menu(ctx: &AppCtx) -> gio::Menu {
     tools.append(
         Some(&ctx.t_or("titlebar.menu.checkConnectivity", "Check connectivity")),
         Some("win.ping"),
+    );
+    tools.append(
+        Some(&ctx.t_or("developerTools.refreshUi", "Refresh UI")),
+        Some("win.refresh-ui"),
     );
     tools.append(
         Some(&ctx.t_or("developerTools.debugInfo", "Debug Info")),
@@ -1252,6 +1257,23 @@ fn install_actions(
         });
         window.add_action(&action);
     }
+    {
+        let ctx = ctx.clone();
+        let toast = toast.clone();
+        let dash = dashboard.clone();
+        let flow = flow.clone();
+        add_action(
+            "refresh-ui",
+            Box::new(move || {
+                ctx.refresh_runtime();
+                dash.refresh();
+                flow.refresh();
+                toast.add_toast(adw::Toast::new(
+                    &ctx.t_or("developerTools.refreshUi", "Refresh UI"),
+                ));
+            }),
+        );
+    }
 
     {
         add_action(
@@ -1621,6 +1643,7 @@ fn present_overlay_window(
     window.set_content(Some(&toolbar));
     install_overlay_actions(&window, ctx, &toast, spec.clone(), files);
     install_shortcuts(&window);
+    install_debug_context_menu(&window, ctx);
     window.present();
     if register {
         ctx.register_overlay(&window, spec);
@@ -2017,6 +2040,19 @@ fn install_overlay_actions(
                 );
                 alert.add_response("ok", &ctx.t_or("common.ok", "OK"));
                 alert.present(Some(&window));
+            }),
+        );
+    }
+    {
+        let ctx = ctx.clone();
+        let toast = toast.clone();
+        add_action(
+            "refresh-ui",
+            Box::new(move || {
+                ctx.refresh_runtime();
+                toast.add_toast(adw::Toast::new(
+                    &ctx.t_or("developerTools.refreshUi", "Refresh UI"),
+                ));
             }),
         );
     }
@@ -2621,4 +2657,69 @@ fn apply_startup_css() {
 #[allow(dead_code)]
 pub fn open_view(stack: &adw::ViewStack, view: MainView) {
     stack.set_visible_child_name(view.as_str());
+}
+
+fn install_debug_context_menu(window: &adw::ApplicationWindow, ctx: &AppCtx) {
+    let gesture = gtk::GestureClick::new();
+    gesture.set_button(3);
+    gesture.set_propagation_phase(gtk::PropagationPhase::Bubble);
+    {
+        let window = window.clone();
+        let ctx = ctx.clone();
+        gesture.connect_pressed(move |g, n_press, x, y| {
+            if n_press != 1 {
+                return;
+            }
+            let Some(host) = g.widget() else {
+                return;
+            };
+            let Some(target) = host.pick(x, y, gtk::PickFlags::DEFAULT) else {
+                return;
+            };
+            let mut names = Vec::new();
+            let mut current = Some(target);
+            while let Some(widget) = current {
+                names.push(widget.type_().name().to_string());
+                current = widget.parent();
+            }
+            let refs: Vec<&str> = names.iter().map(String::as_str).collect();
+            let items = crate::debug_menu::items_for_ancestry(&refs);
+            if items.is_empty() {
+                return;
+            }
+            g.set_state(gtk::EventSequenceState::Claimed);
+            let popover = gtk::Popover::new();
+            popover.set_autohide(true);
+            popover.set_has_arrow(false);
+            popover.set_pointing_to(Some(&gtk::gdk::Rectangle::new(
+                x.round() as i32,
+                y.round() as i32,
+                1,
+                1,
+            )));
+            let list = gtk::Box::new(gtk::Orientation::Vertical, 0);
+            list.set_margin_top(6);
+            list.set_margin_bottom(6);
+            list.set_margin_start(6);
+            list.set_margin_end(6);
+            list.add_css_class("material-context-menu");
+            for item in items {
+                let btn = gtk::Button::with_label(&ctx.t_or(item.i18n_key(), item.fallback()));
+                btn.add_css_class("flat");
+                btn.set_halign(gtk::Align::Fill);
+                let action = item.action_name().to_string();
+                let popover = popover.clone();
+                let window = window.clone();
+                btn.connect_clicked(move |_| {
+                    popover.popdown();
+                    let _ = gtk::prelude::WidgetExt::activate_action(&window, &action, None);
+                });
+                list.append(&btn);
+            }
+            popover.set_child(Some(&list));
+            popover.set_parent(&window);
+            popover.popup();
+        });
+    }
+    window.add_controller(gesture);
 }
