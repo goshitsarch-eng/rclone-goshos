@@ -67,6 +67,12 @@ fn apply_launch(app: &adw::Application, ctx: &AppCtx, args: &[String], first: bo
     if let Some(send) = crate::platform::parse_send_to_args(args) {
         upload_send_to(ctx, &send);
     }
+    for path in crate::config_import::take_open_configs() {
+        ctx.enqueue_config_import(path);
+    }
+    for path in crate::config_import::parse_open_config_args(args) {
+        ctx.enqueue_config_import(path);
+    }
     let standalone_dialogs = ctx.settings.borrow().general.standalone_dialogs;
     let launch = crate::navigation::parse_launch_args(args, standalone_dialogs);
     if let Some(launch) = &launch {
@@ -520,6 +526,18 @@ fn present_main_with(app: &adw::Application, ctx: AppCtx, hidden: bool) {
                 nautilus_nav.navigate_to(&target);
             }
             nautilus_nav.apply_pending_picker();
+            if let Some(path) = ctx_nav.take_config_import() {
+                dialogs::import_rclone_config(
+                    &window_nav,
+                    ctx_nav.clone(),
+                    toast_nav.clone(),
+                    path,
+                    {
+                        let dash = dash_nav.clone();
+                        Rc::new(move || dash.refresh())
+                    },
+                );
+            }
             glib::ControlFlow::Continue
         });
     }

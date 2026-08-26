@@ -1575,6 +1575,20 @@
   },
   "backup": {
     "analyzeFailed": "No se pudo analizar el archivo de copia de seguridad",
+    "importConfig": {
+      "title": "Importar rclone.conf",
+      "heading": "¿Importar remotos desde este archivo de configuración?",
+      "file": "Archivo",
+      "remotes": "Remotos",
+      "overwrite": "Reemplazar remotos que ya existen",
+      "import": "Importar",
+      "cancel": "Cancelar",
+      "empty": "No se encontraron remotos en este archivo",
+      "failed": "No se pudo leer rclone.conf: {{error}}",
+      "noEngine": "rclone no está en ejecución",
+      "success": "Se importaron {{count}} remotos",
+      "partial": "Importados {{created}}, omitidos {{skipped}}, fallidos {{failed}}"
+    },
     "restore": {
       "title": "Restaurar copia de seguridad",
       "ariaClose": "Cerrar vista previa de restauración",

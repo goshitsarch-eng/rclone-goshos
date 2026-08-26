@@ -8,6 +8,7 @@ mod checks;
 mod cli;
 mod cli_import;
 mod command_options;
+mod config_import;
 mod connection;
 mod cron;
 mod dnd;
@@ -71,8 +72,15 @@ fn main() {
     if let Err(err) = platform::install_user_desktop_entry() {
         log::debug!("desktop entry not installed: {err}");
     }
+    if let Err(err) = platform::install_user_mime_package() {
+        log::debug!("mime package not installed: {err}");
+    }
     if let Some(files) = platform::parse_share_intake_args(&args) {
         platform::enqueue_share_intake(&files);
+    }
+    let open_configs = config_import::parse_open_config_args(&args);
+    if !open_configs.is_empty() {
+        config_import::enqueue_open_configs(&open_configs);
     }
     let app = adw::Application::builder()
         .application_id(APP_ID)
@@ -95,6 +103,10 @@ fn main() {
         cli::set_launch_args(args.clone());
         if let Some(files) = platform::parse_share_intake_args(&args) {
             platform::enqueue_share_intake(&files);
+        }
+        let open_configs = config_import::parse_open_config_args(&args);
+        if !open_configs.is_empty() {
+            config_import::enqueue_open_configs(&open_configs);
         }
         app.activate();
         0
@@ -251,6 +263,12 @@ fn register_application_options(app: &adw::Application) {
         None,
     );
     add(
+        "import-config",
+        OptionArg::Filename,
+        "Import remotes from an rclone.conf / rclone.json file",
+        Some("FILE"),
+    );
+    add(
         "dialog",
         OptionArg::String,
         "Open a standalone dialog",
@@ -297,6 +315,7 @@ fn command_line_option_flags(
         "browse",
         "browse-path",
         "standalone",
+        "import-config",
         "tray",
         "tray-action",
         "hidden",
@@ -314,6 +333,11 @@ fn command_line_option_flags(
             .str()
             .map(|s| s.to_string())
             .or_else(|| value.get::<String>())
+            .or_else(|| {
+                value
+                    .get::<std::path::PathBuf>()
+                    .map(|p| p.to_string_lossy().into_owned())
+            })
         {
             flags.push((
                 (*name).to_string(),

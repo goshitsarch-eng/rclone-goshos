@@ -48,6 +48,8 @@ pub struct AppCtx {
     pub watch_hub: Rc<RefCell<crate::watch::WatchHub>>,
     pub fsinfo_cache: Rc<RefCell<HashMap<String, crate::rclone::FsInfo>>>,
     pub pending_picker: Rc<RefCell<Option<crate::picker::PickerRequest>>>,
+    pub pending_config_import: Rc<RefCell<Vec<std::path::PathBuf>>>,
+    pub config_import_open: Rc<Cell<bool>>,
     pub connection: Rc<RefCell<crate::connection::ConnectionStatus>>,
     pub connection_detail: Rc<RefCell<String>>,
     pub last_connection_check: Rc<RefCell<Option<std::time::Instant>>>,
@@ -96,6 +98,8 @@ impl AppCtx {
             watch_hub: Rc::new(RefCell::new(crate::watch::WatchHub::new())),
             fsinfo_cache: Rc::new(RefCell::new(HashMap::new())),
             pending_picker: Rc::new(RefCell::new(None)),
+            pending_config_import: Rc::new(RefCell::new(Vec::new())),
+            config_import_open: Rc::new(Cell::new(false)),
             connection: Rc::new(RefCell::new(crate::connection::ConnectionStatus::Checking)),
             connection_detail: Rc::new(RefCell::new(String::new())),
             last_connection_check: Rc::new(RefCell::new(Some(std::time::Instant::now()))),
@@ -420,6 +424,29 @@ impl AppCtx {
         };
         *self.pending_picker.borrow_mut() = Some(crate::picker::PickerRequest { config, on_pick });
         self.request_browse(&remote, &path);
+    }
+
+    pub fn enqueue_config_import(&self, path: std::path::PathBuf) {
+        if path.as_os_str().is_empty() {
+            return;
+        }
+        let mut pending = self.pending_config_import.borrow_mut();
+        if pending.iter().any(|p| p == &path) {
+            return;
+        }
+        pending.push(path);
+    }
+
+    pub fn take_config_import(&self) -> Option<std::path::PathBuf> {
+        if self.config_import_open.get() {
+            return None;
+        }
+        let mut pending = self.pending_config_import.borrow_mut();
+        if pending.is_empty() {
+            None
+        } else {
+            Some(pending.remove(0))
+        }
     }
 
     pub fn persist(&self) {

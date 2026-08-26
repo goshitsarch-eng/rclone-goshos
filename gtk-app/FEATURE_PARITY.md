@@ -28,7 +28,9 @@ This client is the GTK 4 + libadwaita desktop UI. It talks to a local `rclone rc
 - Theme: system / light / dark
 - i18n: en-US, tr-TR, es-ES, zh-CN, fr-FR, uk-UA, ru-RU, pt-BR, ja-JP
 - Native StatusNotifier tray (ksni) with per-remote Mount/Unmount/Browse menus and Show Window restore
-- User applications menu desktop entry (`Start on Tray`, rclone.conf MIME) written on startup
+- User applications menu desktop entry (`Start on Tray`, rclone.conf MIME, `rclone-manager://` scheme, `%U` open) written on startup
+- Opening `rclone.conf` / `rclone.json` (MIME, `file://`, `--import-config`) imports remotes into the live engine
+- `rclone-manager://` deep links navigate the same routes as Angular hash URLs (`dashboard`, `flow`, `nautilus`, preferences)
 - Windows NotifyIcon / macOS NSStatusItem helpers emit nested `plan_tray` menus and respawn only on menu-signature changes
 - Live job polling from rclone `job/list` + `job/status` + group `core/stats`, with failure alerts
 - Provider list from `config/providers` when adding remotes
@@ -594,8 +596,11 @@ This client is the GTK 4 + libadwaita desktop UI. It talks to a local `rclone rc
 - Live GUI: after tray-helper rewrite, testdrive Photos ⋮ still opens the full listing menu (Open / Open native / Copy to…)
 - Linux Send-to writes the Tauri Nautilus Python `MenuProvider` extension (GNOME Files context menu, not only Scripts)
 - Live GUI: testdrive Remove/Add File Manager menu writes `~/.local/share/nautilus-python/extensions/testdrive (RClone Manager).py` (`Nautilus.MenuProvider`, `--send-to-remote testdrive`)
-- Desktop entry includes `Start on Tray`, `application/x-rclone-config`, and localized comments
+- Desktop entry includes `Start on Tray`, `application/x-rclone-config`, `x-scheme-handler/rclone-manager`, `%U`, and localized comments
 - Job stop transitions emit `notification.title.jobStopped` alerts (same keys as Tauri)
 - New running/starting jobs emit `notification.title.jobStarted` (same keys as Tauri submit notify)
-- Startup installs `~/.local/share/applications/io.github.zarestia_dev.rclone-manager.desktop` with the running binary (Start on Tray + rclone.conf MIME)
+- Startup installs `~/.local/share/applications/io.github.zarestia_dev.rclone-manager.desktop` with the running binary (Start on Tray + rclone.conf MIME + deep-link scheme)
+- Startup installs `~/.local/share/mime/packages/io.github.zarestia_dev.rclone-manager.xml` so `rclone.conf` is `application/x-rclone-config`
 - OS toasts use app name `Rclone Manager` and `folder-remote` icon
+- `rclone-manager://dashboard|flow|nautilus|preferences` deep links parse to the same `NavTarget`s as `#/` routes
+- `--import-config FILE` / MIME / `file://` open of rclone.conf shows Import remotes dialog and `config/create`s them

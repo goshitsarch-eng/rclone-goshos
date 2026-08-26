@@ -5529,6 +5529,183 @@ pub fn import_backup(
     );
 }
 
+pub fn import_rclone_config(
+    parent: &(impl IsA<gtk::Window> + Clone),
+    ctx: AppCtx,
+    toast: adw::ToastOverlay,
+    path: std::path::PathBuf,
+    on_done: Rc<dyn Fn()>,
+) {
+    ctx.config_import_open.set(true);
+    let binary = ctx
+        .engine
+        .borrow()
+        .as_ref()
+        .map(|engine| engine.binary.clone());
+    let password =
+        crate::keyring::resolve_config_password(&ctx.settings.borrow().core.config_password);
+    let dump = crate::config_import::load_config_dump_with(binary.as_deref(), &path, &password);
+    let dialog = adw::Dialog::new();
+    dialog.set_title(&ctx.t_or("backup.importConfig.title", "Import rclone.conf"));
+    dialog.set_content_width(480);
+    dialog.set_content_height(520);
+    let page = adw::PreferencesPage::new();
+    let info = adw::PreferencesGroup::new();
+    info.set_title(&ctx.t_or(
+        "backup.importConfig.heading",
+        "Import remotes from this configuration file?",
+    ));
+    let file_row = adw::ActionRow::new();
+    file_row.set_title(&ctx.t_or("backup.importConfig.file", "File"));
+    file_row.set_subtitle(&path.display().to_string());
+    info.add(&file_row);
+    page.add(&info);
+
+    let remotes_group = adw::PreferencesGroup::new();
+    remotes_group.set_title(&ctx.t_or("backup.importConfig.remotes", "Remotes"));
+    let names = match &dump {
+        Ok(value) => crate::config_import::dump_remote_names(value),
+        Err(err) => {
+            let row = adw::ActionRow::new();
+            row.set_title(&ctx.t_or("backup.importConfig.empty", "No remotes found in this file"));
+            row.set_subtitle(&ctx.tf("backup.importConfig.failed", &[("error", err)]));
+            remotes_group.add(&row);
+            Vec::new()
+        }
+    };
+    if dump.is_ok() && names.is_empty() {
+        let row = adw::ActionRow::new();
+        row.set_title(&ctx.t_or("backup.importConfig.empty", "No remotes found in this file"));
+        remotes_group.add(&row);
+    }
+    for name in &names {
+        let row = adw::ActionRow::new();
+        row.set_title(name);
+        if let Ok(value) = &dump {
+            if let Some(kind) = value
+                .get(name)
+                .and_then(|cfg| cfg.get("type"))
+                .and_then(|x| x.as_str())
+            {
+                row.set_subtitle(kind);
+            }
+        }
+        remotes_group.add(&row);
+    }
+    page.add(&remotes_group);
+
+    let options = adw::PreferencesGroup::new();
+    let overwrite = adw::SwitchRow::new();
+    overwrite.set_title(&ctx.t_or(
+        "backup.importConfig.overwrite",
+        "Replace remotes that already exist",
+    ));
+    options.add(&overwrite);
+    page.add(&options);
+
+    let buttons = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+    buttons.set_halign(gtk::Align::End);
+    buttons.set_margin_top(12);
+    buttons.set_margin_end(12);
+    buttons.set_margin_bottom(12);
+    let cancel = gtk::Button::with_label(&ctx.t_or("backup.importConfig.cancel", "Cancel"));
+    let import = gtk::Button::with_label(&ctx.t_or("backup.importConfig.import", "Import"));
+    import.add_css_class("suggested-action");
+    import.set_sensitive(
+        dump.as_ref()
+            .ok()
+            .is_some_and(|v| v.as_object().is_some_and(|o| !o.is_empty())),
+    );
+    buttons.append(&cancel);
+    buttons.append(&import);
+
+    let content = gtk::Box::new(gtk::Orientation::Vertical, 0);
+    let scroll = gtk::ScrolledWindow::new();
+    scroll.set_vexpand(true);
+    scroll.set_child(Some(&page));
+    content.append(&scroll);
+    content.append(&buttons);
+    dialog.set_child(Some(&content));
+
+    {
+        let dialog = dialog.clone();
+        let ctx = ctx.clone();
+        cancel.connect_clicked(move |_| {
+            ctx.config_import_open.set(false);
+            dialog.close();
+        });
+    }
+    {
+        let dialog = dialog.clone();
+        let ctx = ctx.clone();
+        let toast = toast.clone();
+        let dump = dump.ok();
+        let overwrite = overwrite.clone();
+        import.connect_clicked(move |_| {
+            let Some(dump) = dump.clone() else {
+                ctx.config_import_open.set(false);
+                dialog.close();
+                return;
+            };
+            let existing = ctx
+                .client()
+                .and_then(|client| client.dump_config().ok())
+                .and_then(|value| {
+                    value.as_object().map(|obj| {
+                        obj.keys()
+                            .cloned()
+                            .collect::<std::collections::HashSet<_>>()
+                    })
+                })
+                .unwrap_or_default();
+            let Some(client) = ctx.client() else {
+                toast.add_toast(adw::Toast::new(
+                    &ctx.t_or("backup.importConfig.noEngine", "rclone is not running"),
+                ));
+                ctx.config_import_open.set(false);
+                dialog.close();
+                return;
+            };
+            let report =
+                crate::config_import::import_dump(&client, &dump, &existing, overwrite.is_active());
+            {
+                let mut store = ctx.store.borrow_mut();
+                for name in report.created.iter().chain(report.skipped.iter()) {
+                    store.remotes.entry(name.clone()).or_default();
+                }
+            }
+            ctx.persist();
+            ctx.refresh_runtime();
+            if report.failed.is_empty() && report.skipped.is_empty() {
+                toast.add_toast(adw::Toast::new(&ctx.tf(
+                    "backup.importConfig.success",
+                    &[("count", &report.created_count().to_string())],
+                )));
+            } else {
+                toast.add_toast(adw::Toast::new(&ctx.tf(
+                    "backup.importConfig.partial",
+                    &[
+                        ("created", &report.created_count().to_string()),
+                        ("skipped", &report.skipped_count().to_string()),
+                        ("failed", &report.failed_count().to_string()),
+                    ],
+                )));
+            }
+            ctx.config_import_open.set(false);
+            dialog.close();
+            on_done();
+        });
+    }
+    dialog.connect_closed({
+        let ctx = ctx.clone();
+        move |_| {
+            ctx.config_import_open.set(false);
+        }
+    });
+    let parent = parent.clone().upcast::<gtk::Window>();
+    dialog.present(Some(&parent));
+}
+
 pub fn restore_preview(
     parent: &(impl IsA<gtk::Window> + Clone),
     ctx: AppCtx,

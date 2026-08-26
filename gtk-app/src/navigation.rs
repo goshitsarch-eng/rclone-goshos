@@ -115,7 +115,7 @@ pub fn parse_browse_args(args: &[String]) -> Option<(String, String)> {
 }
 
 pub fn parse_browse_url(input: &str) -> Option<(String, String)> {
-    let trimmed = input.trim();
+    let trimmed = strip_app_scheme(input.trim());
     if trimmed.is_empty() {
         return None;
     }
@@ -130,7 +130,21 @@ pub fn parse_browse_url(input: &str) -> Option<(String, String)> {
     if let Some(idx) = trimmed.find("/nautilus") {
         return parse_nautilus_segments(&trimmed[idx + "/nautilus".len()..]);
     }
+    if let Some(rest) = trimmed.strip_prefix("nautilus/") {
+        return parse_nautilus_segments(rest);
+    }
+    if trimmed == "nautilus" {
+        return Some(("local".into(), String::new()));
+    }
     None
+}
+
+/// Tauri `rclone-manager://` deep-link scheme (also registered on the desktop file).
+fn strip_app_scheme(input: &str) -> &str {
+    input
+        .strip_prefix("rclone-manager://")
+        .or_else(|| input.strip_prefix("rclone-manager:"))
+        .unwrap_or(input)
 }
 
 fn query_string(input: &str) -> Option<String> {
@@ -328,6 +342,7 @@ pub fn parse_launch_args(args: &[String], standalone_dialogs: bool) -> Option<La
 }
 
 pub fn parse_route_url(input: &str) -> Option<NavTarget> {
+    let input = strip_app_scheme(input);
     if let Some((remote, path)) = parse_browse_url(input) {
         return Some(NavTarget::Files { remote, path });
     }
@@ -403,7 +418,7 @@ pub fn normalize_prefs_page(page: &str) -> Option<String> {
 }
 
 fn route_path(input: &str) -> Option<String> {
-    let trimmed = input.trim();
+    let trimmed = strip_app_scheme(input.trim());
     if let Some((_, hash)) = trimmed.split_once('#') {
         let raw = hash
             .split('?')
@@ -609,6 +624,14 @@ mod tests {
             Some(("local".into(), "home/ada".into()))
         );
         assert_eq!(parse_browse_url("https://app.local/dashboard"), None);
+        assert_eq!(
+            parse_browse_url("rclone-manager://nautilus/gdrive/Photos"),
+            Some(("gdrive".into(), "Photos".into()))
+        );
+        assert_eq!(
+            parse_browse_url("rclone-manager:///nautilus/local/home"),
+            Some(("local".into(), "home".into()))
+        );
     }
 
     #[test]
@@ -688,6 +711,25 @@ mod tests {
         assert_eq!(
             parse_route_url("#/keyboard-shortcuts"),
             Some(NavTarget::Shortcuts)
+        );
+        assert_eq!(
+            parse_route_url("rclone-manager://dashboard/mount/testdrive"),
+            Some(NavTarget::Dashboard {
+                tab: AppTab::Mount,
+                remote: Some("testdrive".into()),
+            })
+        );
+        assert_eq!(
+            parse_route_url("rclone-manager://#/preferences/developer"),
+            Some(NavTarget::Preferences {
+                page: Some("developer".into()),
+            })
+        );
+        assert_eq!(
+            parse_route_url("rclone-manager://flow/nightly"),
+            Some(NavTarget::Flow {
+                quick_run: Some("nightly".into()),
+            })
         );
         assert_eq!(
             parse_route_url("#/nautilus/gdrive/Photos"),
@@ -839,6 +881,23 @@ mod tests {
             Some(LaunchRequest {
                 target: NavTarget::Preferences {
                     page: Some("developer".into()),
+                },
+                standalone: false,
+            })
+        );
+        let scheme = parse_launch_args(
+            &[
+                "app".into(),
+                "rclone-manager://dashboard/mount/testdrive".into(),
+            ],
+            false,
+        );
+        assert_eq!(
+            scheme,
+            Some(LaunchRequest {
+                target: NavTarget::Dashboard {
+                    tab: AppTab::Mount,
+                    remote: Some("testdrive".into()),
                 },
                 standalone: false,
             })

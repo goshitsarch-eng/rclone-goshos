@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<mime-info xmlns="http://www.freedesktop.org/standards/shared-mime-info">
+  <mime-type type="application/x-rclone-config">
+    <comment>rclone configuration</comment>
+    <comment xml:lang="de">rclone-Konfiguration</comment>
+    <comment xml:lang="es">configuración de rclone</comment>
+    <comment xml:lang="fr">configuration rclone</comment>
+    <comment xml:lang="tr">rclone yapılandırması</comment>
+    <comment xml:lang="zh">rclone 配置</comment>
+    <glob pattern="rclone.conf"/>
+    <glob pattern="*.rclone.conf"/>
+  </mime-type>
+</mime-info>

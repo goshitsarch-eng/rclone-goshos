@@ -10,6 +10,7 @@ pub mod checks;
 pub mod cli;
 pub mod cli_import;
 pub mod command_options;
+pub mod config_import;
 pub mod connection;
 pub mod cron;
 pub mod dnd;

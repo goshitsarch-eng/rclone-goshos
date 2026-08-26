@@ -1575,6 +1575,20 @@
   },
   "backup": {
     "analyzeFailed": "Yedekleme dosyası analiz edilemedi",
+    "importConfig": {
+      "title": "rclone.conf içe aktar",
+      "heading": "Bu yapılandırma dosyasındaki uzakları içe aktarmak istiyor musunuz?",
+      "file": "Dosya",
+      "remotes": "Uzaklar",
+      "overwrite": "Var olan uzakların üzerine yaz",
+      "import": "İçe aktar",
+      "cancel": "İptal",
+      "empty": "Bu dosyada uzak bulunamadı",
+      "failed": "rclone.conf okunamadı: {{error}}",
+      "noEngine": "rclone çalışmıyor",
+      "success": "{{count}} uzak içe aktarıldı",
+      "partial": "İçe aktarılan {{created}}, atlanan {{skipped}}, başarısız {{failed}}"
+    },
     "restore": {
       "title": "Yedeği Geri Yükle",
       "ariaClose": "Önizlemeyi kapat",

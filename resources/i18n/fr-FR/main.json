@@ -1575,6 +1575,20 @@
   },
   "backup": {
     "analyzeFailed": "Impossible d'analyser le fichier de sauvegarde",
+    "importConfig": {
+      "title": "Importer rclone.conf",
+      "heading": "Importer les distants depuis ce fichier de configuration ?",
+      "file": "Fichier",
+      "remotes": "Distants",
+      "overwrite": "Remplacer les distants existants",
+      "import": "Importer",
+      "cancel": "Annuler",
+      "empty": "Aucun distant dans ce fichier",
+      "failed": "Impossible de lire rclone.conf : {{error}}",
+      "noEngine": "rclone n'est pas en cours d'exécution",
+      "success": "{{count}} distants importés",
+      "partial": "Importés {{created}}, ignorés {{skipped}}, échecs {{failed}}"
+    },
     "restore": {
       "title": "Restaurer la sauvegarde",
       "ariaClose": "Fermer l'aperçu de restauration",

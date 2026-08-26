@@ -140,6 +140,36 @@ pub fn install_user_desktop_entry() -> Result<PathBuf, String> {
     Ok(path)
 }
 
+pub const MIME_PACKAGE_ID: &str = "io.github.zarestia_dev.rclone-manager.xml";
+
+pub fn mime_packages_dir() -> PathBuf {
+    std::env::var("XDG_DATA_HOME")
+        .map(PathBuf::from)
+        .unwrap_or_else(|_| home_dir().join(".local/share"))
+        .join("mime/packages")
+}
+
+/// Shared-MIME package so `rclone.conf` maps to `application/x-rclone-config`.
+pub fn install_user_mime_package() -> Result<PathBuf, String> {
+    let path = mime_packages_dir().join(MIME_PACKAGE_ID);
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+    }
+    let content = include_str!("../data/io.github.zarestia_dev.rclone-manager.xml");
+    if std::fs::read_to_string(&path).ok().as_deref() != Some(content) {
+        std::fs::write(&path, content).map_err(|e| e.to_string())?;
+    }
+    let mime_dir = path
+        .parent()
+        .and_then(|p| p.parent())
+        .map(PathBuf::from)
+        .unwrap_or_else(|| path.parent().unwrap_or(Path::new(".")).to_path_buf());
+    let _ = std::process::Command::new("update-mime-database")
+        .arg(&mime_dir)
+        .status();
+    Ok(path)
+}
+
 pub fn show_os_notification(title: &str, body: &str) -> bool {
     notify_rust::Notification::new()
         .appname("Rclone Manager")
@@ -1420,6 +1450,7 @@ pub fn parse_share_intake_args(args: &[String]) -> Option<Vec<PathBuf>> {
                         | "--dialog"
                         | "--dialog-data"
                         | "--dialog-result"
+                        | "--import-config"
                 ) {
                     i += 1;
                 }
@@ -1818,12 +1849,14 @@ mod tests {
     #[test]
     fn desktop_file_has_tray_action_and_rclone_mime() {
         let desktop = include_str!("../data/io.github.zarestia_dev.rclone-manager.desktop");
-        assert!(desktop.contains("MimeType=application/x-rclone-config"));
+        assert!(desktop
+            .contains("MimeType=application/x-rclone-config;x-scheme-handler/rclone-manager;"));
+        assert!(desktop.contains("Exec=rclone-manager-gtk %U"));
         assert!(desktop.contains("Actions=StartOnTray"));
         assert!(desktop.contains("rclone-manager-gtk --tray"));
         assert!(desktop.contains("Keywords=rclone;cloud;backup;sync;mount;"));
         let installed = desktop_entry_for_exe("/opt/Rclone Manager/rclone-manager-gtk");
-        assert!(installed.contains("Exec=\"/opt/Rclone Manager/rclone-manager-gtk\""));
+        assert!(installed.contains("Exec=\"/opt/Rclone Manager/rclone-manager-gtk\" %U"));
         assert!(installed.contains("Exec=\"/opt/Rclone Manager/rclone-manager-gtk\" --tray"));
         assert!(!installed.contains("Exec=rclone-manager-gtk"));
         assert!(applications_dir()
@@ -1833,6 +1866,12 @@ mod tests {
             DESKTOP_FILE_ID,
             "io.github.zarestia_dev.rclone-manager.desktop"
         );
+        let mime = include_str!("../data/io.github.zarestia_dev.rclone-manager.xml");
+        assert!(mime.contains("application/x-rclone-config"));
+        assert!(mime.contains("rclone.conf"));
+        assert!(mime_packages_dir()
+            .to_string_lossy()
+            .contains("mime/packages"));
     }
 
     #[test]
