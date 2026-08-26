@@ -1249,31 +1249,47 @@ impl NautilusView {
         widget.add_controller(drag);
     }
 
-    fn item_menu_button(&self, name: &str, primary: bool) -> gtk::MenuButton {
-        let more = gtk::MenuButton::new();
-        more.set_icon_name("view-more-symbolic");
+    fn item_menu_button(&self, name: &str, primary: bool) -> gtk::Button {
+        let more = gtk::Button::from_icon_name("view-more-symbolic");
         more.add_css_class("flat");
         more.add_css_class("circular");
-        more.set_tooltip_text(Some(&self.ctx.t_or(
-            "nautilus.contextMenu.selectionActions",
-            "Selection actions",
-        )));
+        more.set_can_target(true);
+        more.set_tooltip_text(Some(
+            &self
+                .ctx
+                .t_or("nautilus.contextMenu.selectionActions", "Selection actions"),
+        ));
         more.set_widget_name(&format!("file-menu-{name}"));
-        let popover = gtk::Popover::new();
-        more.set_popover(Some(&popover));
+        let claim = gtk::GestureClick::new();
+        claim.set_button(1);
+        claim.set_propagation_phase(gtk::PropagationPhase::Capture);
+        claim.connect_pressed(|g, _, _, _| {
+            g.set_state(gtk::EventSequenceState::Claimed);
+        });
+        more.add_controller(claim);
         {
             let view = self.clone();
             let name = name.to_string();
-            let popover = popover.clone();
-            more.connect_notify_local(Some("active"), move |btn, _| {
-                if !btn.is_active() {
-                    return;
-                }
+            more.connect_clicked(move |btn| {
                 view.ensure_name_selected(&name, primary);
-                popover.set_child(Some(&view.build_context_menu(&popover)));
+                let btn = btn.clone();
+                let view = view.clone();
+                glib::timeout_add_local_once(std::time::Duration::from_millis(50), move || {
+                    view.popup_context_on(&btn);
+                });
             });
         }
         more
+    }
+
+    fn popup_context_on(&self, widget: &impl IsA<gtk::Widget>) {
+        let popover = gtk::Popover::new();
+        popover.set_child(Some(&self.build_context_menu(&popover)));
+        popover.set_parent(widget);
+        popover.set_autohide(true);
+        popover.set_has_arrow(true);
+        popover.connect_closed(|popover| popover.unparent());
+        popover.popup();
     }
 
     fn attach_item_context(&self, widget: &impl IsA<gtk::Widget>, name: &str, primary: bool) {
@@ -2705,7 +2721,7 @@ impl NautilusView {
         row.add_suffix(&modified);
         row.add_suffix(&self.item_menu_button(&entry.name, primary));
         row.set_activatable(true);
-        self.attach_item_dnd(&row, &entry, tab, primary);
+        self.attach_item_dnd(&icon, &entry, tab, primary);
         self.attach_item_context(&row, &entry.name, primary);
         row
     }
@@ -2741,7 +2757,7 @@ impl NautilusView {
             meta.set_justify(gtk::Justification::Center);
             tile.append(&meta);
         }
-        self.attach_item_dnd(&tile, &entry, tab, primary);
+        self.attach_item_dnd(&icon, &entry, tab, primary);
         self.attach_item_context(&tile, &entry.name, primary);
         let overlay = gtk::Overlay::new();
         overlay.set_widget_name(&entry.name);
