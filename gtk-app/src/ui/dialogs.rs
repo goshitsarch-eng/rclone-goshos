@@ -178,9 +178,14 @@ pub fn present_standalone(
     req: crate::platform::DialogRequest,
 ) {
     crate::platform::set_standalone_dialog(true);
+    let title = if req.kind == "restore-preview" {
+        ctx.t_or("backup.restore.title", "Restore Backup")
+    } else {
+        req.kind.clone()
+    };
     let window = adw::ApplicationWindow::builder()
         .application(app)
-        .title(&req.kind)
+        .title(&title)
         .default_width(780)
         .default_height(720)
         .build();
@@ -5542,7 +5547,7 @@ pub fn restore_preview(
     let dialog = adw::Dialog::new();
     dialog.set_title(&ctx.t_or("backup.restore.title", "Restore Backup"));
     dialog.set_content_width(520);
-    dialog.set_content_height(640);
+    dialog.set_content_height(720);
     let page = adw::PreferencesPage::new();
     let info = adw::PreferencesGroup::new();
     info.set_title(&ctx.t_or("backup.restore.info", "Backup Information"));
@@ -5589,23 +5594,6 @@ pub fn restore_preview(
         info.add(&missing);
     }
     page.add(&info);
-    if let Some(analysis) = &analysis {
-        let contents = adw::PreferencesGroup::new();
-        contents.set_title(&ctx.t_or("backup.restore.contents", "Backup Contents"));
-        for (key, fallback) in analysis.content_rows() {
-            let row = adw::ActionRow::new();
-            row.set_title(&ctx.t_or(key, fallback));
-            row.add_suffix(&gtk::Image::from_icon_name("object-select-symbolic"));
-            contents.add(&row);
-        }
-        if !analysis.manifest.note.is_empty() {
-            let note = adw::ActionRow::new();
-            note.set_title(&ctx.t_or("backup.restore.note", "Backup Note"));
-            note.set_subtitle(&analysis.manifest.note);
-            contents.add(&note);
-        }
-        page.add(&contents);
-    }
     let options = adw::PreferencesGroup::new();
     options.set_title(&ctx.t_or("backup.restore.options", "Restore Options"));
     let password = adw::PasswordEntryRow::new();
@@ -5630,6 +5618,23 @@ pub fn restore_preview(
     options.add(&scope);
     options.add(&as_name);
     page.add(&options);
+    if let Some(analysis) = &analysis {
+        let contents = adw::PreferencesGroup::new();
+        contents.set_title(&ctx.t_or("backup.restore.contents", "Backup Contents"));
+        for (key, fallback) in analysis.content_rows() {
+            let row = adw::ActionRow::new();
+            row.set_title(&ctx.t_or(key, fallback));
+            row.add_suffix(&gtk::Image::from_icon_name("object-select-symbolic"));
+            contents.add(&row);
+        }
+        if !analysis.manifest.note.is_empty() {
+            let note = adw::ActionRow::new();
+            note.set_title(&ctx.t_or("backup.restore.note", "Backup Note"));
+            note.set_subtitle(&analysis.manifest.note);
+            contents.add(&note);
+        }
+        page.add(&contents);
+    }
     let restore =
         gtk::Button::with_label(&ctx.t_or("backup.restore.restoreAction", "Restore Backup"));
     restore.add_css_class("destructive-action");

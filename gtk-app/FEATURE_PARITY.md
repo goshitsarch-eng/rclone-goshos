@@ -564,3 +564,5 @@ This client is the GTK 4 + libadwaita desktop UI. It talks to a local `rclone rc
 - Detailed Remote wizard title is Remote Configuration; Quick Add keeps its own title
 - Scoped backup restore merges the renamed remote into the live store (does not replace settings)
 - GApplication re-forwards `--dialog` / `--dialog-data` / `--dialog-result` to the running instance
+- Restore preview puts scope / restore-as options above the contents list
+- Live GUI: Detailed Remote created `guilocal` (type=local); Quick Add is OAuth-only
