@@ -49,7 +49,9 @@ pub enum NavTarget {
     Templates {
         save: bool,
     },
-    Export,
+    Export {
+        remote: Option<String>,
+    },
     Repair,
     QuickAdd,
     WhatsNew {
@@ -59,6 +61,36 @@ pub enum NavTarget {
         remote: String,
         path: String,
         name: String,
+    },
+    FileViewer {
+        remote: String,
+        path: String,
+        name: String,
+        is_dir: bool,
+    },
+    StartOperation {
+        remote: String,
+        operation: String,
+    },
+    Vfs {
+        remote: String,
+    },
+    DeleteRemote {
+        remote: String,
+    },
+    RemoteAbout {
+        remote: String,
+    },
+    RestorePreview {
+        path: String,
+    },
+    ArchiveCreate {
+        remote: String,
+        path: String,
+        names: Vec<String>,
+    },
+    QuickRunEditor {
+        id: Option<String>,
     },
 }
 
@@ -184,6 +216,24 @@ fn query_param(query: &str, key: &str) -> Option<String> {
         }
     }
     None
+}
+
+fn remote_path_name(spec: &str) -> (String, String, String) {
+    let (remote, rest) = crate::rclone::split_remote_path(spec);
+    let name = rest
+        .rsplit_once('/')
+        .map(|(_, name)| name.to_string())
+        .filter(|name| !name.is_empty())
+        .unwrap_or_else(|| rest.clone());
+    (remote, rest, name)
+}
+
+fn csv_names(raw: &str) -> Vec<String> {
+    raw.split(',')
+        .map(|s| s.trim())
+        .filter(|s| !s.is_empty())
+        .map(|s| s.to_string())
+        .collect()
 }
 
 fn query_flag(query: &str, key: &str) -> bool {
@@ -339,20 +389,86 @@ pub fn parse_launch_args(args: &[String], standalone_dialogs: bool) -> Option<La
             "--whats-new-rclone" => target = Some(NavTarget::WhatsNew { rclone: true }),
             "--properties" => {
                 if let Some(spec) = value.filter(|v| !v.is_empty() && !v.starts_with('-')) {
-                    let (remote, rest) = crate::rclone::split_remote_path(&spec);
-                    let name = rest
-                        .rsplit_once('/')
-                        .map(|(_, name)| name.to_string())
-                        .filter(|name| !name.is_empty())
-                        .unwrap_or_else(|| rest.clone());
-                    target = Some(NavTarget::Properties {
+                    let (remote, path, name) = remote_path_name(&spec);
+                    target = Some(NavTarget::Properties { remote, path, name });
+                }
+            }
+            "--file-viewer" | "--file-viewer-path" => {
+                if let Some(spec) = value.filter(|v| !v.is_empty() && !v.starts_with('-')) {
+                    let (remote, path, name) = remote_path_name(&spec);
+                    target = Some(NavTarget::FileViewer {
                         remote,
-                        path: rest,
+                        path,
                         name,
+                        is_dir: false,
                     });
                 }
             }
-            "--export" => target = Some(NavTarget::Export),
+            "--start-operation" => {
+                if let Some(spec) = value.filter(|v| !v.is_empty() && !v.starts_with('-')) {
+                    let (remote, operation) = match spec.split_once(':') {
+                        Some((remote, op))
+                            if crate::operations::OperationType::parse(op).is_some() =>
+                        {
+                            (remote.to_string(), op.to_string())
+                        }
+                        _ => (spec, "copy".into()),
+                    };
+                    target = Some(NavTarget::StartOperation { remote, operation });
+                }
+            }
+            "--operation" => {
+                if let Some(op) = value.filter(|v| !v.is_empty() && !v.starts_with('-')) {
+                    if let Some(NavTarget::StartOperation { operation, .. }) = target.as_mut() {
+                        *operation = op;
+                    }
+                }
+            }
+            "--vfs" => {
+                if let Some(name) = value.filter(|v| !v.is_empty() && !v.starts_with('-')) {
+                    target = Some(NavTarget::Vfs { remote: name });
+                }
+            }
+            "--delete-remote" => {
+                if let Some(name) = value.filter(|v| !v.is_empty() && !v.starts_with('-')) {
+                    target = Some(NavTarget::DeleteRemote { remote: name });
+                }
+            }
+            "--remote-about" => {
+                if let Some(name) = value.filter(|v| !v.is_empty() && !v.starts_with('-')) {
+                    target = Some(NavTarget::RemoteAbout { remote: name });
+                }
+            }
+            "--restore-preview" => {
+                if let Some(path) = value.filter(|v| !v.is_empty() && !v.starts_with('-')) {
+                    target = Some(NavTarget::RestorePreview { path });
+                }
+            }
+            "--archive-create" => {
+                if let Some(spec) = value.filter(|v| !v.is_empty() && !v.starts_with('-')) {
+                    let (remote, path, name) = remote_path_name(&spec);
+                    let names = if name.is_empty() {
+                        Vec::new()
+                    } else {
+                        vec![name]
+                    };
+                    target = Some(NavTarget::ArchiveCreate {
+                        remote,
+                        path,
+                        names,
+                    });
+                }
+            }
+            "--quick-run-editor" => {
+                target = Some(NavTarget::QuickRunEditor {
+                    id: value.filter(|v| !v.is_empty() && !v.starts_with('-')),
+                });
+            }
+            "--export" => {
+                target = Some(NavTarget::Export {
+                    remote: value.filter(|v| !v.is_empty() && !v.starts_with('-')),
+                });
+            }
             "--repair" => target = Some(NavTarget::Repair),
             "--auto-add" => auto_add = true,
             "--clone-from" | "--cloneFrom" => {
@@ -466,9 +582,19 @@ pub fn parse_route_url(input: &str) -> Option<NavTarget> {
             let remote = parts.next().map(decode_segment).and_then(|s| nonempty(&s));
             Some(NavTarget::Dashboard { tab, remote })
         }
-        "flow" => Some(NavTarget::Flow {
-            quick_run: parts.next().map(decode_segment).and_then(|s| nonempty(&s)),
-        }),
+        "flow" => {
+            let quick_run = parts.next().map(decode_segment).and_then(|s| nonempty(&s));
+            let edit = query_string(input)
+                .map(|q| {
+                    query_param(&q, "mode").is_some_and(|mode| mode.eq_ignore_ascii_case("edit"))
+                })
+                .unwrap_or(false);
+            if edit {
+                Some(NavTarget::QuickRunEditor { id: quick_run })
+            } else {
+                Some(NavTarget::Flow { quick_run })
+            }
+        }
         "job" => parts
             .next()
             .and_then(|id| id.parse().ok())
@@ -553,7 +679,115 @@ pub fn parse_route_url(input: &str) -> Option<NavTarget> {
                 .unwrap_or_else(|| path.clone());
             Some(NavTarget::Properties { remote, path, name })
         }
-        "export" => Some(NavTarget::Export),
+        "file-viewer" | "fileviewer" => {
+            let remote = parts
+                .next()
+                .map(decode_segment)
+                .and_then(|s| nonempty(&s))?;
+            let path = parts
+                .map(decode_segment)
+                .filter(|s| !s.is_empty())
+                .collect::<Vec<_>>()
+                .join("/");
+            let name = path
+                .rsplit_once('/')
+                .map(|(_, name)| name.to_string())
+                .filter(|name| !name.is_empty())
+                .unwrap_or_else(|| path.clone());
+            let is_dir = query_string(input)
+                .map(|q| query_flag(&q, "isDir") || query_flag(&q, "is_dir"))
+                .unwrap_or(false);
+            Some(NavTarget::FileViewer {
+                remote,
+                path,
+                name,
+                is_dir,
+            })
+        }
+        "start-operation" | "startoperation" => {
+            let remote = parts
+                .next()
+                .map(decode_segment)
+                .and_then(|s| nonempty(&s))?;
+            let operation = parts
+                .next()
+                .map(decode_segment)
+                .and_then(|s| nonempty(&s))
+                .unwrap_or_else(|| "copy".into());
+            Some(NavTarget::StartOperation { remote, operation })
+        }
+        "vfs" => {
+            let remote = parts
+                .next()
+                .map(decode_segment)
+                .and_then(|s| nonempty(&s))?;
+            Some(NavTarget::Vfs { remote })
+        }
+        "delete-remote" | "deleteremote" => {
+            let remote = parts
+                .next()
+                .map(decode_segment)
+                .and_then(|s| nonempty(&s))?;
+            Some(NavTarget::DeleteRemote { remote })
+        }
+        "remote-about" | "remoteabout" => {
+            let remote = parts
+                .next()
+                .map(decode_segment)
+                .and_then(|s| nonempty(&s))?;
+            Some(NavTarget::RemoteAbout { remote })
+        }
+        "restore-preview" | "restorepreview" => {
+            let path = query_string(input)
+                .and_then(|q| query_param(&q, "path"))
+                .or_else(|| {
+                    let joined = parts
+                        .map(decode_segment)
+                        .filter(|s| !s.is_empty())
+                        .collect::<Vec<_>>()
+                        .join("/");
+                    nonempty(&joined)
+                })?;
+            Some(NavTarget::RestorePreview { path })
+        }
+        "archive-create" | "archivecreate" => {
+            let remote = parts
+                .next()
+                .map(decode_segment)
+                .and_then(|s| nonempty(&s))?;
+            let path = parts
+                .map(decode_segment)
+                .filter(|s| !s.is_empty())
+                .collect::<Vec<_>>()
+                .join("/");
+            let names = query_string(input)
+                .and_then(|q| query_param(&q, "names"))
+                .map(|raw| csv_names(&raw))
+                .filter(|names| !names.is_empty())
+                .unwrap_or_else(|| {
+                    path.rsplit_once('/')
+                        .map(|(_, name)| vec![name.to_string()])
+                        .filter(|names| !names[0].is_empty())
+                        .unwrap_or_default()
+                });
+            Some(NavTarget::ArchiveCreate {
+                remote,
+                path,
+                names,
+            })
+        }
+        "quick-run-editor" | "quickrun-editor" | "quickruneditor" => {
+            let id = parts.next().map(decode_segment).and_then(|s| nonempty(&s));
+            Some(NavTarget::QuickRunEditor { id })
+        }
+        "export" => {
+            let remote = parts
+                .next()
+                .map(decode_segment)
+                .and_then(|s| nonempty(&s))
+                .or_else(|| query_string(input).and_then(|q| query_param(&q, "remote")));
+            Some(NavTarget::Export { remote })
+        }
         "repair" => Some(NavTarget::Repair),
         _ => None,
     }
@@ -934,7 +1168,76 @@ mod tests {
                 clone_from: Some("testdrive".into()),
             })
         );
-        assert_eq!(parse_route_url("#/export"), Some(NavTarget::Export));
+        assert_eq!(
+            parse_route_url("#/export"),
+            Some(NavTarget::Export { remote: None })
+        );
+        assert_eq!(
+            parse_route_url("#/export/testdrive"),
+            Some(NavTarget::Export {
+                remote: Some("testdrive".into())
+            })
+        );
+        assert_eq!(
+            parse_route_url("#/file-viewer/testdrive/Photos/README.txt"),
+            Some(NavTarget::FileViewer {
+                remote: "testdrive".into(),
+                path: "Photos/README.txt".into(),
+                name: "README.txt".into(),
+                is_dir: false,
+            })
+        );
+        assert_eq!(
+            parse_route_url("#/start-operation/testdrive/copy"),
+            Some(NavTarget::StartOperation {
+                remote: "testdrive".into(),
+                operation: "copy".into(),
+            })
+        );
+        assert_eq!(
+            parse_route_url("#/vfs/testdrive"),
+            Some(NavTarget::Vfs {
+                remote: "testdrive".into()
+            })
+        );
+        assert_eq!(
+            parse_route_url("#/delete-remote/testdrive"),
+            Some(NavTarget::DeleteRemote {
+                remote: "testdrive".into()
+            })
+        );
+        assert_eq!(
+            parse_route_url("#/remote-about/testdrive"),
+            Some(NavTarget::RemoteAbout {
+                remote: "testdrive".into()
+            })
+        );
+        assert_eq!(
+            parse_route_url("#/restore-preview?path=/tmp/backup.zip"),
+            Some(NavTarget::RestorePreview {
+                path: "/tmp/backup.zip".into()
+            })
+        );
+        assert_eq!(
+            parse_route_url("#/archive-create/testdrive/Photos?names=a.txt,b.txt"),
+            Some(NavTarget::ArchiveCreate {
+                remote: "testdrive".into(),
+                path: "Photos".into(),
+                names: vec!["a.txt".into(), "b.txt".into()],
+            })
+        );
+        assert_eq!(
+            parse_route_url("#/quick-run-editor/gui-qr-copy"),
+            Some(NavTarget::QuickRunEditor {
+                id: Some("gui-qr-copy".into())
+            })
+        );
+        assert_eq!(
+            parse_route_url("#/flow/gui-qr-copy?mode=edit"),
+            Some(NavTarget::QuickRunEditor {
+                id: Some("gui-qr-copy".into())
+            })
+        );
         assert_eq!(parse_route_url("#/repair"), Some(NavTarget::Repair));
         assert_eq!(
             parse_route_url("rclone-manager://dashboard/mount/testdrive"),
@@ -1305,6 +1608,79 @@ mod tests {
             parse_launch_args(&["app".into(), "--quick-add".into()], false),
             Some(LaunchRequest {
                 target: NavTarget::QuickAdd,
+                standalone: false,
+            })
+        );
+        assert_eq!(
+            parse_launch_args(
+                &[
+                    "app".into(),
+                    "--file-viewer".into(),
+                    "testdrive:Photos/README.txt".into()
+                ],
+                false
+            ),
+            Some(LaunchRequest {
+                target: NavTarget::FileViewer {
+                    remote: "testdrive".into(),
+                    path: "Photos/README.txt".into(),
+                    name: "README.txt".into(),
+                    is_dir: false,
+                },
+                standalone: false,
+            })
+        );
+        assert_eq!(
+            parse_launch_args(
+                &[
+                    "app".into(),
+                    "--start-operation".into(),
+                    "testdrive:sync".into()
+                ],
+                false
+            ),
+            Some(LaunchRequest {
+                target: NavTarget::StartOperation {
+                    remote: "testdrive".into(),
+                    operation: "sync".into(),
+                },
+                standalone: false,
+            })
+        );
+        assert_eq!(
+            parse_launch_args(&["app".into(), "--vfs".into(), "testdrive".into()], false),
+            Some(LaunchRequest {
+                target: NavTarget::Vfs {
+                    remote: "testdrive".into()
+                },
+                standalone: false,
+            })
+        );
+        assert_eq!(
+            parse_launch_args(
+                &[
+                    "app".into(),
+                    "--quick-run-editor".into(),
+                    "gui-qr-copy".into()
+                ],
+                false
+            ),
+            Some(LaunchRequest {
+                target: NavTarget::QuickRunEditor {
+                    id: Some("gui-qr-copy".into())
+                },
+                standalone: false,
+            })
+        );
+        assert_eq!(
+            parse_launch_args(
+                &["app".into(), "--export".into(), "testdrive".into()],
+                false
+            ),
+            Some(LaunchRequest {
+                target: NavTarget::Export {
+                    remote: Some("testdrive".into())
+                },
                 standalone: false,
             })
         );

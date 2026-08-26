@@ -295,10 +295,68 @@ fn register_application_options(app: &adw::Application) {
         Some("REMOTE"),
     );
     add(
+        "file-viewer",
+        OptionArg::String,
+        "Open the file viewer for remote:path",
+        Some("REMOTE:PATH"),
+    );
+    add(
+        "start-operation",
+        OptionArg::String,
+        "Open Start Operation (remote or remote:operation)",
+        Some("REMOTE[:OP]"),
+    );
+    add(
+        "operation",
+        OptionArg::String,
+        "Operation type for --start-operation",
+        Some("OP"),
+    );
+    add(
+        "vfs",
+        OptionArg::String,
+        "Open VFS controls for a remote",
+        Some("REMOTE"),
+    );
+    add(
+        "delete-remote",
+        OptionArg::String,
+        "Open Delete Remote",
+        Some("REMOTE"),
+    );
+    add(
+        "remote-about",
+        OptionArg::String,
+        "Open Remote About",
+        Some("REMOTE"),
+    );
+    add(
+        "restore-preview",
+        OptionArg::Filename,
+        "Open Restore Backup for a zip file",
+        Some("FILE"),
+    );
+    add(
+        "archive-create",
+        OptionArg::String,
+        "Open Create Archive for remote:path",
+        Some("REMOTE:PATH"),
+    );
+    app.add_main_option(
+        "quick-run-editor",
+        0.into(),
+        OptionFlags::OPTIONAL_ARG,
+        OptionArg::String,
+        "Open the Quick Run editor, optionally for an id",
+        Some("ID"),
+    );
+    app.add_main_option(
         "export",
-        OptionArg::None,
-        "Open the Export backup dialog",
-        None,
+        0.into(),
+        OptionFlags::OPTIONAL_ARG,
+        OptionArg::String,
+        "Open Export, optionally scoped to a remote",
+        Some("REMOTE"),
     );
     add("repair", OptionArg::None, "Open the Repair sheet", None);
     add(
@@ -394,6 +452,15 @@ fn command_line_option_flags(
         "whats-new-rclone",
         "properties",
         "clone-from",
+        "file-viewer",
+        "start-operation",
+        "operation",
+        "vfs",
+        "delete-remote",
+        "remote-about",
+        "restore-preview",
+        "archive-create",
+        "quick-run-editor",
         "export",
         "repair",
         "remote-config",

@@ -1615,12 +1615,20 @@ fn apply_nav(
             | NavTarget::Backends
             | NavTarget::Flags
             | NavTarget::Templates { .. }
-            | NavTarget::Export
+            | NavTarget::Export { .. }
             | NavTarget::Repair
             | NavTarget::Job { .. }
             | NavTarget::QuickAdd
             | NavTarget::WhatsNew { .. }
             | NavTarget::Properties { .. }
+            | NavTarget::FileViewer { .. }
+            | NavTarget::StartOperation { .. }
+            | NavTarget::Vfs { .. }
+            | NavTarget::DeleteRemote { .. }
+            | NavTarget::RemoteAbout { .. }
+            | NavTarget::RestorePreview { .. }
+            | NavTarget::ArchiveCreate { .. }
+            | NavTarget::QuickRunEditor { .. }
     ) && !window.is_mapped()
     {
         let ctx = ctx.clone();
@@ -1760,7 +1768,9 @@ fn apply_nav(
         NavTarget::Backends => dialogs::backends(window, ctx.clone()),
         NavTarget::Flags => dialogs::rclone_flags(window, ctx.clone()),
         NavTarget::Templates { save } => dialogs::templates_open(window, ctx.clone(), save),
-        NavTarget::Export => dialogs::export_backup(window, ctx.clone(), toast.clone(), None),
+        NavTarget::Export { remote } => {
+            dialogs::export_backup(window, ctx.clone(), toast.clone(), remote.as_deref())
+        }
         NavTarget::Repair => dialogs::repair(window, ctx.clone(), toast.clone()),
         NavTarget::QuickAdd => dialogs::quick_add_remote(window, ctx.clone(), Rc::new(|| ())),
         NavTarget::WhatsNew { rclone } => {
@@ -1768,6 +1778,58 @@ fn apply_nav(
         }
         NavTarget::Properties { remote, path, name } => {
             dialogs::properties(window, ctx.clone(), &remote, &path, &name)
+        }
+        NavTarget::FileViewer {
+            remote,
+            path,
+            name,
+            is_dir,
+        } => dialogs::file_viewer(window, ctx.clone(), &remote, &path, &name, is_dir, &[]),
+        NavTarget::StartOperation { remote, operation } => {
+            let op = crate::operations::OperationType::parse(&operation)
+                .unwrap_or(crate::operations::OperationType::Copy);
+            dialogs::start_operation(
+                window,
+                ctx.clone(),
+                &remote,
+                op,
+                toast.clone(),
+                Rc::new(|| ()),
+            );
+        }
+        NavTarget::Vfs { remote } => {
+            dialogs::vfs_control(window, ctx.clone(), &remote, toast.clone())
+        }
+        NavTarget::DeleteRemote { remote } => {
+            dialogs::delete_remote(window, ctx.clone(), &remote, Rc::new(|| ()))
+        }
+        NavTarget::RemoteAbout { remote } => dialogs::remote_about(window, ctx.clone(), &remote),
+        NavTarget::RestorePreview { path } => dialogs::restore_preview(
+            window,
+            ctx.clone(),
+            toast.clone(),
+            std::path::PathBuf::from(path),
+            Rc::new(|| ()),
+        ),
+        NavTarget::ArchiveCreate {
+            remote,
+            path,
+            names,
+        } => dialogs::archive_create(window, ctx.clone(), &remote, &path, &names),
+        NavTarget::QuickRunEditor { id } => {
+            stack.set_visible_child_name("flow");
+            if let Some(id) = id.as_deref() {
+                flow.select_quick_run(Some(id));
+            }
+            let existing = id.and_then(|id| {
+                ctx.store
+                    .borrow()
+                    .quick_runs
+                    .iter()
+                    .find(|item| item.id == id)
+                    .cloned()
+            });
+            dialogs::quick_run_editor(window, ctx.clone(), existing, Rc::new(|| ()));
         }
     }
 }

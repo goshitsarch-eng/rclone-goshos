@@ -1869,7 +1869,7 @@ impl NautilusView {
                 view.reload();
                 return glib::Propagation::Stop;
             }
-            if key == gtk::gdk::Key::F5 {
+            if key == gtk::gdk::Key::F5 || (ctrl && key == gtk::gdk::Key::r) {
                 view.reload();
                 return glib::Propagation::Stop;
             }
