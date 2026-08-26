@@ -4275,7 +4275,6 @@ impl NautilusView {
                 FileTypeCategory::Archive
             )
         });
-        let folder_open = selected.len() == 1 && self.selected_is_dir();
         let rename_label = if selected.len() > 1 {
             self.ctx
                 .t_or("nautilus.contextMenu.renameMultiple", "Rename Multiple...")
@@ -4297,27 +4296,24 @@ impl NautilusView {
                 )
             }
         };
-        let mut items: Vec<(String, &str)> = Vec::new();
-        if !folder_open {
-            items.extend([
-                (self.ctx.t_or("nautilus.contextMenu.open", "Open"), "open"),
-                (
-                    self.ctx
-                        .t_or("nautilus.contextMenu.openNative", "Open native"),
-                    "native",
-                ),
-                (
-                    self.ctx
-                        .t_or("nautilus.contextMenu.openNewTab", "Open in New Tab"),
-                    "tab",
-                ),
-                (
-                    self.ctx
-                        .t_or("nautilus.contextMenu.openNewWindow", "Open in New Window"),
-                    "window",
-                ),
-            ]);
-        }
+        let mut items: Vec<(String, &str)> = vec![
+            (self.ctx.t_or("nautilus.contextMenu.open", "Open"), "open"),
+            (
+                self.ctx
+                    .t_or("nautilus.contextMenu.openNative", "Open native"),
+                "native",
+            ),
+            (
+                self.ctx
+                    .t_or("nautilus.contextMenu.openNewTab", "Open in New Tab"),
+                "tab",
+            ),
+            (
+                self.ctx
+                    .t_or("nautilus.contextMenu.openNewWindow", "Open in New Window"),
+                "window",
+            ),
+        ];
         items.extend([
             (
                 self.ctx.t_or("nautilus.contextMenu.refresh", "Refresh"),
@@ -4457,18 +4453,10 @@ impl NautilusView {
                 "detach",
             ),
         ]);
-        let stack = gtk::Stack::new();
-        if folder_open {
-            let open_btn = gtk::Button::with_label(&format!(
-                "{}  ▸",
-                self.ctx.t_or("nautilus.contextMenu.open", "Open")
-            ));
-            let stack_open = stack.clone();
-            open_btn.connect_clicked(move |_| {
-                stack_open.set_visible_child_name("open");
-            });
-            box_.append(&open_btn);
-        }
+        box_.set_margin_top(8);
+        box_.set_margin_bottom(8);
+        box_.set_margin_start(8);
+        box_.set_margin_end(8);
         for (label, action) in items {
             let btn = gtk::Button::with_label(&label);
             let view = self.clone();
@@ -4542,50 +4530,7 @@ impl NautilusView {
             });
             box_.append(&btn);
         }
-        stack.add_named(&box_, Some("main"));
-        if folder_open {
-            let open_page = gtk::Box::new(gtk::Orientation::Vertical, 4);
-            let back = gtk::Button::with_label(&self.ctx.t("common.back"));
-            let stack_back = stack.clone();
-            back.connect_clicked(move |_| {
-                stack_back.set_visible_child_name("main");
-            });
-            open_page.append(&back);
-            for (label, action) in [
-                (self.ctx.t_or("nautilus.contextMenu.open", "Open"), "open"),
-                (
-                    self.ctx
-                        .t_or("nautilus.contextMenu.openNewTab", "Open in New Tab"),
-                    "tab",
-                ),
-                (
-                    self.ctx
-                        .t_or("nautilus.contextMenu.openNewWindow", "Open in New Window"),
-                    "window",
-                ),
-            ] {
-                let btn = gtk::Button::with_label(&label);
-                let view = self.clone();
-                let popover = popover.clone();
-                btn.connect_clicked(move |_| {
-                    popover.popdown();
-                    match action {
-                        "open" => {
-                            if let Some(name) = view.selected_name() {
-                                view.open_name(&name);
-                            }
-                        }
-                        "tab" => view.open_selected_in_new_tab(),
-                        "window" => view.open_selected_in_new_window(),
-                        _ => {}
-                    }
-                });
-                open_page.append(&btn);
-            }
-            stack.add_named(&open_page, Some("open"));
-        }
-        stack.set_visible_child_name("main");
-        stack.upcast()
+        box_.upcast()
     }
 
     fn selected_is_dir(&self) -> bool {
