@@ -5693,20 +5693,26 @@ pub fn restore_preview(
                                 .map(|item| item.manifest.export_type)
                         })
                         .unwrap_or_else(|| "FullBackup".into());
-                    if let Some(settings) = settings {
-                        let merged =
-                            backup::merge_settings(&ctx.settings.borrow(), &settings, &export_type);
-                        *ctx.settings.borrow_mut() = merged;
-                    }
-                    if let Some(store) = store {
-                        let merged = backup::merge_store(&ctx.store.borrow(), &store, &export_type);
-                        *ctx.store.borrow_mut() = merged;
-                    }
+                    let scoped = profile.is_some();
+                    let (settings, store) = backup::apply_restore(
+                        &ctx.settings.borrow(),
+                        &ctx.store.borrow(),
+                        settings,
+                        store,
+                        &export_type,
+                        scoped,
+                    );
+                    *ctx.settings.borrow_mut() = settings;
+                    *ctx.store.borrow_mut() = store;
+                    let mut create_errors = Vec::new();
                     if let (Some(dump), Some(client)) = (rclone, ctx.client()) {
                         if let Some(obj) = dump.as_object() {
                             for (name, cfg) in obj {
                                 if let Some(t) = cfg.get("type").and_then(|x| x.as_str()) {
-                                    let _ = client.create_remote(name, t, cfg.clone(), None);
+                                    let params = backup::rclone_create_params(cfg);
+                                    if let Err(e) = client.create_remote(name, t, params, None) {
+                                        create_errors.push(format!("{name}: {e}"));
+                                    }
                                 }
                             }
                         }
@@ -5715,9 +5721,16 @@ pub fn restore_preview(
                     ctx.restart_engine();
                     ctx.reload_automations();
                     ctx.refresh_runtime();
-                    toast.add_toast(adw::Toast::new(
-                        &ctx.t_or("backup.restoreSuccess", "Backup restored successfully"),
-                    ));
+                    if create_errors.is_empty() {
+                        toast.add_toast(adw::Toast::new(
+                            &ctx.t_or("backup.restoreSuccess", "Backup restored successfully"),
+                        ));
+                    } else {
+                        toast.add_toast(adw::Toast::new(&ctx.tf(
+                            "backup.restoreFailed",
+                            &[("error", &create_errors.join("; "))],
+                        )));
+                    }
                     dialog.close();
                     on_done();
                 }

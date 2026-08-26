@@ -127,8 +127,26 @@ pub fn merge_store(current: &AppStore, incoming: &AppStore, export_type: &str) -
         "alerts" => merge_store_alerts(current, incoming),
         "store" if incoming.remotes.is_empty() => merge_store_alerts(current, incoming),
         "settings" | "connections" | "nautilus" | "rclone" | "remotes" => current.clone(),
+        "remote" | "profile" => merge_store_remotes(current, incoming),
         _ => incoming.clone(),
     }
+}
+
+fn merge_store_remotes(current: &AppStore, incoming: &AppStore) -> AppStore {
+    let mut out = current.clone();
+    for (name, meta) in &incoming.remotes {
+        out.remotes.insert(name.clone(), meta.clone());
+    }
+    for run in &incoming.quick_runs {
+        let exists = out.quick_runs.iter().any(|existing| {
+            existing.id == run.id
+                || (existing.name == run.name && existing.remote_name == run.remote_name)
+        });
+        if !exists {
+            out.quick_runs.push(run.clone());
+        }
+    }
+    out
 }
 
 fn merge_store_alerts(current: &AppStore, incoming: &AppStore) -> AppStore {
@@ -155,9 +173,40 @@ pub fn merge_settings(
             out.nautilus = incoming.nautilus.clone();
             out
         }
-        "alerts" | "store" | "rclone" | "remotes" => current.clone(),
+        "alerts" | "store" | "rclone" | "remotes" | "remote" | "profile" => current.clone(),
         _ => incoming.clone(),
     }
+}
+
+/// Apply a restore onto the live settings/store. A scoped (one-remote) restore
+/// merges that remote and keeps the current settings.
+pub fn apply_restore(
+    current_settings: &AppSettings,
+    current_store: &AppStore,
+    settings: Option<AppSettings>,
+    store: Option<AppStore>,
+    export_type: &str,
+    scoped: bool,
+) -> (AppSettings, AppStore) {
+    let kind = if scoped { "remote" } else { export_type };
+    let settings = match settings {
+        Some(incoming) if !scoped => merge_settings(current_settings, &incoming, export_type),
+        _ => current_settings.clone(),
+    };
+    let store = match store {
+        Some(incoming) => merge_store(current_store, &incoming, kind),
+        None => current_store.clone(),
+    };
+    (settings, store)
+}
+
+/// `config/create` parameters should not repeat the remote type key.
+pub fn rclone_create_params(cfg: &Value) -> Value {
+    let mut params = cfg.clone();
+    if let Some(obj) = params.as_object_mut() {
+        obj.remove("type");
+    }
+    params
 }
 
 pub fn filter_store_remotes(store: &AppStore, names: &[String]) -> AppStore {
@@ -366,7 +415,14 @@ pub fn scoped_store(
         .filter(|s| !s.is_empty())
         .unwrap_or(from);
     let mut scoped = AppStore::default();
-    if let Some(meta) = store.remotes.remove(from) {
+    if let Some(mut meta) = store.remotes.remove(from) {
+        if dest != from {
+            for profiles in meta.profiles.values_mut() {
+                for profile in profiles.values_mut() {
+                    crate::store::rewrite_remote_refs(&mut profile.rclone, from, dest);
+                }
+            }
+        }
         scoped.remotes.insert(dest.to_string(), meta);
     }
     scoped.quick_runs = store
@@ -512,6 +568,64 @@ mod tests {
         let rclone = scoped_rclone(dump, Some("drive"), Some("photos"));
         assert_eq!(rclone["photos"]["type"], "drive");
         assert!(rclone.get("dropbox").is_none());
+    }
+
+    #[test]
+    fn scoped_full_backup_merges_into_current_store() {
+        let mut current = AppStore::default();
+        current
+            .remotes
+            .insert("keep".into(), crate::store::RemoteMeta::default());
+        let mut incoming = AppStore::default();
+        incoming
+            .remotes
+            .insert("photos".into(), crate::store::RemoteMeta::default());
+        incoming.quick_runs.push(crate::store::QuickRun::new(
+            "Nightly".into(),
+            crate::operations::OperationType::Sync,
+            "photos".into(),
+        ));
+        let (settings, store) = apply_restore(
+            &AppSettings::default(),
+            &current,
+            Some(AppSettings::default()),
+            Some(incoming),
+            "FullBackup",
+            true,
+        );
+        assert!(store.remotes.contains_key("keep"));
+        assert!(store.remotes.contains_key("photos"));
+        assert_eq!(store.quick_runs[0].remote_name, "photos");
+        assert_eq!(
+            settings.general.language,
+            AppSettings::default().general.language
+        );
+        let params = rclone_create_params(&serde_json::json!({
+            "type": "alias",
+            "remote": "/tmp/rclone-test-remote"
+        }));
+        assert!(params.get("type").is_none());
+        assert_eq!(params["remote"], "/tmp/rclone-test-remote");
+    }
+
+    #[test]
+    fn scoped_store_rewrites_renamed_remote_paths() {
+        let mut store = AppStore::default();
+        let mut meta = crate::store::RemoteMeta::default();
+        let mut profile = crate::store::ProfileConfig::default();
+        profile.rclone = serde_json::json!({ "srcFs": "drive:Photos", "dstFs": "/tmp/out" });
+        meta.profiles
+            .insert("copy".into(), [("default".into(), profile)].into());
+        store.remotes.insert("drive".into(), meta);
+        let scoped = scoped_store(store, Some("drive"), Some("photos"));
+        assert_eq!(
+            scoped.remotes["photos"].profiles["copy"]["default"].rclone["srcFs"],
+            "photos:Photos"
+        );
+        assert_eq!(
+            scoped.remotes["photos"].profiles["copy"]["default"].rclone["dstFs"],
+            "/tmp/out"
+        );
     }
 
     #[test]
