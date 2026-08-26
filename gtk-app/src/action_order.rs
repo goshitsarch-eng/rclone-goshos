@@ -92,6 +92,19 @@ pub fn move_item(items: &mut [OrderItem], index: usize, delta: isize) -> usize {
     next as usize
 }
 
+/// Angular `moveItemInArray`: move `from` to `to`, shifting neighbors.
+pub fn move_index<T>(items: &mut [T], from: usize, to: usize) -> bool {
+    if from >= items.len() || to >= items.len() || from == to {
+        return false;
+    }
+    if from < to {
+        items[from..=to].rotate_left(1);
+    } else {
+        items[to..=from].rotate_right(1);
+    }
+    true
+}
+
 pub fn visible_ids(items: &[OrderItem]) -> Vec<String> {
     items
         .iter()
@@ -151,6 +164,21 @@ mod tests {
         apply_visibility(&mut items, "a", false);
         assert_eq!(visible_ids(&items), vec!["b"]);
         assert_eq!(move_item(&mut items, 2, 1), 2);
+    }
+
+    #[test]
+    fn move_index_matches_angular_drag() {
+        let mut ids = vec!["a", "b", "c", "d"];
+        assert!(move_index(&mut ids, 0, 2));
+        assert_eq!(ids, ["b", "c", "a", "d"]);
+        assert!(move_index(&mut ids, 3, 0));
+        assert_eq!(ids, ["d", "b", "c", "a"]);
+        assert!(!move_index(&mut ids, 1, 1));
+        assert!(!move_index(&mut ids, 9, 0));
+        let mut items = build_items(&["copy".into(), "sync".into()], &["copy", "sync", "move"]);
+        assert!(move_index(&mut items, 2, 0));
+        assert_eq!(items[0].id, "move");
+        assert_eq!(items[1].id, "copy");
     }
 
     #[test]

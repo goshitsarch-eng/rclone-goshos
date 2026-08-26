@@ -172,17 +172,70 @@ pub(super) fn settings_list(
     list
 }
 
+fn standalone_window_title(ctx: &AppCtx, kind: &str) -> String {
+    match kind {
+        "preferences" => ctx.t_or("settings.title", "Preferences"),
+        "about" => ctx.t_or("modals.about.title", "About"),
+        "logs" => ctx.t_or("modals.logs.title", "Logs"),
+        "export" => ctx.t_or("modals.export.title", "Export backup"),
+        "backend" => ctx.t_or("modals.backend.title", "Backends"),
+        "rclone-flags" => ctx.t_or("settings.rcloneFlags.title", "Rclone Flags"),
+        "job-detail" => ctx.t_or("jobManager.jobDetail", "Job Detail"),
+        "properties" => ctx.t_or("nautilus.contextMenu.properties", "Properties"),
+        "remote-about" => ctx.t_or("home.options.aboutRemote", "About Remote"),
+        "keyboard-shortcuts" => ctx.t_or("shortcuts.title", "Keyboard Shortcuts"),
+        "alerts" => ctx.t_or("alerts.title", "Alerts"),
+        "archive-create" => ctx.t_or("nautilus.modals.archiveCreate.title", "Create archive"),
+        "quick-run-editor" => ctx.t_or("flow.quickRun.editor.createTitle", "Create Quick Run"),
+        "template-manager" => ctx.t_or("templates.title", "Templates"),
+        "delete-remote" => ctx.t_or("home.deleteRemote.title", "Delete Remote"),
+        "remote-config" => ctx.t_or("general.remoteConfig.title.add", "Remote Configuration"),
+        "restore-preview" => ctx.t_or("backup.restore.title", "Restore Backup"),
+        "vfs" => ctx.t_or("remoteConfig.vfs", "VFS"),
+        "start-operation" => ctx.t_or("operations.start", "Start"),
+        "file-viewer" => ctx.t_or("nautilus.contextMenu.open", "Open"),
+        other => other.to_string(),
+    }
+}
+
+pub(super) fn attach_id_drag_drop(
+    widget: &impl IsA<gtk::Widget>,
+    id: String,
+    on_drop: Rc<dyn Fn(String, String)>,
+) {
+    let source = gtk::DragSource::new();
+    source.set_actions(gtk::gdk::DragAction::MOVE);
+    {
+        let id = id.clone();
+        source.connect_prepare(move |_, _, _| {
+            Some(gtk::gdk::ContentProvider::for_value(&id.to_value()))
+        });
+    }
+    widget.add_controller(source);
+    let drop = gtk::DropTarget::new(String::static_type(), gtk::gdk::DragAction::MOVE);
+    {
+        let to = id;
+        drop.connect_drop(move |_, value, _, _| {
+            let Ok(from) = value.get::<String>() else {
+                return false;
+            };
+            if from == to {
+                return false;
+            }
+            on_drop(from, to.clone());
+            true
+        });
+    }
+    widget.add_controller(drop);
+}
+
 pub fn present_standalone(
     app: &adw::Application,
     ctx: AppCtx,
     req: crate::platform::DialogRequest,
 ) {
     crate::platform::set_standalone_dialog(true);
-    let title = if req.kind == "restore-preview" {
-        ctx.t_or("backup.restore.title", "Restore Backup")
-    } else {
-        req.kind.clone()
-    };
+    let title = standalone_window_title(&ctx, &req.kind);
     let window = adw::ApplicationWindow::builder()
         .application(app)
         .title(&title)
@@ -234,7 +287,14 @@ pub fn present_standalone(
         "job-detail" => job_detail(&window, ctx.clone(), jobid),
         "properties" => properties(&window, ctx.clone(), &remote, &path, &name),
         "remote-about" => remote_about(&window, ctx.clone(), &remote),
-        "keyboard-shortcuts" => shortcuts(&window, &ctx),
+        "keyboard-shortcuts" => shortcuts_open(
+            &window,
+            &ctx,
+            req.data
+                .get("nautilus")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false),
+        ),
         "alerts" => alerts(&window, ctx.clone()),
         "archive-create" => archive_create(&window, ctx.clone(), &remote, &path, &[]),
         "quick-run-editor" => {
@@ -1352,11 +1412,23 @@ fn run_progress_job<T, F, OnOk>(
 }
 
 pub fn shortcuts(parent: &impl IsA<gtk::Widget>, ctx: &AppCtx) {
-    if try_spawn_standalone(ctx, "keyboard-shortcuts", serde_json::json!({})) {
+    shortcuts_open(parent, ctx, false);
+}
+
+pub fn shortcuts_open(parent: &impl IsA<gtk::Widget>, ctx: &AppCtx, nautilus: bool) {
+    if try_spawn_standalone(
+        ctx,
+        "keyboard-shortcuts",
+        serde_json::json!({ "nautilus": nautilus }),
+    ) {
         return;
     }
     let dialog = adw::Dialog::new();
-    dialog.set_title(&ctx.t_or("shortcuts.title", "Keyboard Shortcuts"));
+    dialog.set_title(&if nautilus {
+        ctx.t_or("nautilus.shortcuts.title", "Nautilus Keyboard Shortcuts")
+    } else {
+        ctx.t_or("shortcuts.title", "Keyboard Shortcuts")
+    });
     dialog.set_content_width(560);
     dialog.set_content_height(560);
     let search = gtk::SearchEntry::new();
@@ -1366,7 +1438,7 @@ pub fn shortcuts(parent: &impl IsA<gtk::Widget>, ctx: &AppCtx) {
     )));
     let list = gtk::ListBox::new();
     list.add_css_class("boxed-list");
-    let entries = [
+    let global = [
         (
             "global",
             "shortcuts.categories.global",
@@ -1374,16 +1446,34 @@ pub fn shortcuts(parent: &impl IsA<gtk::Widget>, ctx: &AppCtx) {
             &[
                 ("Ctrl+Q", "shortcuts.actions.quit", "Quit Application"),
                 (
-                    "Ctrl+Shift+?",
+                    "Ctrl+? / Ctrl+Shift+?",
                     "shortcuts.actions.showShortcuts",
                     "Show Keyboard Shortcuts",
                 ),
+            ][..],
+        ),
+        (
+            "application",
+            "shortcuts.categories.application",
+            "Application",
+            &[
                 (
                     "Ctrl+,",
                     "shortcuts.actions.openPreferences",
                     "Open Preferences",
                 ),
                 ("Ctrl+.", "shortcuts.actions.openFlags", "Open Rclone Flags"),
+                ("Ctrl+Alt+A", "alerts.title", "Alerts"),
+                (
+                    "Ctrl+Alt+F",
+                    "shortcuts.actions.openFlowOverlay",
+                    "Toggle Flow Workspace",
+                ),
+                (
+                    "Ctrl+B",
+                    "shortcuts.actions.toggleBrowser",
+                    "Toggle File Browser",
+                ),
             ][..],
         ),
         (
@@ -1402,16 +1492,6 @@ pub fn shortcuts(parent: &impl IsA<gtk::Widget>, ctx: &AppCtx) {
                     "Create New Remote (Quick)",
                 ),
                 (
-                    "Ctrl+I",
-                    "shortcuts.actions.loadConfig",
-                    "Load Configuration",
-                ),
-                (
-                    "Ctrl+E",
-                    "shortcuts.actions.exportConfig",
-                    "Export Configuration",
-                ),
-                (
                     "Ctrl+Shift+M",
                     "shortcuts.actions.forceCheck",
                     "Force Check Mounts",
@@ -1425,82 +1505,77 @@ pub fn shortcuts(parent: &impl IsA<gtk::Widget>, ctx: &AppCtx) {
         ),
         (
             "files",
-            "shortcuts.categories.fileBrowser",
-            "File Browser",
+            "shortcuts.categories.fileOperations",
+            "File Operations",
             &[
                 (
-                    "Ctrl+B",
-                    "shortcuts.actions.toggleBrowser",
-                    "Toggle File Browser",
-                ),
-                (
-                    "Ctrl+Alt+F",
-                    "shortcuts.actions.openFlowOverlay",
-                    "Toggle Flow Workspace",
-                ),
-                (
-                    "Ctrl+T / Ctrl+W",
-                    "nautilus.tabs.newClose",
-                    "New / close file tab",
-                ),
-                (
-                    "Ctrl+Shift+D",
-                    "titlebar.detach",
-                    "Detach current workspace",
-                ),
-                ("F5", "nautilus.actions.reload", "Reload listing"),
-                ("F2", "nautilus.contextMenu.rename", "Rename"),
-                (
-                    "Space",
-                    "fileBrowser.fileViewer.title",
-                    "Preview file or folder",
-                ),
-                ("Delete", "nautilus.contextMenu.delete", "Delete"),
-                (
-                    "Ctrl+C / X / V",
-                    "nautilus.actions.clipboard",
-                    "Copy / Cut / Paste",
-                ),
-                (
-                    "Ctrl+Shift+N",
-                    "nautilus.contextMenu.newFolder",
-                    "New folder",
-                ),
-                ("Ctrl+H", "nautilus.view.hidden", "Toggle hidden files"),
-                ("Backspace", "nautilus.actions.parent", "Parent folder"),
-                ("Ctrl+Tab", "nautilus.contextMenu.nextTab", "Next file tab"),
-                (
-                    "Ctrl+Shift+Tab",
-                    "nautilus.contextMenu.previousTab",
-                    "Previous file tab",
-                ),
-                (
                     "Ctrl+I",
-                    "nautilus.contextMenu.switchPane",
-                    "Switch split pane",
-                ),
-                ("Alt+Enter", "nautilus.contextMenu.properties", "Properties"),
-                ("Ctrl+A", "nautilus.contextMenu.selectAll", "Select all"),
-                ("Ctrl+L", "nautilus.titles.pathPlaceholder", "Edit path"),
-                (
-                    "Ctrl+F",
-                    "nautilus.titles.searchPlaceholder",
-                    "Search listing",
+                    "shortcuts.actions.loadConfig",
+                    "Load Configuration",
                 ),
                 (
-                    "Alt+← / Alt+→",
-                    "nautilus.actions.history",
-                    "Back / forward",
+                    "Ctrl+E",
+                    "shortcuts.actions.exportConfig",
+                    "Export Configuration",
                 ),
             ][..],
         ),
+        (
+            "navigation",
+            "shortcuts.categories.navigation",
+            "Navigation",
+            &[("Escape", "shortcuts.actions.closeDialog", "Close Dialog")][..],
+        ),
     ];
+    let nautilus_entries = [(
+        "files",
+        "shortcuts.categories.fileBrowserNautilus",
+        "File Browser (Nautilus)",
+        &[
+            ("Ctrl+C", "nautilus.contextMenu.copy", "Copy"),
+            ("Ctrl+X", "nautilus.contextMenu.cut", "Cut"),
+            ("Ctrl+V", "nautilus.contextMenu.paste", "Paste"),
+            ("Delete", "nautilus.contextMenu.delete", "Delete"),
+            ("Ctrl+A", "nautilus.contextMenu.selectAll", "Select All"),
+            ("F5 / Ctrl+R", "nautilus.contextMenu.refresh", "Refresh"),
+            (
+                "Ctrl+Shift+N",
+                "nautilus.contextMenu.newFolder",
+                "New Folder",
+            ),
+            ("Ctrl+F", "nautilus.contextMenu.search", "Search"),
+            ("Ctrl+H", "nautilus.view.showHidden", "Show Hidden Files"),
+            ("Alt+Enter", "nautilus.contextMenu.properties", "Properties"),
+            ("Backspace / Alt+Up", "nautilus.contextMenu.goUp", "Go Up"),
+            ("Alt+Left", "nautilus.contextMenu.goBack", "Go Back"),
+            ("Alt+Right", "nautilus.contextMenu.goForward", "Go Forward"),
+            ("Enter", "nautilus.contextMenu.open", "Open"),
+            ("Ctrl+L", "nautilus.contextMenu.focusPath", "Focus Path"),
+            ("Ctrl+T", "nautilus.contextMenu.newTab", "New Tab"),
+            ("Ctrl+Tab", "nautilus.contextMenu.nextTab", "Next Tab"),
+            (
+                "Ctrl+Shift+Tab",
+                "nautilus.contextMenu.previousTab",
+                "Previous Tab",
+            ),
+            (
+                "Ctrl+Shift+T",
+                "nautilus.contextMenu.duplicateTab",
+                "Duplicate Tab",
+            ),
+            ("Ctrl+W", "nautilus.contextMenu.closeTab", "Close Tab"),
+            ("Ctrl+/", "nautilus.contextMenu.toggleSplit", "Toggle Split"),
+            ("Ctrl+I", "nautilus.contextMenu.switchPane", "Switch Pane"),
+            ("Escape", "shortcuts.actions.closeDialog", "Close Dialog"),
+        ][..],
+    )];
+    let entries: &[(_, _, _, _)] = if nautilus { &nautilus_entries } else { &global };
     for (_, cat_key, cat_fallback, items) in entries {
         let header = adw::ActionRow::new();
         header.set_title(&ctx.t_or(cat_key, cat_fallback));
         header.set_sensitive(false);
         list.append(&header);
-        for (keys, desc_key, desc_fallback) in items {
+        for (keys, desc_key, desc_fallback) in items.iter() {
             let row = adw::ActionRow::new();
             row.set_title(&ctx.t_or(desc_key, desc_fallback));
             row.set_subtitle(keys);
@@ -2403,8 +2478,8 @@ pub fn action_order(
     let rebuild: Rc<RefCell<Box<dyn Fn()>>> = Rc::new(RefCell::new(Box::new(|| {})));
     let visible_l = ctx.t_or("common.show", "Visible");
     let hidden_l = ctx.t_or("common.hide", "Hidden");
-    let up_tip = ctx.t_or("modals.itemOrderVisibility.showItem", "Move up");
-    let down_tip = ctx.t_or("modals.itemOrderVisibility.hideItem", "Move down");
+    let up_tip = ctx.t_or("generalOverview.moveUp", "Move panel up");
+    let down_tip = ctx.t_or("generalOverview.moveDown", "Move panel down");
     let rebuild_fn = {
         let list = list.clone();
         let items = items.clone();
@@ -2481,6 +2556,27 @@ pub fn action_order(
                 row.add_suffix(&up);
                 row.add_suffix(&down);
                 row.add_suffix(&visible);
+                {
+                    let items = items.clone();
+                    let rebuild = rebuild.clone();
+                    attach_id_drag_drop(
+                        &row,
+                        item.id.clone(),
+                        Rc::new(move |from, to| {
+                            let mut list = items.borrow_mut();
+                            let Some(from_idx) = list.iter().position(|item| item.id == from)
+                            else {
+                                return;
+                            };
+                            let Some(to_idx) = list.iter().position(|item| item.id == to) else {
+                                return;
+                            };
+                            crate::action_order::move_index(&mut list, from_idx, to_idx);
+                            drop(list);
+                            rebuild.borrow()();
+                        }),
+                    );
+                }
                 list.append(&row);
             }
         })
@@ -3952,7 +4048,10 @@ pub fn start_operation(
         return;
     }
     let dialog = adw::Dialog::new();
-    dialog.set_title(&format!("{} — {remote}", op.api_label()));
+    dialog.set_title(&format!(
+        "{} — {remote}",
+        ctx.t_or(op.action_label_key(), op.api_label())
+    ));
     dialog.set_content_width(560);
     dialog.set_content_height(640);
 
@@ -9556,6 +9655,29 @@ pub fn item_order(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, on_done: Rc<dyn F
             }
             row.add_suffix(&up);
             row.add_suffix(&down);
+            {
+                let names = names.clone();
+                let hidden = hidden.clone();
+                let list = list.clone();
+                let subtitle = subtitle.to_string();
+                attach_id_drag_drop(
+                    &row,
+                    name.clone(),
+                    Rc::new(move |from, to| {
+                        {
+                            let mut names = names.borrow_mut();
+                            let Some(from_idx) = names.iter().position(|n| n == &from) else {
+                                return;
+                            };
+                            let Some(to_idx) = names.iter().position(|n| n == &to) else {
+                                return;
+                            };
+                            crate::action_order::move_index(&mut names, from_idx, to_idx);
+                        }
+                        refill(&list, &names, &hidden, &subtitle);
+                    }),
+                );
+            }
             list.append(&row);
         }
     }
@@ -9692,6 +9814,29 @@ pub fn configure_sidebar(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, on_done: R
             }
             row.add_suffix(&up);
             row.add_suffix(&down);
+            {
+                let names = names.clone();
+                let hidden = hidden.clone();
+                let list = list.clone();
+                let labels = labels.clone();
+                attach_id_drag_drop(
+                    &row,
+                    name.clone(),
+                    Rc::new(move |from, to| {
+                        {
+                            let mut names = names.borrow_mut();
+                            let Some(from_idx) = names.iter().position(|n| n == &from) else {
+                                return;
+                            };
+                            let Some(to_idx) = names.iter().position(|n| n == &to) else {
+                                return;
+                            };
+                            crate::action_order::move_index(&mut names, from_idx, to_idx);
+                        }
+                        refill(&list, &names, &hidden, &labels);
+                    }),
+                );
+            }
             list.append(&row);
         }
     }

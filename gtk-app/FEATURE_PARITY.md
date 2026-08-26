@@ -702,6 +702,12 @@ This client is the GTK 4 + libadwaita desktop UI. It talks to a local `rclone rc
 - Files listings render the first 200 items and offer Show N more (Angular view-pane batch)
 - Deep links and CLI for remaining dialogs: `#/file-viewer`, `#/start-operation/{remote}/{op}`, `#/vfs/{remote}`, `#/delete-remote/{remote}`, `#/remote-about/{remote}`, `#/restore-preview?path=`, `#/archive-create/{remote}/{path}?names=`, `#/quick-run-editor/{id}`, `#/flow/{id}?mode=edit`, `#/export/{remote}`
 - Files Ctrl+R refreshes the listing (same as F5 / Angular nautilus-keyboard)
+- Files sidebar has a Keyboard Shortcuts row that opens the Nautilus-scoped cheat sheet (`nautilus.shortcuts.title`)
+- Global shortcuts modal matches Angular categories (application / remotes / file operations / navigation), including Alerts and Escape
+- Action-order, remote-order, sidebar-configure, and dashboard/Flow edit-layout lists support drag-reorder (`moveItemInArray`)
+- Files keybinds yield while a dialog is open or the path/search field is focused
+- Standalone dialog window titles and Start Operation titles use i18n instead of raw kind / API labels
+- Dashboard panel headings use `generalOverview.panels.*`
 - Live GUI: `--file-viewer testdrive:Photos/README.txt` opens README.txt (7 B)
 - Live GUI: `--vfs testdrive` opens VFS Control (Refresh Metadata / Clear Metadata Cache)
 - Live GUI: `--start-operation testdrive:copy` opens Copy with profile `gui-copy-test`

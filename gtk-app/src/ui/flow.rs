@@ -857,6 +857,17 @@ impl FlowView {
             label.append(&hide);
             label.append(&up);
             label.append(&down);
+            let view = self.clone();
+            dialogs::attach_id_drag_drop(
+                &expander,
+                id.to_string(),
+                Rc::new(move |from, to| {
+                    let mut layout = view.flow_layout();
+                    if layout.move_panel_to(&from, &to, crate::layout::QUICK_RUN_PANELS) {
+                        view.write_flow_layout(layout);
+                    }
+                }),
+            );
         }
         expander.set_label_widget(Some(&label));
         expander.set_expanded(crate::settings::panel_is_open(

@@ -735,7 +735,10 @@ impl Dashboard {
         let inner = gtk::Box::new(gtk::Orientation::Vertical, 12);
         let expander = gtk::Expander::new(None);
         let label = gtk::Box::new(gtk::Orientation::Horizontal, 6);
-        label.append(&section_label(crate::layout::panel_title(id)));
+        label.append(&section_label(&self.ctx.t_or(
+            crate::layout::panel_title_key(id),
+            crate::layout::panel_title(id),
+        )));
         if *self.editing_layout.borrow() {
             let hide = gtk::Button::from_icon_name("view-conceal-symbolic");
             hide.set_tooltip_text(Some(
@@ -769,6 +772,17 @@ impl Dashboard {
             label.append(&hide);
             label.append(&up);
             label.append(&down);
+            let dash = self.clone();
+            super::dialogs::attach_id_drag_drop(
+                &expander,
+                id.to_string(),
+                Rc::new(move |from, to| {
+                    let mut layout = dash.dashboard_layout();
+                    if layout.move_panel_to(&from, &to, crate::layout::DASHBOARD_PANELS) {
+                        dash.write_dashboard_layout(layout);
+                    }
+                }),
+            );
         }
         expander.set_label_widget(Some(&label));
         expander.set_expanded(crate::settings::panel_is_open(

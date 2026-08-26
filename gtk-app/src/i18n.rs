@@ -398,6 +398,11 @@ mod tests {
             "templates.jsonView",
             "templates.addKey",
             "nautilus.loadMore",
+            "nautilus.shortcuts.title",
+            "shortcuts.categories.fileBrowserNautilus",
+            "nautilus.contextMenu.refresh",
+            "generalOverview.panels.jobs",
+            "generalOverview.moveUp",
         ];
         for lang in SUPPORTED_LANGUAGES {
             let i18n = I18n::load(lang);

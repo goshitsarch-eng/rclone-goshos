@@ -1854,6 +1854,9 @@ impl NautilusView {
         controller.connect_key_pressed(move |_, key, _, modifier| {
             let ctrl = modifier.contains(gtk::gdk::ModifierType::CONTROL_MASK);
             let shift = modifier.contains(gtk::gdk::ModifierType::SHIFT_MASK);
+            if files_keys_should_yield(&view, key, ctrl) {
+                return glib::Propagation::Proceed;
+            }
             if ctrl && key == gtk::gdk::Key::l {
                 view.show_path_entry();
                 return glib::Propagation::Stop;
@@ -2155,6 +2158,19 @@ impl NautilusView {
             });
         }
         self.sidebar.append(&configure);
+        let shortcuts = adw::ActionRow::new();
+        shortcuts.set_title(&self.ctx.t_or("shortcuts.title", "Keyboard Shortcuts"));
+        shortcuts.set_activatable(true);
+        shortcuts.add_prefix(&gtk::Image::from_icon_name("input-keyboard-symbolic"));
+        {
+            let view = self.clone();
+            shortcuts.connect_activated(move |_| {
+                if let Some(win) = view.root.root().and_downcast::<gtk::Window>() {
+                    dialogs::shortcuts_open(&win, &view.ctx, true);
+                }
+            });
+        }
+        self.sidebar.append(&shortcuts);
         let starred_row = adw::ActionRow::new();
         starred_row.set_title(&self.ctx.t_or("nautilus.titles.starred", "Starred"));
         starred_row.set_activatable(true);
@@ -5286,6 +5302,38 @@ fn make_flow() -> gtk::FlowBox {
     grid.set_valign(gtk::Align::Start);
     grid.set_vexpand(true);
     grid
+}
+
+fn files_keys_should_yield(view: &NautilusView, key: gtk::gdk::Key, ctrl: bool) -> bool {
+    if overlay_dialog_open(&view.root) {
+        return true;
+    }
+    let editing = view.search_entry.has_focus() || view.path_entry.has_focus();
+    if !editing {
+        return false;
+    }
+    let allowed = key == gtk::gdk::Key::Escape
+        || (ctrl && key == gtk::gdk::Key::f)
+        || (ctrl && key == gtk::gdk::Key::l);
+    !allowed
+}
+
+fn overlay_dialog_open(widget: &impl IsA<gtk::Widget>) -> bool {
+    let Some(root) = widget.root() else {
+        return false;
+    };
+    let mut stack = vec![root.upcast::<gtk::Widget>()];
+    while let Some(node) = stack.pop() {
+        if node.is::<adw::Dialog>() && node.is_visible() {
+            return true;
+        }
+        let mut child = node.first_child();
+        while let Some(next) = child {
+            stack.push(next.clone());
+            child = next.next_sibling();
+        }
+    }
+    false
 }
 
 fn clear_list(list: &gtk::ListBox) {
