@@ -756,3 +756,5 @@ This client is the GTK 4 + libadwaita desktop UI. It talks to a local `rclone rc
 - Live GUI: Preferences Security shows **Not Encrypted** / Credentials stored in plain text, Password + Confirm Password, disabled Enable Encryption
 - Live GUI: mismatch `secret` / `other` outlines Confirm in red with **Passwords do not match** and keeps Enable Encryption disabled; matching 6-character passwords enable the button (rclone.conf left unencrypted)
 - Global right-click on window chrome opens Refresh UI / Clear Cache / Open Developer Tools (Angular `DebugService`); editable fields keep the native GTK menu
+- Live GUI: Preferences Security tab title is **Security**; Enable Encryption is grey until passwords match
+- Live GUI: dashboard right-click shows Refresh UI / Clear Cache / Open Developer Tools; Refresh UI toast
