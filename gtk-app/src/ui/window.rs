@@ -425,10 +425,28 @@ fn present_main_with(app: &adw::Application, ctx: AppCtx, hidden: bool) {
     {
         let ctx = ctx.clone();
         let stack = view_stack.clone();
+        let window = window.clone();
+        let reverting = Rc::new(std::cell::Cell::new(false));
         view_stack.connect_visible_child_notify(move |_| {
-            if let Some(name) = stack.visible_child_name() {
+            let Some(name) = stack.visible_child_name() else {
+                return;
+            };
+            if reverting.get() {
                 *ctx.active_workspace.borrow_mut() = name.to_string();
+                return;
             }
+            let default = ctx.settings.borrow().general.default_view.clone();
+            if crate::navigation::workspace_open_plan(&default, name.as_str())
+                != crate::navigation::WorkspaceOpen::SwitchStack
+            {
+                reverting.set(true);
+                stack.set_visible_child_name(&default);
+                reverting.set(false);
+                let _ = open_workspace_target(&ctx, &window, &stack, name.as_str());
+                *ctx.active_workspace.borrow_mut() = default;
+                return;
+            }
+            *ctx.active_workspace.borrow_mut() = name.to_string();
         });
     }
 
@@ -1077,10 +1095,17 @@ fn install_actions(
     );
     {
         let stack = view_stack.clone();
+        let ctx = ctx.clone();
+        let window = window.clone();
         view_action.connect_activate(move |action, value| {
             if let Some(v) = value.and_then(|v| v.str().map(|s| s.to_string())) {
-                stack.set_visible_child_name(&v);
-                action.set_state(&glib::Variant::from(v.as_str()));
+                if open_workspace_target(&ctx, &window, &stack, &v) {
+                    action.set_state(&glib::Variant::from(
+                        stack.visible_child_name().unwrap_or_default().as_str(),
+                    ));
+                } else {
+                    action.set_state(&glib::Variant::from(v.as_str()));
+                }
             }
         });
     }
@@ -1089,6 +1114,8 @@ fn install_actions(
     {
         let stack = view_stack.clone();
         let view_action = view_action.clone();
+        let ctx = ctx.clone();
+        let window = window.clone();
         let last = Rc::new(std::cell::RefCell::new(
             ctx.settings.borrow().general.default_view.clone(),
         ));
@@ -1107,8 +1134,9 @@ fn install_actions(
                     *last.borrow_mut() = current;
                     "flow".into()
                 };
-                stack.set_visible_child_name(&next);
-                view_action.set_state(&glib::Variant::from(next.as_str()));
+                if !open_workspace_target(&ctx, &window, &stack, &next) {
+                    view_action.set_state(&glib::Variant::from(next.as_str()));
+                }
             }),
         );
     }
@@ -1339,6 +1367,37 @@ fn present_standalone_workspace(app: &adw::Application, ctx: &AppCtx, target: &N
     }
 }
 
+fn open_workspace_target(
+    ctx: &AppCtx,
+    window: &adw::ApplicationWindow,
+    stack: &adw::ViewStack,
+    target: &str,
+) -> bool {
+    let default = ctx.settings.borrow().general.default_view.clone();
+    match crate::navigation::workspace_open_plan(&default, target) {
+        crate::navigation::WorkspaceOpen::SwitchStack => {
+            stack.set_visible_child_name(target);
+            false
+        }
+        crate::navigation::WorkspaceOpen::OverlayFiles => {
+            present_files_at(window, ctx, "local", "");
+            true
+        }
+        crate::navigation::WorkspaceOpen::OverlayFlow => {
+            if let Some(app) = window.application().and_downcast::<adw::Application>() {
+                open_workspace_window(&app, ctx, MainView::Flow);
+            }
+            true
+        }
+        crate::navigation::WorkspaceOpen::OverlayDashboard => {
+            if let Some(app) = window.application().and_downcast::<adw::Application>() {
+                open_workspace_window(&app, ctx, MainView::MainMenu);
+            }
+            true
+        }
+    }
+}
+
 pub fn present_files_at(parent: &impl IsA<gtk::Widget>, ctx: &AppCtx, remote: &str, path: &str) {
     let Some(win) = parent.root().and_downcast::<gtk::Window>() else {
         return;
@@ -1471,6 +1530,11 @@ fn apply_nav(
             | NavTarget::About
             | NavTarget::Logs { .. }
             | NavTarget::Shortcuts
+            | NavTarget::Backends
+            | NavTarget::Flags
+            | NavTarget::Templates
+            | NavTarget::Export
+            | NavTarget::Repair
             | NavTarget::Job { .. }
     ) && !window.is_mapped()
     {
@@ -1606,6 +1670,11 @@ fn apply_nav(
         NavTarget::About => dialogs::about(window, ctx.clone()),
         NavTarget::Logs { remote } => dialogs::logs(window, ctx.clone(), remote),
         NavTarget::Shortcuts => dialogs::shortcuts(window, ctx),
+        NavTarget::Backends => dialogs::backends(window, ctx.clone()),
+        NavTarget::Flags => dialogs::rclone_flags(window, ctx.clone()),
+        NavTarget::Templates => dialogs::templates(window, ctx.clone()),
+        NavTarget::Export => dialogs::export_backup(window, ctx.clone(), toast.clone(), None),
+        NavTarget::Repair => dialogs::repair(window, ctx.clone(), toast.clone()),
     }
 }
 

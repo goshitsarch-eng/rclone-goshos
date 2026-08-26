@@ -374,6 +374,42 @@ pub fn replace_executable(new_bin: &Path, current_exe: &Path) -> Result<(), Stri
     Ok(())
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AppInstallKind {
+    ReplaceBinary,
+    WindowsInstaller,
+    MacPackage,
+}
+
+pub fn app_install_kind(url: &str) -> AppInstallKind {
+    let path = url
+        .split(['?', '#'])
+        .next()
+        .unwrap_or(url)
+        .to_ascii_lowercase();
+    if path.ends_with(".msi") || path.ends_with(".exe") {
+        AppInstallKind::WindowsInstaller
+    } else if path.ends_with(".dmg") || path.ends_with(".pkg") {
+        AppInstallKind::MacPackage
+    } else {
+        AppInstallKind::ReplaceBinary
+    }
+}
+
+pub fn installer_command(kind: AppInstallKind, path: &Path) -> Option<Vec<String>> {
+    match kind {
+        AppInstallKind::ReplaceBinary => None,
+        AppInstallKind::WindowsInstaller => Some(vec![
+            "msiexec".into(),
+            "/i".into(),
+            path.to_string_lossy().into_owned(),
+        ]),
+        AppInstallKind::MacPackage => {
+            Some(vec!["open".into(), path.to_string_lossy().into_owned()])
+        }
+    }
+}
+
 pub fn install_app_update(
     url: &str,
     current_exe: &Path,
@@ -383,14 +419,32 @@ pub fn install_app_update(
     let parent = current_exe
         .parent()
         .ok_or_else(|| "cannot locate application directory".to_string())?;
+    let kind = app_install_kind(url);
     let tmp = parent.join(format!(
-        "{}.update",
+        "{}.update{}",
         current_exe
             .file_name()
             .map(|n| n.to_string_lossy().into_owned())
-            .unwrap_or_else(|| "rclone-manager".into())
+            .unwrap_or_else(|| "rclone-manager".into()),
+        match kind {
+            AppInstallKind::WindowsInstaller if url.to_ascii_lowercase().contains(".msi") => ".msi",
+            AppInstallKind::WindowsInstaller => ".exe",
+            AppInstallKind::MacPackage if url.to_ascii_lowercase().contains(".pkg") => ".pkg",
+            AppInstallKind::MacPackage => ".dmg",
+            AppInstallKind::ReplaceBinary => "",
+        }
     ));
     download_file(url, &tmp, cancel, progress)?;
+    if let Some(cmd) = installer_command(kind, &tmp) {
+        let status = std::process::Command::new(&cmd[0])
+            .args(&cmd[1..])
+            .status()
+            .map_err(|e| e.to_string())?;
+        if !status.success() {
+            return Err(format!("installer exited with {status}"));
+        }
+        return Ok(tmp);
+    }
     replace_executable(&tmp, current_exe)?;
     Ok(current_exe.to_path_buf())
 }
@@ -647,6 +701,36 @@ mod tests {
         assert!((p.fraction() - 0.5).abs() < f64::EPSILON);
         assert!(p.label().contains('/'));
         assert_eq!(DownloadProgress::default().fraction(), 0.0);
+    }
+
+    #[test]
+    fn app_install_kind_classifies_os_packages() {
+        assert_eq!(
+            app_install_kind("https://example.com/app.msi?x=1"),
+            AppInstallKind::WindowsInstaller
+        );
+        assert_eq!(
+            app_install_kind("https://example.com/Setup.exe"),
+            AppInstallKind::WindowsInstaller
+        );
+        assert_eq!(
+            app_install_kind("https://example.com/app.dmg"),
+            AppInstallKind::MacPackage
+        );
+        assert_eq!(
+            app_install_kind("https://example.com/app.AppImage"),
+            AppInstallKind::ReplaceBinary
+        );
+        let msi = installer_command(
+            AppInstallKind::WindowsInstaller,
+            Path::new("C:\\Temp\\app.msi"),
+        )
+        .unwrap();
+        assert_eq!(msi[0], "msiexec");
+        assert!(msi.iter().any(|a| a.ends_with("app.msi")));
+        let dmg = installer_command(AppInstallKind::MacPackage, Path::new("/tmp/app.dmg")).unwrap();
+        assert_eq!(dmg, vec!["open".to_string(), "/tmp/app.dmg".into()]);
+        assert!(installer_command(AppInstallKind::ReplaceBinary, Path::new("/bin/app")).is_none());
     }
 
     #[test]

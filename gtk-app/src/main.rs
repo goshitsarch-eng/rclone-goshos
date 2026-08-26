@@ -235,6 +235,32 @@ fn register_application_options(app: &adw::Application) {
         None,
     );
     add(
+        "backends",
+        OptionArg::None,
+        "Open the Backends dialog",
+        None,
+    );
+    add(
+        "rclone-flags",
+        OptionArg::None,
+        "Open the Rclone Flags dialog",
+        None,
+    );
+    add("flags", OptionArg::None, "Alias for --rclone-flags", None);
+    add(
+        "templates",
+        OptionArg::None,
+        "Open the Templates dialog",
+        None,
+    );
+    add(
+        "export",
+        OptionArg::None,
+        "Open the Export backup dialog",
+        None,
+    );
+    add("repair", OptionArg::None, "Open the Repair sheet", None);
+    add(
         "remote-config",
         OptionArg::String,
         "Open remote configuration",
@@ -316,6 +342,12 @@ fn command_line_option_flags(
         "logs",
         "auto-add",
         "shortcuts",
+        "backends",
+        "rclone-flags",
+        "flags",
+        "templates",
+        "export",
+        "repair",
         "remote-config",
         "step",
         "profile",

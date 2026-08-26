@@ -43,6 +43,11 @@ pub enum NavTarget {
         remote: Option<String>,
     },
     Shortcuts,
+    Backends,
+    Flags,
+    Templates,
+    Export,
+    Repair,
 }
 
 impl NavTarget {
@@ -302,6 +307,11 @@ pub fn parse_launch_args(args: &[String], standalone_dialogs: bool) -> Option<La
                 });
             }
             "--shortcuts" => target = Some(NavTarget::Shortcuts),
+            "--backends" => target = Some(NavTarget::Backends),
+            "--rclone-flags" | "--flags" => target = Some(NavTarget::Flags),
+            "--templates" => target = Some(NavTarget::Templates),
+            "--export" => target = Some(NavTarget::Export),
+            "--repair" => target = Some(NavTarget::Repair),
             "--auto-add" => auto_add = true,
             "--remote-config" => {
                 if let Some(name) = value.filter(|v| !v.is_empty() && !v.starts_with('-')) {
@@ -444,6 +454,11 @@ pub fn parse_route_url(input: &str) -> Option<NavTarget> {
             remote: parts.next().map(decode_segment).and_then(|s| nonempty(&s)),
         }),
         "shortcuts" | "keyboard-shortcuts" => Some(NavTarget::Shortcuts),
+        "backends" | "backend" => Some(NavTarget::Backends),
+        "flags" | "rclone-flags" => Some(NavTarget::Flags),
+        "templates" => Some(NavTarget::Templates),
+        "export" => Some(NavTarget::Export),
+        "repair" => Some(NavTarget::Repair),
         _ => None,
     }
 }
@@ -525,6 +540,29 @@ fn is_standalone_target(
 /// detached window, matching Angular's Files overlay from those views.
 pub fn overlay_files_for_workspace(workspace: &str) -> bool {
     matches!(workspace, "main_menu" | "flow")
+}
+
+/// How the titlebar / Ctrl+B should open a workspace relative to `default_view`.
+/// Non-default targets overlay (detached window) so the base view stays put,
+/// matching Angular `openBrowserOverlay` / `openFlowOverlay` / `openMainUiOverlay`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WorkspaceOpen {
+    SwitchStack,
+    OverlayFiles,
+    OverlayFlow,
+    OverlayDashboard,
+}
+
+pub fn workspace_open_plan(default_view: &str, target: &str) -> WorkspaceOpen {
+    if target == default_view {
+        return WorkspaceOpen::SwitchStack;
+    }
+    match target {
+        "nautilus" => WorkspaceOpen::OverlayFiles,
+        "flow" => WorkspaceOpen::OverlayFlow,
+        "main_menu" => WorkspaceOpen::OverlayDashboard,
+        _ => WorkspaceOpen::SwitchStack,
+    }
 }
 
 #[cfg(test)]
@@ -763,6 +801,14 @@ mod tests {
             parse_route_url("#/keyboard-shortcuts"),
             Some(NavTarget::Shortcuts)
         );
+        assert_eq!(parse_route_url("#/backends"), Some(NavTarget::Backends));
+        assert_eq!(
+            parse_route_url("rclone-manager://flags"),
+            Some(NavTarget::Flags)
+        );
+        assert_eq!(parse_route_url("#/templates"), Some(NavTarget::Templates));
+        assert_eq!(parse_route_url("#/export"), Some(NavTarget::Export));
+        assert_eq!(parse_route_url("#/repair"), Some(NavTarget::Repair));
         assert_eq!(
             parse_route_url("rclone-manager://dashboard/mount/testdrive"),
             Some(NavTarget::Dashboard {
@@ -999,6 +1045,26 @@ mod tests {
         assert!(overlay_files_for_workspace("flow"));
         assert!(!overlay_files_for_workspace("nautilus"));
         assert!(!overlay_files_for_workspace(""));
+        assert_eq!(
+            workspace_open_plan("main_menu", "nautilus"),
+            WorkspaceOpen::OverlayFiles
+        );
+        assert_eq!(
+            workspace_open_plan("main_menu", "flow"),
+            WorkspaceOpen::OverlayFlow
+        );
+        assert_eq!(
+            workspace_open_plan("nautilus", "main_menu"),
+            WorkspaceOpen::OverlayDashboard
+        );
+        assert_eq!(
+            workspace_open_plan("main_menu", "main_menu"),
+            WorkspaceOpen::SwitchStack
+        );
+        assert_eq!(
+            workspace_open_plan("nautilus", "nautilus"),
+            WorkspaceOpen::SwitchStack
+        );
     }
 
     #[test]
@@ -1050,5 +1116,19 @@ mod tests {
         assert!(query_flag("autoAdd=true&x=1", "autoAdd"));
         assert!(query_flag("autoAdd", "autoAdd"));
         assert!(!query_flag("autoAdd=false", "autoAdd"));
+        assert_eq!(
+            parse_launch_args(&["app".into(), "--backends".into()], false),
+            Some(LaunchRequest {
+                target: NavTarget::Backends,
+                standalone: false,
+            })
+        );
+        assert_eq!(
+            parse_launch_args(&["app".into(), "--rclone-flags".into()], false),
+            Some(LaunchRequest {
+                target: NavTarget::Flags,
+                standalone: false,
+            })
+        );
     }
 }

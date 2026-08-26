@@ -649,3 +649,7 @@ This client is the GTK 4 + libadwaita desktop UI. It talks to a local `rclone rc
 - Updates hides app Install on Flatpak/portable and links Flathub/download page
 - `Ctrl+?` opens keyboard shortcuts (same as Angular; `Ctrl+Shift+?` still works)
 - Remote detail Monitoring/Configuration tab is remembered per remote
+- Titlebar / Ctrl+B / Flow peek overlay a detached workspace when the target is not `default_view` (Angular overlay model)
+- Global Logs dialog has a Remote Filter dropdown (All + remotes); `--logs REMOTE` locks the dropdown
+- `--backends`, `--rclone-flags`, `--templates`, `--export`, `--repair` and `#/backends|flags|templates|export|repair` open those dialogs
+- App update install launches `msiexec` / `open` for Windows MSI/EXE and macOS DMG/PKG instead of replacing the binary

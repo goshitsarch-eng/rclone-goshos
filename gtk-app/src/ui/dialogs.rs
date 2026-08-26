@@ -1814,6 +1814,49 @@ pub fn logs(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, remote: Option<String>)
             apply(&search.text());
         });
     }
+    let remote_names = {
+        let mut names: Vec<String> = ctx
+            .snapshot
+            .borrow()
+            .remotes
+            .iter()
+            .map(|r| r.name.clone())
+            .collect();
+        for key in ctx.store.borrow().logs.keys() {
+            if key != "_engine" && !names.iter().any(|n| n == key) {
+                names.push(key.clone());
+            }
+        }
+        names.sort();
+        names
+    };
+    let remote_labels: Vec<String> = std::iter::once(ctx.t_or("common.all", "All"))
+        .chain(remote_names.iter().cloned())
+        .collect();
+    let remote_label_refs: Vec<&str> = remote_labels.iter().map(String::as_str).collect();
+    let remotes_model = gtk::StringList::new(&remote_label_refs);
+    let remote_drop = gtk::DropDown::new(Some(remotes_model), gtk::Expression::NONE);
+    remote_drop.set_tooltip_text(Some(&ctx.t_or("alerts.remoteFilter", "Remote Filter")));
+    if let Some(locked_name) = locked.as_deref() {
+        if let Some(idx) = remote_names.iter().position(|n| n == locked_name) {
+            remote_drop.set_selected((idx + 1) as u32);
+        }
+        remote_drop.set_sensitive(false);
+    } else {
+        let apply = apply.clone();
+        let search = search.clone();
+        let remote_filter = remote_filter.clone();
+        let remote_names = remote_names.clone();
+        remote_drop.connect_selected_notify(move |drop| {
+            let idx = drop.selected() as usize;
+            *remote_filter.borrow_mut() = if idx == 0 {
+                None
+            } else {
+                remote_names.get(idx - 1).cloned()
+            };
+            apply(&search.text());
+        });
+    }
     let reload = {
         let ctx = ctx.clone();
         let entries = entries.clone();
@@ -1951,6 +1994,7 @@ pub fn logs(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, remote: Option<String>)
     toolbar.set_margin_top(8);
     search.set_hexpand(true);
     toolbar.append(&level);
+    toolbar.append(&remote_drop);
     toolbar.append(&search);
     toolbar.append(&refresh);
     toolbar.append(&copy_all);
