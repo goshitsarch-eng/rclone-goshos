@@ -97,9 +97,9 @@ fn main() {
             .map(|s| s.to_str().unwrap_or_default().to_string())
             .collect();
         cli::merge_option_flags(&mut args, &command_line_option_flags(cmdline));
-        if !cmdline.is_remote() && !args.iter().any(|arg| arg.starts_with("--")) {
+        if !cmdline.is_remote() {
             let env_args: Vec<String> = std::env::args().collect();
-            if env_args.iter().any(|arg| arg.starts_with("--")) {
+            if env_args.len() > 1 {
                 args = env_args;
             }
         }

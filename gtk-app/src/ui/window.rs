@@ -670,6 +670,10 @@ fn app_menu(ctx: &AppCtx) -> gio::Menu {
         Some("win.alerts"),
     );
     prefs.append(
+        Some(&ctx.t_or("modals.logs.terminalOutput", "Logs")),
+        Some("win.logs"),
+    );
+    prefs.append(
         Some(&ctx.t_or("titlebar.menu.shortcuts", "Keyboard Shortcuts")),
         Some("win.shortcuts"),
     );
@@ -885,6 +889,14 @@ fn install_actions(
         add_action(
             "alerts",
             Box::new(move || dialogs::alerts(&window, ctx.clone())),
+        );
+    }
+    {
+        let ctx = ctx.clone();
+        let window = window.clone();
+        add_action(
+            "logs",
+            Box::new(move || dialogs::logs(&window, ctx.clone(), None)),
         );
     }
     {
@@ -1449,6 +1461,30 @@ fn apply_nav(
     toast: &adw::ToastOverlay,
     target: NavTarget,
 ) {
+    if matches!(
+        target,
+        NavTarget::Updates
+            | NavTarget::Alerts
+            | NavTarget::Preferences { .. }
+            | NavTarget::RemoteConfig { .. }
+            | NavTarget::Onboarding
+            | NavTarget::About
+            | NavTarget::Logs { .. }
+            | NavTarget::Shortcuts
+            | NavTarget::Job { .. }
+    ) && !window.is_mapped()
+    {
+        let ctx = ctx.clone();
+        let stack = stack.clone();
+        let dashboard = dashboard.clone();
+        let flow = flow.clone();
+        let window = window.clone();
+        let toast = toast.clone();
+        glib::idle_add_local_once(move || {
+            apply_nav(&ctx, &stack, &dashboard, &flow, &window, &toast, target);
+        });
+        return;
+    }
     match target {
         NavTarget::Dashboard { tab, remote } => {
             stack.set_visible_child_name("main_menu");

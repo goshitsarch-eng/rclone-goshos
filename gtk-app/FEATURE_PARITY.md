@@ -638,7 +638,7 @@ This client is the GTK 4 + libadwaita desktop UI. It talks to a local `rclone rc
 - Dashboard sidebar status uses mount/serve/job icons with translated tooltips
 - Dashboard General/Mount/Operations/Serve tab persists as `runtime.dashboard_tab`
 - Remote-config deep links honor `?autoAdd=true` / `--auto-add`
-- `#/logs/{remote}` and `--logs REMOTE` open remote-scoped logs
+- `#/logs/{remote}` and `--logs REMOTE` open remote-scoped logs; hamburger **Logs** is `win.logs`
 - Zero-remotes overview shows Quick Add / Detailed Remote CTAs
 - After rclone install, titlebar/banner prompt to restart the engine
 - Updates hides app Install on Flatpak/portable and links Flathub/download page
