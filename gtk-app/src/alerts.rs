@@ -284,14 +284,7 @@ mod tests {
 
     #[test]
     fn mount_and_serve_start_and_stop() {
-        let started = mount_events(
-            &[],
-            &[MountedRemote {
-                fs: "drive:".into(),
-                mount_point: "/mnt/drive".into(),
-            }],
-            &tf,
-        );
+        let started = mount_events(&[], &[MountedRemote::new("drive:", "/mnt/drive")], &tf);
         assert_eq!(started.len(), 1);
         assert_eq!(started[0].kind, AlertEventKind::Mount);
         assert_eq!(started[0].remote, "drive");

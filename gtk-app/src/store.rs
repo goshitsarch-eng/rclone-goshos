@@ -2032,29 +2032,23 @@ mod tests {
     #[test]
     fn mounts_alias_target_and_named_point() {
         let alias = json!({ "type": "alias", "remote": "/tmp/rclone-test-remote" });
-        let mounts = vec![MountedRemote {
-            fs: "/tmp/rclone-test-remote".into(),
-            mount_point: "/home/ubuntu/rclone-manager/testdrive".into(),
-        }];
+        let mounts = vec![MountedRemote::new(
+            "/tmp/rclone-test-remote",
+            "/home/ubuntu/rclone-manager/testdrive",
+        )];
         assert!(remote_is_mounted("testdrive", &alias, &mounts));
         assert!(!remote_is_mounted(
             "dummyexport",
             &json!({ "type": "local" }),
             &mounts
         ));
-        let named = vec![MountedRemote {
-            fs: "/home/ubuntu".into(),
-            mount_point: "/tmp/mnt/dummyexport".into(),
-        }];
+        let named = vec![MountedRemote::new("/home/ubuntu", "/tmp/mnt/dummyexport")];
         assert!(remote_is_mounted(
             "dummyexport",
             &json!({ "type": "local" }),
             &named
         ));
-        let prefixed = vec![MountedRemote {
-            fs: "drive:Photos".into(),
-            mount_point: "/mnt/drive".into(),
-        }];
+        let prefixed = vec![MountedRemote::new("drive:Photos", "/mnt/drive")];
         assert!(remote_is_mounted(
             "drive",
             &json!({ "type": "drive" }),
@@ -2822,10 +2816,7 @@ mod tests {
             .automation_last_run
             .insert("remote:drive:sync:default".into(), Utc::now());
         let snap = RuntimeSnapshot {
-            mounts: vec![MountedRemote {
-                fs: "drive:Photos".into(),
-                mount_point: "/mnt/drive".into(),
-            }],
+            mounts: vec![MountedRemote::new("drive:Photos", "/mnt/drive")],
             serves: vec![ServeItem {
                 id: "s1".into(),
                 addr: "127.0.0.1:8080".into(),

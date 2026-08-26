@@ -422,6 +422,33 @@ impl AppCtx {
         self.persist();
     }
 
+    pub fn stamp_mount(&self, fs: &str, mount_point: &str, profile: &str, origin: &str) {
+        if mount_point.is_empty() {
+            return;
+        }
+        let mut snap = self.snapshot.borrow_mut();
+        if let Some(mount) = snap
+            .mounts
+            .iter_mut()
+            .find(|item| item.mount_point == mount_point)
+        {
+            if !profile.is_empty() {
+                mount.profile = profile.to_string();
+            }
+            if !origin.is_empty() {
+                mount.origin = origin.to_string();
+            }
+            if !fs.is_empty() {
+                mount.fs = fs.to_string();
+            }
+            return;
+        }
+        let mut mount = crate::rclone::MountedRemote::new(fs, mount_point);
+        mount.profile = profile.to_string();
+        mount.origin = origin.to_string();
+        snap.mounts.push(mount);
+    }
+
     pub fn backend_key(&self) -> String {
         crate::layout::backend_key(&self.settings.borrow().core.active_backend)
     }
@@ -685,7 +712,11 @@ impl AppCtx {
             return;
         };
         let dump = self.cached_dump(&client);
-        let mounts = client.list_mounts().unwrap_or_default();
+        let previous_mounts = self.snapshot.borrow().mounts.clone();
+        let mounts = crate::rclone::merge_mount_context(
+            client.list_mounts().unwrap_or_default(),
+            &previous_mounts,
+        );
         let serves = client.serve_list().unwrap_or_default();
         let stats = client.stats(None).unwrap_or(serde_json::json!({}));
         let disks = client
@@ -706,7 +737,6 @@ impl AppCtx {
         }
         let remotes = crate::store::build_remote_infos(&dump, &mounts, &serves, &jobs, &hidden);
         let previous = self.snapshot.borrow().jobs.clone();
-        let previous_mounts = self.snapshot.borrow().mounts.clone();
         let previous_serves = self.snapshot.borrow().serves.clone();
         let was_online = self.snapshot.borrow().engine_online;
         notify_job_changes(self, &previous, &jobs);
@@ -737,13 +767,16 @@ impl AppCtx {
         let client = self
             .client()
             .ok_or_else(|| self.t_or("errors.engineOffline", "rclone engine is offline"))?;
-        let mounts = client.list_mounts().map_err(|e| e.to_string())?;
+        let previous_mounts = self.snapshot.borrow().mounts.clone();
+        let mounts = crate::rclone::merge_mount_context(
+            client.list_mounts().map_err(|e| e.to_string())?,
+            &previous_mounts,
+        );
         let dump = self.cached_dump(&client);
         let serves = self.snapshot.borrow().serves.clone();
         let jobs = self.snapshot.borrow().jobs.clone();
         let hidden = self.store.borrow().hidden_remotes.clone();
         let remotes = crate::store::build_remote_infos(&dump, &mounts, &serves, &jobs, &hidden);
-        let previous_mounts = self.snapshot.borrow().mounts.clone();
         emit_runtime_alerts(self, &previous_mounts, &mounts, &serves, &serves);
         let count = mounts.len();
         let mut snap = self.snapshot.borrow_mut();

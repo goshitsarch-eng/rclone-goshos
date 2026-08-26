@@ -360,7 +360,7 @@ pub fn handle(ctx: &AppCtx, cmd: TrayAction) {
                     .as_ref()
                     .and_then(|m| m.get_profile(OperationType::Mount, &profile))
                     .unwrap_or_default();
-                if let Err(e) = start_profile(
+                match start_profile(
                     &c,
                     &remote,
                     OperationType::Mount,
@@ -368,13 +368,19 @@ pub fn handle(ctx: &AppCtx, cmd: TrayAction) {
                     meta.as_ref(),
                     "tray",
                 ) {
-                    log::warn!("tray mount {remote} failed: {e}");
-                    let point = dirs::home_dir()
-                        .unwrap_or_default()
-                        .join("mnt")
-                        .join(&remote);
-                    let _ = std::fs::create_dir_all(&point);
-                    let _ = c.mount(&remote_fs(&remote, ""), &point.to_string_lossy(), "mount");
+                    Ok(point) => ctx.stamp_mount(&remote_fs(&remote, ""), &point, &profile, "tray"),
+                    Err(e) => {
+                        log::warn!("tray mount {remote} failed: {e}");
+                        let point = dirs::home_dir()
+                            .unwrap_or_default()
+                            .join("mnt")
+                            .join(&remote);
+                        let _ = std::fs::create_dir_all(&point);
+                        let point = point.to_string_lossy().into_owned();
+                        if c.mount(&remote_fs(&remote, ""), &point, "mount").is_ok() {
+                            ctx.stamp_mount(&remote_fs(&remote, ""), &point, &profile, "tray");
+                        }
+                    }
                 }
             }
             ctx.refresh_runtime();

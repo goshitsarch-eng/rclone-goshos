@@ -3713,6 +3713,7 @@ fn toggle_mount(ctx: &AppCtx, name: &str, mounted: bool, toast: &adw::ToastOverl
             "dashboard",
         ) {
             Ok(id) => {
+                ctx.stamp_mount(&remote_fs(name, ""), &id, &pname, "dashboard");
                 crate::jobs::remember_started(
                     &mut ctx.store.borrow_mut().job_meta,
                     &id,
@@ -3737,15 +3738,18 @@ fn toggle_mount(ctx: &AppCtx, name: &str, mounted: bool, toast: &adw::ToastOverl
     let mount_point = default_mount_point(name);
     let _ = std::fs::create_dir_all(&mount_point);
     match client.mount(&remote_fs(name, ""), &mount_point, "mount") {
-        Ok(_) => toast.add_toast(adw::Toast::new(&ctx.tf(
-            "notification.body.mountSucceeded",
-            &[
-                ("remote", name),
-                ("profile", pname.as_str()),
-                ("backend", "local"),
-                ("mountPoint", &mount_point),
-            ],
-        ))),
+        Ok(_) => {
+            ctx.stamp_mount(&remote_fs(name, ""), &mount_point, &pname, "dashboard");
+            toast.add_toast(adw::Toast::new(&ctx.tf(
+                "notification.body.mountSucceeded",
+                &[
+                    ("remote", name),
+                    ("profile", pname.as_str()),
+                    ("backend", "local"),
+                    ("mountPoint", &mount_point),
+                ],
+            )));
+        }
         Err(e) => toast.add_toast(adw::Toast::new(&e.to_string())),
     }
     ctx.refresh_runtime();

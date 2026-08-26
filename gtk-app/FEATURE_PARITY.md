@@ -522,6 +522,7 @@ This client is the GTK 4 + libadwaita desktop UI. It talks to a local `rclone rc
 - Engine online/offline transitions emit alert events
 - Switching extra RC backends parks `job_history` / `job_meta` (and in-session mounts/serves) per backend so job IDs do not bleed across rcd instances
 - Flag editors call `options/blocks` and keep empty named groups when `options/info` omits them
+- Live mounts keep profile/origin across RC refresh and backend switches (rclone has no profile field)
 
 ## Still deepening
 

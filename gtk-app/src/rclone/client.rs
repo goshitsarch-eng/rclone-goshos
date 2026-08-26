@@ -1013,10 +1013,50 @@ impl DirEntry {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct MountedRemote {
     pub fs: String,
     pub mount_point: String,
+    pub profile: String,
+    pub quick_run_id: String,
+    pub origin: String,
+}
+
+impl MountedRemote {
+    pub fn new(fs: impl Into<String>, mount_point: impl Into<String>) -> Self {
+        Self {
+            fs: fs.into(),
+            mount_point: mount_point.into(),
+            ..Default::default()
+        }
+    }
+}
+
+/// Carry profile/origin across RC refreshes (rclone has no profile field).
+pub fn merge_mount_context(
+    incoming: Vec<MountedRemote>,
+    existing: &[MountedRemote],
+) -> Vec<MountedRemote> {
+    incoming
+        .into_iter()
+        .map(|mut mount| {
+            if let Some(prev) = existing
+                .iter()
+                .find(|item| item.mount_point == mount.mount_point)
+            {
+                if mount.profile.is_empty() {
+                    mount.profile = prev.profile.clone();
+                }
+                if mount.quick_run_id.is_empty() {
+                    mount.quick_run_id = prev.quick_run_id.clone();
+                }
+                if mount.origin.is_empty() {
+                    mount.origin = prev.origin.clone();
+                }
+            }
+            mount
+        })
+        .collect()
 }
 
 /// rclone ≥1.64 returns `{ mountPoint: fs }`. 1.60 returns
@@ -1028,10 +1068,7 @@ pub fn parse_mount_points(value: &Value) -> Vec<MountedRemote> {
     if let Some(obj) = points.as_object() {
         return obj
             .iter()
-            .map(|(point, fs)| MountedRemote {
-                fs: fs.as_str().unwrap_or_default().to_string(),
-                mount_point: point.clone(),
-            })
+            .map(|(point, fs)| MountedRemote::new(fs.as_str().unwrap_or_default(), point.clone()))
             .collect();
     }
     let Some(arr) = points.as_array() else {
@@ -1050,7 +1087,7 @@ pub fn parse_mount_points(value: &Value) -> Vec<MountedRemote> {
                 .and_then(|v| v.as_str())
                 .unwrap_or_default()
                 .to_string();
-            Some(MountedRemote { fs, mount_point })
+            Some(MountedRemote::new(fs, mount_point))
         })
         .collect()
 }
@@ -1070,10 +1107,10 @@ pub fn parse_proc_mounts(text: &str) -> Vec<MountedRemote> {
             if fstype != "fuse.rclone" {
                 return None;
             }
-            Some(MountedRemote {
-                fs: unescape_mount_field(fs),
-                mount_point: unescape_mount_field(point),
-            })
+            Some(MountedRemote::new(
+                unescape_mount_field(fs),
+                unescape_mount_field(point),
+            ))
         })
         .collect()
 }
@@ -2065,6 +2102,19 @@ mod tests {
             mounts[0].mount_point,
             "/home/ubuntu/rclone-manager/testdrive"
         );
+    }
+
+    #[test]
+    fn merges_mount_profile_context() {
+        let live = vec![MountedRemote::new("drive:", "/mnt/drive")];
+        let mut remembered = MountedRemote::new("drive:", "/mnt/drive");
+        remembered.profile = "nightly".into();
+        remembered.origin = "dashboard".into();
+        let merged = merge_mount_context(live, &[remembered]);
+        assert_eq!(merged[0].profile, "nightly");
+        assert_eq!(merged[0].origin, "dashboard");
+        let fresh = merge_mount_context(vec![MountedRemote::new("other:", "/mnt/other")], &[]);
+        assert!(fresh[0].profile.is_empty());
     }
 
     #[test]

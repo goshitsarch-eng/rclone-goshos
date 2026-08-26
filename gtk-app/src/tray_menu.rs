@@ -405,10 +405,7 @@ mod tests {
             completed: json!([]),
             parent_job_id: None,
         }];
-        let mounts = vec![MountedRemote {
-            fs: "drive:".into(),
-            mount_point: "/mnt/drive".into(),
-        }];
+        let mounts = vec![MountedRemote::new("drive:", "/mnt/drive")];
         let plan = plan_tray(&remotes, &store, &jobs, &mounts, &[], 8);
         assert_eq!(
             plan.first().and_then(|i| i.action.clone()),

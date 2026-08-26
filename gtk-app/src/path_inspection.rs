@@ -366,10 +366,7 @@ mod tests {
     #[test]
     fn detects_live_mount_collision() {
         let store = AppStore::default();
-        let live = [MountedRemote {
-            fs: "photos:".into(),
-            mount_point: "/mnt/photos".into(),
-        }];
+        let live = [MountedRemote::new("photos:", "/mnt/photos")];
         let hit = find_mount_collision(&store, "/mnt/photos", "drive", &live).unwrap();
         assert_eq!(hit.remote, "photos");
         assert_eq!(hit.profile, "live");

@@ -1845,8 +1845,12 @@ pub fn profile_usage(
             if find_active_job(jobs, remote, op, profile).is_some() {
                 usage.jobs = 1;
             }
-            if op == OperationType::Mount && find_active_mount(mounts, remote).is_some() {
-                usage.mounts = 1;
+            if op == OperationType::Mount {
+                if let Some(mount) = find_active_mount(mounts, remote) {
+                    if mount.profile.is_empty() || mount.profile == profile {
+                        usage.mounts = 1;
+                    }
+                }
             }
             if op == OperationType::Serve && find_active_serve(serves, remote).is_some() {
                 usage.serves = 1;
@@ -1861,8 +1865,10 @@ pub fn profile_usage(
                         && (job.profile.is_empty() || job.profile == profile)
                 })
                 .count();
-            if find_active_mount(mounts, remote).is_some() {
-                usage.mounts = 1;
+            if let Some(mount) = find_active_mount(mounts, remote) {
+                if mount.profile.is_empty() || mount.profile == profile {
+                    usage.mounts = 1;
+                }
             }
             if find_active_serve(serves, remote).is_some() {
                 usage.serves = 1;
@@ -3260,10 +3266,7 @@ mod tests {
             Some(1)
         );
         assert!(find_active_job(&jobs, "drive", OperationType::Sync, "missing").is_none());
-        let mounts = vec![MountedRemote {
-            fs: "drive:photos".into(),
-            mount_point: "/mnt/drive".into(),
-        }];
+        let mounts = vec![MountedRemote::new("drive:photos", "/mnt/drive")];
         assert!(find_active_mount(&mounts, "drive").is_some());
         assert!(find_active_mount(&mounts, "dropbox").is_none());
         let serves = vec![ServeItem {
