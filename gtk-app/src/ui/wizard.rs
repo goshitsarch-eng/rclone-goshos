@@ -1,5 +1,6 @@
 use super::dialogs;
 use super::AppCtx;
+use crate::config_steps::{self, wizard_steps, EditorStep, HELPERS, QUICK_ADD_OPS};
 use crate::flags::parse_flag_value;
 use crate::interactive::{
     allows_custom_value, apply_interactive_response, example_label, is_continue_disabled,
@@ -152,10 +153,10 @@ fn present_ex(
     } else if oauth_only {
         ctx.t_or("wizards.quickAdd.title", "Quick Add Remote")
     } else {
-        ctx.t_or("general.remoteConfig.title.add", "Remote Configuration")
+        ctx.t_or("modals.remoteConfig.title.add", "Add New Remote")
     };
     dialog.set_title(&title);
-    dialog.set_content_width(680);
+    dialog.set_content_width(980);
     dialog.set_content_height(780);
 
     let mut providers = ctx
@@ -476,15 +477,8 @@ fn present_ex(
     }
     let op_flags: Rc<RefCell<Vec<(OperationType, adw::SwitchRow, adw::EntryRow, adw::EntryRow)>>> =
         Rc::new(RefCell::new(Vec::new()));
+    let mut op_pages: Vec<(OperationType, adw::PreferencesPage)> = Vec::new();
     let ops_group = adw::PreferencesGroup::new();
-    const QUICK_ADD_OPS: [OperationType; 6] = [
-        OperationType::Mount,
-        OperationType::Sync,
-        OperationType::Copy,
-        OperationType::Bisync,
-        OperationType::Move,
-        OperationType::Serve,
-    ];
     let ops_for_page: &[OperationType] = if oauth_only {
         &QUICK_ADD_OPS
     } else {
@@ -596,9 +590,27 @@ fn present_ex(
                 crate::picker::FilePickerConfig::folders(),
             );
         }
-        ops_group.add(&enable);
-        ops_group.add(&osrc);
-        ops_group.add(&odst);
+        if oauth_only {
+            ops_group.add(&enable);
+            ops_group.add(&osrc);
+            ops_group.add(&odst);
+        } else {
+            let page = adw::PreferencesPage::new();
+            let group = adw::PreferencesGroup::new();
+            group.set_title(&ctx.t_or(
+                &format!("modals.remoteConfig.steps.{}", op.as_str()),
+                op.api_label(),
+            ));
+            group.set_description(Some(&ctx.t_or(
+                "modals.remoteConfig.steps.profiles",
+                "Enable this operation and set source / destination paths.",
+            )));
+            group.add(&enable);
+            group.add(&osrc);
+            group.add(&odst);
+            page.add(&group);
+            op_pages.push((op, page));
+        }
         op_flags.borrow_mut().push((op, enable, osrc, odst));
     }
     if let Some(ref meta) = existing_meta {
@@ -952,10 +964,26 @@ fn present_ex(
             cmd_group.set_visible(row.is_active());
         });
     }
+    let defaults = adw::PreferencesGroup::new();
+    defaults.set_title(&ctx.t_or("modals.remoteConfig.steps.profiles", "Default profiles"));
+    defaults.add(&mount);
+    defaults.add(&src);
+    defaults.add(&dst);
+    defaults.add(&serve);
+    defaults.add(&mount_type);
+    defaults.add(&cron);
+    let cron_row = super::dialogs::attach_cron_builder_row(&cron, &ctx);
+    defaults.add(&cron_row);
+    defaults.add(&tray);
+    defaults.add(&autostart);
+    defaults.add(&cli);
+    obscure.add_to_group(&defaults);
+    setup.add(&defaults);
+
     nav.add_titled(
         &setup,
-        Some("setup"),
-        &ctx.t_or("wizards.remoteConfig.remoteType", "Provider"),
+        Some("remote"),
+        &ctx.t_or("modals.remoteConfig.steps.remote", "Remote"),
     );
     if oauth_only {
         let operations = adw::PreferencesPage::new();
@@ -965,6 +993,17 @@ fn present_ex(
             Some("operations"),
             &ctx.t_or("modals.quickAdd.operations.title", "Operations"),
         );
+    } else {
+        for (op, page) in op_pages {
+            nav.add_titled(
+                &page,
+                Some(op.as_str()),
+                &ctx.t_or(
+                    &format!("modals.remoteConfig.steps.{}", op.as_str()),
+                    op.api_label(),
+                ),
+            );
+        }
     }
 
     let interactive_box = gtk::Box::new(gtk::Orientation::Vertical, 10);
@@ -1011,30 +1050,21 @@ fn present_ex(
         &ctx.t_or("wizards.remoteConfig.authenticationMethod", "Authorize"),
     );
 
-    let profiles = adw::PreferencesPage::new();
-    let pgroup = adw::PreferencesGroup::new();
-    pgroup.set_title(&ctx.t_or("modals.remoteConfig.steps.profiles", "Default profiles"));
-    pgroup.add(&mount);
-    pgroup.add(&src);
-    pgroup.add(&dst);
-    pgroup.add(&serve);
-    pgroup.add(&mount_type);
-    pgroup.add(&cron);
-    let cron_row = super::dialogs::attach_cron_builder_row(&cron, &ctx);
-    pgroup.add(&cron_row);
-    pgroup.add(&tray);
-    pgroup.add(&autostart);
-    pgroup.add(&cli);
-    obscure.add_to_group(&pgroup);
-    profiles.add(&pgroup);
+    let helper_views: Rc<RefCell<Vec<(&'static str, gtk::TextView)>>> =
+        Rc::new(RefCell::new(Vec::new()));
     if !oauth_only {
-        profiles.add(&ops_group);
+        let restrict = ctx.settings.borrow().general.restrict;
+        for (kind, label, _) in HELPERS.iter().filter(|(kind, _, _)| *kind != "runtime") {
+            let (page, view) =
+                helper_json_page(&ctx, kind, label, existing_meta.as_ref(), restrict);
+            helper_views.borrow_mut().push((*kind, view));
+            nav.add_titled(
+                &page,
+                Some(*kind),
+                &ctx.t_or(&format!("modals.remoteConfig.steps.{kind}"), label),
+            );
+        }
     }
-    nav.add_titled(
-        &profiles,
-        Some("profiles"),
-        &ctx.t_or("modals.remoteConfig.steps.profiles", "Profiles"),
-    );
 
     let runtime_name = adw::EntryRow::new();
     runtime_name.set_title(&ctx.t_or("remoteConfig.runtimeProfile", "Runtime profile"));
@@ -1113,23 +1143,216 @@ fn present_ex(
     runtime_scroll.set_child(Some(&runtime_view));
     runtime_group.add(&runtime_scroll);
     runtime_page.add(&runtime_group);
-    nav.add_titled(
-        &runtime_page,
-        Some("runtime"),
-        &ctx.t_or("modals.remoteConfig.steps.runtimeRemote", "Runtime"),
-    );
+    if !oauth_only {
+        nav.add_titled(
+            &runtime_page,
+            Some("runtime"),
+            &ctx.t_or("modals.remoteConfig.steps.runtimeRemote", "Runtime"),
+        );
+    }
 
-    let switcher = adw::ViewSwitcher::new();
-    switcher.set_stack(Some(&nav));
-    switcher.set_policy(adw::ViewSwitcherPolicy::Wide);
+    let steps = wizard_steps(oauth_only);
+    let current_idx = Rc::new(Cell::new(0));
+    let remote_valid = Rc::new(Cell::new(false));
+    let nav_locked = Rc::new(Cell::new(false));
+    {
+        let names = ctx.store.borrow().remote_names();
+        remote_valid.set(
+            crate::validators::validate_remote_name(&name.text(), &names, existing.as_deref())
+                .is_ok(),
+        );
+    }
+
+    let split = adw::OverlaySplitView::new();
+    split.set_min_sidebar_width(230.0);
+    split.set_show_sidebar(true);
+
+    let sidebar = gtk::ListBox::new();
+    sidebar.add_css_class("navigation-sidebar");
+    sidebar.set_selection_mode(gtk::SelectionMode::Single);
+    for step in &steps {
+        let row = adw::ActionRow::new();
+        row.set_title(&ctx.t_or(&step.i18n_key(), step.fallback_label()));
+        row.set_activatable(true);
+        row.add_prefix(&gtk::Image::from_icon_name(step.icon_name()));
+        sidebar.append(&row);
+    }
+    let side_scroll = gtk::ScrolledWindow::new();
+    side_scroll.set_vexpand(true);
+    side_scroll.set_child(Some(&sidebar));
+    split.set_sidebar(Some(&side_scroll));
+
+    let step_title = gtk::Label::new(Some(
+        &ctx.t_or("modals.remoteConfig.steps.remote", "Remote"),
+    ));
+    step_title.add_css_class("title-3");
+    step_title.set_xalign(0.0);
+    step_title.set_hexpand(true);
+    let side_toggle = gtk::Button::from_icon_name("sidebar-show-symbolic");
+    side_toggle.set_tooltip_text(Some(&ctx.t_or("sidebar.toggleSidebar", "Toggle Sidebar")));
+    {
+        let split = split.clone();
+        side_toggle.connect_clicked(move |_| {
+            split.set_show_sidebar(!split.shows_sidebar());
+        });
+    }
+    let title_row = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+    title_row.set_margin_start(12);
+    title_row.set_margin_end(12);
+    title_row.set_margin_top(10);
+    title_row.append(&side_toggle);
+    title_row.append(&step_title);
 
     let continue_btn = gtk::Button::with_label(&ctx.t_or(
         "wizards.remoteConfig.readyToContinue",
         "Continue / Authorize",
     ));
     continue_btn.add_css_class("suggested-action");
-    let save = gtk::Button::with_label(&ctx.t_or("common.save", "Save remote"));
+    let back = gtk::Button::with_label(&ctx.t_or("common.back", "Back"));
+    let next = gtk::Button::with_label(&ctx.t_or("common.next", "Next"));
+    next.add_css_class("suggested-action");
+    let save = gtk::Button::with_label(&ctx.t_or(
+        if existing.is_none() && clone_from.is_none() {
+            "common.create"
+        } else {
+            "common.save"
+        },
+        if existing.is_none() && clone_from.is_none() {
+            "Create"
+        } else {
+            "Save"
+        },
+    ));
     save.add_css_class("pill");
+
+    let refresh_nav: Rc<RefCell<Rc<dyn Fn()>>> = Rc::new(RefCell::new(Rc::new(|| {})));
+    let go_to: Rc<RefCell<Rc<dyn Fn(usize)>>> = Rc::new(RefCell::new(Rc::new(|_| {})));
+    {
+        let steps = steps.clone();
+        let current_idx = current_idx.clone();
+        let remote_valid = remote_valid.clone();
+        let nav_locked = nav_locked.clone();
+        let nav = nav.clone();
+        let refresh_nav = refresh_nav.clone();
+        *go_to.borrow_mut() = Rc::new(move |idx| {
+            if !config_steps::is_step_clickable(
+                idx,
+                current_idx.get(),
+                remote_valid.get(),
+                nav_locked.get(),
+            ) {
+                return;
+            }
+            let Some(step) = steps.get(idx).copied() else {
+                return;
+            };
+            current_idx.set(idx);
+            nav.set_visible_child_name(step.page_name());
+            refresh_nav.borrow()();
+        });
+    }
+    {
+        let steps = steps.clone();
+        let current_idx = current_idx.clone();
+        let remote_valid = remote_valid.clone();
+        let nav_locked = nav_locked.clone();
+        let nav = nav.clone();
+        let split = split.clone();
+        let sidebar = sidebar.clone();
+        let step_title = step_title.clone();
+        let back = back.clone();
+        let next = next.clone();
+        let continue_btn = continue_btn.clone();
+        let save = save.clone();
+        let ctx = ctx.clone();
+        *refresh_nav.borrow_mut() = Rc::new(move || {
+            let interactive = nav.visible_child_name().as_deref() == Some("interactive");
+            let locked = nav_locked.get() || interactive;
+            split.set_show_sidebar(!locked);
+            let idx = current_idx.get();
+            let step = steps.get(idx).copied().unwrap_or(EditorStep::Remote);
+            if !interactive {
+                nav.set_visible_child_name(step.page_name());
+                if let Some(row) = sidebar.row_at_index(idx as i32) {
+                    sidebar.select_row(Some(&row));
+                }
+            }
+            let title = if interactive {
+                ctx.t_or("wizards.remoteConfig.authenticationMethod", "Authorize")
+            } else {
+                ctx.t_or(&step.i18n_key(), step.fallback_label())
+            };
+            step_title.set_text(&title);
+            for (i, _) in steps.iter().enumerate() {
+                if let Some(row) = sidebar.row_at_index(i as i32) {
+                    row.set_sensitive(config_steps::is_step_clickable(
+                        i,
+                        idx,
+                        remote_valid.get(),
+                        locked,
+                    ));
+                }
+            }
+            back.set_visible(idx > 0 && !locked);
+            back.set_sensitive(!locked);
+            next.set_visible(idx + 1 < steps.len() && !locked);
+            next.set_sensitive(!config_steps::is_next_disabled(
+                step.is_remote(),
+                remote_valid.get(),
+                locked,
+            ));
+            continue_btn.set_sensitive(remote_valid.get());
+            save.set_visible(!locked);
+            save.set_sensitive(remote_valid.get() && !locked);
+        });
+    }
+    {
+        let current_idx = current_idx.clone();
+        let go_to = go_to.clone();
+        sidebar.connect_row_selected(move |_, row| {
+            let Some(row) = row else {
+                return;
+            };
+            let idx = row.index();
+            if idx < 0 || idx as usize == current_idx.get() {
+                return;
+            }
+            go_to.borrow()(idx as usize);
+        });
+    }
+    {
+        let current_idx = current_idx.clone();
+        let go_to = go_to.clone();
+        back.connect_clicked(move |_| {
+            if let Some(idx) = config_steps::prev_step_index(current_idx.get()) {
+                go_to.borrow()(idx);
+            }
+        });
+    }
+    {
+        let current_idx = current_idx.clone();
+        let go_to = go_to.clone();
+        let steps_len = steps.len();
+        next.connect_clicked(move |_| {
+            if let Some(idx) = config_steps::next_step_index(current_idx.get(), steps_len) {
+                go_to.borrow()(idx);
+            }
+        });
+    }
+    {
+        let remote_valid = remote_valid.clone();
+        let refresh_nav = refresh_nav.clone();
+        let ctx = ctx.clone();
+        let editing = existing.clone();
+        name.connect_changed(move |row| {
+            let names = ctx.store.borrow().remote_names();
+            remote_valid.set(
+                crate::validators::validate_remote_name(&row.text(), &names, editing.as_deref())
+                    .is_ok(),
+            );
+            refresh_nav.borrow()();
+        });
+    }
 
     {
         let ctx = ctx.clone();
@@ -1149,12 +1372,11 @@ fn present_ex(
         let custom_options = custom_options.clone();
         let json_mode = json_mode.clone();
         let json_view = json_view.clone();
-        let oauth_only = oauth_only;
+        let nav_locked = nav_locked.clone();
+        let refresh_nav = refresh_nav.clone();
+        let go_to = go_to.clone();
+        let steps = steps.clone();
         continue_btn.connect_clicked(move |_| {
-            if oauth_only && nav.visible_child_name().as_deref() == Some("setup") {
-                nav.set_visible_child_name("operations");
-                return;
-            }
             let remote_name = name.text().to_string();
             if remote_name.is_empty() {
                 return;
@@ -1229,7 +1451,13 @@ fn present_ex(
                             "rclone finished the interactive flow. Review profiles and save.",
                         ));
                         question_error.set_text("");
-                        nav.set_visible_child_name("profiles");
+                        nav_locked.set(false);
+                        if steps.len() > 1 {
+                            go_to.borrow()(1);
+                        } else {
+                            nav.set_visible_child_name("remote");
+                            refresh_nav.borrow()();
+                        }
                     } else {
                         apply_question_widgets(
                             &ctx,
@@ -1241,7 +1469,9 @@ fn present_ex(
                             &answer_switch,
                             &example_row,
                         );
+                        nav_locked.set(true);
                         nav.set_visible_child_name("interactive");
+                        refresh_nav.borrow()();
                     }
                     state.borrow_mut().flow = next;
                 }
@@ -1284,6 +1514,7 @@ fn present_ex(
         let runtime_name = runtime_name.clone();
         let runtime_view = runtime_view.clone();
         let runtime_flag_rows = runtime_flag_rows.clone();
+        let helper_views = helper_views.clone();
         save.connect_clicked(move |_| {
             let remote_name = name.text().to_string();
             let existing_names = ctx.store.borrow().remote_names();
@@ -1449,6 +1680,11 @@ fn present_ex(
                             &op_flags.borrow(),
                             &runtime_name.text(),
                             &collect_runtime_json(&runtime_view, &runtime_flag_rows.borrow()),
+                            &helper_views
+                                .borrow()
+                                .iter()
+                                .map(|(kind, view)| (*kind, textview_text(view)))
+                                .collect::<Vec<_>>(),
                         );
                         on_done();
                         dialog.close();
@@ -1468,21 +1704,27 @@ fn present_ex(
         });
     }
 
-    let box_ = gtk::Box::new(gtk::Orientation::Vertical, 12);
-    box_.set_margin_top(8);
-    box_.set_margin_bottom(12);
-    box_.append(&switcher);
+    let content = gtk::Box::new(gtk::Orientation::Vertical, 8);
+    content.set_hexpand(true);
+    content.set_vexpand(true);
+    content.append(&title_row);
     let scroll = gtk::ScrolledWindow::new();
     scroll.set_vexpand(true);
     scroll.set_child(Some(&nav));
-    box_.append(&scroll);
+    content.append(&scroll);
     let buttons = gtk::Box::new(gtk::Orientation::Horizontal, 8);
     buttons.set_halign(gtk::Align::End);
+    buttons.set_margin_start(12);
     buttons.set_margin_end(12);
+    buttons.set_margin_bottom(10);
+    buttons.append(&back);
     buttons.append(&continue_btn);
+    buttons.append(&next);
     buttons.append(&save);
-    box_.append(&buttons);
-    dialog.set_child(Some(&box_));
+    content.append(&buttons);
+    split.set_content(Some(&content));
+    dialog.set_child(Some(&split));
+    refresh_nav.borrow()();
     dialog.present(Some(parent));
 }
 
@@ -2075,6 +2317,7 @@ fn persist_meta(
     op_flags: &[(OperationType, adw::SwitchRow, adw::EntryRow, adw::EntryRow)],
     runtime_name: &str,
     runtime_json: &str,
+    helpers: &[(&str, String)],
 ) {
     let mut meta = ctx
         .store
@@ -2147,12 +2390,9 @@ fn persist_meta(
     } else {
         runtime_name.trim()
     };
-    if let Ok(value) = serde_json::from_str::<Value>(runtime_json.trim()) {
-        if value.as_object().is_some_and(|obj| !obj.is_empty()) {
-            meta.upsert_helper("runtime", helper, value);
-        }
-    } else if !runtime_json.trim().is_empty() {
-        meta.upsert_helper("runtime", helper, json!({ "raw": runtime_json.trim() }));
+    persist_helper_json(&mut meta, "runtime", helper, runtime_json);
+    for (kind, json) in helpers {
+        persist_helper_json(&mut meta, kind, helper, json);
     }
     crate::presets::apply_to_remote_meta(
         &mut meta,
@@ -2163,6 +2403,60 @@ fn persist_meta(
         .remotes
         .insert(remote_name.to_string(), meta);
     ctx.persist();
+}
+
+fn persist_helper_json(meta: &mut RemoteMeta, kind: &str, name: &str, json: &str) {
+    if let Ok(value) = serde_json::from_str::<Value>(json.trim()) {
+        if value.as_object().is_some_and(|obj| !obj.is_empty()) {
+            meta.upsert_helper(kind, name, value);
+        }
+    } else if !json.trim().is_empty() {
+        meta.upsert_helper(kind, name, json!({ "raw": json.trim() }));
+    }
+}
+
+fn helper_json_page(
+    ctx: &AppCtx,
+    kind: &str,
+    fallback: &str,
+    existing: Option<&RemoteMeta>,
+    restrict: bool,
+) -> (adw::PreferencesPage, gtk::TextView) {
+    let view = gtk::TextView::new();
+    view.set_wrap_mode(gtk::WrapMode::WordChar);
+    view.set_monospace(true);
+    view.set_left_margin(8);
+    view.set_right_margin(8);
+    view.set_top_margin(8);
+    view.set_bottom_margin(8);
+    let value = existing
+        .and_then(|meta| {
+            let names = meta.helper_names(kind);
+            let chosen = names
+                .iter()
+                .find(|n| n.eq_ignore_ascii_case("default"))
+                .cloned()
+                .or_else(|| names.into_iter().next())
+                .unwrap_or_else(|| "default".into());
+            meta.helper_profile(kind, &chosen)
+        })
+        .unwrap_or_else(|| json!({}));
+    fill_json_view(&view, &value, restrict);
+    let page = adw::PreferencesPage::new();
+    let group = adw::PreferencesGroup::new();
+    group.set_title(&ctx.t_or(&format!("modals.remoteConfig.steps.{kind}"), fallback));
+    group.set_description(Some(&ctx.t_or(
+        "wizards.remoteConfig.runtimeRemoteWarning.description",
+        "These options are stored on the remote profile and are not written into rclone.conf.",
+    )));
+    let scroll = gtk::ScrolledWindow::new();
+    scroll.set_min_content_height(280);
+    scroll.set_hexpand(true);
+    scroll.set_vexpand(true);
+    scroll.set_child(Some(&view));
+    group.add(&scroll);
+    page.add(&group);
+    (page, view)
 }
 
 fn parse_runtime_json(text: &str) -> Value {

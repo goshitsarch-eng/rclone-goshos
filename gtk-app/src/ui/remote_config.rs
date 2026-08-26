@@ -4,6 +4,7 @@
 use super::dialogs;
 use super::interactive::InteractivePanel;
 use super::AppCtx;
+use crate::config_steps::{editor_steps, parse_open_step, EditorStep};
 use crate::flags::{
     flag_category_for_op, options_for_category, parse_flag_value, static_flags_for, FlagBlock,
     FlagOption,
@@ -21,13 +22,6 @@ use serde_json::{json, Map, Value};
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum EditorStep {
-    Remote,
-    Op(OperationType),
-    Helper(&'static str),
-}
-
 #[derive(Clone, Default)]
 pub struct RemoteConfigOpen {
     pub initial: Option<String>,
@@ -35,13 +29,6 @@ pub struct RemoteConfigOpen {
     pub auto_add: bool,
     pub clone_from: Option<String>,
 }
-
-const HELPERS: &[(&str, &str, &str)] = &[
-    ("vfs", "VFS", "drive-harddisk-symbolic"),
-    ("filter", "Filter", "view-filter-symbolic"),
-    ("backend", "Backend", "preferences-system-symbolic"),
-    ("runtime", "Runtime", "emblem-system-symbolic"),
-];
 
 pub fn present(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, remote: String, on_done: Rc<dyn Fn()>) {
     present_with(parent, ctx, remote, RemoteConfigOpen::default(), on_done);
@@ -175,7 +162,7 @@ pub fn present_with(
         row.add_prefix(&icon);
         sidebar.append(&row);
     }
-    let initial_step = parse_open_step(&open);
+    let initial_step = parse_open_step(open.initial.as_deref());
     *current.borrow_mut() = initial_step;
     if let Some(idx) = editor_steps().iter().position(|step| *step == initial_step) {
         if let Some(row) = sidebar.row_at_index(idx as i32) {
@@ -194,11 +181,7 @@ pub fn present_with(
                     continue;
                 };
                 let label = step_label(&ctx, step);
-                let alias = match step {
-                    EditorStep::Remote => "remote",
-                    EditorStep::Op(op) => op.as_str(),
-                    EditorStep::Helper(kind) => kind,
-                };
+                let alias = step.alias();
                 row.set_visible(crate::pref_search::any_field_matches(
                     &[&label, alias],
                     &query,
@@ -253,6 +236,7 @@ pub fn present_with(
                     body.append(&page);
                     *persist_step.borrow_mut() = Box::new(saver);
                 }
+                EditorStep::QuickOps => {}
             }
         }) as Rc<dyn Fn()>
     };
@@ -299,44 +283,8 @@ pub fn present_with(
     dialogs::present_window_or_dialog(parent, &ctx, &dialog);
 }
 
-fn editor_steps() -> Vec<EditorStep> {
-    let mut steps = vec![EditorStep::Remote];
-    steps.extend(OperationType::ALL.iter().copied().map(EditorStep::Op));
-    steps.extend(HELPERS.iter().map(|(kind, _, _)| EditorStep::Helper(*kind)));
-    steps
-}
-
-fn parse_open_step(open: &RemoteConfigOpen) -> EditorStep {
-    let Some(raw) = open.initial.as_deref() else {
-        return EditorStep::Remote;
-    };
-    let lower = raw.to_ascii_lowercase();
-    if lower.is_empty() || lower == "remote" {
-        return EditorStep::Remote;
-    }
-    if let Some(op) = OperationType::parse(&lower) {
-        return EditorStep::Op(op);
-    }
-    if let Some((kind, _, _)) = HELPERS.iter().find(|(kind, _, _)| *kind == lower) {
-        return EditorStep::Helper(*kind);
-    }
-    EditorStep::Remote
-}
-
 fn step_label(ctx: &AppCtx, step: EditorStep) -> String {
-    match step {
-        EditorStep::Remote => ctx.t_or("modals.remoteConfig.steps.remote", "Remote"),
-        EditorStep::Op(op) => {
-            ctx.t_or(&format!("operations.{}.label", op.as_str()), op.api_label())
-        }
-        EditorStep::Helper(kind) => {
-            let key = match kind {
-                "runtime" => "modals.remoteConfig.steps.runtimeRemote",
-                other => return ctx.t_or(&format!("modals.remoteConfig.steps.{other}"), other),
-            };
-            ctx.t_or(key, "Runtime Remote")
-        }
-    }
+    ctx.t_or(&step.i18n_key(), step.fallback_label())
 }
 
 fn remote_type_of(ctx: &AppCtx, remote: &str) -> String {
@@ -480,15 +428,7 @@ fn capture_remote_template(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, remote: 
 }
 
 fn step_icon(step: EditorStep) -> &'static str {
-    match step {
-        EditorStep::Remote => "network-server-symbolic",
-        EditorStep::Op(op) => op.icon_name(),
-        EditorStep::Helper(kind) => HELPERS
-            .iter()
-            .find(|(k, _, _)| *k == kind)
-            .map(|(_, _, icon)| *icon)
-            .unwrap_or("preferences-other-symbolic"),
-    }
+    step.icon_name()
 }
 
 fn remote_page(

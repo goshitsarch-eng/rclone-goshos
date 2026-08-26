@@ -9,6 +9,7 @@ mod cli;
 mod cli_import;
 mod command_options;
 mod config_import;
+mod config_steps;
 mod connection;
 mod cron;
 mod dnd;
