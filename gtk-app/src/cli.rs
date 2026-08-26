@@ -124,7 +124,16 @@ pub fn option_flag_from_variant(
 }
 
 /// Re-insert GIO-consumed flags so a second instance can deep-link the primary.
+///
+/// Flags are inserted after argv0 so leftover tokens stay as values. GLib
+/// `OptionArg::None` consumes `--about` / `--preferences` and leaves `rclone`
+/// in leftover; appending the flag would yield `app rclone --about` and drop
+/// the page.
 pub fn merge_option_flags(args: &mut Vec<String>, flags: &[(String, Option<String>)]) {
+    if args.is_empty() {
+        return;
+    }
+    let mut insert_at = 1;
     for (name, value) in flags {
         let flag = format!("--{name}");
         if args
@@ -133,10 +142,12 @@ pub fn merge_option_flags(args: &mut Vec<String>, flags: &[(String, Option<Strin
         {
             continue;
         }
-        args.push(flag);
+        args.insert(insert_at, flag);
+        insert_at += 1;
         if let Some(value) = value {
             if !value.is_empty() {
-                args.push(value.clone());
+                args.insert(insert_at, value.clone());
+                insert_at += 1;
             }
         }
     }
@@ -261,6 +272,57 @@ mod tests {
         );
         merge_option_flags(&mut args, &[("about".into(), None)]);
         assert_eq!(args.iter().filter(|arg| *arg == "--about").count(), 1);
+    }
+
+    #[test]
+    fn inserts_consumed_flags_before_leftover_page_tokens() {
+        let mut about = vec!["app".into(), "rclone".into()];
+        merge_option_flags(&mut about, &[("about".into(), None)]);
+        assert_eq!(
+            about,
+            vec!["app".to_string(), "--about".into(), "rclone".into()]
+        );
+        assert_eq!(
+            crate::navigation::parse_launch_args(&about, false),
+            Some(crate::navigation::LaunchRequest {
+                target: crate::navigation::NavTarget::About {
+                    page: Some("about-rclone".into())
+                },
+                standalone: false,
+            })
+        );
+
+        let mut prefs = vec!["app".into(), "security".into()];
+        merge_option_flags(&mut prefs, &[("preferences".into(), None)]);
+        assert_eq!(
+            prefs,
+            vec!["app".to_string(), "--preferences".into(), "security".into()]
+        );
+        assert_eq!(
+            crate::navigation::parse_launch_args(&prefs, false),
+            Some(crate::navigation::LaunchRequest {
+                target: crate::navigation::NavTarget::Preferences {
+                    page: Some("security".into())
+                },
+                standalone: false,
+            })
+        );
+
+        let mut both = vec!["app".into(), "rclone".into(), "security".into()];
+        merge_option_flags(
+            &mut both,
+            &[("about".into(), None), ("preferences".into(), None)],
+        );
+        assert_eq!(
+            both,
+            vec![
+                "app".to_string(),
+                "--about".into(),
+                "--preferences".into(),
+                "rclone".into(),
+                "security".into()
+            ]
+        );
     }
 
     #[test]

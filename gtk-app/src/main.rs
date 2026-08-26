@@ -194,43 +194,30 @@ fn register_application_options(app: &adw::Application) {
     );
     add("updates", OptionArg::None, "Open the Updates dialog", None);
     add("alerts", OptionArg::None, "Open the Alerts dialog", None);
-    app.add_main_option(
+    add(
         "preferences",
-        0.into(),
-        OptionFlags::OPTIONAL_ARG,
-        OptionArg::String,
-        "Open Preferences, optionally a page",
-        Some("PAGE"),
+        OptionArg::None,
+        "Open Preferences (optional page follows the flag)",
+        None,
     );
-    app.add_main_option(
-        "settings",
-        0.into(),
-        OptionFlags::OPTIONAL_ARG,
-        OptionArg::String,
-        "Alias for --preferences",
-        Some("PAGE"),
-    );
+    add("settings", OptionArg::None, "Alias for --preferences", None);
     add(
         "onboarding",
         OptionArg::None,
         "Re-open the first-run onboarding window",
         None,
     );
-    app.add_main_option(
+    add(
         "about",
-        0.into(),
-        OptionFlags::OPTIONAL_ARG,
-        OptionArg::String,
-        "Open the About dialog, optionally a page",
-        Some("PAGE"),
+        OptionArg::None,
+        "Open the About dialog (optional page follows the flag)",
+        None,
     );
-    app.add_main_option(
+    add(
         "logs",
-        0.into(),
-        OptionFlags::OPTIONAL_ARG,
-        OptionArg::String,
-        "Open the Logs dialog, optionally scoped to a remote",
-        Some("REMOTE"),
+        OptionArg::None,
+        "Open the Logs dialog (optional remote follows the flag)",
+        None,
     );
     add(
         "auto-add",
@@ -257,13 +244,11 @@ fn register_application_options(app: &adw::Application) {
         None,
     );
     add("flags", OptionArg::None, "Alias for --rclone-flags", None);
-    app.add_main_option(
+    add(
         "templates",
-        0.into(),
-        OptionFlags::OPTIONAL_ARG,
-        OptionArg::String,
-        "Open the Templates dialog, optionally the Save tab",
-        Some("MODE"),
+        OptionArg::None,
+        "Open the Templates dialog (optional save/new follows the flag)",
+        None,
     );
     add(
         "quick-add",
@@ -272,13 +257,11 @@ fn register_application_options(app: &adw::Application) {
         None,
     );
     add("quickadd", OptionArg::None, "Alias for --quick-add", None);
-    app.add_main_option(
+    add(
         "whats-new",
-        0.into(),
-        OptionFlags::OPTIONAL_ARG,
-        OptionArg::String,
-        "Open What's New (app or rclone)",
-        Some("KIND"),
+        OptionArg::None,
+        "Open What's New (optional app/rclone follows the flag)",
+        None,
     );
     add(
         "whats-new-app",
@@ -352,21 +335,17 @@ fn register_application_options(app: &adw::Application) {
         "Open Create Archive for remote:path",
         Some("REMOTE:PATH"),
     );
-    app.add_main_option(
+    add(
         "quick-run-editor",
-        0.into(),
-        OptionFlags::OPTIONAL_ARG,
-        OptionArg::String,
-        "Open the Quick Run editor, optionally for an id",
-        Some("ID"),
+        OptionArg::None,
+        "Open the Quick Run editor (optional id follows the flag)",
+        None,
     );
-    app.add_main_option(
+    add(
         "export",
-        0.into(),
-        OptionFlags::OPTIONAL_ARG,
-        OptionArg::String,
-        "Open Export, optionally scoped to a remote",
-        Some("REMOTE"),
+        OptionArg::None,
+        "Open Export (optional remote follows the flag)",
+        None,
     );
     add("repair", OptionArg::None, "Open the Repair sheet", None);
     add(
@@ -387,13 +366,11 @@ fn register_application_options(app: &adw::Application) {
         "Remote-config profile (with --remote-config)",
         Some("NAME"),
     );
-    app.add_main_option(
+    add(
         "standalone",
-        0.into(),
-        OptionFlags::OPTIONAL_ARG,
-        OptionArg::String,
-        "Open a standalone workspace (nautilus|flow|main)",
-        Some("KIND"),
+        OptionArg::None,
+        "Open a standalone workspace (optional nautilus|flow|main follows)",
+        None,
     );
     add(
         "send-to-remote",

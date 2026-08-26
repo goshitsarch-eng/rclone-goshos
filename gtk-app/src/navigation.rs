@@ -1565,6 +1565,20 @@ mod tests {
                 standalone: false,
             })
         );
+        assert_eq!(
+            parse_launch_args(&["app".into(), "--preferences".into()], false),
+            Some(LaunchRequest {
+                target: NavTarget::Preferences { page: None },
+                standalone: false,
+            })
+        );
+        assert_eq!(
+            parse_launch_args(&["app".into(), "--logs".into()], false),
+            Some(LaunchRequest {
+                target: NavTarget::Logs { remote: None },
+                standalone: false,
+            })
+        );
     }
 
     #[test]
