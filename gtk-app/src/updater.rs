@@ -515,6 +515,34 @@ impl PendingUpdates {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AboutUpdateCard {
+    RestartRequired,
+    Available,
+    UpToDate,
+}
+
+pub fn about_update_card(restart_required: bool, update_available: bool) -> AboutUpdateCard {
+    if restart_required {
+        AboutUpdateCard::RestartRequired
+    } else if update_available {
+        AboutUpdateCard::Available
+    } else {
+        AboutUpdateCard::UpToDate
+    }
+}
+
+pub fn about_visible_page(requested: &str) -> &'static str {
+    match requested {
+        "about-app" | "app" => "about-app",
+        "about-rclone" | "rclone" => "about-rclone",
+        "credits" => "credits",
+        "legal" => "legal",
+        "system" => "system",
+        _ => "details",
+    }
+}
+
 pub fn filter_skipped(info: Option<UpdateInfo>, skipped: &[String]) -> Option<UpdateInfo> {
     info.filter(|u| {
         u.available
@@ -749,6 +777,34 @@ mod tests {
             b"old"
         );
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn about_update_card_prefers_restart() {
+        assert_eq!(
+            about_update_card(true, true),
+            AboutUpdateCard::RestartRequired
+        );
+        assert_eq!(
+            about_update_card(true, false),
+            AboutUpdateCard::RestartRequired
+        );
+        assert_eq!(about_update_card(false, true), AboutUpdateCard::Available);
+        assert_eq!(about_update_card(false, false), AboutUpdateCard::UpToDate);
+    }
+
+    #[test]
+    fn about_visible_page_aliases() {
+        assert_eq!(about_visible_page("about-app"), "about-app");
+        assert_eq!(about_visible_page("app"), "about-app");
+        assert_eq!(about_visible_page("rclone"), "about-rclone");
+        assert_eq!(about_visible_page("about-rclone"), "about-rclone");
+        assert_eq!(about_visible_page("credits"), "credits");
+        assert_eq!(about_visible_page("legal"), "legal");
+        assert_eq!(about_visible_page("system"), "system");
+        assert_eq!(about_visible_page(""), "details");
+        assert_eq!(about_visible_page("details"), "details");
+        assert_eq!(about_visible_page("unknown"), "details");
     }
 
     #[test]

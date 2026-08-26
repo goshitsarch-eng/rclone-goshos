@@ -341,8 +341,17 @@ fn present_main_with(app: &adw::Application, ctx: AppCtx, hidden: bool) {
     notice_btn.set_visible(false);
     {
         let ctx = ctx.clone();
+        let window = window.clone();
         notice_btn.connect_clicked(move |_| {
-            if ctx.settings.borrow().runtime.rclone_restart_required {
+            if ctx.settings.borrow().runtime.app_restart_required {
+                ctx.settings.borrow_mut().runtime.app_restart_required = false;
+                ctx.persist();
+                if let Err(e) = crate::platform::relaunch() {
+                    log::error!("relaunch failed: {e}");
+                } else if let Some(app) = window.application() {
+                    app.quit();
+                }
+            } else if ctx.settings.borrow().runtime.rclone_restart_required {
                 ctx.settings.borrow_mut().runtime.rclone_restart_required = false;
                 ctx.persist();
                 ctx.restart_engine();
@@ -390,6 +399,15 @@ fn present_main_with(app: &adw::Application, ctx: AppCtx, hidden: bool) {
                 ctx.settings.borrow_mut().runtime.rclone_restart_required = false;
                 ctx.persist();
                 ctx.restart_engine();
+            }
+            BannerKind::AppRestart => {
+                ctx.settings.borrow_mut().runtime.app_restart_required = false;
+                ctx.persist();
+                if let Err(e) = crate::platform::relaunch() {
+                    toast.add_toast(adw::Toast::new(&e));
+                } else if let Some(app) = window.application() {
+                    app.quit();
+                }
             }
             BannerKind::Metered | BannerKind::Development | BannerKind::None => {}
         });
@@ -2342,6 +2360,7 @@ enum BannerKind {
     Metered,
     Update,
     RcloneRestart,
+    AppRestart,
     Development,
 }
 
@@ -2362,6 +2381,13 @@ fn update_banner(ctx: &AppCtx, banner: &adw::Banner, kind: &Rc<std::cell::RefCel
         banner.set_button_label(Some(&ctx.t_or("modals.about.restartNow", "Restart Now")));
         banner.set_revealed(true);
         *kind.borrow_mut() = BannerKind::RcloneRestart;
+        return;
+    }
+    if settings.runtime.app_restart_required {
+        banner.set_title(&ctx.t_or("modals.about.readyToRestart", "Restart Required"));
+        banner.set_button_label(Some(&ctx.t_or("modals.about.restartNow", "Restart Now")));
+        banner.set_revealed(true);
+        *kind.borrow_mut() = BannerKind::AppRestart;
         return;
     }
     if let Some(issue) = crate::repair::banner_from_issues(&issues) {
@@ -2453,17 +2479,20 @@ fn sync_home_button(ctx: &AppCtx, btn: &gtk::Button) {
 
 fn menu_signature(ctx: &AppCtx) -> String {
     format!(
-        "{}|{}|{}|{}",
+        "{}|{}|{}|{}|{}",
         ctx.active_workspace.borrow(),
         menu_notice_text(ctx).unwrap_or_default(),
         ctx.store.borrow().unacknowledged_alerts(),
         u8::from(ctx.settings.borrow().runtime.rclone_restart_required),
+        u8::from(ctx.settings.borrow().runtime.app_restart_required),
     )
 }
 
 fn menu_notice_text(ctx: &AppCtx) -> Option<String> {
     let alerts = ctx.store.borrow().unacknowledged_alerts();
-    if ctx.settings.borrow().runtime.rclone_restart_required {
+    if ctx.settings.borrow().runtime.rclone_restart_required
+        || ctx.settings.borrow().runtime.app_restart_required
+    {
         Some("!".into())
     } else if ctx.updates.borrow().has_updates() {
         Some("!".into())
@@ -2487,7 +2516,13 @@ fn sync_menu_badge(ctx: &AppCtx, badge: &gtk::Label) {
 fn sync_notice_button(ctx: &AppCtx, btn: &gtk::Button) {
     let updates = ctx.updates.borrow().clone();
     let alerts = ctx.store.borrow().unacknowledged_alerts();
-    if ctx.settings.borrow().runtime.rclone_restart_required {
+    if ctx.settings.borrow().runtime.app_restart_required {
+        btn.set_visible(true);
+        btn.set_icon_name("view-refresh-symbolic");
+        btn.set_tooltip_text(Some(
+            &ctx.t_or("modals.about.readyToRestart", "Restart Required"),
+        ));
+    } else if ctx.settings.borrow().runtime.rclone_restart_required {
         btn.set_visible(true);
         btn.set_icon_name("view-refresh-symbolic");
         btn.set_tooltip_text(Some(&ctx.t_or(

@@ -164,6 +164,8 @@ pub struct RuntimeSettings {
     pub selected_detail_pages: HashMap<String, String>,
     #[serde(default)]
     pub rclone_restart_required: bool,
+    #[serde(default)]
+    pub app_restart_required: bool,
 }
 
 pub fn panel_state_key(scope: &str, id: &str) -> String {
@@ -222,6 +224,7 @@ impl Default for RuntimeSettings {
             dashboard_tab: default_dashboard_tab(),
             selected_detail_pages: HashMap::new(),
             rclone_restart_required: false,
+            app_restart_required: false,
         }
     }
 }
@@ -586,6 +589,7 @@ mod tests {
         assert_eq!(loaded.runtime.dashboard_tab, "general");
         assert!(loaded.runtime.selected_detail_pages.is_empty());
         assert!(!loaded.runtime.rclone_restart_required);
+        assert!(!loaded.runtime.app_restart_required);
         assert!(panel_is_open(
             &loaded.runtime.panel_open_states,
             "dashboard",

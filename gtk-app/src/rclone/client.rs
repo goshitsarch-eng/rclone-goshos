@@ -2060,11 +2060,24 @@ pub struct BackendIdentity {
     pub version: String,
     pub os: String,
     pub arch: String,
+    pub go: String,
+    pub is_beta: bool,
+    pub is_git: bool,
 }
 
 impl BackendIdentity {
     pub fn summary(&self) -> String {
         format!("{} · {}/{}", self.version, self.os, self.arch)
+    }
+
+    pub fn channel_badge(&self) -> Option<&'static str> {
+        if self.is_beta {
+            Some("beta")
+        } else if self.is_git || self.version.to_ascii_uppercase().contains("DEV") {
+            Some("dev")
+        } else {
+            None
+        }
     }
 }
 
@@ -2085,6 +2098,17 @@ pub fn backend_identity(info: &Value) -> BackendIdentity {
             .and_then(|x| x.as_str())
             .unwrap_or("unknown")
             .to_string(),
+        go: info
+            .get("goVersion")
+            .or_else(|| info.get("go_version"))
+            .and_then(|x| x.as_str())
+            .unwrap_or("")
+            .to_string(),
+        is_beta: info
+            .get("isBeta")
+            .and_then(|x| x.as_bool())
+            .unwrap_or(false),
+        is_git: info.get("isGit").and_then(|x| x.as_bool()).unwrap_or(false),
     }
 }
 
@@ -2301,7 +2325,22 @@ mod tests {
             "arch": "amd64"
         }));
         assert_eq!(id.summary(), "v1.68.2 · linux/amd64");
+        assert_eq!(id.channel_badge(), None);
         assert_eq!(backend_identity(&json!({})).version, "unknown");
+        let git = backend_identity(&json!({
+            "version": "v1.60.1-DEV",
+            "os": "linux",
+            "arch": "amd64",
+            "goVersion": "go1.19.4",
+            "isGit": true
+        }));
+        assert_eq!(git.go, "go1.19.4");
+        assert_eq!(git.channel_badge(), Some("dev"));
+        let beta = backend_identity(&json!({
+            "version": "v1.70.0-beta.1",
+            "isBeta": true
+        }));
+        assert_eq!(beta.channel_badge(), Some("beta"));
     }
 
     #[test]

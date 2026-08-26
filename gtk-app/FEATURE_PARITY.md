@@ -735,3 +735,6 @@ This client is the GTK 4 + libadwaita desktop UI. It talks to a local `rclone rc
 - Detach on Flow/Dashboard overlays is a no-op; Files still detaches the current tab
 - Live GUI: Files overlay `toggle-flow` opens **Flow Workspace** while Remotes stays on the main window; second toggle closes Flow
 - Live GUI: Files detach titles use `Files — Home`; Nautilus sheet search `Undo` / `New Tab`
+- About includes dedicated About App and About Rclone pages (OS/arch/mode, debug tools, rclone version + beta/dev badge, Go, PID/kill, memory, FS cache)
+- About App / About Rclone update cards match Angular: Ready to restart, update available (What's New / Install / Skip), or up to date, plus auto-check, channel, and skipped versions
+- App updates stage a restart (`runtime.app_restart_required`) instead of relaunching immediately; banner and About App show Restart Now

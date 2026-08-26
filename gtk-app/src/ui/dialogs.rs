@@ -567,7 +567,618 @@ pub fn preferences_page(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, page: Optio
     super::preferences::present_page(parent, ctx, page);
 }
 
+fn quit_rclone_engine(ctx: &AppCtx, toast: &adw::ToastOverlay) {
+    let local = ctx.settings.borrow().core.active_backend.is_empty()
+        || ctx.settings.borrow().core.active_backend == "local";
+    if local {
+        if ctx.engine.borrow().is_none() {
+            toast.add_toast(adw::Toast::new(
+                &ctx.t_or("modals.about.noProcessToKill", "No rclone process to kill"),
+            ));
+            return;
+        }
+        *ctx.engine.borrow_mut() = None;
+        ctx.refresh_runtime();
+        toast.add_toast(adw::Toast::new(&ctx.t_or(
+            "modals.about.killSuccess",
+            "Rclone process killed successfully",
+        )));
+        return;
+    }
+    if let Some(client) = ctx.client() {
+        match client.quit() {
+            Ok(_) => toast.add_toast(adw::Toast::new(&ctx.t_or(
+                "modals.about.killSuccess",
+                "Rclone process killed successfully",
+            ))),
+            Err(_) => toast.add_toast(adw::Toast::new(
+                &ctx.t_or("modals.about.killFailed", "Failed to kill rclone process"),
+            )),
+        }
+    } else {
+        toast.add_toast(adw::Toast::new(
+            &ctx.t_or("modals.about.noProcessToKill", "No rclone process to kill"),
+        ));
+    }
+}
+
+fn relaunch_application(widget: &impl IsA<gtk::Widget>, ctx: &AppCtx, toast: &adw::ToastOverlay) {
+    ctx.settings.borrow_mut().runtime.app_restart_required = false;
+    ctx.persist();
+    match crate::platform::relaunch() {
+        Ok(()) => {
+            if let Some(app) = widget
+                .root()
+                .and_then(|root| root.downcast::<gtk::Window>().ok())
+                .and_then(|win| win.application())
+            {
+                app.quit();
+            }
+        }
+        Err(e) => toast.add_toast(adw::Toast::new(&e)),
+    }
+}
+
+fn about_channel_row(ctx: &AppCtx, title: &str, current: &str, app: bool) -> adw::ComboRow {
+    let row = adw::ComboRow::new();
+    row.set_title(title);
+    let stable = ctx.t_or("modals.about.channelStable", "Stable");
+    let beta = ctx.t_or("modals.about.channelBeta", "Beta");
+    row.set_model(Some(&gtk::StringList::new(&[&stable, &beta])));
+    row.set_selected(if current == "beta" { 1 } else { 0 });
+    {
+        let ctx = ctx.clone();
+        row.connect_selected_notify(move |row| {
+            let value = if row.selected() == 1 {
+                "beta"
+            } else {
+                "stable"
+            };
+            if app {
+                ctx.settings.borrow_mut().runtime.app_update_channel = value.into();
+            } else {
+                ctx.settings.borrow_mut().runtime.rclone_update_channel = value.into();
+            }
+            ctx.persist();
+        });
+    }
+    row
+}
+
+fn about_auto_check_row(ctx: &AppCtx, current: bool, app: bool) -> adw::SwitchRow {
+    let row = adw::SwitchRow::new();
+    row.set_title(&ctx.t_or("modals.about.autoCheck", "Auto-Check Updates"));
+    row.set_active(current);
+    {
+        let ctx = ctx.clone();
+        row.connect_active_notify(move |row| {
+            if app {
+                ctx.settings.borrow_mut().runtime.app_auto_check_updates = row.is_active();
+            } else {
+                ctx.settings.borrow_mut().runtime.rclone_auto_check_updates = row.is_active();
+            }
+            ctx.persist();
+        });
+    }
+    row
+}
+
+fn about_app_page(
+    parent: &impl IsA<gtk::Widget>,
+    ctx: &AppCtx,
+    dialog: &adw::Dialog,
+    toast: &adw::ToastOverlay,
+) -> gtk::Widget {
+    let page = gtk::Box::new(gtk::Orientation::Vertical, 12);
+    page.set_margin_top(16);
+    page.set_margin_start(16);
+    page.set_margin_end(16);
+    page.set_margin_bottom(16);
+    let debug = crate::platform::debug_info();
+    let identity = adw::PreferencesGroup::new();
+    identity.set_title(&ctx.t_or("modals.about.aboutApp", "About App"));
+    let name = adw::ActionRow::new();
+    name.set_title(&ctx.t_or("modals.about.appName", "Rclone Manager"));
+    name.set_subtitle(env!("CARGO_PKG_VERSION"));
+    identity.add(&name);
+    let os_row = adw::ActionRow::new();
+    os_row.set_title(&ctx.t_or("modals.about.os", "OS"));
+    os_row.set_subtitle(&format!("{} ({})", debug.platform, debug.arch));
+    identity.add(&os_row);
+    let mode_row = adw::ActionRow::new();
+    mode_row.set_title(&ctx.t_or("modals.about.mode", "Mode"));
+    mode_row.set_subtitle(&debug.mode);
+    identity.add(&mode_row);
+    {
+        let parent = parent.clone();
+        let ctx_click = ctx.clone();
+        let debug_btn =
+            gtk::Button::with_label(&ctx.t_or("modals.about.debugTools", "Debug tools"));
+        debug_btn.set_valign(gtk::Align::Center);
+        debug_btn.connect_clicked(move |_| debug_info(&parent, ctx_click.clone()));
+        let debug_row = adw::ActionRow::new();
+        debug_row.set_title(&ctx.t_or("modals.about.debugTools", "Debug tools"));
+        debug_row.add_suffix(&debug_btn);
+        identity.add(&debug_row);
+    }
+    page.append(&identity);
+
+    let restart = ctx.settings.borrow().runtime.app_restart_required;
+    let pending_app = ctx.updates.borrow().app.clone().filter(|u| u.available);
+    let card = crate::updater::about_update_card(restart, pending_app.is_some());
+    let updates = adw::PreferencesGroup::new();
+    match card {
+        crate::updater::AboutUpdateCard::RestartRequired => {
+            updates.set_title(&ctx.t_or("modals.about.readyToRestart", "Restart Required"));
+            updates.set_description(Some(&ctx.t_or(
+                "modals.about.restartDescription",
+                "An update has been installed. Please restart the application to apply the changes.",
+            )));
+            if let Some(info) = &pending_app {
+                let row = adw::ActionRow::new();
+                row.set_title(&ctx.t_or("modals.about.version", "Version"));
+                row.set_subtitle(&info.latest);
+                updates.add(&row);
+            }
+            page.append(&updates);
+            let restart_btn =
+                gtk::Button::with_label(&ctx.t_or("modals.about.restartNow", "Restart Now"));
+            restart_btn.add_css_class("suggested-action");
+            restart_btn.set_halign(gtk::Align::Start);
+            {
+                let parent = parent.clone();
+                let ctx = ctx.clone();
+                let toast = toast.clone();
+                restart_btn.connect_clicked(move |_| {
+                    relaunch_application(&parent, &ctx, &toast);
+                });
+            }
+            page.append(&restart_btn);
+        }
+        crate::updater::AboutUpdateCard::Available => {
+            let info = pending_app.expect("available card requires pending app update");
+            updates.set_title(&ctx.t_or("modals.about.updateAvailable", "Update Available"));
+            let ver = adw::ActionRow::new();
+            ver.set_title(&ctx.t_or("modals.about.version", "Version"));
+            let channel = ctx.settings.borrow().runtime.app_update_channel.clone();
+            let channel_label = ctx.t_or(
+                if channel == "beta" {
+                    "modals.about.channelBeta"
+                } else {
+                    "modals.about.channelStable"
+                },
+                &channel,
+            );
+            ver.set_subtitle(&format!("{} · {channel_label}", info.latest));
+            updates.add(&ver);
+            page.append(&updates);
+            let buttons = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+            {
+                let parent = parent.clone();
+                let ctx = ctx.clone();
+                let notes =
+                    gtk::Button::with_label(&ctx.t_or("modals.about.whatsNew", "What's New"));
+                notes.connect_clicked(move |_| whats_new(&parent, ctx.clone(), "app"));
+                buttons.append(&notes);
+            }
+            let managed = crate::platform::managed_build();
+            let can_install = info.download_url.is_some()
+                && crate::platform::update_command(managed).is_none()
+                && crate::platform::update_page_url(managed).is_none();
+            if can_install {
+                let install = gtk::Button::with_label(
+                    &ctx.t_or("modals.about.installUpdate", "Download Update"),
+                );
+                install.add_css_class("suggested-action");
+                {
+                    let parent = parent.clone();
+                    let ctx = ctx.clone();
+                    let toast = toast.clone();
+                    let dialog = dialog.clone();
+                    install.connect_clicked(move |_| {
+                        start_app_update(&parent, ctx.clone(), toast.clone());
+                        dialog.close();
+                    });
+                }
+                buttons.append(&install);
+            } else {
+                if let Some(command) = crate::platform::update_command(managed) {
+                    let cmd_row = adw::ActionRow::new();
+                    cmd_row.set_title(&ctx.t_or(
+                        "modals.about.managedBuildNotice",
+                        "This build cannot be updated by the app updater.",
+                    ));
+                    cmd_row.set_subtitle(command);
+                    page.append(&cmd_row);
+                }
+                if let Some(url) = crate::platform::update_page_url(managed) {
+                    let label = if matches!(managed, crate::platform::ManagedBuild::Flatpak) {
+                        ctx.t_or("modals.about.openFlathub", "Open Flathub")
+                    } else {
+                        ctx.t_or("modals.about.downloadPage", "Download Page")
+                    };
+                    buttons.append(&gtk::LinkButton::with_label(url, &label));
+                }
+            }
+            {
+                let ctx = ctx.clone();
+                let parent = parent.clone();
+                let dialog = dialog.clone();
+                let latest = info.latest.clone();
+                let skip =
+                    gtk::Button::with_label(&ctx.t_or("modals.about.skipVersion", "Skip Version"));
+                skip.connect_clicked(move |_| {
+                    ctx.settings
+                        .borrow_mut()
+                        .runtime
+                        .app_skipped_updates
+                        .push(latest.clone());
+                    ctx.persist();
+                    ctx.refresh_updates();
+                    dialog.close();
+                    about_open(&parent, ctx.clone(), "about-app");
+                });
+                buttons.append(&skip);
+            }
+            page.append(&buttons);
+        }
+        crate::updater::AboutUpdateCard::UpToDate => {
+            updates.set_title(&ctx.t_or("modals.about.upToDate", "Up to Date"));
+            updates.set_description(Some(&ctx.t_or(
+                "modals.about.latestVersionMsg",
+                "You're running the latest version",
+            )));
+            page.append(&updates);
+        }
+    }
+
+    if !restart {
+        let check =
+            gtk::Button::with_label(&ctx.t_or("modals.about.checkUpdates", "Check for Updates"));
+        check.set_halign(gtk::Align::Start);
+        {
+            let ctx = ctx.clone();
+            let parent = parent.clone();
+            let dialog = dialog.clone();
+            check.connect_clicked(move |_| {
+                ctx.refresh_updates();
+                dialog.close();
+                about_open(&parent, ctx.clone(), "about-app");
+            });
+        }
+        page.append(&check);
+    }
+
+    let settings = adw::PreferencesGroup::new();
+    settings.set_title(&ctx.t_or("modals.about.updateSettings", "Update Settings"));
+    let auto = about_auto_check_row(
+        ctx,
+        ctx.settings.borrow().runtime.app_auto_check_updates,
+        true,
+    );
+    auto.set_sensitive(!restart);
+    settings.add(&auto);
+    let channel = about_channel_row(
+        ctx,
+        &ctx.t_or("modals.about.releaseChannel", "Release Channel"),
+        &ctx.settings.borrow().runtime.app_update_channel,
+        true,
+    );
+    channel.set_sensitive(!restart);
+    settings.add(&channel);
+    page.append(&settings);
+    if let Some(skipped) = skipped_versions_group(
+        ctx,
+        &ctx.t_or("modals.about.skippedUpdates", "Skipped Updates"),
+        &ctx.settings.borrow().runtime.app_skipped_updates,
+        true,
+    ) {
+        page.append(&skipped);
+    }
+    page.upcast()
+}
+
+fn about_rclone_page(
+    parent: &impl IsA<gtk::Widget>,
+    ctx: &AppCtx,
+    dialog: &adw::Dialog,
+    toast: &adw::ToastOverlay,
+) -> gtk::Widget {
+    let page = gtk::Box::new(gtk::Orientation::Vertical, 12);
+    page.set_margin_top(16);
+    page.set_margin_start(16);
+    page.set_margin_end(16);
+    page.set_margin_bottom(16);
+    let identity = adw::PreferencesGroup::new();
+    identity.set_title(&ctx.t_or("modals.about.aboutRclone", "About Rclone"));
+    match ctx
+        .client()
+        .and_then(|c| c.version_info().ok())
+        .map(|v| crate::rclone::backend_identity(&v))
+    {
+        Some(info) => {
+            let ver = adw::ActionRow::new();
+            ver.set_title(&ctx.t_or("modals.about.version", "Version"));
+            let subtitle = match info.channel_badge() {
+                Some("beta") => format!(
+                    "{} · {}",
+                    info.version,
+                    ctx.t_or("modals.about.channelBeta", "Beta")
+                ),
+                Some("dev") => format!("{} · Dev", info.version),
+                _ => info.version.clone(),
+            };
+            ver.set_subtitle(&subtitle);
+            identity.add(&ver);
+            let os_row = adw::ActionRow::new();
+            os_row.set_title(&ctx.t_or("modals.about.os", "OS"));
+            os_row.set_subtitle(&format!("{} ({})", info.os, info.arch));
+            identity.add(&os_row);
+            let go_row = adw::ActionRow::new();
+            go_row.set_title(&ctx.t_or("modals.about.goVersion", "Go Version"));
+            go_row.set_subtitle(&info.go);
+            identity.add(&go_row);
+        }
+        None => {
+            let err = adw::ActionRow::new();
+            err.set_title(&ctx.t_or("modals.about.loadInfoFailed", "Failed to load rclone info."));
+            identity.add(&err);
+        }
+    }
+    let pid = ctx
+        .client()
+        .and_then(|c| c.pid().ok())
+        .map(|n| n.to_string());
+    if let Some(pid) = pid {
+        let pid_row = adw::ActionRow::new();
+        pid_row.set_title(&ctx.t_or("modals.about.pid", "Process ID"));
+        pid_row.set_subtitle(&pid);
+        let kill = gtk::Button::with_label(&ctx.t_or("modals.about.killProcess", "Kill Process"));
+        kill.add_css_class("destructive-action");
+        kill.set_valign(gtk::Align::Center);
+        {
+            let ctx = ctx.clone();
+            let toast = toast.clone();
+            kill.connect_clicked(move |_| quit_rclone_engine(&ctx, &toast));
+        }
+        pid_row.add_suffix(&kill);
+        identity.add(&pid_row);
+    }
+    let mem_row = adw::ActionRow::new();
+    mem_row.set_title(&ctx.t_or("modals.about.memory", "Memory"));
+    let alloc = ctx
+        .client()
+        .and_then(|c| c.memstats().ok())
+        .and_then(|mem| mem.get("Alloc").cloned())
+        .map(|v| crate::rclone::format_bytes(v.as_i64().unwrap_or(0)))
+        .unwrap_or_else(|| "—".into());
+    mem_row.set_subtitle(&alloc);
+    {
+        let parent = parent.clone();
+        let ctx = ctx.clone();
+        let view = gtk::Button::with_label(
+            &ctx.t_or("modals.about.viewMemoryStats", "View Memory Statistics"),
+        );
+        view.set_valign(gtk::Align::Center);
+        view.connect_clicked(move |_| memory_stats(&parent, ctx.clone()));
+        mem_row.add_suffix(&view);
+    }
+    identity.add(&mem_row);
+    let cache_row = adw::ActionRow::new();
+    cache_row.set_title(&ctx.t_or("modals.about.backendCache", "Backend Cache"));
+    let cache_count = ctx
+        .client()
+        .and_then(|c| c.fscache_entries().ok())
+        .map(|v| crate::rclone::parse_fscache_entry_count(&v).to_string())
+        .unwrap_or_else(|| "—".into());
+    cache_row.set_subtitle(&format!(
+        "{} {}",
+        cache_count,
+        ctx.t_or("modals.about.entries", "Active Entries")
+    ));
+    {
+        let ctx = ctx.clone();
+        let toast = toast.clone();
+        let cache_row_cb = cache_row.clone();
+        let entries_label = ctx.t_or("modals.about.entries", "Active Entries");
+        let clear = gtk::Button::with_label(&ctx.t_or("modals.about.clear", "Clear"));
+        clear.set_valign(gtk::Align::Center);
+        clear.connect_clicked(move |_| {
+            if let Some(client) = ctx.client() {
+                match client.fscache_clear() {
+                    Ok(_) => {
+                        let count = client
+                            .fscache_entries()
+                            .ok()
+                            .map(|v| crate::rclone::parse_fscache_entry_count(&v).to_string())
+                            .unwrap_or_else(|| "0".into());
+                        cache_row_cb.set_subtitle(&format!("{count} {entries_label}"));
+                        toast.add_toast(adw::Toast::new(
+                            &ctx.t_or("modals.about.cacheCleared", "Cache cleared successfully"),
+                        ));
+                    }
+                    Err(_) => toast.add_toast(adw::Toast::new(
+                        &ctx.t_or("modals.about.cacheClearFailed", "Failed to clear cache"),
+                    )),
+                }
+            }
+        });
+        cache_row.add_suffix(&clear);
+    }
+    identity.add(&cache_row);
+    page.append(&identity);
+
+    let restart = ctx.settings.borrow().runtime.rclone_restart_required;
+    let pending_rclone = ctx.updates.borrow().rclone.clone().filter(|u| u.available);
+    let card = crate::updater::about_update_card(restart, pending_rclone.is_some());
+    let updates = adw::PreferencesGroup::new();
+    match card {
+        crate::updater::AboutUpdateCard::RestartRequired => {
+            updates.set_title(&ctx.t_or(
+                "modals.about.rcloneRestartRequired",
+                "Rclone Restart Required",
+            ));
+            updates.set_description(Some(&ctx.t_or(
+                "modals.about.rcloneRestartDescription",
+                "An Rclone update has been installed. Please restart the engine to apply the changes.",
+            )));
+            if let Some(info) = &pending_rclone {
+                let row = adw::ActionRow::new();
+                row.set_title(&ctx.t_or("modals.about.version", "Version"));
+                row.set_subtitle(&info.latest);
+                updates.add(&row);
+            }
+            page.append(&updates);
+            let restart_btn =
+                gtk::Button::with_label(&ctx.t_or("modals.about.restartNow", "Restart Now"));
+            restart_btn.add_css_class("suggested-action");
+            restart_btn.set_halign(gtk::Align::Start);
+            {
+                let ctx = ctx.clone();
+                restart_btn.connect_clicked(move |_| {
+                    ctx.settings.borrow_mut().runtime.rclone_restart_required = false;
+                    ctx.persist();
+                    ctx.restart_engine();
+                });
+            }
+            page.append(&restart_btn);
+        }
+        crate::updater::AboutUpdateCard::Available => {
+            let info = pending_rclone.expect("available card requires pending rclone update");
+            updates.set_title(&ctx.t_or(
+                "modals.about.rcloneUpdateAvailable",
+                "Rclone Update Available",
+            ));
+            let ver = adw::ActionRow::new();
+            ver.set_title(&ctx.t_or("modals.about.version", "Version"));
+            let channel = ctx.settings.borrow().runtime.rclone_update_channel.clone();
+            let channel_label = ctx.t_or(
+                if channel == "beta" {
+                    "modals.about.channelBeta"
+                } else {
+                    "modals.about.channelStable"
+                },
+                &channel,
+            );
+            ver.set_subtitle(&format!("{} · {channel_label}", info.latest));
+            updates.add(&ver);
+            page.append(&updates);
+            let buttons = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+            {
+                let parent = parent.clone();
+                let ctx = ctx.clone();
+                let notes = gtk::Button::with_label(
+                    &ctx.t_or("modals.about.whatsNewRclone", "What's New in Rclone"),
+                );
+                notes.connect_clicked(move |_| whats_new(&parent, ctx.clone(), "rclone"));
+                buttons.append(&notes);
+            }
+            let install = gtk::Button::with_label(
+                &ctx.t_or("modals.about.updateRclone", "Download Rclone Update"),
+            );
+            install.add_css_class("suggested-action");
+            {
+                let parent = parent.clone();
+                let ctx = ctx.clone();
+                let toast = toast.clone();
+                let dialog = dialog.clone();
+                install.connect_clicked(move |_| {
+                    start_rclone_update(&parent, ctx.clone(), toast.clone());
+                    dialog.close();
+                });
+            }
+            buttons.append(&install);
+            {
+                let ctx = ctx.clone();
+                let parent = parent.clone();
+                let dialog = dialog.clone();
+                let latest = info.latest.clone();
+                let skip =
+                    gtk::Button::with_label(&ctx.t_or("modals.about.skipVersion", "Skip Version"));
+                skip.connect_clicked(move |_| {
+                    ctx.settings
+                        .borrow_mut()
+                        .runtime
+                        .rclone_skipped_updates
+                        .push(latest.clone());
+                    ctx.persist();
+                    ctx.refresh_updates();
+                    dialog.close();
+                    about_open(&parent, ctx.clone(), "about-rclone");
+                });
+                buttons.append(&skip);
+            }
+            page.append(&buttons);
+        }
+        crate::updater::AboutUpdateCard::UpToDate => {
+            updates.set_title(&ctx.t_or("modals.about.rcloneUpToDate", "Rclone Up to Date"));
+            updates.set_description(Some(&ctx.t_or(
+                "modals.about.latestVersionMsg",
+                "You're running the latest version",
+            )));
+            page.append(&updates);
+        }
+    }
+
+    if !restart {
+        let check = gtk::Button::with_label(&ctx.t_or(
+            "modals.about.checkRcloneUpdates",
+            "Check for Rclone Updates",
+        ));
+        check.set_halign(gtk::Align::Start);
+        {
+            let ctx = ctx.clone();
+            let parent = parent.clone();
+            let dialog = dialog.clone();
+            check.connect_clicked(move |_| {
+                ctx.refresh_updates();
+                dialog.close();
+                about_open(&parent, ctx.clone(), "about-rclone");
+            });
+        }
+        page.append(&check);
+    }
+
+    let settings = adw::PreferencesGroup::new();
+    settings.set_title(&ctx.t_or(
+        "modals.about.rcloneUpdateSettings",
+        "Rclone Update Settings",
+    ));
+    let auto = about_auto_check_row(
+        ctx,
+        ctx.settings.borrow().runtime.rclone_auto_check_updates,
+        false,
+    );
+    auto.set_sensitive(!restart);
+    settings.add(&auto);
+    let channel = about_channel_row(
+        ctx,
+        &ctx.t_or("modals.about.releaseChannel", "Release Channel"),
+        &ctx.settings.borrow().runtime.rclone_update_channel,
+        false,
+    );
+    channel.set_sensitive(!restart);
+    settings.add(&channel);
+    page.append(&settings);
+    if let Some(skipped) = skipped_versions_group(
+        ctx,
+        &ctx.t_or(
+            "modals.about.skippedRcloneUpdates",
+            "Skipped Rclone Updates",
+        ),
+        &ctx.settings.borrow().runtime.rclone_skipped_updates,
+        false,
+    ) {
+        page.append(&skipped);
+    }
+    page.upcast()
+}
+
 pub fn about(parent: &impl IsA<gtk::Widget>, ctx: AppCtx) {
+    about_open(parent, ctx, "details");
+}
+
+pub fn about_open(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, page: &str) {
     if try_spawn_standalone(&ctx, "about", serde_json::json!({})) {
         return;
     }
@@ -596,9 +1207,10 @@ pub fn about(parent: &impl IsA<gtk::Widget>, ctx: AppCtx) {
         .unwrap_or_else(|| ctx.t_or("modals.about.rcloneUpToDate", "rclone is up to date"));
     let dialog = adw::Dialog::new();
     dialog.set_title(&ctx.t_or("modals.about.title", "About"));
-    dialog.set_content_width(560);
-    dialog.set_content_height(560);
+    dialog.set_content_width(680);
+    dialog.set_content_height(620);
     let stack = adw::ViewStack::new();
+    let toast = adw::ToastOverlay::new();
 
     let details = gtk::Box::new(gtk::Orientation::Vertical, 12);
     details.set_margin_top(16);
@@ -704,6 +1316,16 @@ pub fn about(parent: &impl IsA<gtk::Widget>, ctx: AppCtx) {
         Some("details"),
         &ctx.t_or("modals.about.details", "Details"),
     );
+    stack.add_titled(
+        &about_app_page(parent, &ctx, &dialog, &toast),
+        Some("about-app"),
+        &ctx.t_or("modals.about.aboutApp", "About App"),
+    );
+    stack.add_titled(
+        &about_rclone_page(parent, &ctx, &dialog, &toast),
+        Some("about-rclone"),
+        &ctx.t_or("modals.about.aboutRclone", "About Rclone"),
+    );
 
     let credits = gtk::Box::new(gtk::Orientation::Vertical, 8);
     credits.set_margin_top(16);
@@ -792,7 +1414,6 @@ pub fn about(parent: &impl IsA<gtk::Widget>, ctx: AppCtx) {
         .unwrap_or_else(|| "—".into());
     pid_row.set_subtitle(&pid);
     engine_group.add(&pid_row);
-    let toast = adw::ToastOverlay::new();
     {
         let ctx = ctx.clone();
         let toast = toast.clone();
@@ -800,38 +1421,7 @@ pub fn about(parent: &impl IsA<gtk::Widget>, ctx: AppCtx) {
             gtk::Button::with_label(&ctx.t_or("modals.about.killRclone", "Quit rclone engine"));
         quit.add_css_class("destructive-action");
         quit.set_halign(gtk::Align::Start);
-        quit.connect_clicked(move |_| {
-            let local = ctx.settings.borrow().core.active_backend.is_empty()
-                || ctx.settings.borrow().core.active_backend == "local";
-            if local {
-                if ctx.engine.borrow().is_none() {
-                    toast.add_toast(adw::Toast::new(
-                        &ctx.t_or("modals.about.noProcessToKill", "No rclone process to kill"),
-                    ));
-                    return;
-                }
-                *ctx.engine.borrow_mut() = None;
-                ctx.refresh_runtime();
-                toast.add_toast(adw::Toast::new(&ctx.t_or(
-                    "modals.about.killSuccess",
-                    "Rclone process killed successfully",
-                )));
-            } else if let Some(client) = ctx.client() {
-                match client.quit() {
-                    Ok(_) => toast.add_toast(adw::Toast::new(&ctx.t_or(
-                        "modals.about.killSuccess",
-                        "Rclone process killed successfully",
-                    ))),
-                    Err(_) => toast.add_toast(adw::Toast::new(
-                        &ctx.t_or("modals.about.killFailed", "Failed to kill rclone process"),
-                    )),
-                }
-            } else {
-                toast.add_toast(adw::Toast::new(
-                    &ctx.t_or("modals.about.noProcessToKill", "No rclone process to kill"),
-                ));
-            }
-        });
+        quit.connect_clicked(move |_| quit_rclone_engine(&ctx, &toast));
         system.append(&engine_group);
         system.append(&quit);
     }
@@ -902,6 +1492,7 @@ pub fn about(parent: &impl IsA<gtk::Widget>, ctx: AppCtx) {
     let switcher = adw::ViewSwitcher::new();
     switcher.set_stack(Some(&stack));
     switcher.set_policy(adw::ViewSwitcherPolicy::Wide);
+    stack.set_visible_child_name(crate::updater::about_visible_page(page));
     let toolbar = adw::ToolbarView::new();
     let header = adw::HeaderBar::new();
     header.set_title_widget(Some(&switcher));
@@ -1279,14 +1870,11 @@ fn start_app_update(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, toast: adw::Toa
                 "updates.installSuccess",
                 &[("path", &path.display().to_string())],
             )));
-            if let Err(e) = crate::platform::relaunch() {
-                ctx.notify(
-                    &ctx.tf("backendErrors.updater.relaunchFailed", &[("error", &e)]),
-                    "",
-                );
-            } else {
-                std::process::exit(0);
-            }
+            ctx.settings.borrow_mut().runtime.app_restart_required = true;
+            ctx.persist();
+            toast.add_toast(adw::Toast::new(
+                &ctx.t_or("modals.about.readyToRestart", "Restart Required"),
+            ));
         },
     );
 }
