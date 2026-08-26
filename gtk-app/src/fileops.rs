@@ -990,6 +990,110 @@ pub fn is_local_open_target(remote: &str) -> bool {
     remote.is_empty() || remote == "local"
 }
 
+/// Listing context menu shape, matching Angular `nautilus-context-menu`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ListingMenuKind {
+    Empty,
+    SingleFile,
+    SingleFolder,
+    Multi,
+}
+
+impl ListingMenuKind {
+    pub fn from_selection(count: usize, first_is_dir: bool) -> Self {
+        match count {
+            0 => Self::Empty,
+            1 if first_is_dir => Self::SingleFolder,
+            1 => Self::SingleFile,
+            _ => Self::Multi,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct ListingMenuFlags {
+    pub has_clipboard: bool,
+    pub public_ok: bool,
+    pub cleanup_ok: bool,
+    pub archive_selected: bool,
+    pub can_undo: bool,
+    pub can_redo: bool,
+}
+
+/// Action ids for the Files listing context menu (`sep` is a visual divider).
+pub fn listing_context_actions(
+    kind: ListingMenuKind,
+    flags: ListingMenuFlags,
+) -> Vec<&'static str> {
+    let mut items = Vec::new();
+    match kind {
+        ListingMenuKind::Empty => {
+            items.extend(["reload", "mkdir", "sep", "upload", "uploaddir", "copyurl"]);
+            if flags.has_clipboard {
+                items.push("paste");
+            }
+            items.extend(["sep", "props"]);
+            if flags.cleanup_ok {
+                items.push("cleanup");
+            }
+            items.push("sendto");
+            push_history(&mut items, flags);
+            items.push("detach");
+        }
+        ListingMenuKind::Multi => {
+            items.extend(["copy", "cut", "copyto", "moveto"]);
+            items.extend(["sep", "mkdirsel", "rename", "archive"]);
+            if flags.archive_selected {
+                items.extend(["archivelist", "extract"]);
+            }
+            items.extend(["sep", "delete", "sep", "props", "download"]);
+            push_history(&mut items, flags);
+        }
+        ListingMenuKind::SingleFile => {
+            items.extend(["open", "native", "share", "copypath"]);
+            if flags.public_ok {
+                items.push("public");
+            }
+            items.extend([
+                "sep", "copy", "cut", "copyto", "moveto", "rename", "archive",
+            ]);
+            if flags.archive_selected {
+                items.extend(["archivelist", "extract"]);
+            }
+            items.extend(["sep", "delete", "sep", "props", "download", "star"]);
+            push_history(&mut items, flags);
+            items.push("detach");
+        }
+        ListingMenuKind::SingleFolder => {
+            items.extend(["open_submenu", "rmdirs", "copypath"]);
+            if flags.public_ok {
+                items.push("public");
+            }
+            items.extend(["sep", "copy", "cut", "copyto", "moveto"]);
+            if flags.has_clipboard {
+                items.push("paste");
+            }
+            items.extend(["rename", "archive", "sep", "delete", "sep", "props", "star"]);
+            push_history(&mut items, flags);
+            items.extend(["sendto", "detach"]);
+        }
+    }
+    items
+}
+
+pub fn listing_open_submenu_actions() -> &'static [&'static str] {
+    &["open", "tab", "window"]
+}
+
+fn push_history(items: &mut Vec<&'static str>, flags: ListingMenuFlags) {
+    if flags.can_undo {
+        items.push("undo");
+    }
+    if flags.can_redo {
+        items.push("redo");
+    }
+}
+
 /// Open a local path in the OS handler, or download a remote file to `$TMP` first.
 pub fn open_file_natively(
     client: Option<&RcClient>,
@@ -1066,6 +1170,116 @@ mod tests {
         assert!(FILE_CONTEXT_MENU_MAX_HEIGHT_PX >= 300);
         assert!(FILE_CONTEXT_MENU_MAX_HEIGHT_PX < 800);
         assert!(FILE_CONTEXT_MENU_MIN_WIDTH_PX >= 200);
+    }
+
+    #[test]
+    fn listing_menu_kind_from_selection() {
+        assert_eq!(
+            ListingMenuKind::from_selection(0, true),
+            ListingMenuKind::Empty
+        );
+        assert_eq!(
+            ListingMenuKind::from_selection(1, false),
+            ListingMenuKind::SingleFile
+        );
+        assert_eq!(
+            ListingMenuKind::from_selection(1, true),
+            ListingMenuKind::SingleFolder
+        );
+        assert_eq!(
+            ListingMenuKind::from_selection(3, true),
+            ListingMenuKind::Multi
+        );
+    }
+
+    #[test]
+    fn listing_empty_menu_hides_item_actions() {
+        let items = listing_context_actions(
+            ListingMenuKind::Empty,
+            ListingMenuFlags {
+                has_clipboard: false,
+                cleanup_ok: true,
+                can_undo: true,
+                ..ListingMenuFlags::default()
+            },
+        );
+        assert!(items.contains(&"reload"));
+        assert!(items.contains(&"mkdir"));
+        assert!(items.contains(&"upload"));
+        assert!(items.contains(&"cleanup"));
+        assert!(items.contains(&"undo"));
+        assert!(!items.contains(&"open"));
+        assert!(!items.contains(&"delete"));
+        assert!(!items.contains(&"paste"));
+        assert!(!items.contains(&"native"));
+        assert!(!items.contains(&"share"));
+    }
+
+    #[test]
+    fn listing_empty_menu_shows_paste_when_clipboard_full() {
+        let items = listing_context_actions(
+            ListingMenuKind::Empty,
+            ListingMenuFlags {
+                has_clipboard: true,
+                ..ListingMenuFlags::default()
+            },
+        );
+        assert!(items.contains(&"paste"));
+    }
+
+    #[test]
+    fn listing_single_file_menu_omits_folder_actions() {
+        let items = listing_context_actions(
+            ListingMenuKind::SingleFile,
+            ListingMenuFlags {
+                public_ok: true,
+                archive_selected: true,
+                ..ListingMenuFlags::default()
+            },
+        );
+        assert!(items.contains(&"open"));
+        assert!(items.contains(&"native"));
+        assert!(items.contains(&"share"));
+        assert!(items.contains(&"public"));
+        assert!(items.contains(&"extract"));
+        assert!(!items.contains(&"open_submenu"));
+        assert!(!items.contains(&"rmdirs"));
+        assert!(!items.contains(&"mkdir"));
+        assert!(!items.contains(&"upload"));
+        assert!(!items.contains(&"paste"));
+    }
+
+    #[test]
+    fn listing_single_folder_menu_uses_open_submenu() {
+        let items = listing_context_actions(
+            ListingMenuKind::SingleFolder,
+            ListingMenuFlags {
+                has_clipboard: true,
+                public_ok: false,
+                ..ListingMenuFlags::default()
+            },
+        );
+        assert!(items.contains(&"open_submenu"));
+        assert!(items.contains(&"rmdirs"));
+        assert!(items.contains(&"paste"));
+        assert!(!items.contains(&"native"));
+        assert!(!items.contains(&"share"));
+        assert!(!items.contains(&"public"));
+        assert_eq!(listing_open_submenu_actions(), &["open", "tab", "window"]);
+    }
+
+    #[test]
+    fn listing_multi_menu_is_bulk_actions() {
+        let items = listing_context_actions(ListingMenuKind::Multi, ListingMenuFlags::default());
+        assert!(items.contains(&"copy"));
+        assert!(items.contains(&"mkdirsel"));
+        assert!(items.contains(&"rename"));
+        assert!(items.contains(&"archive"));
+        assert!(items.contains(&"delete"));
+        assert!(!items.contains(&"open"));
+        assert!(!items.contains(&"native"));
+        assert!(!items.contains(&"mkdir"));
+        assert!(!items.contains(&"upload"));
     }
 
     #[test]

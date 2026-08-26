@@ -214,7 +214,14 @@ fn register_application_options(app: &adw::Application) {
         "Re-open the first-run onboarding window",
         None,
     );
-    add("about", OptionArg::None, "Open the About dialog", None);
+    app.add_main_option(
+        "about",
+        0.into(),
+        OptionFlags::OPTIONAL_ARG,
+        OptionArg::String,
+        "Open the About dialog, optionally a page",
+        Some("PAGE"),
+    );
     app.add_main_option(
         "logs",
         0.into(),

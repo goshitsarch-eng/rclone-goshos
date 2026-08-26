@@ -741,3 +741,5 @@ This client is the GTK 4 + libadwaita desktop UI. It talks to a local `rclone rc
 - Live GUI: About App shows OS `linux (x86_64)`, mode `gtk-desktop`, Up to Date, Check for Updates, Auto-Check, Release Channel Stable
 - Live GUI: About Rclone shows `v1.60.1-DEV · Beta`, Go `go1.22.2`, PID + Kill Process, Memory + View Memory Statistics, Backend Cache, Rclone Up to Date
 - Live GUI: `app_restart_required` banner reads **Restart Required** / **Restart Now**; About App shows the same card and hides Check for Updates
+- Files listing context menu is context-sensitive (empty / file / folder Open submenu / multi), matching Angular
+- About deep links select a page (`#/about/about-rclone`, `--about rclone`); Debug tools include Restart App and GTK Inspector; memory stats include heap/stack/GC counts

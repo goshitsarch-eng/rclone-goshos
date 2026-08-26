@@ -2127,7 +2127,7 @@ fn apply_nav(
             | NavTarget::Preferences { .. }
             | NavTarget::RemoteConfig { .. }
             | NavTarget::Onboarding
-            | NavTarget::About
+            | NavTarget::About { .. }
             | NavTarget::Logs { .. }
             | NavTarget::Shortcuts
             | NavTarget::Backends
@@ -2280,7 +2280,9 @@ fn apply_nav(
                 onboarding::present(&app, ctx.clone());
             }
         }
-        NavTarget::About => dialogs::about(window, ctx.clone()),
+        NavTarget::About { page } => {
+            dialogs::about_open(window, ctx.clone(), page.as_deref().unwrap_or("details"))
+        }
         NavTarget::Logs { remote } => dialogs::logs(window, ctx.clone(), remote),
         NavTarget::Shortcuts => dialogs::shortcuts(window, ctx),
         NavTarget::Backends => dialogs::backends(window, ctx.clone()),

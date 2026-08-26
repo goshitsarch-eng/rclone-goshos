@@ -271,7 +271,14 @@ pub fn present_standalone(
             ctx.clone(),
             req.data.get("page").and_then(|v| v.as_str()),
         ),
-        "about" => about(&window, ctx.clone()),
+        "about" => about_open(
+            &window,
+            ctx.clone(),
+            req.data
+                .get("page")
+                .and_then(|v| v.as_str())
+                .unwrap_or("details"),
+        ),
         "logs" => logs(
             &window,
             ctx.clone(),
@@ -1179,7 +1186,11 @@ pub fn about(parent: &impl IsA<gtk::Widget>, ctx: AppCtx) {
 }
 
 pub fn about_open(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, page: &str) {
-    if try_spawn_standalone(&ctx, "about", serde_json::json!({})) {
+    if try_spawn_standalone(
+        &ctx,
+        "about",
+        serde_json::json!({ "page": crate::updater::about_visible_page(page) }),
+    ) {
         return;
     }
     let version = ctx
@@ -1582,14 +1593,23 @@ pub fn memory_stats(parent: &impl IsA<gtk::Widget>, ctx: AppCtx) {
     if let Some(mem) = ctx.client().and_then(|c| c.memstats().ok()) {
         for (key, i18n_key, fallback) in [
             ("Alloc", "modals.about.memAlloc", "Allocated"),
+            (
+                "TotalAlloc",
+                "modals.about.memTotalAlloc",
+                "Total allocated",
+            ),
             ("Sys", "modals.about.memSys", "System"),
+            ("Mallocs", "modals.about.memMallocs", "Mallocs"),
+            ("Frees", "modals.about.memFrees", "Frees"),
             ("HeapAlloc", "modals.about.memHeapAlloc", "Heap"),
+            ("HeapSys", "modals.about.memHeapSys", "Heap system"),
+            ("StackInuse", "modals.about.memStackInuse", "Stack"),
             ("NumGC", "modals.about.gc", "GC cycles"),
         ] {
             let row = adw::ActionRow::new();
             row.set_title(&ctx.t_or(i18n_key, fallback));
             let value = mem.get(key).cloned().unwrap_or(serde_json::json!(0));
-            row.set_subtitle(&if key == "NumGC" {
+            row.set_subtitle(&if matches!(key, "NumGC" | "Mallocs" | "Frees") {
                 value.to_string()
             } else {
                 crate::rclone::format_bytes(value.as_i64().unwrap_or(0))
@@ -2369,6 +2389,22 @@ pub fn debug_info(parent: &impl IsA<gtk::Widget>, ctx: AppCtx) {
     actions.append(&open_cfg);
     actions.append(&open_cache);
     actions.append(&open_logs);
+    let inspector =
+        gtk::Button::with_label(&ctx.t_or("modals.about.openDevTools", "Open DevTools"));
+    inspector.connect_clicked(|_| {
+        gtk::Window::set_interactive_debugging(true);
+    });
+    actions.append(&inspector);
+    {
+        let parent = parent.clone();
+        let ctx = ctx.clone();
+        let restart = gtk::Button::with_label(&ctx.t_or("modals.about.restartApp", "Restart App"));
+        restart.add_css_class("destructive-action");
+        restart.connect_clicked(move |_| {
+            relaunch_application(&parent, &ctx, &adw::ToastOverlay::new());
+        });
+        actions.append(&restart);
+    }
     let box_ = gtk::Box::new(gtk::Orientation::Vertical, 8);
     box_.set_margin_top(12);
     box_.set_margin_start(12);

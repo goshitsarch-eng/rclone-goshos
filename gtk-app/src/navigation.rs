@@ -39,7 +39,9 @@ pub enum NavTarget {
         clone_from: Option<String>,
     },
     Onboarding,
-    About,
+    About {
+        page: Option<String>,
+    },
     Logs {
         remote: Option<String>,
     },
@@ -363,7 +365,13 @@ pub fn parse_launch_args(args: &[String], standalone_dialogs: bool) -> Option<La
                 });
             }
             "--onboarding" => target = Some(NavTarget::Onboarding),
-            "--about" => target = Some(NavTarget::About),
+            "--about" => {
+                target = Some(NavTarget::About {
+                    page: value
+                        .filter(|v| !v.is_empty() && !v.starts_with('-'))
+                        .map(|page| crate::updater::about_visible_page(&page).to_string()),
+                });
+            }
             "--logs" => {
                 target = Some(NavTarget::Logs {
                     remote: value.filter(|v| !v.is_empty() && !v.starts_with('-')),
@@ -644,7 +652,14 @@ pub fn parse_route_url(input: &str) -> Option<NavTarget> {
             })
         }
         "onboarding" => Some(NavTarget::Onboarding),
-        "about" => Some(NavTarget::About),
+        "about" => {
+            let page = parts
+                .next()
+                .map(decode_segment)
+                .and_then(|s| nonempty(&s))
+                .map(|page| crate::updater::about_visible_page(&page).to_string());
+            Some(NavTarget::About { page })
+        }
         "logs" => Some(NavTarget::Logs {
             remote: parts.next().map(decode_segment).and_then(|s| nonempty(&s)),
         }),
@@ -1181,7 +1196,22 @@ mod tests {
             })
         );
         assert_eq!(parse_route_url("#/onboarding"), Some(NavTarget::Onboarding));
-        assert_eq!(parse_route_url("#/about"), Some(NavTarget::About));
+        assert_eq!(
+            parse_route_url("#/about"),
+            Some(NavTarget::About { page: None })
+        );
+        assert_eq!(
+            parse_route_url("#/about/about-rclone"),
+            Some(NavTarget::About {
+                page: Some("about-rclone".into())
+            })
+        );
+        assert_eq!(
+            parse_route_url("#/about/app"),
+            Some(NavTarget::About {
+                page: Some("about-app".into())
+            })
+        );
         assert_eq!(
             parse_route_url("#/logs"),
             Some(NavTarget::Logs { remote: None })
@@ -1522,7 +1552,16 @@ mod tests {
         assert_eq!(
             parse_launch_args(&["app".into(), "--about".into()], false),
             Some(LaunchRequest {
-                target: NavTarget::About,
+                target: NavTarget::About { page: None },
+                standalone: false,
+            })
+        );
+        assert_eq!(
+            parse_launch_args(&["app".into(), "--about".into(), "rclone".into()], false),
+            Some(LaunchRequest {
+                target: NavTarget::About {
+                    page: Some("about-rclone".into())
+                },
                 standalone: false,
             })
         );
