@@ -2,8 +2,15 @@ use super::AppCtx;
 use crate::jobs::{find_active_quick_run, start_profile, stop_profile};
 use crate::operations::OperationType;
 use crate::rclone::remote_fs;
-use crate::tray_menu::{plan_tray, TrayAction, TrayCaption, TrayMenuItem};
+use crate::tray_menu::{
+    flatten_tray_menu, plan_tray, tray_helper_needs_restart, tray_helper_signature, TrayAction,
+    TrayCaption, TrayMenuItem,
+};
 use std::cell::RefCell;
+use std::path::PathBuf;
+use std::process::Child;
+#[cfg(any(target_os = "windows", target_os = "macos"))]
+use std::process::{Command, Stdio};
 use std::sync::mpsc::{self, Receiver, Sender};
 use std::sync::{Arc, Mutex};
 
@@ -16,6 +23,45 @@ pub struct TrayBus {
     pub tx: Sender<TrayAction>,
     rx: Arc<Mutex<Receiver<TrayAction>>>,
     handle: Option<ksni::Handle<StatusIcon>>,
+    native: Option<Arc<NativeTrayHelper>>,
+}
+
+struct NativeTrayHelper {
+    exe: PathBuf,
+    last_sig: Mutex<String>,
+    child: Mutex<Option<Child>>,
+}
+
+#[allow(dead_code)]
+impl NativeTrayHelper {
+    fn spawn(exe: PathBuf, items: &[(String, Option<String>)]) -> Option<Self> {
+        let child = spawn_native_helper(&exe, items)?;
+        Some(Self {
+            last_sig: Mutex::new(tray_helper_signature(items)),
+            child: Mutex::new(Some(child)),
+            exe,
+        })
+    }
+
+    fn sync(&self, items: &[(String, Option<String>)]) {
+        let Ok(mut last) = self.last_sig.lock() else {
+            return;
+        };
+        if !tray_helper_needs_restart(&last, items) {
+            return;
+        }
+        *last = tray_helper_signature(items);
+        drop(last);
+        let Ok(mut slot) = self.child.lock() else {
+            return;
+        };
+        if let Some(mut child) = slot.take() {
+            let _ = child.kill();
+            let _ = child.wait();
+        }
+        *slot = spawn_native_helper(&self.exe, items);
+        log::info!("native tray helper restarted ({} items)", items.len());
+    }
 }
 
 impl TrayBus {
@@ -29,18 +75,20 @@ impl TrayBus {
     }
 
     pub fn refresh(&self, ctx: &AppCtx) {
-        let Some(handle) = &self.handle else {
-            return;
-        };
         let (items, icon_name, title, description, busy) = plan_status(ctx);
-        handle.update(|icon| {
-            icon.items = items;
-            icon.icon_name = icon_name;
-            icon.icon_pixmap = tray_pixmaps(busy);
-            icon.tooltip_title = title;
-            icon.tooltip_description = description;
-            icon.busy = busy;
-        });
+        if let Some(handle) = &self.handle {
+            handle.update(|icon| {
+                icon.items = items.clone();
+                icon.icon_name = icon_name;
+                icon.icon_pixmap = tray_pixmaps(busy);
+                icon.tooltip_title = title;
+                icon.tooltip_description = description;
+                icon.busy = busy;
+            });
+        }
+        if let Some(native) = &self.native {
+            native.sync(&flatten_tray_menu(&items));
+        }
     }
 }
 
@@ -318,56 +366,92 @@ pub fn start_or_reuse(ctx: &AppCtx) -> Option<TrayBus> {
     bus
 }
 
-fn empty_bus() -> TrayBus {
-    let (tx, rx) = mpsc::channel();
-    TrayBus {
-        tx,
-        rx: Arc::new(Mutex::new(rx)),
-        handle: None,
+#[allow(dead_code)]
+fn spawn_native_helper(exe: &PathBuf, items: &[(String, Option<String>)]) -> Option<Child> {
+    #[cfg(target_os = "windows")]
+    {
+        return spawn_windows_notifyicon(exe, items);
+    }
+    #[cfg(target_os = "macos")]
+    {
+        return spawn_macos_status_item(exe, items);
+    }
+    #[cfg(not(any(target_os = "windows", target_os = "macos")))]
+    {
+        let _ = (exe, items);
+        None
     }
 }
 
 #[cfg(target_os = "windows")]
-fn start_windows_notifyicon() -> Option<TrayBus> {
-    let exe = std::env::current_exe().ok()?;
-    let script = crate::platform::windows_notifyicon_ps1(&exe.to_string_lossy());
+fn spawn_windows_notifyicon(exe: &PathBuf, items: &[(String, Option<String>)]) -> Option<Child> {
+    let path = dirs::config_dir()?.join("rclone-manager/tray-notifyicon.ps1");
+    if let Some(parent) = path.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+    std::fs::write(
+        &path,
+        crate::platform::windows_notifyicon_ps1(&exe.to_string_lossy(), items),
+    )
+    .ok()?;
     let ps = if which::which("powershell").is_ok() {
         "powershell"
     } else {
         "pwsh"
     };
-    std::process::Command::new(ps)
-        .args(["-NoProfile", "-WindowStyle", "Hidden", "-Command", &script])
-        .stdin(std::process::Stdio::null())
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
+    Command::new(ps)
+        .args([
+            "-NoProfile",
+            "-WindowStyle",
+            "Hidden",
+            "-File",
+            path.to_str()?,
+        ])
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
         .spawn()
-        .ok()?;
-    log::info!("Windows NotifyIcon tray helper started");
-    Some(empty_bus())
+        .ok()
 }
 
 #[cfg(target_os = "macos")]
-fn start_macos_status_item() -> Option<TrayBus> {
-    let exe = std::env::current_exe().ok()?;
+fn spawn_macos_status_item(exe: &PathBuf, items: &[(String, Option<String>)]) -> Option<Child> {
     let path = dirs::config_dir()?.join("rclone-manager/tray-status-item.swift");
     if let Some(parent) = path.parent() {
         let _ = std::fs::create_dir_all(parent);
     }
     std::fs::write(
         &path,
-        crate::platform::macos_status_item_swift(&exe.to_string_lossy()),
+        crate::platform::macos_status_item_swift(&exe.to_string_lossy(), items),
     )
     .ok()?;
-    std::process::Command::new("swift")
+    Command::new("swift")
         .arg(&path)
-        .stdin(std::process::Stdio::null())
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
         .spawn()
-        .ok()?;
-    log::info!("macOS NSStatusItem tray helper started");
-    Some(empty_bus())
+        .ok()
+}
+
+#[cfg(any(target_os = "windows", target_os = "macos"))]
+fn start_native_helper(ctx: &AppCtx) -> Option<TrayBus> {
+    let exe = std::env::current_exe().ok()?;
+    let (items, ..) = plan_status(ctx);
+    let flat = flatten_tray_menu(&items);
+    let native = NativeTrayHelper::spawn(exe, &flat)?;
+    log::info!(
+        "{} tray helper started ({} items)",
+        crate::platform::tray_backend(),
+        flat.len()
+    );
+    let (tx, rx) = mpsc::channel();
+    Some(TrayBus {
+        tx,
+        rx: Arc::new(Mutex::new(rx)),
+        handle: None,
+        native: Some(Arc::new(native)),
+    })
 }
 
 pub fn start(ctx: &AppCtx) -> Option<TrayBus> {
@@ -376,11 +460,11 @@ pub fn start(ctx: &AppCtx) -> Option<TrayBus> {
     }
     #[cfg(target_os = "windows")]
     {
-        return start_windows_notifyicon();
+        return start_native_helper(ctx);
     }
     #[cfg(target_os = "macos")]
     {
-        return start_macos_status_item();
+        return start_native_helper(ctx);
     }
     let (tx, rx) = mpsc::channel();
     let (items, icon_name, title, description, busy) = plan_status(ctx);
@@ -417,6 +501,7 @@ pub fn start(ctx: &AppCtx) -> Option<TrayBus> {
         tx: tx.clone(),
         rx: Arc::new(Mutex::new(rx)),
         handle: Some(handle),
+        native: None,
     };
     log::info!("StatusNotifier tray started ({remotes} remotes)");
     Some(bus)

@@ -193,24 +193,47 @@ fn powershell_single_quoted(value: &str) -> String {
     format!("'{}'", value.replace('\'', "''"))
 }
 
+/// Fallback menu when `plan_tray` has not been flattened yet.
+pub fn default_tray_helper_items() -> Vec<(String, Option<String>)> {
+    vec![
+        ("Show Window".into(), Some("show-window".into())),
+        ("Open Files".into(), Some("open-files".into())),
+        (String::new(), None),
+        ("Unmount All".into(), Some("unmount-all".into())),
+        ("Stop All Jobs".into(), Some("stop-jobs".into())),
+        ("Stop All Serves".into(), Some("stop-serves".into())),
+        (String::new(), None),
+        ("Quit".into(), Some("quit".into())),
+    ]
+}
+
+fn helper_items_or_default(items: &[(String, Option<String>)]) -> Vec<(String, Option<String>)> {
+    if items.is_empty() {
+        default_tray_helper_items()
+    } else {
+        items.to_vec()
+    }
+}
+
 /// PowerShell NotifyIcon that forwards clicks to `exe --tray-action`.
-pub fn windows_notifyicon_ps1(exe: &str) -> String {
+pub fn windows_notifyicon_ps1(exe: &str, items: &[(String, Option<String>)]) -> String {
     let quoted = powershell_single_quoted(exe);
-    let items = [
-        ("Show Window", "show-window"),
-        ("Open Files", "open-files"),
-        ("Unmount All", "unmount-all"),
-        ("Stop All Jobs", "stop-jobs"),
-        ("Stop All Serves", "stop-serves"),
-        ("Quit", "quit"),
-    ];
     let mut menu = String::new();
-    for (label, action) in items {
-        menu.push_str(&format!(
-            "$item = New-Object System.Windows.Forms.ToolStripMenuItem '{label}'; \
-             $item.add_Click({{ Start-Process -FilePath {quoted} -ArgumentList '--tray-action','{action}' }}); \
-             $menu.Items.Add($item) | Out-Null; "
-        ));
+    for (label, action) in helper_items_or_default(items) {
+        match action {
+            None => menu.push_str(
+                "$menu.Items.Add((New-Object System.Windows.Forms.ToolStripSeparator)) | Out-Null; ",
+            ),
+            Some(token) => {
+                let quoted_label = powershell_single_quoted(&label);
+                let quoted_action = powershell_single_quoted(&token);
+                menu.push_str(&format!(
+                    "$item = New-Object System.Windows.Forms.ToolStripMenuItem {quoted_label}; \
+                     $item.add_Click({{ Start-Process -FilePath {quoted} -ArgumentList '--tray-action',{quoted_action} }}); \
+                     $menu.Items.Add($item) | Out-Null; "
+                ));
+            }
+        }
     }
     format!(
         "Add-Type -AssemblyName System.Windows.Forms; \
@@ -228,9 +251,27 @@ pub fn windows_notifyicon_ps1(exe: &str) -> String {
     )
 }
 
+fn swift_string_literal(value: &str) -> String {
+    value
+        .replace('\\', "\\\\")
+        .replace('"', "\\\"")
+        .replace('\n', " ")
+}
+
 /// Swift NSStatusItem helper that forwards clicks to `exe --tray-action`.
-pub fn macos_status_item_swift(exe: &str) -> String {
-    let escaped = exe.replace('\\', "\\\\").replace('"', "\\\"");
+pub fn macos_status_item_swift(exe: &str, items: &[(String, Option<String>)]) -> String {
+    let escaped = swift_string_literal(exe);
+    let mut adds = String::new();
+    for (label, action) in helper_items_or_default(items) {
+        match action {
+            None => adds.push_str("menu.addItem(NSMenuItem.separator())\n"),
+            Some(token) => {
+                let title = swift_string_literal(&label);
+                let token = swift_string_literal(&token);
+                adds.push_str(&format!("add(\"{title}\", \"{token}\")\n"));
+            }
+        }
+    }
     format!(
         r#"import Cocoa
 let exe = "{escaped}"
@@ -240,31 +281,24 @@ func run(_ action: String) {{
     p.arguments = ["--tray-action", action]
     try? p.run()
 }}
-let app = NSApplication.shared
-app.setActivationPolicy(.accessory)
-let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
-item.button?.title = "R"
-let menu = NSMenu()
-for (title, action) in [
-    ("Show Window", "show-window"),
-    ("Open Files", "open-files"),
-    ("Unmount All", "unmount-all"),
-    ("Stop All Jobs", "stop-jobs"),
-    ("Stop All Serves", "stop-serves"),
-    ("Quit", "quit"),
-] {{
-    let mi = NSMenuItem(title: title, action: #selector(TrayTarget.runAction(_:)), keyEquivalent: "")
-    mi.representedObject = action
-    menu.addItem(mi)
-}}
 class TrayTarget: NSObject {{
     @objc func runAction(_ sender: NSMenuItem) {{
         if let action = sender.representedObject as? String {{ run(action) }}
     }}
 }}
+let app = NSApplication.shared
+app.setActivationPolicy(.accessory)
+let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
+item.button?.title = "R"
+let menu = NSMenu()
 let target = TrayTarget()
-for mi in menu.items {{ mi.target = target }}
-item.menu = menu
+func add(_ title: String, _ action: String) {{
+    let mi = NSMenuItem(title: title, action: #selector(TrayTarget.runAction(_:)), keyEquivalent: "")
+    mi.representedObject = action
+    mi.target = target
+    menu.addItem(mi)
+}}
+{adds}item.menu = menu
 app.run()
 "#
     )
@@ -1336,18 +1370,38 @@ mod tests {
                 "ksni"
             }
         );
-        let ps = windows_notifyicon_ps1(r"C:\Program Files\rclone-manager-gtk.exe");
+        let ps = windows_notifyicon_ps1(
+            r"C:\Program Files\rclone-manager-gtk.exe",
+            &default_tray_helper_items(),
+        );
         assert!(ps.contains("System.Windows.Forms.NotifyIcon"));
         assert!(ps.contains("--tray-action"));
         assert!(ps.contains("show-window"));
         assert!(ps.contains("unmount-all"));
+        assert!(ps.contains("ToolStripSeparator"));
         assert!(ps.contains(r"C:\Program Files\rclone-manager-gtk.exe"));
-        let swift =
-            macos_status_item_swift(r#"/Applications/Rclone "Manager".app/Contents/MacOS/app"#);
+        let swift = macos_status_item_swift(
+            r#"/Applications/Rclone "Manager".app/Contents/MacOS/app"#,
+            &default_tray_helper_items(),
+        );
         assert!(swift.contains("NSStatusItem"));
         assert!(swift.contains("--tray-action"));
         assert!(swift.contains("open-files"));
         assert!(swift.contains(r#"\""#));
+        let dynamic = vec![
+            (
+                "testdrive: Mount · default".into(),
+                Some("mount|testdrive|default".into()),
+            ),
+            (String::new(), None),
+            ("Quit".into(), Some("quit".into())),
+        ];
+        let ps = windows_notifyicon_ps1(r"C:\rclone-manager-gtk.exe", &dynamic);
+        assert!(ps.contains("mount|testdrive|default"));
+        assert!(ps.contains("testdrive: Mount"));
+        let swift = macos_status_item_swift("/opt/rclone-manager-gtk", &dynamic);
+        assert!(swift.contains("mount|testdrive|default"));
+        assert!(swift.contains("NSMenuItem.separator"));
     }
 
     #[test]

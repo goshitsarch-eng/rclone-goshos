@@ -112,6 +112,78 @@ pub fn parse_tray_action(token: &str) -> Option<TrayAction> {
     }
 }
 
+/// Flatten a nested StatusNotifier menu into `(label, action-token)` pairs.
+/// Nested submenu names collapse to the top-level prefix (`drive: Mount · home`).
+/// Separators are `("", None)`. Disabled / status-only rows are omitted.
+pub fn flatten_tray_menu(menu: &[TrayMenuItem]) -> Vec<(String, Option<String>)> {
+    let mut out = Vec::new();
+    flatten_tray_menu_into(menu, "", &mut out);
+    trim_tray_separators(&mut out);
+    out
+}
+
+fn flatten_tray_menu_into(
+    menu: &[TrayMenuItem],
+    prefix: &str,
+    out: &mut Vec<(String, Option<String>)>,
+) {
+    for item in menu {
+        if !item.children.is_empty() {
+            let next = if prefix.is_empty() {
+                item.label.trim_start_matches('●').trim().to_string()
+            } else {
+                prefix.to_string()
+            };
+            flatten_tray_menu_into(&item.children, &next, out);
+            continue;
+        }
+        if item.action.is_none() {
+            if out.last().is_some_and(|(_, action)| action.is_none()) {
+                continue;
+            }
+            out.push((String::new(), None));
+            continue;
+        }
+        if !item.enabled || matches!(item.action, Some(TrayAction::Status)) {
+            continue;
+        }
+        let Some(action) = item.action.as_ref() else {
+            continue;
+        };
+        let label = if prefix.is_empty() {
+            item.label.clone()
+        } else {
+            format!("{prefix}: {}", item.label)
+        };
+        out.push((label, Some(encode_tray_action(action))));
+    }
+}
+
+fn trim_tray_separators(items: &mut Vec<(String, Option<String>)>) {
+    while items.first().is_some_and(|(_, action)| action.is_none()) {
+        items.remove(0);
+    }
+    while items.last().is_some_and(|(_, action)| action.is_none()) {
+        items.pop();
+    }
+}
+
+/// Stable encoding used to decide whether a Win/macOS tray helper must restart.
+pub fn tray_helper_signature(items: &[(String, Option<String>)]) -> String {
+    items
+        .iter()
+        .map(|(label, action)| match action {
+            None => "|".to_string(),
+            Some(token) => format!("{label}={token}"),
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+pub fn tray_helper_needs_restart(prev: &str, items: &[(String, Option<String>)]) -> bool {
+    tray_helper_signature(items) != prev
+}
+
 pub fn parse_tray_action_args(args: &[String]) -> Option<TrayAction> {
     let mut i = 0;
     while i < args.len() {
@@ -691,5 +763,55 @@ mod tests {
         );
         assert_eq!(parse_tray_action(""), None);
         assert_eq!(parse_tray_action("nope"), None);
+    }
+
+    #[test]
+    fn flatten_tray_menu_includes_prefixed_remote_actions() {
+        let remotes = vec![drive_remote(false)];
+        let mut store = AppStore::default();
+        let mut meta = RemoteMeta {
+            show_on_tray: true,
+            primary_actions: vec!["mount".into()],
+            ..RemoteMeta::default()
+        };
+        meta.upsert_profile(
+            OperationType::Mount,
+            ProfileConfig {
+                name: "media".into(),
+                app: Default::default(),
+                rclone: json!({ "mountPoint": "/mnt/media" }),
+            },
+        );
+        store.remotes.insert("drive".into(), meta);
+        let mut qr = QuickRun::new("Photos".into(), OperationType::Copy, "drive".into());
+        qr.show_on_tray = true;
+        store.quick_runs.push(qr.clone());
+        let plan = plan_tray(&remotes, &store, &[], &[], &[], 4);
+        let flat = flatten_tray_menu(&plan);
+        assert!(
+            flat.iter().any(|(label, action)| {
+                action.as_deref() == Some("mount|drive|media") && label == "drive: Mount · media"
+            }),
+            "flat menu missing mount: {flat:?}"
+        );
+        assert!(flat.iter().any(|(label, action)| {
+            action.as_deref() == Some("browse-in|drive") && label == "drive: Browse in app"
+        }));
+        assert!(flat.iter().any(|(label, action)| {
+            action.as_deref() == Some(&format!("qr-start|{}", qr.id)) && label.contains("Photos")
+        }));
+        assert!(!flat
+            .iter()
+            .any(|(_, action)| action.as_deref() == Some("status")));
+        let sig = tray_helper_signature(&flat);
+        assert!(!tray_helper_needs_restart(&sig, &flat));
+        let mut changed = flat.clone();
+        changed.push(("Quit".into(), Some("quit".into())));
+        assert!(tray_helper_needs_restart(&sig, &changed));
+        let ps = crate::platform::windows_notifyicon_ps1("C:\\app.exe", &flat);
+        assert!(ps.contains("mount|drive|media"));
+        let swift = crate::platform::macos_status_item_swift("/opt/app", &flat);
+        assert!(swift.contains("mount|drive|media"));
+        assert!(swift.contains("qr-start|"));
     }
 }
