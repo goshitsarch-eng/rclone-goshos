@@ -124,6 +124,7 @@ impl AppCtx {
             .ensure_paths(&[crate::settings::AppSettings::log_path()
                 .to_string_lossy()
                 .into_owned()]);
+        crate::platform::start_metered_watch();
         ctx
     }
 

@@ -27,6 +27,24 @@ pub enum DropPlan {
     Transfer { dest: DropDest, move_items: bool },
 }
 
+pub fn drag_ghost_label(items: &[DragItem]) -> String {
+    match items.len() {
+        0 => String::new(),
+        1 => items[0].name.clone(),
+        n => format!("{n} items"),
+    }
+}
+
+pub fn drag_ghost_icon(items: &[DragItem]) -> &'static str {
+    if items.iter().any(|item| item.is_dir) {
+        "folder-symbolic"
+    } else if items.len() > 1 {
+        "folder-documents-symbolic"
+    } else {
+        "text-x-generic-symbolic"
+    }
+}
+
 pub fn encode_payload(items: &[DragItem]) -> String {
     serde_json::to_string(&serde_json::json!({
         "kind": PAYLOAD_KIND,
@@ -300,5 +318,21 @@ mod tests {
         let dest = dest_from_location("dropbox:Inbox");
         assert_eq!(dest.remote, "dropbox");
         assert_eq!(dest.path, "Inbox");
+    }
+
+    #[test]
+    fn drag_ghost_uses_name_or_count() {
+        let one = vec![item("drive", "Photos/README.txt", false)];
+        assert_eq!(drag_ghost_label(&one), "README.txt");
+        assert_eq!(drag_ghost_icon(&one), "text-x-generic-symbolic");
+        let many = vec![
+            item("drive", "Photos/a.png", false),
+            item("drive", "Photos/b.png", false),
+        ];
+        assert_eq!(drag_ghost_label(&many), "2 items");
+        assert_eq!(drag_ghost_icon(&many), "folder-documents-symbolic");
+        let folder = vec![item("drive", "Photos", true)];
+        assert_eq!(drag_ghost_icon(&folder), "folder-symbolic");
+        assert!(drag_ghost_label(&[]).is_empty());
     }
 }

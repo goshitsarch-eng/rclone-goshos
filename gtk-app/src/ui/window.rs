@@ -577,6 +577,10 @@ fn present_main_with(app: &adw::Application, ctx: AppCtx, hidden: bool) {
             update_banner(&ctx_poll, &banner_poll, &banner_kind_poll);
         }
         poll_tick.set(tick.wrapping_add(1));
+        if crate::platform::take_metered_change().is_some() {
+            ctx_poll.apply_effective_bandwidth();
+            update_banner(&ctx_poll, &banner_poll, &banner_kind_poll);
+        }
         if let Some(tray) = &tray {
             tray.drain(&ctx_poll);
             tray.refresh(&ctx_poll);

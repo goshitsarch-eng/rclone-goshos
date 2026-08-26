@@ -672,7 +672,22 @@ pub fn metered_from_nm_status(status: u32) -> bool {
     matches!(status, 1 | 3)
 }
 
-pub fn is_network_metered() -> bool {
+pub fn metered_from_refarg(value: &dyn dbus::arg::RefArg) -> Option<bool> {
+    if let Some(n) = value.as_u64() {
+        return Some(metered_from_nm_status(n as u32));
+    }
+    if let Some(n) = value.as_i64() {
+        return Some(metered_from_nm_status(n.max(0) as u32));
+    }
+    None
+}
+
+static METERED_WATCH_STARTED: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
+static METERED_CACHED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+static METERED_DIRTY: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+fn query_network_metered() -> bool {
     use std::time::Duration;
     let Ok(conn) = dbus::blocking::Connection::new_system() else {
         return false;
@@ -687,6 +702,85 @@ pub fn is_network_metered() -> bool {
         Ok(status) => metered_from_nm_status(status),
         Err(_) => false,
     }
+}
+
+fn store_metered(value: bool) {
+    let prev = METERED_CACHED.swap(value, std::sync::atomic::Ordering::Relaxed);
+    if prev != value {
+        METERED_DIRTY.store(true, std::sync::atomic::Ordering::SeqCst);
+    }
+}
+
+/// Start a background NetworkManager `Metered` watcher (D-Bus signals, 1s poll fallback).
+pub fn start_metered_watch() {
+    if METERED_WATCH_STARTED.swap(true, std::sync::atomic::Ordering::SeqCst) {
+        return;
+    }
+    let initial = query_network_metered();
+    METERED_CACHED.store(initial, std::sync::atomic::Ordering::Relaxed);
+    let _ = std::thread::Builder::new()
+        .name("nm-metered".into())
+        .spawn(metered_watch_loop);
+}
+
+pub fn take_metered_change() -> Option<bool> {
+    if METERED_DIRTY.swap(false, std::sync::atomic::Ordering::SeqCst) {
+        Some(METERED_CACHED.load(std::sync::atomic::Ordering::Relaxed))
+    } else {
+        None
+    }
+}
+
+fn metered_watch_loop() {
+    if watch_nm_metered_signals().is_err() {
+        loop {
+            std::thread::sleep(std::time::Duration::from_secs(1));
+            store_metered(query_network_metered());
+        }
+    }
+}
+
+fn watch_nm_metered_signals() -> Result<(), ()> {
+    use dbus::arg::{RefArg, Variant};
+    use std::collections::HashMap;
+    let conn = dbus::blocking::Connection::new_system().map_err(|_| ())?;
+    let mut rule = dbus::message::MatchRule::new_signal(
+        "org.freedesktop.DBus.Properties",
+        "PropertiesChanged",
+    );
+    rule.path = Some("/org/freedesktop/NetworkManager".into());
+    conn.add_match(
+        rule,
+        |(iface, changed, _inv): (
+            String,
+            HashMap<String, Variant<Box<dyn RefArg + 'static>>>,
+            Vec<String>,
+        ),
+         _,
+         _| {
+            if let Some(value) = changed.get("Metered") {
+                if let Some(metered) = metered_from_refarg(&*value.0) {
+                    store_metered(metered);
+                }
+            } else if iface == "org.freedesktop.NetworkManager"
+                || iface == "org.freedesktop.DBus.Properties"
+            {
+                store_metered(query_network_metered());
+            }
+            true
+        },
+    )
+    .map_err(|_| ())?;
+    loop {
+        let _ = conn.process(std::time::Duration::from_secs(1));
+    }
+}
+
+pub fn is_network_metered() -> bool {
+    if METERED_WATCH_STARTED.load(std::sync::atomic::Ordering::Relaxed) {
+        return METERED_CACHED.load(std::sync::atomic::Ordering::Relaxed);
+    }
+    query_network_metered()
 }
 
 pub fn is_flatpak() -> bool {
@@ -1907,6 +2001,10 @@ mod tests {
         assert!(!metered_from_nm_status(0));
         assert!(!metered_from_nm_status(2));
         assert!(!metered_from_nm_status(4));
+        assert_eq!(metered_from_refarg(&1u32), Some(true));
+        assert_eq!(metered_from_refarg(&2u32), Some(false));
+        assert_eq!(metered_from_refarg(&3u64), Some(true));
+        assert!(take_metered_change().is_none());
     }
 
     #[test]

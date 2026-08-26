@@ -619,3 +619,6 @@ This client is the GTK 4 + libadwaita desktop UI. It talks to a local `rclone rc
 - App/rclone update download URLs resolve Windows MSI/EXE and macOS DMG/zip assets; rclone zip is OS-specific
 - Host-local “Open folder” uses the system file manager when the path exists on this machine, even if the extra RC backend OS differs
 - Remote-config content header can collapse the profile sidebar
+- NetworkManager `Metered` D-Bus watcher applies bandwidth + banner immediately (1s poll fallback)
+- Files toolbar Detach Tab opens the current listing in a new window
+- Files internal drag shows a GTK `DragIcon` ghost with name or “N items”

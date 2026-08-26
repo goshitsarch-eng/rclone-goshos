@@ -206,6 +206,11 @@ impl NautilusView {
         toolbar.append(&upload);
         toolbar.append(&new_tab);
         toolbar.append(&split_btn);
+        let detach_btn = gtk::Button::from_icon_name("window-new-symbolic");
+        detach_btn.set_tooltip_text(Some(
+            &ctx.t_or("nautilus.contextMenu.detachTab", "Detach Tab"),
+        ));
+        toolbar.append(&detach_btn);
         toolbar.append(&star);
         toolbar.append(&layout);
         toolbar.append(&icon_btn);
@@ -412,6 +417,10 @@ impl NautilusView {
         {
             let view = view.clone();
             sidebar_btn.connect_clicked(move |_| view.toggle_sidebar());
+        }
+        {
+            let view = view.clone();
+            detach_btn.connect_clicked(move |_| view.detach_current_tab());
         }
         {
             let view = view.clone();
@@ -1403,6 +1412,26 @@ impl NautilusView {
                 Some(gtk::gdk::ContentProvider::for_value(
                     &crate::dnd::encode_payload(&items).to_value(),
                 ))
+            });
+        }
+        {
+            let view = self.clone();
+            source.connect_drag_begin(move |_, drag| {
+                let items = view.pending_drag.borrow().clone().unwrap_or_default();
+                let icon = gtk::DragIcon::for_drag(drag);
+                let row = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+                row.add_css_class("card");
+                row.set_margin_start(8);
+                row.set_margin_end(8);
+                row.set_margin_top(6);
+                row.set_margin_bottom(6);
+                row.append(&gtk::Image::from_icon_name(crate::dnd::drag_ghost_icon(
+                    &items,
+                )));
+                row.append(&gtk::Label::new(Some(&crate::dnd::drag_ghost_label(
+                    &items,
+                ))));
+                icon.set_child(Some(&row));
             });
         }
         {
