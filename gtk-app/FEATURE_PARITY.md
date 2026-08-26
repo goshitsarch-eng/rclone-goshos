@@ -738,3 +738,6 @@ This client is the GTK 4 + libadwaita desktop UI. It talks to a local `rclone rc
 - About includes dedicated About App and About Rclone pages (OS/arch/mode, debug tools, rclone version + beta/dev badge, Go, PID/kill, memory, FS cache)
 - About App / About Rclone update cards match Angular: Ready to restart, update available (What's New / Install / Skip), or up to date, plus auto-check, channel, and skipped versions
 - App updates stage a restart (`runtime.app_restart_required`) instead of relaunching immediately; banner and About App show Restart Now
+- Live GUI: About App shows OS `linux (x86_64)`, mode `gtk-desktop`, Up to Date, Check for Updates, Auto-Check, Release Channel Stable
+- Live GUI: About Rclone shows `v1.60.1-DEV · Beta`, Go `go1.22.2`, PID + Kill Process, Memory + View Memory Statistics, Backend Cache, Rclone Up to Date
+- Live GUI: `app_restart_required` banner reads **Restart Required** / **Restart Now**; About App shows the same card and hides Check for Updates
