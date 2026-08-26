@@ -611,6 +611,8 @@ This client is the GTK 4 + libadwaita desktop UI. It talks to a local `rclone rc
 - Startup installs AppStream metainfo under `~/.local/share/metainfo/`
 - Live GUI: Export Format=`rclone.conf` saved `/tmp/gui-export.rclone.conf` (`rclone.conf exported`; `[dummyexport]` `[guiimport]` `[guilocal]` `[testdrive]` `[testdrive2]`)
 - Live GUI: AppStream metainfo installed at `~/.local/share/metainfo/io.github.zarestia_dev.rclone-manager.metainfo.xml`
+- Live GUI: Dashboard **Manage Backends · local** opens the Backends dialog (Local rclone RC `127.0.0.1:33663`)
+- Live GUI: Files toolbar sidebar toggle hides Configure Sidebar / Starred / local disks and writes `nautilus.sidebar_visible` false, then true again
 - Mount folder pickers reject non-empty destinations (`backendErrors.file.folderNotEmpty`) and Windows drive roots
 - Files sidebar toggle persists `nautilus.sidebar_visible` (setting is no longer forced on)
 - Dashboard and Flow overview headers open the Backends dialog (`overviewHeader.manageBackends`)
