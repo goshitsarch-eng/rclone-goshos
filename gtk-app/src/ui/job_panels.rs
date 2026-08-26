@@ -522,7 +522,7 @@ pub fn detail_jobs_panel(
                 return;
             }
             if let Some(job) = jobs.get(index as usize) {
-                ctx.request_nav(NavTarget::for_job(job));
+                ctx.request_nav(NavTarget::Job { id: job.id });
             }
         });
     }
