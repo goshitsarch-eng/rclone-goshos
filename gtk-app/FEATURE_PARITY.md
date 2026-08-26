@@ -534,6 +534,7 @@ This client is the GTK 4 + libadwaita desktop UI. It talks to a local `rclone rc
 - Files right-click context menu is attached to each list/grid item and pointed at the main window
 - Files toolbar Selection actions menu (Copy / Copy to… / Move to… / Paste / rename / delete)
 - Live GUI: testdrive Photos Copy to… `verify-copy-to` (`sync/copy`, job 25238 in `job_history`, 3/3 files)
+- Live GUI: Selection actions menu lists Copy to… / Move to… and Copy toasts
 - Live GUI: remotes testdrive (Mounted) + dummyexport, Mount tab, Preferences tray/notifications ON, About, Alerts history
 
 ## Still deepening
