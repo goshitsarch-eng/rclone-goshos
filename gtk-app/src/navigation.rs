@@ -480,6 +480,12 @@ fn is_standalone_target(
     }
 }
 
+/// Dashboard and Flow keep their workspace visible and open Files in a
+/// detached window, matching Angular's Files overlay from those views.
+pub fn overlay_files_for_workspace(workspace: &str) -> bool {
+    matches!(workspace, "main_menu" | "flow")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -939,5 +945,13 @@ mod tests {
                 standalone: false,
             })
         );
+    }
+
+    #[test]
+    fn files_overlay_keeps_dashboard_and_flow() {
+        assert!(overlay_files_for_workspace("main_menu"));
+        assert!(overlay_files_for_workspace("flow"));
+        assert!(!overlay_files_for_workspace("nautilus"));
+        assert!(!overlay_files_for_workspace(""));
     }
 }

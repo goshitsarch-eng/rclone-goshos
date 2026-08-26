@@ -368,6 +368,20 @@ mod tests {
     }
 
     #[test]
+    fn restore_as_exists_in_all_catalogs() {
+        if i18n_dir().is_none() {
+            return;
+        }
+        for lang in SUPPORTED_LANGUAGES {
+            let i18n = I18n::load(lang);
+            assert!(
+                i18n.has("backup.restore.restoreAs"),
+                "backup.restore.restoreAs missing in {lang}"
+            );
+        }
+    }
+
+    #[test]
     fn detect_language_falls_back() {
         assert!(
             SUPPORTED_LANGUAGES.contains(&I18n::detect_language().as_str())

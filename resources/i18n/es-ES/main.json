@@ -1626,6 +1626,7 @@
         "profile": "Restaurar perfil específico"
       },
       "selectProfile": "Seleccionar perfil",
+      "restoreAs": "Restaurar como (cambio de nombre opcional)",
       "note": "Nota de copia de seguridad",
       "passwordRequired": "Se requiere contraseña",
       "encryptedWarning": "Esta copia de seguridad está cifrada. Introduce la contraseña correcta para descifrarla y restaurarla.",

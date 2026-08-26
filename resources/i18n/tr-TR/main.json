@@ -1626,6 +1626,7 @@
         "profile": "Belirli Profili Geri Yükle"
       },
       "selectProfile": "Profil Seç",
+      "restoreAs": "Farklı adla geri yükle (isteğe bağlı)",
       "note": "Yedekleme Notu",
       "passwordRequired": "Şifre Gerekli",
       "encryptedWarning": "Bu yedekleme şifrelenmiş. Şifresini çözmek ve geri yüklemek için doğru parolayı girin.",

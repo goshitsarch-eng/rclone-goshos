@@ -33,6 +33,7 @@ pub struct AppCtx {
     pub selected_remote: Rc<RefCell<Option<String>>>,
     pub selected_quick_run: Rc<RefCell<Option<String>>>,
     pub pending_browse: Rc<RefCell<Option<(String, String)>>>,
+    pub pending_files_overlay: Rc<RefCell<Option<(String, String)>>>,
     pub pending_nav: Rc<RefCell<Option<crate::navigation::NavTarget>>>,
     pub pending_show: Rc<Cell<bool>>,
     pub pending_quit: Rc<Cell<bool>>,
@@ -83,6 +84,7 @@ impl AppCtx {
             selected_remote: Rc::new(RefCell::new(None)),
             selected_quick_run: Rc::new(RefCell::new(None)),
             pending_browse: Rc::new(RefCell::new(None)),
+            pending_files_overlay: Rc::new(RefCell::new(None)),
             pending_nav: Rc::new(RefCell::new(None)),
             pending_show: Rc::new(Cell::new(false)),
             pending_quit: Rc::new(Cell::new(false)),
@@ -186,10 +188,10 @@ impl AppCtx {
                 let _ = open::that(&typed.path);
                 return;
             }
-            self.request_browse("local", &typed.path);
+            self.request_browse_or_overlay("local", &typed.path);
             return;
         }
-        self.request_browse(&typed.remote, &typed.path);
+        self.request_browse_or_overlay(&typed.remote, &typed.path);
     }
 
     pub fn backend_display_name(&self) -> String {
@@ -217,7 +219,7 @@ impl AppCtx {
             self.open_typed_path(name, &point);
             return;
         }
-        self.request_browse(name, "");
+        self.request_browse_or_overlay(name, "");
     }
 
     pub fn browse_quick_run(&self, qr: &crate::store::QuickRun) {
@@ -352,6 +354,18 @@ impl AppCtx {
             remote: remote.to_string(),
             path: path.to_string(),
         });
+    }
+
+    pub fn request_browse_or_overlay(&self, remote: &str, path: &str) {
+        if crate::navigation::overlay_files_for_workspace(&self.active_workspace.borrow()) {
+            *self.pending_files_overlay.borrow_mut() = Some((remote.to_string(), path.to_string()));
+            return;
+        }
+        self.request_browse(remote, path);
+    }
+
+    pub fn take_files_overlay(&self) -> Option<(String, String)> {
+        self.pending_files_overlay.borrow_mut().take()
     }
 
     pub fn request_nav(&self, target: crate::navigation::NavTarget) {

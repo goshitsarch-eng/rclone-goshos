@@ -1626,6 +1626,7 @@
         "profile": "Restaurar Perfil Específico"
       },
       "selectProfile": "Selecione o Perfil",
+      "restoreAs": "Restaurar como (renomear opcional)",
       "note": "Nota de Backup",
       "passwordRequired": "Senha Requerida",
       "encryptedWarning": "Essa cópia de segurança está criptografada. Entre com a senha correta para descriptografar e restaurar.",

@@ -1626,6 +1626,7 @@
         "profile": "恢复指定配置文件"
       },
       "selectProfile": "选择配置文件",
+      "restoreAs": "还原为（可选重命名）",
       "note": "备份备注",
       "passwordRequired": "需要密码",
       "encryptedWarning": "此备份已加密，请输入正确密码以解密并恢复。",

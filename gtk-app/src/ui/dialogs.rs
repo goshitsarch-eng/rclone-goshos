@@ -531,6 +531,23 @@ pub fn about(parent: &impl IsA<gtk::Widget>, ctx: AppCtx) {
     comments.set_justify(gtk::Justification::Center);
     details.append(&title);
     details.append(&comments);
+    let version_row = adw::ActionRow::new();
+    version_row.set_title(&ctx.t_or("modals.about.version", "Version"));
+    version_row.set_subtitle(&format!("{} · rclone {version}", env!("CARGO_PKG_VERSION")));
+    let copy_version = gtk::Button::from_icon_name("edit-copy-symbolic");
+    copy_version.set_valign(gtk::Align::Center);
+    copy_version.set_tooltip_text(Some(&ctx.t_or("common.copy", "Copy")));
+    let copy_text = format!(
+        "Rclone Manager {} · rclone {version}",
+        env!("CARGO_PKG_VERSION")
+    );
+    copy_version.connect_clicked(move |_| {
+        if let Some(display) = gtk::gdk::Display::default() {
+            display.clipboard().set_text(&copy_text);
+        }
+    });
+    version_row.add_suffix(&copy_version);
+    details.append(&version_row);
     let site = gtk::LinkButton::with_label(
         "https://github.com/Zarestia-Dev/rclone-manager",
         &ctx.t_or("modals.about.website", "Website"),
@@ -2479,7 +2496,7 @@ pub fn backends(parent: &impl IsA<gtk::Widget>, ctx: AppCtx) {
     let dialog = adw::Dialog::new();
     dialog.set_title(&ctx.t_or("titlebar.menu.backends", "Backends"));
     dialog.set_content_width(560);
-    dialog.set_content_height(520);
+    dialog.set_content_height(640);
     let list = gtk::ListBox::new();
     list.add_css_class("boxed-list");
     let ready = ctx.engine_ready();
@@ -2783,6 +2800,9 @@ pub fn backends(parent: &impl IsA<gtk::Widget>, ctx: AppCtx) {
     let box_ = gtk::Box::new(gtk::Orientation::Vertical, 8);
     box_.set_margin_top(12);
     box_.append(&scrolled_list(&list));
+    box_.append(&super::preferences::rclone_conf_security_group(
+        &ctx, parent,
+    ));
     box_.append(&bar);
     dialog.set_child(Some(&box_));
     present_window_or_dialog(parent, &ctx, &dialog);

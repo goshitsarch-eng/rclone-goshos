@@ -33,6 +33,7 @@ pub struct Dashboard {
     detail_page: Rc<RefCell<String>>,
     detail_sig: Rc<RefCell<String>>,
     sidebar_sig: Rc<RefCell<String>>,
+    split: adw::OverlaySplitView,
 }
 
 impl Dashboard {
@@ -41,6 +42,7 @@ impl Dashboard {
         let split = adw::OverlaySplitView::new();
         split.set_min_sidebar_width(260.0);
         split.set_max_sidebar_width(360.0);
+        split.set_show_sidebar(ctx.settings.borrow().runtime.dashboard_sidebar_open);
 
         let sidebar = gtk::Box::new(gtk::Orientation::Vertical, 8);
         sidebar.set_margin_top(8);
@@ -76,6 +78,15 @@ impl Dashboard {
         split.set_sidebar(Some(&sidebar));
 
         let content_box = gtk::Box::new(gtk::Orientation::Vertical, 0);
+        let side_toggle = gtk::Button::from_icon_name("sidebar-show-symbolic");
+        side_toggle.set_tooltip_text(Some(&ctx.t_or("sidebar.toggleSidebar", "Toggle Sidebar")));
+        side_toggle.set_halign(gtk::Align::Start);
+        let content_header = gtk::Box::new(gtk::Orientation::Horizontal, 6);
+        content_header.set_margin_top(6);
+        content_header.set_margin_start(8);
+        content_header.set_margin_end(8);
+        content_header.append(&side_toggle);
+        content_box.append(&content_header);
         let content = gtk::Stack::new();
         content.set_vexpand(true);
         let overview = gtk::Box::new(gtk::Orientation::Vertical, 12);
@@ -124,7 +135,12 @@ impl Dashboard {
             detail_page: Rc::new(RefCell::new("monitoring".into())),
             detail_sig: Rc::new(RefCell::new(String::new())),
             sidebar_sig: Rc::new(RefCell::new(String::new())),
+            split,
         };
+        {
+            let dash = dash.clone();
+            side_toggle.connect_clicked(move |_| dash.toggle_sidebar());
+        }
 
         let mut group_anchor: Option<gtk::ToggleButton> = None;
         for tab in AppTab::ALL {
@@ -324,11 +340,7 @@ impl Dashboard {
                     .unwrap_or(usize::MAX)
             });
         }
-        let editing = *self.editing_layout.borrow();
         for remote in remotes {
-            if remote.hidden && !editing {
-                continue;
-            }
             if !query.is_empty()
                 && !remote.name.to_lowercase().contains(&query)
                 && !remote.r#type.to_lowercase().contains(&query)
@@ -345,20 +357,25 @@ impl Dashboard {
             icon.set_pixel_size(16);
             icon.set_tooltip_text(Some(&remote.r#type));
             box_.append(&icon);
-            let name = gtk::Label::new(Some(&if remote.hidden {
-                format!("{} (hidden)", remote.name)
-            } else {
-                remote.name.clone()
-            }));
+            let name = gtk::Label::new(Some(&remote.name));
             name.set_xalign(0.0);
             name.set_hexpand(true);
-            let badge = gtk::Label::new(Some(&status_dot(
+            if remote.hidden {
+                name.add_css_class("dim-label");
+                let hidden = self
+                    .ctx
+                    .t_or("sidebar.hiddenOnDashboard", "Hidden on Dashboard");
+                name.set_tooltip_text(Some(&hidden));
+                row.set_tooltip_text(Some(&hidden));
+            }
+            box_.append(&name);
+            append_status_badges(
+                &box_,
+                &self.ctx,
                 remote.mounted,
                 remote.serving,
                 remote.job_active,
-            )));
-            box_.append(&name);
-            box_.append(&badge);
+            );
             row.set_child(Some(&box_));
             row.set_widget_name(&remote.name);
             if self.ctx.selected_remote.borrow().as_deref() == Some(remote.name.as_str()) {
@@ -379,6 +396,17 @@ impl Dashboard {
             ));
             self.sidebar_list.append(&empty);
         }
+    }
+
+    fn toggle_sidebar(&self) {
+        let next = !self.split.shows_sidebar();
+        self.split.set_show_sidebar(next);
+        self.ctx
+            .settings
+            .borrow_mut()
+            .runtime
+            .dashboard_sidebar_open = next;
+        self.ctx.persist();
     }
 
     fn remotes_for_display(&self) -> Vec<crate::store::RemoteInfo> {
@@ -3997,22 +4025,36 @@ fn default_mount_point(name: &str) -> String {
     crate::path_inspection::suggest_default_mount_path(name, &crate::store::AppStore::default())
 }
 
-fn status_dot(mounted: bool, serving: bool, job: bool) -> String {
-    let mut parts = Vec::new();
+fn append_status_badges(parent: &gtk::Box, ctx: &AppCtx, mounted: bool, serving: bool, job: bool) {
+    let badges = gtk::Box::new(gtk::Orientation::Horizontal, 2);
+    badges.set_valign(gtk::Align::Center);
+    badges.set_tooltip_text(Some(&remote_state_label(ctx, mounted, serving, job)));
     if mounted {
-        parts.push("M");
+        let icon = gtk::Image::from_icon_name("drive-harddisk-symbolic");
+        icon.set_pixel_size(12);
+        icon.set_tooltip_text(Some(
+            &ctx.t_or("overviews.status.labels.mounted", "Mounted"),
+        ));
+        badges.append(&icon);
     }
     if serving {
-        parts.push("S");
+        let icon = gtk::Image::from_icon_name("network-server-symbolic");
+        icon.set_pixel_size(12);
+        icon.set_tooltip_text(Some(&ctx.t_or("serve.serving", "Serving")));
+        badges.append(&icon);
     }
     if job {
-        parts.push("J");
+        let icon = gtk::Image::from_icon_name("media-playback-start-symbolic");
+        icon.set_pixel_size(12);
+        icon.set_tooltip_text(Some(&ctx.t_or("automation.status.running", "Running")));
+        badges.append(&icon);
     }
-    if parts.is_empty() {
-        "·".into()
-    } else {
-        parts.join("")
+    if !mounted && !serving && !job {
+        let idle = gtk::Label::new(Some("·"));
+        idle.add_css_class("dim-label");
+        badges.append(&idle);
     }
+    parent.append(&badges);
 }
 
 fn remote_state_label(ctx: &AppCtx, mounted: bool, serving: bool, job: bool) -> String {

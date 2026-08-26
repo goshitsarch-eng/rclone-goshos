@@ -1208,7 +1208,13 @@ fn add_security_page(
     page: &adw::PreferencesPage,
     parent: &impl IsA<gtk::Widget>,
 ) {
-    let ctx = &session.ctx;
+    page.add(&rclone_conf_security_group(&session.ctx, parent));
+}
+
+pub fn rclone_conf_security_group(
+    ctx: &AppCtx,
+    parent: &impl IsA<gtk::Widget>,
+) -> adw::PreferencesGroup {
     let s1 = adw::PreferencesGroup::new();
     s1.set_title(&ctx.t_or(
         "modals.backend.security.configPassword",
@@ -1384,7 +1390,7 @@ fn add_security_page(
     sec_row.add_suffix(&change);
     sec_row.add_suffix(&unencrypt);
     s1.add(&sec_row);
-    page.add(&s1);
+    s1
 }
 
 fn add_developer_page(

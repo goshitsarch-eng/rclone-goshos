@@ -1626,6 +1626,7 @@
         "profile": "Restaurer un profil spécifique"
       },
       "selectProfile": "Sélectionner un profil",
+      "restoreAs": "Restaurer sous (renommage facultatif)",
       "note": "Note de sauvegarde",
       "passwordRequired": "Mot de passe requis",
       "encryptedWarning": "Cette sauvegarde est chiffrée. Entrez le mot de passe correct pour déchiffrer et restaurer.",

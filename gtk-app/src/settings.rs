@@ -154,6 +154,10 @@ pub struct RuntimeSettings {
     pub selected_profiles: HashMap<String, String>,
     #[serde(default)]
     pub panel_open_states: HashMap<String, bool>,
+    #[serde(default = "default_true")]
+    pub dashboard_sidebar_open: bool,
+    #[serde(default = "default_true")]
+    pub flow_sidebar_open: bool,
 }
 
 pub fn panel_state_key(scope: &str, id: &str) -> String {
@@ -203,6 +207,8 @@ impl Default for RuntimeSettings {
             selected_sync_ops: HashMap::new(),
             selected_profiles: HashMap::new(),
             panel_open_states: HashMap::new(),
+            dashboard_sidebar_open: true,
+            flow_sidebar_open: true,
         }
     }
 }
@@ -547,6 +553,8 @@ mod tests {
         assert!(loaded.runtime.selected_sync_ops.is_empty());
         assert!(loaded.runtime.selected_profiles.is_empty());
         assert!(loaded.runtime.panel_open_states.is_empty());
+        assert!(loaded.runtime.dashboard_sidebar_open);
+        assert!(loaded.runtime.flow_sidebar_open);
         assert!(panel_is_open(
             &loaded.runtime.panel_open_states,
             "dashboard",

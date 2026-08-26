@@ -624,3 +624,10 @@ This client is the GTK 4 + libadwaita desktop UI. It talks to a local `rclone rc
 - Files internal drag shows a GTK `DragIcon` ghost with name or “N items”
 - Live GUI: process thread `nm-metered` starts with the app
 - Live GUI: `rclone-manager://nautilus` opens the Files workspace (separate Files window 1222×882)
+- Dashboard and Flow sidebars can collapse; open state persists as `runtime.dashboard_sidebar_open` / `runtime.flow_sidebar_open`
+- Hidden remotes stay in the dashboard sidebar (dimmed, `sidebar.hiddenOnDashboard`) instead of disappearing
+- Browse from Dashboard/Flow opens a detached Files window so the current workspace stays visible
+- Backends dialog includes the same rclone.conf Security actions as Preferences
+- About copies the app + rclone version in one click
+- `backup.restore.restoreAs` exists in all nine catalogs
+- Dashboard sidebar status uses mount/serve/job icons with translated tooltips

@@ -512,18 +512,11 @@ fn present_main_with(app: &adw::Application, ctx: AppCtx, hidden: bool) {
                 stack_nav.set_visible_child_name("nautilus");
             }
             if let Some((remote, path)) = ctx_nav.pending_browse.borrow_mut().take() {
-                let target = if remote == "local" {
-                    if path.is_empty() {
-                        "/".into()
-                    } else {
-                        path
-                    }
-                } else if path.is_empty() {
-                    format!("{remote}:")
-                } else {
-                    format!("{remote}:{path}")
-                };
+                let target = files_target(&remote, &path);
                 nautilus_nav.navigate_to(&target);
+            }
+            if let Some((remote, path)) = ctx_nav.take_files_overlay() {
+                present_files_at(&window_nav, &ctx_nav, &remote, &path);
             }
             nautilus_nav.apply_pending_picker();
             if let Some(path) = ctx_nav.take_config_import() {

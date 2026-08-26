@@ -21,6 +21,7 @@ pub struct FlowView {
     remote_filter: Rc<RefCell<Option<String>>>,
     selected_flow_remote: Rc<RefCell<Option<String>>>,
     detail_page: Rc<RefCell<String>>,
+    split: adw::OverlaySplitView,
 }
 
 impl FlowView {
@@ -28,6 +29,7 @@ impl FlowView {
         let root = gtk::Box::new(gtk::Orientation::Vertical, 0);
         let split = adw::OverlaySplitView::new();
         split.set_min_sidebar_width(260.0);
+        split.set_show_sidebar(ctx.settings.borrow().runtime.flow_sidebar_open);
 
         let side = gtk::Box::new(gtk::Orientation::Vertical, 8);
         side.set_margin_top(8);
@@ -53,7 +55,18 @@ impl FlowView {
         content.set_margin_start(16);
         content.set_margin_end(16);
         let content_scroll = scrolled(&content);
-        split.set_content(Some(&content_scroll));
+        let side_toggle = gtk::Button::from_icon_name("sidebar-show-symbolic");
+        side_toggle.set_tooltip_text(Some(&ctx.t_or("sidebar.toggleSidebar", "Toggle Sidebar")));
+        side_toggle.set_halign(gtk::Align::Start);
+        let content_header = gtk::Box::new(gtk::Orientation::Horizontal, 6);
+        content_header.set_margin_top(6);
+        content_header.set_margin_start(8);
+        content_header.set_margin_end(8);
+        content_header.append(&side_toggle);
+        let content_wrap = gtk::Box::new(gtk::Orientation::Vertical, 0);
+        content_wrap.append(&content_header);
+        content_wrap.append(&content_scroll);
+        split.set_content(Some(&content_wrap));
         let stack = adw::ViewStack::new();
         stack.add_titled_with_icon(
             &split,
@@ -100,7 +113,12 @@ impl FlowView {
             remote_filter: Rc::new(RefCell::new(None)),
             selected_flow_remote: Rc::new(RefCell::new(None)),
             detail_page: Rc::new(RefCell::new("monitoring".into())),
+            split,
         };
+        {
+            let view = view.clone();
+            side_toggle.connect_clicked(move |_| view.toggle_sidebar());
+        }
 
         {
             let view = view.clone();
@@ -122,6 +140,13 @@ impl FlowView {
         }
         view.refresh();
         view
+    }
+
+    fn toggle_sidebar(&self) {
+        let next = !self.split.shows_sidebar();
+        self.split.set_show_sidebar(next);
+        self.ctx.settings.borrow_mut().runtime.flow_sidebar_open = next;
+        self.ctx.persist();
     }
 
     pub fn select_quick_run(&self, id: Option<&str>) {
