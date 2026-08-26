@@ -726,3 +726,7 @@ This client is the GTK 4 + libadwaita desktop UI. It talks to a local `rclone rc
 - Live GUI: `--quick-run-editor gui-qr-copy` opens the Quick Run editor (Name / testdrive copy)
 - Live GUI: `--restore-preview` opens Restore Backup (password + Restore Specific Profile)
 - Live GUI: `--export testdrive` opens Export with Type Full Backup and remote testdrive preselected
+- Live GUI: `--browse testdrive` detached Files window has overlay chrome (`Files` header) and `win.shortcuts` / `win.about` / `win.preferences` actions
+- Live GUI: overlay `win.shortcuts` opens Keyboard Shortcuts; search `xyzzy` shows **No results found** / **No options match your search** / **Clear Search**
+- Live GUI: overlay About shows `GTK 4 + libadwaita · 0.3.2 · rclone v1.60.1-DEV`
+- Live GUI: Nautilus shortcuts search `F2` → Rename; `Detach` → Detach Tab
