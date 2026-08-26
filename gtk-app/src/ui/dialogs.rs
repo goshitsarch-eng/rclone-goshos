@@ -8333,36 +8333,24 @@ pub(crate) fn transfer_row_actions(
 ) -> gtk::Box {
     let actions = gtk::Box::new(gtk::Orientation::Horizontal, 8);
     actions.set_valign(gtk::Align::Center);
-    if !parsed.src.is_empty() {
+    for (path, is_fallback) in
+        crate::transfers::transfer_action_paths(&parsed.src, &parsed.dst, remote_name, &parsed.name)
+    {
+        let is_source = is_fallback || path == parsed.src;
         actions.append(&transfer_side_actions(
             ctx,
             parent,
-            &parsed.src,
+            &path,
             job_type,
-            true,
-            true,
-            false,
+            if is_fallback {
+                true
+            } else {
+                completed || is_source
+            },
+            is_source,
+            is_fallback,
             on_deleted.clone(),
         ));
-    }
-    if !parsed.dst.is_empty() {
-        actions.append(&transfer_side_actions(
-            ctx,
-            parent,
-            &parsed.dst,
-            job_type,
-            completed,
-            false,
-            false,
-            on_deleted.clone(),
-        ));
-    }
-    if crate::transfers::needs_fallback_actions(&parsed.src, &parsed.dst) {
-        if let Some(path) = crate::transfers::fallback_transfer_path(remote_name, &parsed.name) {
-            actions.append(&transfer_side_actions(
-                ctx, parent, &path, job_type, true, true, true, on_deleted,
-            ));
-        }
     }
     actions
 }

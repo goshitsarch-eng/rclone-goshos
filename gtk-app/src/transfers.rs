@@ -347,6 +347,27 @@ pub fn needs_fallback_actions(src: &str, dst: &str) -> bool {
     !has_cloud_remote(src) && !has_cloud_remote(dst)
 }
 
+/// Sides that get Open / Copy / Download / Delete. Name-only rclone rows
+/// (no `srcFs`/`dstFs`) use only the Angular fallback `remote` + `name`.
+pub fn transfer_action_paths(
+    src: &str,
+    dst: &str,
+    remote: &str,
+    name: &str,
+) -> Vec<(String, bool)> {
+    if needs_fallback_actions(src, dst) {
+        return fallback_transfer_path(remote, name)
+            .into_iter()
+            .map(|path| (path, true))
+            .collect();
+    }
+    [src, dst]
+        .into_iter()
+        .filter(|path| !path.is_empty())
+        .map(|path| (path.to_string(), false))
+        .collect()
+}
+
 pub fn can_copy_url_fallback(
     remote: &str,
     name: &str,
@@ -492,6 +513,14 @@ mod tests {
         assert!(!can_download_fallback("testdrive", "a.jpg", "delete"));
         assert!(can_delete_fallback("testdrive", "a.jpg", "copy"));
         assert!(!can_delete_fallback("/", "a.jpg", "copy"));
+        let fallback_only =
+            transfer_action_paths("Photos/a.jpg", "Photos/a.jpg", "testdrive", "Photos/a.jpg");
+        assert_eq!(fallback_only, vec![("testdrive:Photos/a.jpg".into(), true)]);
+        let both = transfer_action_paths("drive:a.jpg", "box:a.jpg", "drive", "a.jpg");
+        assert_eq!(
+            both,
+            vec![("drive:a.jpg".into(), false), ("box:a.jpg".into(), false)]
+        );
     }
 
     #[test]
