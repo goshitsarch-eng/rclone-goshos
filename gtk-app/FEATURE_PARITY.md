@@ -664,3 +664,7 @@ This client is the GTK 4 + libadwaita desktop UI. It talks to a local `rclone rc
 - Preferences pending-restart banner lists the queued setting names
 - Developer menu and Preferences open the GTK Inspector (`developerTools.openDevTools`)
 - Titlebar / menu Close overlay dismisses detached workspace windows and returns to the base view
+- Live GUI: Flow overlay shows origin chips All / Dashboard / Quick Run / Files / Automations; `win.close-overlay` dismisses the Flow window and leaves Remotes
+- Live GUI: `win.inspector` opens GTK Inspector (Objects tree: AdwApplication / AdwApplicationWindow)
+- Live GUI: testdrive remote-config sidenav shows Obscure / Clear / Apply plus the result row
+- Live GUI: Preferences General lists Restrict, Prevent Sleep, Detached Dialogs, theme, and tray icon theme
