@@ -81,6 +81,7 @@ pub struct NautilusView {
     share_label: gtk::Label,
     filter_bar: gtk::Box,
     icon_btn: gtk::Button,
+    actions_btn: gtk::MenuButton,
 }
 
 impl NautilusView {
@@ -368,6 +369,7 @@ impl NautilusView {
             share_label,
             filter_bar,
             icon_btn: icon_btn.clone(),
+            actions_btn: actions_btn.clone(),
         };
         view.refresh_type_filters();
 
@@ -1270,26 +1272,12 @@ impl NautilusView {
         {
             let view = self.clone();
             let name = name.to_string();
-            more.connect_clicked(move |btn| {
+            more.connect_clicked(move |_| {
                 view.ensure_name_selected(&name, primary);
-                let btn = btn.clone();
-                let view = view.clone();
-                glib::timeout_add_local_once(std::time::Duration::from_millis(50), move || {
-                    view.popup_context_on(&btn);
-                });
+                view.actions_btn.popup();
             });
         }
         more
-    }
-
-    fn popup_context_on(&self, widget: &impl IsA<gtk::Widget>) {
-        let popover = gtk::Popover::new();
-        popover.set_child(Some(&self.build_context_menu(&popover)));
-        popover.set_parent(widget);
-        popover.set_autohide(true);
-        popover.set_has_arrow(true);
-        popover.connect_closed(|popover| popover.unparent());
-        popover.popup();
     }
 
     fn attach_item_context(&self, widget: &impl IsA<gtk::Widget>, name: &str, primary: bool) {
