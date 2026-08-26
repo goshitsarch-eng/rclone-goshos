@@ -106,6 +106,50 @@ pub fn set_autostart(enabled: bool) -> Result<(), String> {
     }
 }
 
+pub const DESKTOP_FILE_ID: &str = "io.github.zarestia_dev.rclone-manager.desktop";
+
+pub fn applications_dir() -> PathBuf {
+    std::env::var("XDG_DATA_HOME")
+        .map(PathBuf::from)
+        .unwrap_or_else(|_| home_dir().join(".local/share"))
+        .join("applications")
+}
+
+/// User applications menu entry with the running binary as `Exec`.
+pub fn desktop_entry_for_exe(exe: &str) -> String {
+    let exec = if exe.contains(char::is_whitespace) {
+        format!("\"{exe}\"")
+    } else {
+        exe.to_string()
+    };
+    include_str!("../data/io.github.zarestia_dev.rclone-manager.desktop")
+        .replace("Exec=rclone-manager-gtk", &format!("Exec={exec}"))
+}
+
+pub fn install_user_desktop_entry() -> Result<PathBuf, String> {
+    let exe = std::env::current_exe().map_err(|e| e.to_string())?;
+    let path = applications_dir().join(DESKTOP_FILE_ID);
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+    }
+    let content = desktop_entry_for_exe(&exe.to_string_lossy());
+    if std::fs::read_to_string(&path).ok().as_deref() == Some(content.as_str()) {
+        return Ok(path);
+    }
+    std::fs::write(&path, content).map_err(|e| e.to_string())?;
+    Ok(path)
+}
+
+pub fn show_os_notification(title: &str, body: &str) -> bool {
+    notify_rust::Notification::new()
+        .appname("Rclone Manager")
+        .summary(title)
+        .body(body)
+        .icon("folder-remote")
+        .show()
+        .is_ok()
+}
+
 /// XDG autostart entry. `--tray` matches Tauri `tauri_plugin_autostart`.
 pub fn autostart_desktop_entry(exec: &str) -> String {
     format!(
@@ -1778,6 +1822,17 @@ mod tests {
         assert!(desktop.contains("Actions=StartOnTray"));
         assert!(desktop.contains("rclone-manager-gtk --tray"));
         assert!(desktop.contains("Keywords=rclone;cloud;backup;sync;mount;"));
+        let installed = desktop_entry_for_exe("/opt/Rclone Manager/rclone-manager-gtk");
+        assert!(installed.contains("Exec=\"/opt/Rclone Manager/rclone-manager-gtk\""));
+        assert!(installed.contains("Exec=\"/opt/Rclone Manager/rclone-manager-gtk\" --tray"));
+        assert!(!installed.contains("Exec=rclone-manager-gtk"));
+        assert!(applications_dir()
+            .to_string_lossy()
+            .contains("applications"));
+        assert_eq!(
+            DESKTOP_FILE_ID,
+            "io.github.zarestia_dev.rclone-manager.desktop"
+        );
     }
 
     #[test]

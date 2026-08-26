@@ -1016,10 +1016,7 @@ impl AppCtx {
 
     pub fn notify(&self, title: &str, body: &str) {
         if self.settings.borrow().general.notifications {
-            let _ = notify_rust::Notification::new()
-                .summary(title)
-                .body(body)
-                .show();
+            let _ = crate::platform::show_os_notification(title, body);
         }
     }
 

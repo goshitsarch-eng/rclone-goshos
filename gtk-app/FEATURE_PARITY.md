@@ -28,6 +28,7 @@ This client is the GTK 4 + libadwaita desktop UI. It talks to a local `rclone rc
 - Theme: system / light / dark
 - i18n: en-US, tr-TR, es-ES, zh-CN, fr-FR, uk-UA, ru-RU, pt-BR, ja-JP
 - Native StatusNotifier tray (ksni) with per-remote Mount/Unmount/Browse menus and Show Window restore
+- User applications menu desktop entry (`Start on Tray`, rclone.conf MIME) written on startup
 - Windows NotifyIcon / macOS NSStatusItem helpers emit nested `plan_tray` menus and respawn only on menu-signature changes
 - Live job polling from rclone `job/list` + `job/status` + group `core/stats`, with failure alerts
 - Provider list from `config/providers` when adding remotes
@@ -595,3 +596,6 @@ This client is the GTK 4 + libadwaita desktop UI. It talks to a local `rclone rc
 - Live GUI: testdrive Remove/Add File Manager menu writes `~/.local/share/nautilus-python/extensions/testdrive (RClone Manager).py` (`Nautilus.MenuProvider`, `--send-to-remote testdrive`)
 - Desktop entry includes `Start on Tray`, `application/x-rclone-config`, and localized comments
 - Job stop transitions emit `notification.title.jobStopped` alerts (same keys as Tauri)
+- New running/starting jobs emit `notification.title.jobStarted` (same keys as Tauri submit notify)
+- Startup installs `~/.local/share/applications/io.github.zarestia_dev.rclone-manager.desktop` with the running binary (Start on Tray + rclone.conf MIME)
+- OS toasts use app name `Rclone Manager` and `folder-remote` icon

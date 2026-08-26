@@ -29,7 +29,14 @@ pub fn job_events(previous: &[JobInfo], current: &[JobInfo], tf: FormatFn<'_>) -
             ("backend", job.origin.as_str()),
             ("error", job.error.as_deref().unwrap_or("rclone job failed")),
         ];
-        if job.status == "failed" && was.map(|j| j.status.as_str()) != Some("failed") {
+        if was.is_none() && !matches!(job.status.as_str(), "completed" | "failed" | "stopped") {
+            out.push(job_event(
+                job,
+                AlertSeverity::Info,
+                tf("notification.title.jobStarted", &params),
+                tf("notification.body.jobStarted", &params),
+            ));
+        } else if job.status == "failed" && was.map(|j| j.status.as_str()) != Some("failed") {
             out.push(job_event(
                 job,
                 AlertSeverity::High,
@@ -283,6 +290,10 @@ mod tests {
     fn job_events_emit_fail_and_complete() {
         let prev = vec![job(1, "running"), job(2, "running")];
         let curr = vec![job(1, "failed"), job(2, "completed")];
+        let started = job_events(&[], &[job(9, "running")], &tf);
+        assert_eq!(started.len(), 1);
+        assert!(started[0].title.contains("notification.title.jobStarted"));
+        assert!(job_events(&[job(9, "running")], &[job(9, "running")], &tf).is_empty());
         let events = job_events(&prev, &curr, &tf);
         assert_eq!(events.len(), 2);
         assert!(events.iter().any(|e| e.severity == AlertSeverity::High));

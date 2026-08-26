@@ -1563,8 +1563,10 @@ fn dispatch_action_once(action: &AlertAction, event: &AlertEvent) -> bool {
     );
     match action.kind.as_str() {
         "os_toast" => notify_rust::Notification::new()
+            .appname("Rclone Manager")
             .summary(&event.title)
             .body(&event.body)
+            .icon("folder-remote")
             .show()
             .is_ok(),
         "webhook" => {
