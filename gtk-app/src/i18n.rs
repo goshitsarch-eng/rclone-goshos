@@ -397,6 +397,7 @@ mod tests {
             "templates.visualView",
             "templates.jsonView",
             "templates.addKey",
+            "nautilus.loadMore",
         ];
         for lang in SUPPORTED_LANGUAGES {
             let i18n = I18n::load(lang);

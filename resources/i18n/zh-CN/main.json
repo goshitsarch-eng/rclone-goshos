@@ -2648,6 +2648,7 @@
     }
   },
   "nautilus": {
+    "loadMore": "再显示 {{count}} 项",
     "sidebar": {
       "configureTitle": "配置侧边栏项目",
       "configureDescription": "拖动项目以重新排序，或使用眼睛图标隐藏或显示侧边栏中的磁盘和远程连接。"

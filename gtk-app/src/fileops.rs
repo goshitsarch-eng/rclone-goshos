@@ -314,6 +314,15 @@ pub const FILE_ITEM_MENU_HIT_PX: i32 = 48;
 /// than the window and GTK presents nothing.
 pub const FILE_CONTEXT_MENU_MIN_WIDTH_PX: i32 = 260;
 pub const FILE_CONTEXT_MENU_MAX_HEIGHT_PX: i32 = 420;
+/// Angular Nautilus view-pane first paint (`GRID_RENDER_BATCH`).
+pub const LISTING_RENDER_BATCH: usize = 200;
+
+/// Next half-open range of listing rows to append (`shown..end`).
+pub fn next_listing_batch(total: usize, shown: usize) -> (usize, usize) {
+    let start = shown.min(total);
+    let end = start.saturating_add(LISTING_RENDER_BATCH).min(total);
+    (start, end)
+}
 
 pub fn file_item_menu_widget_name(entry_name: &str) -> String {
     format!("file-menu-{entry_name}")
@@ -1332,6 +1341,17 @@ mod tests {
         assert!(dirs
             .iter()
             .any(|(fs, path)| fs == "testdrive:" && path == "Inbox/folder"));
+    }
+
+    #[test]
+    fn listing_batch_matches_angular_first_paint() {
+        assert_eq!(LISTING_RENDER_BATCH, 200);
+        assert_eq!(next_listing_batch(0, 0), (0, 0));
+        assert_eq!(next_listing_batch(50, 0), (0, 50));
+        assert_eq!(next_listing_batch(250, 0), (0, 200));
+        assert_eq!(next_listing_batch(250, 200), (200, 250));
+        assert_eq!(next_listing_batch(250, 250), (250, 250));
+        assert_eq!(next_listing_batch(10, 99), (10, 10));
     }
 
     #[test]

@@ -2648,6 +2648,7 @@
     }
   },
   "nautilus": {
+    "loadMore": "Mostrar mais {{count}}",
     "sidebar": {
       "configureTitle": "Configurar Itens da Barra de Navegação",
       "configureDescription": "Arraste os itens para reorganizá-los ou clique no ícone de olho para esconder ou mostrar unidades e remotos de nuvem na barra lateral."

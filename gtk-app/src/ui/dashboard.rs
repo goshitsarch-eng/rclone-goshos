@@ -2405,14 +2405,23 @@ impl Dashboard {
                     }
                     "clone" => {
                         if let Some(win) = dash.root.root().and_downcast::<gtk::Window>() {
-                            dialogs::clone_remote(&win, ctx.clone(), &remote, {
-                                let dash = dash.clone();
-                                let ctx = ctx.clone();
-                                Rc::new(move || {
-                                    ctx.refresh_runtime();
-                                    dash.refresh();
-                                })
-                            });
+                            dialogs::remote_config_open(
+                                &win,
+                                ctx.clone(),
+                                None,
+                                super::remote_config::RemoteConfigOpen {
+                                    clone_from: Some(remote.clone()),
+                                    ..Default::default()
+                                },
+                                {
+                                    let dash = dash.clone();
+                                    let ctx = ctx.clone();
+                                    Rc::new(move || {
+                                        ctx.refresh_runtime();
+                                        dash.refresh();
+                                    })
+                                },
+                            );
                         }
                     }
                     "export" => {

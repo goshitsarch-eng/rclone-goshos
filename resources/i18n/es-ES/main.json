@@ -2648,6 +2648,7 @@
     }
   },
   "nautilus": {
+    "loadMore": "Mostrar {{count}} más",
     "sidebar": {
       "configureTitle": "Configurar elementos de la barra lateral",
       "configureDescription": "Arrastre elementos para reordenarlos o use el icono de ojo para ocultar o mostrar discos y remotos en la barra lateral."

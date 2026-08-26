@@ -117,11 +117,20 @@ pub fn present(
     existing: Option<String>,
     on_done: Rc<dyn Fn()>,
 ) {
-    present_ex(parent, ctx, existing, false, on_done);
+    present_ex(parent, ctx, existing, false, None, on_done);
 }
 
 pub fn present_quick_add(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, on_done: Rc<dyn Fn()>) {
-    present_ex(parent, ctx, None, true, on_done);
+    present_ex(parent, ctx, None, true, None, on_done);
+}
+
+pub fn present_clone(
+    parent: &impl IsA<gtk::Widget>,
+    ctx: AppCtx,
+    source: String,
+    on_done: Rc<dyn Fn()>,
+) {
+    present_ex(parent, ctx, None, false, Some(source), on_done);
 }
 
 fn present_ex(
@@ -129,11 +138,17 @@ fn present_ex(
     ctx: AppCtx,
     existing: Option<String>,
     oauth_only: bool,
+    clone_from: Option<String>,
     on_done: Rc<dyn Fn()>,
 ) {
     let dialog = adw::Dialog::new();
     let title = if let Some(name) = existing.as_deref() {
         ctx.tf("modals.remoteConfig.title.edit", &[("target", name)])
+    } else if let Some(source) = clone_from.as_deref() {
+        format!(
+            "{} — {source}",
+            ctx.t_or("home.options.cloneRemote", "Clone Remote")
+        )
     } else if oauth_only {
         ctx.t_or("wizards.quickAdd.title", "Quick Add Remote")
     } else {
@@ -151,20 +166,22 @@ fn present_ex(
     if oauth_only {
         providers = crate::providers::oauth_supported_providers(&providers);
     }
-    let existing_params = existing.as_ref().and_then(|name| {
+    let seed_remote = existing.as_ref().or(clone_from.as_ref());
+    let existing_params = seed_remote.and_then(|name| {
         ctx.client()
             .and_then(|c| c.dump_config().ok())
             .and_then(|dump| crate::providers::dump_remote_params(&dump, name))
     });
-    let existing_meta = existing
-        .as_ref()
-        .and_then(|name| ctx.store.borrow().remotes.get(name).cloned());
+    let existing_meta = seed_remote.and_then(|name| ctx.store.borrow().remotes.get(name).cloned());
 
     let name = adw::EntryRow::new();
     name.set_title(&ctx.t_or("wizards.remoteConfig.remoteName", "Remote name"));
     if let Some(existing) = &existing {
         name.set_text(existing);
         name.set_sensitive(false);
+    } else if let Some(source) = &clone_from {
+        let names = ctx.store.borrow().remote_names();
+        name.set_text(&crate::store::unique_remote_name(&names, source));
     }
     {
         let ctx = ctx.clone();
@@ -1247,6 +1264,7 @@ fn present_ex(
         let ctx = ctx.clone();
         let dialog = dialog.clone();
         let existing = existing.clone();
+        let clone_from = clone_from.clone();
         let state = state.clone();
         let name = name.clone();
         let type_row = type_row.clone();
@@ -1382,7 +1400,7 @@ fn present_ex(
                         }
                     }
                 }
-                if existing.is_none() {
+                if existing.is_none() && clone_from.is_none() {
                     let vendor = params.get("vendor").and_then(|v| v.as_str());
                     let presets =
                         crate::presets::resolve_presets(&r#type, vendor, std::env::consts::OS);
@@ -1395,6 +1413,18 @@ fn present_ex(
                 };
                 match result {
                     Ok(_) => {
+                        if let Some(source) = clone_from.as_deref() {
+                            if let Some(meta) = crate::store::clone_remote_meta(
+                                &ctx.store.borrow(),
+                                source,
+                                &remote_name,
+                            ) {
+                                ctx.store
+                                    .borrow_mut()
+                                    .remotes
+                                    .insert(remote_name.clone(), meta);
+                            }
+                        }
                         persist_meta(
                             &ctx,
                             &remote_name,

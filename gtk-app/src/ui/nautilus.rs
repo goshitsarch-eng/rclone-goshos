@@ -78,6 +78,9 @@ pub struct NautilusView {
     right_scroll: gtk::ScrolledWindow,
     ops: gtk::ListBox,
     last_listing: Rc<RefCell<Vec<DirEntry>>>,
+    last_listing_right: Rc<RefCell<Vec<DirEntry>>>,
+    listing_shown: Rc<Cell<usize>>,
+    listing_shown_right: Rc<Cell<usize>>,
     picker_bar: gtk::Box,
     picker_label: gtk::Label,
     share_bar: gtk::Box,
@@ -429,6 +432,9 @@ impl NautilusView {
             right_scroll,
             ops,
             last_listing: Rc::new(RefCell::new(Vec::new())),
+            last_listing_right: Rc::new(RefCell::new(Vec::new())),
+            listing_shown: Rc::new(Cell::new(0)),
+            listing_shown_right: Rc::new(Cell::new(0)),
             picker_bar,
             picker_label,
             share_bar,
@@ -2778,7 +2784,34 @@ impl NautilusView {
     fn populate_entries(&self, entries: &[DirEntry], primary: bool) {
         if primary {
             *self.last_listing.borrow_mut() = entries.to_vec();
+            self.listing_shown.set(0);
+        } else {
+            *self.last_listing_right.borrow_mut() = entries.to_vec();
+            self.listing_shown_right.set(0);
         }
+        if !self.is_grid() {
+            let list = if primary {
+                &self.list
+            } else {
+                &self.list_right
+            };
+            list.append(&self.column_header_row());
+        }
+        self.append_listing_batch(primary);
+    }
+
+    fn append_listing_batch(&self, primary: bool) {
+        let listing = if primary {
+            self.last_listing.borrow().clone()
+        } else {
+            self.last_listing_right.borrow().clone()
+        };
+        let shown = if primary {
+            self.listing_shown.get()
+        } else {
+            self.listing_shown_right.get()
+        };
+        let (start, end) = crate::fileops::next_listing_batch(listing.len(), shown);
         let tab = if primary {
             self.current.borrow().clone()
         } else {
@@ -2790,8 +2823,12 @@ impl NautilusView {
             } else {
                 &self.grid_right
             };
-            for entry in entries {
+            remove_named_flow_child(grid, "load-more");
+            for entry in &listing[start..end] {
                 grid.insert(&self.entry_tile(entry.clone(), &tab, primary), -1);
+            }
+            if end < listing.len() {
+                grid.insert(&self.load_more_tile(listing.len() - end, primary), -1);
             }
         } else {
             let list = if primary {
@@ -2799,11 +2836,52 @@ impl NautilusView {
             } else {
                 &self.list_right
             };
-            list.append(&self.column_header_row());
-            for entry in entries {
+            remove_named_list_child(list, "load-more");
+            for entry in &listing[start..end] {
                 list.append(&self.entry_row(entry.clone(), &tab, primary));
             }
+            if end < listing.len() {
+                list.append(&self.load_more_row(listing.len() - end, primary));
+            }
         }
+        if primary {
+            self.listing_shown.set(end);
+        } else {
+            self.listing_shown_right.set(end);
+        }
+    }
+
+    fn load_more_label(&self, remaining: usize) -> String {
+        self.ctx.tf_or(
+            "nautilus.loadMore",
+            "Show {{count}} more",
+            &[("count", &remaining.to_string())],
+        )
+    }
+
+    fn load_more_row(&self, remaining: usize, primary: bool) -> adw::ActionRow {
+        let row = adw::ActionRow::new();
+        row.set_title(&self.load_more_label(remaining));
+        row.set_activatable(true);
+        row.set_widget_name("load-more");
+        {
+            let view = self.clone();
+            row.connect_activated(move |_| view.append_listing_batch(primary));
+        }
+        row
+    }
+
+    fn load_more_tile(&self, remaining: usize, primary: bool) -> gtk::Widget {
+        let btn = gtk::Button::with_label(&self.load_more_label(remaining));
+        btn.set_widget_name("load-more");
+        btn.add_css_class("pill");
+        btn.set_halign(gtk::Align::Center);
+        btn.set_valign(gtk::Align::Center);
+        {
+            let view = self.clone();
+            btn.connect_clicked(move |_| view.append_listing_batch(primary));
+        }
+        btn.upcast()
     }
 
     fn column_header_row(&self) -> adw::ActionRow {
@@ -5219,6 +5297,33 @@ fn clear_list(list: &gtk::ListBox) {
 fn clear_flow(flow: &gtk::FlowBox) {
     while let Some(child) = flow.first_child() {
         flow.remove(&child);
+    }
+}
+
+fn remove_named_list_child(list: &gtk::ListBox, name: &str) {
+    let mut child = list.first_child();
+    while let Some(widget) = child {
+        let next = widget.next_sibling();
+        if widget.widget_name() == name {
+            list.remove(&widget);
+        }
+        child = next;
+    }
+}
+
+fn remove_named_flow_child(flow: &gtk::FlowBox, name: &str) {
+    let mut child = flow.first_child();
+    while let Some(widget) = child {
+        let next = widget.next_sibling();
+        let matches = widget.widget_name() == name
+            || widget
+                .downcast_ref::<gtk::FlowBoxChild>()
+                .and_then(|item| item.child())
+                .is_some_and(|inner| inner.widget_name() == name);
+        if matches {
+            flow.remove(&widget);
+        }
+        child = next;
     }
 }
 

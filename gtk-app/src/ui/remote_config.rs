@@ -476,56 +476,7 @@ fn preset_bar(
 }
 
 fn capture_remote_template(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, remote: &str) {
-    let dialog = adw::Dialog::new();
-    dialog.set_title(&ctx.t_or("templates.newTitle", "New Template"));
-    dialog.set_content_width(420);
-    let name = adw::EntryRow::new();
-    name.set_title(&ctx.t_or("templates.templateName", "Template Name"));
-    name.set_text(&format!("{remote} preset"));
-    let desc = adw::EntryRow::new();
-    desc.set_title(&ctx.t_or("templates.templateDesc", "Description (optional)"));
-    let save = gtk::Button::with_label(&ctx.t_or("common.save", "Save"));
-    save.add_css_class("suggested-action");
-    {
-        let ctx = ctx.clone();
-        let remote = remote.to_string();
-        let dialog = dialog.clone();
-        let name = name.clone();
-        let desc = desc.clone();
-        save.connect_clicked(move |_| {
-            let values = ctx
-                .store
-                .borrow()
-                .remotes
-                .get(&remote)
-                .map(|meta| crate::user_templates::capture_from_meta(meta, &[]))
-                .unwrap_or_else(|| serde_json::json!({}));
-            let now = chrono::Utc::now().to_rfc3339();
-            ctx.store
-                .borrow_mut()
-                .templates
-                .push(crate::store::UserTemplate {
-                    id: uuid::Uuid::new_v4().to_string(),
-                    name: name.text().to_string(),
-                    description: desc.text().to_string(),
-                    icon: "emblem-ok-symbolic".into(),
-                    created_at: now.clone(),
-                    updated_at: now,
-                    values,
-                });
-            ctx.persist();
-            dialog.close();
-        });
-    }
-    let group = adw::PreferencesGroup::new();
-    group.add(&name);
-    group.add(&desc);
-    let box_ = gtk::Box::new(gtk::Orientation::Vertical, 8);
-    box_.set_margin_top(12);
-    box_.append(&group);
-    box_.append(&save);
-    dialog.set_child(Some(&box_));
-    dialog.present(Some(parent));
+    dialogs::templates_capture_for_remote(parent, ctx, remote);
 }
 
 fn step_icon(step: EditorStep) -> &'static str {

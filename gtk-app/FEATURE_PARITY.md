@@ -691,8 +691,12 @@ This client is the GTK 4 + libadwaita desktop UI. It talks to a local `rclone rc
 - Job detail shows a copyable monospace error block when a job has an error
 - PDF viewer prev/next tooltips use `fileBrowser.fileViewer.previousPage` / `nextPage` in all locales
 - GIO registers `--quick-add`, `--whats-new[-app|-rclone]`, `--properties`, `--clone-from`, and optional `--templates MODE`
-- `#/remote-config?cloneFrom=` / `--clone-from` clones the source remote and opens its configuration editor
+- `#/remote-config?cloneFrom=` / `--clone-from` opens the Clone Remote wizard with dumped fields; rclone.conf is written only on Save
 - Live GUI: Templates New Template shows category expanders, Add Key, Visual Inspector / JSON Editor
 - Live GUI: Alert action kind chips wrap; Webhook shows Header Name/Value + Add header; Discord preset fills Content-Type and JSON body
 - Live GUI: `--whats-new-rclone` forwarded to the running instance and opened rclone v1.75.0 notes
 - Live GUI: `--properties testdrive:Photos` opened the Photos properties dialog (testdrive, directory, 35 files)
+- Template Manage → Edit uses the same Visual / JSON inspector as Save (category expanders, Add Key, presets)
+- Clone Remote / `#/remote-config?cloneFrom=` opens the wizard with dumped fields and a suggested name; rclone.conf is written only on Save
+- Remote-config “Save as template” opens the full capture inspector with that remote preselected
+- Files listings render the first 200 items and offer Show N more (Angular view-pane batch)

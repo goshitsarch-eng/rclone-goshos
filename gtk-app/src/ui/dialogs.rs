@@ -247,7 +247,16 @@ pub fn present_standalone(
                 .get("mode")
                 .and_then(|v| v.as_str())
                 .is_some_and(|mode| mode == "save" || mode == "new");
-            templates_open(&window, ctx.clone(), save);
+            let remote = req
+                .data
+                .get("remote")
+                .and_then(|v| v.as_str())
+                .filter(|s| !s.is_empty());
+            if let Some(remote) = remote {
+                templates_capture_for_remote(&window, ctx.clone(), remote);
+            } else {
+                templates_open(&window, ctx.clone(), save);
+            }
         }
         "delete-remote" => delete_remote(&window, ctx.clone(), &remote, noop),
         "remote-config" => remote_config_open(
@@ -3793,7 +3802,7 @@ pub fn remote_config_open(
         .filter(|name| !name.is_empty())
         .map(|s| s.to_string())
     {
-        clone_remote(parent, ctx, &source, on_done);
+        super::wizard::present_clone(parent, ctx, source, on_done);
         return;
     }
     if let Some(name) = existing {
@@ -4484,6 +4493,7 @@ pub fn delete_remote(
     dialog.present(Some(parent));
 }
 
+#[allow(dead_code)]
 pub fn clone_remote(
     parent: &impl IsA<gtk::Widget>,
     ctx: AppCtx,
@@ -8856,6 +8866,33 @@ pub fn templates(parent: &impl IsA<gtk::Widget>, ctx: AppCtx) {
     templates_open(parent, ctx, false);
 }
 
+pub fn templates_capture_for_remote(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, remote: &str) {
+    if try_spawn_standalone(
+        &ctx,
+        "template-manager",
+        serde_json::json!({ "mode": "save", "remote": remote }),
+    ) {
+        return;
+    }
+    let dialog = adw::Dialog::new();
+    dialog.set_title(&ctx.t_or("templates.saveAsTemplate", "Capture template"));
+    dialog.set_content_width(640);
+    dialog.set_content_height(640);
+    let on_saved = {
+        let dialog = dialog.clone();
+        Rc::new(move || {
+            dialog.close();
+        }) as Rc<dyn Fn()>
+    };
+    dialog.set_child(Some(&build_capture_page(
+        parent,
+        ctx.clone(),
+        on_saved,
+        Some(remote),
+    )));
+    present_window_or_dialog(parent, &ctx, &dialog);
+}
+
 pub fn templates_open(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, save: bool) {
     if try_spawn_standalone(
         &ctx,
@@ -8917,7 +8954,7 @@ pub fn templates_open(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, save: bool) {
             stack.set_visible_child_name("manage");
         }) as Rc<dyn Fn()>
     };
-    let save_page = build_capture_page(parent, ctx.clone(), on_saved);
+    let save_page = build_capture_page(parent, ctx.clone(), on_saved, None);
     stack.add_titled(
         &save_page,
         Some("save"),
@@ -10792,8 +10829,8 @@ fn edit_template(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, existing: Option<U
     } else {
         ctx.t_or("templates.newTitle", "New template")
     });
-    dialog.set_content_width(560);
-    dialog.set_content_height(520);
+    dialog.set_content_width(640);
+    dialog.set_content_height(640);
     let name = adw::EntryRow::new();
     name.set_title(&ctx.t_or("templates.templateName", "Name"));
     name.set_text(
@@ -10813,22 +10850,173 @@ fn edit_template(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, existing: Option<U
     let group = adw::PreferencesGroup::new();
     group.add(&name);
     group.add(&description);
-    let json_group = adw::PreferencesGroup::new();
-    json_group.set_title(&ctx.t_or("templates.jsonView", "JSON Editor"));
+    let initial = existing
+        .as_ref()
+        .map(|item| item.values.clone())
+        .unwrap_or_else(|| serde_json::json!({}));
+    let source = Rc::new(RefCell::new(initial.clone()));
+    let key_rows: Rc<RefCell<Vec<(String, adw::SwitchRow)>>> = Rc::new(RefCell::new(Vec::new()));
+    let keys_list = gtk::ListBox::new();
+    keys_list.add_css_class("boxed-list");
+    keys_list.set_selection_mode(gtk::SelectionMode::None);
+    let count = gtk::Label::new(None);
+    count.add_css_class("dim-label");
+    count.set_xalign(0.0);
+    let key_search = gtk::SearchEntry::new();
+    key_search.set_placeholder_text(Some(&ctx.t_or("templates.search", "Search keys…")));
+    populate_template_key_rows(&ctx, &keys_list, &key_rows, &count, &initial);
+    {
+        let key_rows = key_rows.clone();
+        key_search.connect_search_changed(move |entry| {
+            filter_template_key_rows(&key_rows.borrow(), &entry.text());
+        });
+    }
+    let select_all =
+        gtk::Button::with_label(&ctx.t_or("templates.selectAllKeys", "Select all keys"));
+    {
+        let key_rows = key_rows.clone();
+        select_all.connect_clicked(move |_| {
+            for (_, row) in key_rows.borrow().iter() {
+                if row.is_visible() {
+                    row.set_active(true);
+                }
+            }
+        });
+    }
+    let deselect_all =
+        gtk::Button::with_label(&ctx.t_or("templates.deselectAllKeys", "Deselect all keys"));
+    {
+        let key_rows = key_rows.clone();
+        deselect_all.connect_clicked(move |_| {
+            for (_, row) in key_rows.borrow().iter() {
+                if row.is_visible() {
+                    row.set_active(false);
+                }
+            }
+        });
+    }
+    let apply_presets =
+        gtk::Button::with_label(&ctx.t_or("templates.applyPresets", "Apply Default Presets"));
+    {
+        let ctx = ctx.clone();
+        let source = source.clone();
+        let keys_list = keys_list.clone();
+        let key_rows = key_rows.clone();
+        let count = count.clone();
+        let key_search = key_search.clone();
+        apply_presets.connect_clicked(move |_| {
+            let presets = crate::presets::default_template_presets(std::env::consts::OS);
+            crate::user_templates::merge_values(&mut source.borrow_mut(), &presets, true);
+            populate_template_key_rows(&ctx, &keys_list, &key_rows, &count, &source.borrow());
+            filter_template_key_rows(&key_rows.borrow(), &key_search.text());
+        });
+    }
+    let key_buttons = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+    key_buttons.append(&select_all);
+    key_buttons.append(&deselect_all);
+    key_buttons.append(&apply_presets);
+    let keys_scroll = gtk::ScrolledWindow::new();
+    keys_scroll.set_min_content_height(180);
+    keys_scroll.set_vexpand(true);
+    keys_scroll.set_child(Some(&keys_list));
+    let add_key = adw::EntryRow::new();
+    add_key.set_title(&ctx.t_or("templates.key", "Key"));
+    add_key.set_text("vfs.dir_cache_time");
+    let add_value = adw::EntryRow::new();
+    add_value.set_title(&ctx.t_or("templates.value", "Value"));
+    let add_btn = gtk::Button::with_label(&ctx.t_or("templates.addKey", "Add Key"));
+    add_btn.set_valign(gtk::Align::Center);
+    {
+        let ctx = ctx.clone();
+        let source = source.clone();
+        let keys_list = keys_list.clone();
+        let key_rows = key_rows.clone();
+        let count = count.clone();
+        let key_search = key_search.clone();
+        let add_key = add_key.clone();
+        let add_value = add_value.clone();
+        add_btn.connect_clicked(move |_| {
+            let path = add_key.text().trim().to_string();
+            if path.is_empty() {
+                return;
+            }
+            crate::user_templates::set_leaf(
+                &mut source.borrow_mut(),
+                &path,
+                serde_json::json!(add_value.text().to_string()),
+            );
+            populate_template_key_rows(&ctx, &keys_list, &key_rows, &count, &source.borrow());
+            filter_template_key_rows(&key_rows.borrow(), &key_search.text());
+        });
+    }
+    let add_box = gtk::Box::new(gtk::Orientation::Vertical, 4);
+    add_box.append(&add_key);
+    add_box.append(&add_value);
+    add_box.append(&add_btn);
     let json_view = gtk::TextView::new();
     json_view.set_monospace(true);
     json_view.set_wrap_mode(gtk::WrapMode::WordChar);
     json_view.set_hexpand(true);
     json_view.set_vexpand(true);
-    let pretty = existing
-        .as_ref()
-        .map(|item| serde_json::to_string_pretty(&item.values).unwrap_or_else(|_| "{}".into()))
-        .unwrap_or_else(|| "{\n}".into());
-    text_view_set(&json_view, &pretty);
     let json_scroll = gtk::ScrolledWindow::new();
-    json_scroll.set_min_content_height(260);
+    json_scroll.set_min_content_height(180);
     json_scroll.set_vexpand(true);
     json_scroll.set_child(Some(&json_view));
+    let view_stack = gtk::Stack::new();
+    view_stack.add_named(&keys_scroll, Some("visual"));
+    view_stack.add_named(&json_scroll, Some("json"));
+    view_stack.set_visible_child_name("visual");
+    let visual_btn = gtk::ToggleButton::with_label(&ctx.t_or("templates.visualView", "Visual"));
+    let json_btn = gtk::ToggleButton::with_label(&ctx.t_or("templates.jsonView", "JSON"));
+    json_btn.set_group(Some(&visual_btn));
+    visual_btn.set_active(true);
+    {
+        let view_stack = view_stack.clone();
+        let json_view = json_view.clone();
+        let source = source.clone();
+        let key_rows = key_rows.clone();
+        let ctx = ctx.clone();
+        let keys_list = keys_list.clone();
+        let count = count.clone();
+        let key_search = key_search.clone();
+        visual_btn.connect_toggled(move |btn| {
+            if !btn.is_active() {
+                return;
+            }
+            if let Ok(map) = crate::flags::parse_json_object(&text_view_get(&json_view)) {
+                *source.borrow_mut() = serde_json::Value::Object(map);
+                populate_template_key_rows(&ctx, &keys_list, &key_rows, &count, &source.borrow());
+                filter_template_key_rows(&key_rows.borrow(), &key_search.text());
+            }
+            view_stack.set_visible_child_name("visual");
+        });
+    }
+    {
+        let view_stack = view_stack.clone();
+        let json_view = json_view.clone();
+        let source = source.clone();
+        let key_rows = key_rows.clone();
+        json_btn.connect_toggled(move |btn| {
+            if !btn.is_active() {
+                return;
+            }
+            let paths: Vec<String> = key_rows
+                .borrow()
+                .iter()
+                .filter(|(_, row)| row.is_active())
+                .map(|(path, _)| path.clone())
+                .collect();
+            let values = crate::user_templates::filter_by_paths(&source.borrow(), &paths);
+            text_view_set(
+                &json_view,
+                &serde_json::to_string_pretty(&values).unwrap_or_else(|_| "{}".into()),
+            );
+            view_stack.set_visible_child_name("json");
+        });
+    }
+    let view_switch = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+    view_switch.append(&visual_btn);
+    view_switch.append(&json_btn);
     let save = gtk::Button::with_label(&ctx.t("common.save"));
     save.add_css_class("suggested-action");
     {
@@ -10837,6 +11025,9 @@ fn edit_template(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, existing: Option<U
         let dialog = dialog.clone();
         let name = name.clone();
         let description = description.clone();
+        let source = source.clone();
+        let key_rows = key_rows.clone();
+        let view_stack = view_stack.clone();
         let json_view = json_view.clone();
         let existing_id = existing.as_ref().map(|item| item.id.clone());
         let created_at = existing
@@ -10853,12 +11044,22 @@ fn edit_template(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, existing: Option<U
                 template_error(&parent, &ctx, &ctx.t_or("templates.templateName", "Name"));
                 return;
             }
-            let values = match crate::flags::parse_json_object(&text_view_get(&json_view)) {
-                Ok(map) => serde_json::Value::Object(map),
-                Err(e) => {
-                    template_error(&parent, &ctx, &e);
-                    return;
+            let values = if view_stack.visible_child_name().as_deref() == Some("json") {
+                match crate::flags::parse_json_object(&text_view_get(&json_view)) {
+                    Ok(map) => serde_json::Value::Object(map),
+                    Err(e) => {
+                        template_error(&parent, &ctx, &e);
+                        return;
+                    }
                 }
+            } else {
+                let paths: Vec<String> = key_rows
+                    .borrow()
+                    .iter()
+                    .filter(|(_, row)| row.is_active())
+                    .map(|(path, _)| path.clone())
+                    .collect();
+                crate::user_templates::filter_by_paths(&source.borrow(), &paths)
             };
             persist_user_template(
                 &ctx,
@@ -10878,38 +11079,18 @@ fn edit_template(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, existing: Option<U
             templates(&parent, ctx.clone());
         });
     }
-    let presets =
-        gtk::Button::with_label(&ctx.t_or("templates.applyPresets", "Apply Default Presets"));
-    presets.set_tooltip_text(Some(
-        &ctx.t_or("templates.applyPresets", "Apply Default Presets"),
-    ));
-    {
-        let json_view = json_view.clone();
-        presets.connect_clicked(move |_| {
-            let current = crate::flags::parse_json_object(&text_view_get(&json_view))
-                .map(serde_json::Value::Object)
-                .unwrap_or_else(|_| serde_json::json!({}));
-            let mut merged = current;
-            crate::user_templates::merge_values(
-                &mut merged,
-                &crate::presets::default_template_presets(std::env::consts::OS),
-                true,
-            );
-            text_view_set(
-                &json_view,
-                &serde_json::to_string_pretty(&merged).unwrap_or_else(|_| "{}".into()),
-            );
-        });
-    }
-    let actions = gtk::Box::new(gtk::Orientation::Horizontal, 8);
-    actions.append(&presets);
-    actions.append(&save);
     let box_ = gtk::Box::new(gtk::Orientation::Vertical, 8);
     box_.set_margin_top(12);
+    box_.set_margin_start(12);
+    box_.set_margin_end(12);
     box_.append(&group);
-    box_.append(&json_group);
-    box_.append(&json_scroll);
-    box_.append(&actions);
+    box_.append(&count);
+    box_.append(&key_search);
+    box_.append(&key_buttons);
+    box_.append(&add_box);
+    box_.append(&view_switch);
+    box_.append(&view_stack);
+    box_.append(&save);
     dialog.set_child(Some(&box_));
     dialog.present(Some(parent));
 }
@@ -10928,7 +11109,7 @@ fn capture_template(parent: &impl IsA<gtk::Widget>, ctx: AppCtx) {
             templates(&parent, ctx.clone());
         }) as Rc<dyn Fn()>
     };
-    dialog.set_child(Some(&build_capture_page(parent, ctx, on_saved)));
+    dialog.set_child(Some(&build_capture_page(parent, ctx, on_saved, None)));
     dialog.present(Some(parent));
 }
 
@@ -10936,6 +11117,7 @@ fn build_capture_page(
     parent: &impl IsA<gtk::Widget>,
     ctx: AppCtx,
     on_saved: Rc<dyn Fn()>,
+    initial_remote: Option<&str>,
 ) -> gtk::Box {
     let name = adw::EntryRow::new();
     name.set_title(&ctx.t_or("templates.templateName", "Name"));
@@ -10952,6 +11134,11 @@ fn build_capture_page(
     let remote = adw::ComboRow::new();
     remote.set_title(&ctx.t_or("remote.profiles", "Source"));
     remote.set_model(Some(&gtk::StringList::new(&remote_refs)));
+    if let Some(name) = initial_remote {
+        if let Some(idx) = remotes.iter().position(|r| r == name) {
+            remote.set_selected((idx + 1) as u32);
+        }
+    }
     let categories = [
         (
             "backend",
