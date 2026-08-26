@@ -37,7 +37,7 @@ This client is the GTK 4 + libadwaita desktop UI. It talks to a local `rclone rc
 - Nautilus tabs (Ctrl+T/W), real dual-pane split, drag-drop upload, undo, right-click context menu (archive / Send to), operations panel
 - VFS stats/refresh/forget/queue on remote detail
 - App + rclone update checks in About; rclone binary install to `~/.local/bin`
-- Linux Send-to (Nautilus/Dolphin/Nemo) and `--send-to-remote` CLI upload path
+- Linux Send-to (Nautilus script + Python MenuProvider, Dolphin, Nemo) and `--send-to-remote` CLI upload path
 - Autostart + prevent-sleep inhibitor while jobs/mounts/serves are active
 - Profile-aware operation start dialog (src/dst/URL/mount/serve type, dry-run, static flags, folder pickers)
 - Per-operation profiles in the remote wizard, CLI flag import, obscure tool
@@ -591,3 +591,6 @@ This client is the GTK 4 + libadwaita desktop UI. It talks to a local `rclone rc
 - Tray backends: Linux StatusNotifier (`ksni`), Windows NotifyIcon helper (`--tray-action`), macOS NSStatusItem Swift helper (`--tray-action`)
 - Win/macOS tray helpers flatten `plan_tray` for restart signatures and emit nested NotifyIcon / NSStatusItem menus (per-remote Mount/Unmount/Browse, quick runs)
 - Live GUI: after tray-helper rewrite, testdrive Photos ⋮ still opens the full listing menu (Open / Open native / Copy to…)
+- Linux Send-to writes the Tauri Nautilus Python `MenuProvider` extension (GNOME Files context menu, not only Scripts)
+- Desktop entry includes `Start on Tray`, `application/x-rclone-config`, and localized comments
+- Job stop transitions emit `notification.title.jobStopped` alerts (same keys as Tauri)

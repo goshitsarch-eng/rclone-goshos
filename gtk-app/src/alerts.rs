@@ -43,6 +43,15 @@ pub fn job_events(previous: &[JobInfo], current: &[JobInfo], tf: FormatFn<'_>) -
                 tf("notification.title.jobCompleted", &params),
                 tf("notification.body.jobCompleted", &params),
             ));
+        } else if job.status == "stopped"
+            && was.is_some_and(|j| !matches!(j.status.as_str(), "stopped" | "completed" | "failed"))
+        {
+            out.push(job_event(
+                job,
+                AlertSeverity::Warning,
+                tf("notification.title.jobStopped", &params),
+                tf("notification.body.jobStopped", &params),
+            ));
         }
     }
     out
@@ -280,6 +289,11 @@ mod tests {
         assert!(events
             .iter()
             .any(|e| e.title.contains("notification.title.jobCompleted")));
+        let stopped = job_events(&[job(3, "running")], &[job(3, "stopped")], &tf);
+        assert_eq!(stopped.len(), 1);
+        assert_eq!(stopped[0].severity, AlertSeverity::Warning);
+        assert!(stopped[0].title.contains("notification.title.jobStopped"));
+        assert!(job_events(&[job(3, "stopped")], &[job(3, "stopped")], &tf).is_empty());
     }
 
     #[test]

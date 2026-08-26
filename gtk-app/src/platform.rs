@@ -811,6 +811,8 @@ impl Drop for PowerInhibitor {
 }
 
 const NAUTILUS_SCRIPT: &str = include_str!("../../src-tauri/resources/send_to/nautilus_script.sh");
+const NAUTILUS_EXTENSION: &str =
+    include_str!("../../src-tauri/resources/send_to/nautilus_extension.py");
 const DOLPHIN_DESKTOP: &str =
     include_str!("../../src-tauri/resources/send_to/dolphin_action.desktop");
 const NEMO_ACTION: &str = include_str!("../../src-tauri/resources/send_to/nemo_action.nemo_action");
@@ -863,6 +865,32 @@ pub fn is_send_to_registered(remote: &str, path: Option<&str>) -> bool {
     }
 }
 
+pub fn nautilus_python_dir() -> PathBuf {
+    home_dir().join(".local/share/nautilus-python/extensions")
+}
+
+/// GNOME Files context-menu extension (same template as Tauri).
+pub fn nautilus_python_extension(
+    name: &str,
+    exec_path: &str,
+    remote: &str,
+    path: &str,
+    class_name: &str,
+    uuid: &str,
+) -> String {
+    apply_template(
+        NAUTILUS_EXTENSION,
+        &[
+            ("class_name", class_name),
+            ("exec_path", exec_path),
+            ("remote", remote),
+            ("path", path),
+            ("uuid", uuid),
+            ("name", name),
+        ],
+    )
+}
+
 fn register_linux_send_to(remote: &str, path: Option<&str>) -> Result<(), String> {
     let name = send_to_display_name(remote, path);
     let exec = current_exe_quoted();
@@ -878,6 +906,17 @@ fn register_linux_send_to(remote: &str, path: Option<&str>) -> Result<(), String
     write_executable(
         &home.join(".local/share/nautilus/scripts").join(&name),
         &apply_template(NAUTILUS_SCRIPT, &replacements),
+    )
+    .map_err(|e| e.to_string())?;
+    let uuid = uuid::Uuid::new_v4().to_string().replace('-', "");
+    let class_name = format!("RCloneManagerExtension_{uuid}");
+    let py_path = nautilus_python_dir().join(format!("{name}.py"));
+    if let Some(parent) = py_path.parent() {
+        std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+    }
+    std::fs::write(
+        &py_path,
+        nautilus_python_extension(&name, &exec, remote, path_val, &class_name, &uuid),
     )
     .map_err(|e| e.to_string())?;
     write_executable(
@@ -901,6 +940,7 @@ fn unregister_linux_send_to(remote: &str, path: Option<&str>) -> Result<(), Stri
     let name = send_to_display_name(remote, path);
     let home = home_dir();
     let _ = std::fs::remove_file(home.join(".local/share/nautilus/scripts").join(&name));
+    let _ = std::fs::remove_file(nautilus_python_dir().join(format!("{name}.py")));
     let _ = std::fs::remove_file(
         home.join(".local/share/kio/servicemenus")
             .join(format!("{name}.desktop")),
@@ -918,6 +958,7 @@ fn is_linux_send_to_registered(remote: &str, path: Option<&str>) -> bool {
     home.join(".local/share/nautilus/scripts")
         .join(&name)
         .exists()
+        || nautilus_python_dir().join(format!("{name}.py")).exists()
         || home
             .join(".local/share/kio/servicemenus")
             .join(format!("{name}.desktop"))
@@ -1707,6 +1748,36 @@ mod tests {
     fn templates_substitute_placeholders() {
         let out = apply_template("x {remote} {path}", &[("remote", "a"), ("path", "b")]);
         assert_eq!(out, "x a b");
+    }
+
+    #[test]
+    fn nautilus_python_extension_matches_tauri_menu_provider() {
+        let py = nautilus_python_extension(
+            "testdrive (RClone Manager)",
+            "\"/opt/rclone-manager-gtk\"",
+            "testdrive",
+            "Photos",
+            "RCloneManagerExtension_abc123",
+            "abc123",
+        );
+        assert!(py.contains("class RCloneManagerExtension_abc123"));
+        assert!(py.contains("Nautilus.MenuProvider"));
+        assert!(py.contains("--send-to-remote"));
+        assert!(py.contains("testdrive"));
+        assert!(py.contains("Photos"));
+        assert!(py.contains("Upload to testdrive (RClone Manager)"));
+        assert!(nautilus_python_dir()
+            .to_string_lossy()
+            .contains("nautilus-python/extensions"));
+    }
+
+    #[test]
+    fn desktop_file_has_tray_action_and_rclone_mime() {
+        let desktop = include_str!("../data/io.github.zarestia_dev.rclone-manager.desktop");
+        assert!(desktop.contains("MimeType=application/x-rclone-config"));
+        assert!(desktop.contains("Actions=StartOnTray"));
+        assert!(desktop.contains("rclone-manager-gtk --tray"));
+        assert!(desktop.contains("Keywords=rclone;cloud;backup;sync;mount;"));
     }
 
     #[test]
