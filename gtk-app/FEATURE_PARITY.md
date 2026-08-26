@@ -579,6 +579,7 @@ This client is the GTK 4 + libadwaita desktop UI. It talks to a local `rclone rc
 - Files row ⋮ opens the full listing context menu (Share, Send-to, archive, star) instead of the short Selection actions list
 - Files grid matches list: single-click selects, double-click opens (`activate_on_single_click=false`)
 - Files ⋮ is a 48px overlay hit target (`.file-item-menu` / `.file-item-menu-hit`) that claims clicks so the tile does not open
+- Files ⋮ / right-click open the context popover on pointer release so the click-away dismiss does not eat the menu
 - Windows autostart writes `HKCU\...\Run` `Rclone Manager` → `"exe" --tray` (PowerShell)
 - macOS autostart writes `~/Library/LaunchAgents/io.github.zarestia_dev.rclone-manager.plist` (`RunAtLoad`, `--tray`)
 - Prevent-sleep: Windows `SetThreadExecutionState(ES_CONTINUOUS|SYSTEM|AWAYMODE)`, macOS `caffeinate -dims`, Linux logind / systemd-inhibit
