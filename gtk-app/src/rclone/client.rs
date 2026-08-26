@@ -693,6 +693,9 @@ impl RcClient {
     }
 
     pub fn mount(&self, fs: &str, mount_point: &str, mount_type: &str) -> Result<Value, RcError> {
+        if host_fuse_mounted(mount_point) {
+            let _ = host_unmount(mount_point);
+        }
         self.call(
             "mount/mount",
             json!({
@@ -704,7 +707,16 @@ impl RcClient {
     }
 
     pub fn unmount(&self, mount_point: &str) -> Result<Value, RcError> {
-        self.call("mount/unmount", json!({ "mountPoint": mount_point }))
+        match self.call("mount/unmount", json!({ "mountPoint": mount_point })) {
+            Ok(value) => Ok(value),
+            Err(err) => {
+                if host_unmount(mount_point).is_ok() {
+                    Ok(json!({ "unmounted": mount_point }))
+                } else {
+                    Err(err)
+                }
+            }
+        }
     }
 
     pub fn unmount_all(&self) -> Result<Value, RcError> {
@@ -1124,6 +1136,30 @@ fn merge_host_mounts(mounts: &mut Vec<MountedRemote>) {
             mounts.push(extra);
         }
     }
+}
+
+pub fn host_fuse_mounted(mount_point: &str) -> bool {
+    let Ok(text) = std::fs::read_to_string("/proc/mounts") else {
+        return false;
+    };
+    let want = mount_point.trim_end_matches('/');
+    parse_proc_mounts(&text)
+        .iter()
+        .any(|m| m.mount_point.trim_end_matches('/') == want)
+}
+
+pub fn host_unmount(mount_point: &str) -> Result<(), String> {
+    for (bin, args) in [
+        ("fusermount3", &["-u", mount_point] as &[&str]),
+        ("fusermount", &["-u", mount_point]),
+        ("umount", &[mount_point]),
+    ] {
+        match std::process::Command::new(bin).args(args).status() {
+            Ok(status) if status.success() => return Ok(()),
+            _ => continue,
+        }
+    }
+    Err(format!("failed to unmount {mount_point}"))
 }
 
 #[derive(Debug, Clone, Default)]
@@ -2102,6 +2138,27 @@ mod tests {
             mounts[0].mount_point,
             "/home/ubuntu/rclone-manager/testdrive"
         );
+        assert!(host_fuse_mounted_in(
+            &text_with_testdrive(),
+            "/home/ubuntu/rclone-manager/testdrive"
+        ));
+        assert!(!host_fuse_mounted_in(
+            &text_with_testdrive(),
+            "/home/ubuntu/rclone-manager/other"
+        ));
+    }
+
+    fn text_with_testdrive() -> String {
+        "/tmp/rclone-test-remote /home/ubuntu/rclone-manager/testdrive fuse.rclone rw 0 0\n\
+         /dev/sda1 / ext4 rw 0 0\n"
+            .into()
+    }
+
+    fn host_fuse_mounted_in(text: &str, mount_point: &str) -> bool {
+        let want = mount_point.trim_end_matches('/');
+        parse_proc_mounts(text)
+            .iter()
+            .any(|m| m.mount_point.trim_end_matches('/') == want)
     }
 
     #[test]

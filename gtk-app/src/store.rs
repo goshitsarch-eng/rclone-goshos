@@ -1882,21 +1882,26 @@ pub fn clone_remote_meta(store: &AppStore, from: &str, to: &str) -> Option<Remot
 }
 
 pub fn remote_is_mounted(name: &str, cfg: &Value, mounts: &[MountedRemote]) -> bool {
-    let prefix = format!("{name}:");
     let alias = cfg.get("remote").and_then(|v| v.as_str()).unwrap_or("");
-    mounts.iter().any(|m| {
-        m.fs == prefix
-            || m.fs.starts_with(&prefix)
-            || (!alias.is_empty() && paths_equivalent(&m.fs, alias))
-            || mount_point_named(&m.mount_point, name)
-    })
+    mounts
+        .iter()
+        .any(|m| mount_matches_remote(&m.fs, &m.mount_point, name, alias))
+}
+
+pub fn mount_matches_remote(fs: &str, mount_point: &str, name: &str, alias: &str) -> bool {
+    let prefix = format!("{name}:");
+    fs == name
+        || fs == prefix
+        || fs.starts_with(&prefix)
+        || (!alias.is_empty() && paths_equivalent(fs, alias))
+        || mount_point_named(mount_point, name)
 }
 
 fn paths_equivalent(left: &str, right: &str) -> bool {
     left.trim_end_matches('/') == right.trim_end_matches('/')
 }
 
-fn mount_point_named(mount_point: &str, name: &str) -> bool {
+pub fn mount_point_named(mount_point: &str, name: &str) -> bool {
     let point = mount_point.trim_end_matches('/');
     point.ends_with(&format!("/{name}")) || point == name
 }
@@ -2053,6 +2058,16 @@ mod tests {
             "drive",
             &json!({ "type": "drive" }),
             &prefixed
+        ));
+        assert!(mount_matches_remote(
+            "/tmp/rclone-test-remote",
+            "/home/ubuntu/rclone-manager/testdrive",
+            "testdrive",
+            "/tmp/rclone-test-remote"
+        ));
+        assert!(mount_point_named(
+            "/home/ubuntu/rclone-manager/testdrive",
+            "testdrive"
         ));
     }
 

@@ -1805,10 +1805,17 @@ pub fn find_active_mount<'a>(
     mounts: &'a [MountedRemote],
     remote: &str,
 ) -> Option<&'a MountedRemote> {
-    let prefix = format!("{remote}:");
+    find_active_mount_for(mounts, remote, "")
+}
+
+pub fn find_active_mount_for<'a>(
+    mounts: &'a [MountedRemote],
+    remote: &str,
+    alias: &str,
+) -> Option<&'a MountedRemote> {
     mounts
         .iter()
-        .find(|m| m.fs == remote || m.fs == prefix || m.fs.starts_with(&prefix))
+        .find(|m| crate::store::mount_matches_remote(&m.fs, &m.mount_point, remote, alias))
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -3299,6 +3306,15 @@ mod tests {
         let mounts = vec![MountedRemote::new("drive:photos", "/mnt/drive")];
         assert!(find_active_mount(&mounts, "drive").is_some());
         assert!(find_active_mount(&mounts, "dropbox").is_none());
+        let alias_mounts = vec![MountedRemote::new(
+            "/tmp/rclone-test-remote",
+            "/home/ubuntu/rclone-manager/testdrive",
+        )];
+        assert!(find_active_mount(&alias_mounts, "testdrive").is_some());
+        assert!(
+            find_active_mount_for(&alias_mounts, "testdrive", "/tmp/rclone-test-remote").is_some()
+        );
+        assert!(find_active_mount(&alias_mounts, "dummyexport").is_none());
         let serves = vec![ServeItem {
             id: "abc".into(),
             addr: "127.0.0.1:8080".into(),
