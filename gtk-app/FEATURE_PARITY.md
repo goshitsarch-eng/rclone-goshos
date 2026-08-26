@@ -15,7 +15,7 @@ This client is the GTK 4 + libadwaita desktop UI. It talks to a local `rclone rc
 - File viewer (image/text/video/audio locally, PDF via system app, remote download preview, syntax highlighting for common text languages)
 - Quick runs: create/edit/duplicate/delete, cron validation + human-readable hint, watcher, autostart, tray flag, start/stop, folder pickers
 - Workflow builder placeholder (same as current Angular stub)
-- Preferences: language, default view, tray, startup (XDG autostart), notifications, restrict, prevent sleep (systemd-inhibit), rclone binary, bandwidth, tray item cap, log level, standalone dialogs
+- Preferences: language, default view, tray, startup (XDG / Windows Run / macOS LaunchAgent), notifications, restrict, prevent sleep (logind, SetThreadExecutionState, caffeinate), rclone binary, bandwidth, tray item cap, log level, standalone dialogs
 - Rclone flags editor: category pages (backend/filter/vfs/mount/copy/sync/check/network/other) writing `options/set`
 - Backends: local rcd plus extra RC backends with add/test/switch/remove
 - Alerts: history, rule editor, action editor (os_toast, webhook, telegram, whatsapp, script, email/mqtt logged)
@@ -577,4 +577,9 @@ This client is the GTK 4 + libadwaita desktop UI. It talks to a local `rclone rc
 - Watch automations debounce from the last change (`watch_delay`) and pass scoped `(src, dst)` pairs when “changed only” is on
 - Sync / Bisync / Check start rejects file sources with the same directory-only error as Tauri
 - Files row ⋮ opens the full listing context menu (Share, Send-to, archive, star) instead of the short Selection actions list
+- Files grid matches list: single-click selects, double-click opens (`activate_on_single_click=false`)
+- Files ⋮ is a 48px overlay hit target (`.file-item-menu` / `.file-item-menu-hit`) that claims clicks so the tile does not open
+- Windows autostart writes `HKCU\...\Run` `Rclone Manager` → `"exe" --tray` (PowerShell)
+- macOS autostart writes `~/Library/LaunchAgents/io.github.zarestia_dev.rclone-manager.plist` (`RunAtLoad`, `--tray`)
+- Prevent-sleep: Windows `SetThreadExecutionState(ES_CONTINUOUS|SYSTEM|AWAYMODE)`, macOS `caffeinate -dims`, Linux logind / systemd-inhibit
 - Live GUI: testdrive Files grid still has a hard-to-hit ⋮ target (same as GDK button-3); Shift+F10 / toolbar Selection actions remain the reliable openers in this session

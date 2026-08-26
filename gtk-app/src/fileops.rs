@@ -307,6 +307,18 @@ pub fn point_in_rect(x: f64, y: f64, left: f64, top: f64, width: f64, height: f6
     x >= left && x <= left + width && y >= top && y <= top + height
 }
 
+/// Minimum pointer target for the Files listing ⋮ control. Adwaita circular
+/// icon buttons are ~24px, which is easy to miss on a FlowBox tile.
+pub const FILE_ITEM_MENU_HIT_PX: i32 = 48;
+
+pub fn file_item_menu_widget_name(entry_name: &str) -> String {
+    format!("file-menu-{entry_name}")
+}
+
+pub fn is_file_item_menu_widget(widget_name: &str) -> bool {
+    widget_name.starts_with("file-menu-")
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DeleteItem {
     pub fs: String,
@@ -1019,6 +1031,15 @@ mod tests {
         assert!(point_in_rect(30.0, 28.0, 10.0, 20.0, 40.0, 16.0));
         assert!(!point_in_rect(9.0, 28.0, 10.0, 20.0, 40.0, 16.0));
         assert!(!point_in_rect(30.0, 37.0, 10.0, 20.0, 40.0, 16.0));
+    }
+
+    #[test]
+    fn file_item_menu_hit_target_is_large_enough() {
+        assert!(FILE_ITEM_MENU_HIT_PX >= 44);
+        assert_eq!(file_item_menu_widget_name("Photos"), "file-menu-Photos");
+        assert!(is_file_item_menu_widget("file-menu-Photos"));
+        assert!(!is_file_item_menu_widget("Photos"));
+        assert!(!is_file_item_menu_widget("file-menu"));
     }
 
     #[test]

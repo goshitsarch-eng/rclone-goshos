@@ -65,6 +65,7 @@ pub struct NautilusView {
     clipboard: Rc<RefCell<Vec<(String, String, bool, bool)>>>,
     pending_drag: Rc<RefCell<Option<Vec<crate::dnd::DragItem>>>>,
     skip_lasso: Rc<Cell<bool>>,
+    ignore_activate: Rc<Cell<bool>>,
     hover_open: Rc<RefCell<Option<String>>>,
     undo: Rc<RefCell<Vec<String>>>,
     redo: Rc<RefCell<Vec<String>>>,
@@ -363,6 +364,7 @@ impl NautilusView {
             clipboard: Rc::new(RefCell::new(Vec::new())),
             pending_drag: Rc::new(RefCell::new(None)),
             skip_lasso: Rc::new(Cell::new(false)),
+            ignore_activate: Rc::new(Cell::new(false)),
             hover_open: Rc::new(RefCell::new(None)),
             undo: Rc::new(RefCell::new(vec![])),
             redo: Rc::new(RefCell::new(vec![])),
@@ -475,6 +477,9 @@ impl NautilusView {
         {
             let view = view.clone();
             view.list.clone().connect_row_activated(move |_, row| {
+                if view.ignore_activate.get() {
+                    return;
+                }
                 if let Some(name) = row_name(row) {
                     view.open_name(&name);
                 }
@@ -485,6 +490,9 @@ impl NautilusView {
             view.list_right
                 .clone()
                 .connect_row_activated(move |_, row| {
+                    if view.ignore_activate.get() {
+                        return;
+                    }
                     if let Some(name) = row_name(row) {
                         view.open_name_in_pane(&name, false);
                     }
@@ -493,6 +501,9 @@ impl NautilusView {
         {
             let view = view.clone();
             view.grid.clone().connect_child_activated(move |_, child| {
+                if view.ignore_activate.get() {
+                    return;
+                }
                 if let Some(name) = flow_child_name(child) {
                     view.open_name(&name);
                 }
@@ -503,6 +514,9 @@ impl NautilusView {
             view.grid_right
                 .clone()
                 .connect_child_activated(move |_, child| {
+                    if view.ignore_activate.get() {
+                        return;
+                    }
                     if let Some(name) = flow_child_name(child) {
                         view.open_name_in_pane(&name, false);
                     }
@@ -1270,26 +1284,67 @@ impl NautilusView {
         let more = gtk::Button::from_icon_name("view-more-symbolic");
         more.add_css_class("flat");
         more.add_css_class("circular");
+        more.add_css_class("file-item-menu");
         more.set_can_target(true);
+        more.set_focus_on_click(true);
+        more.set_size_request(
+            crate::fileops::FILE_ITEM_MENU_HIT_PX,
+            crate::fileops::FILE_ITEM_MENU_HIT_PX,
+        );
         more.set_tooltip_text(Some(
             &self.ctx.t_or("nautilus.contextMenu.moreActions", "Actions"),
         ));
-        more.set_widget_name(&format!("file-menu-{name}"));
+        more.set_widget_name(&crate::fileops::file_item_menu_widget_name(name));
         let claim = gtk::GestureClick::new();
-        claim.set_button(1);
+        claim.set_button(0);
+        claim.set_exclusive(true);
         claim.set_propagation_phase(gtk::PropagationPhase::Capture);
-        claim.connect_pressed(|g, _, _, _| {
-            g.set_state(gtk::EventSequenceState::Claimed);
-        });
+        {
+            let view = self.clone();
+            claim.connect_pressed(move |g, _, _, _| {
+                g.set_state(gtk::EventSequenceState::Claimed);
+                view.skip_lasso.set(true);
+                view.ignore_activate.set(true);
+            });
+        }
         more.add_controller(claim);
         {
             let view = self.clone();
             let name = name.to_string();
             let target = more.clone();
             more.connect_clicked(move |_| {
+                view.skip_lasso.set(true);
+                view.ignore_activate.set(true);
                 view.ensure_name_selected(&name, primary);
-                view.popup_context_at(&target, 12.0, 16.0);
+                view.popup_context_at(&target, 24.0, 24.0);
+                let view = view.clone();
+                glib::idle_add_local_once(move || {
+                    view.ignore_activate.set(false);
+                    view.skip_lasso.set(false);
+                });
             });
+        }
+        {
+            let view = self.clone();
+            let name = name.to_string();
+            let target = more.clone();
+            let secondary = gtk::GestureClick::new();
+            secondary.set_button(3);
+            secondary.set_exclusive(true);
+            secondary.set_propagation_phase(gtk::PropagationPhase::Capture);
+            secondary.connect_pressed(move |g, _, x, y| {
+                g.set_state(gtk::EventSequenceState::Claimed);
+                view.skip_lasso.set(true);
+                view.ignore_activate.set(true);
+                view.ensure_name_selected(&name, primary);
+                view.popup_context_at(&target, x, y);
+                let view = view.clone();
+                glib::idle_add_local_once(move || {
+                    view.ignore_activate.set(false);
+                    view.skip_lasso.set(false);
+                });
+            });
+            more.add_controller(secondary);
         }
         more
     }
@@ -2764,11 +2819,24 @@ impl NautilusView {
         self.attach_item_context(&tile, &entry.name, primary);
         let overlay = gtk::Overlay::new();
         overlay.set_widget_name(&entry.name);
+        overlay.set_hexpand(true);
+        overlay.set_vexpand(true);
+        overlay.set_overflow(gtk::Overflow::Visible);
         overlay.set_child(Some(&tile));
+        let hit = gtk::Box::new(gtk::Orientation::Horizontal, 0);
+        hit.add_css_class("file-item-menu-hit");
+        hit.set_halign(gtk::Align::End);
+        hit.set_valign(gtk::Align::Start);
+        hit.set_can_target(true);
+        hit.set_size_request(
+            crate::fileops::FILE_ITEM_MENU_HIT_PX,
+            crate::fileops::FILE_ITEM_MENU_HIT_PX,
+        );
         let more = self.item_menu_button(&entry.name, primary);
-        more.set_halign(gtk::Align::End);
-        more.set_valign(gtk::Align::Start);
-        overlay.add_overlay(&more);
+        more.set_hexpand(true);
+        more.set_vexpand(true);
+        hit.append(&more);
+        overlay.add_overlay(&hit);
         overlay.upcast()
     }
 
@@ -5053,6 +5121,7 @@ fn row_name(row: &gtk::ListBoxRow) -> Option<String> {
 fn make_flow() -> gtk::FlowBox {
     let grid = gtk::FlowBox::new();
     grid.set_selection_mode(gtk::SelectionMode::Multiple);
+    grid.set_activate_on_single_click(false);
     grid.set_homogeneous(true);
     grid.set_min_children_per_line(2);
     grid.set_max_children_per_line(12);

@@ -1710,7 +1710,16 @@ fn sync_connection_button(ctx: &AppCtx, btn: &gtk::Button) {
 
 fn apply_startup_css() {
     let provider = gtk::CssProvider::new();
-    provider.load_from_string(".startup-loading { background-color: @window_bg_color; }");
+    provider.load_from_string(
+        ".startup-loading { background-color: @window_bg_color; }\n\
+         .file-item-menu { min-width: 48px; min-height: 48px; padding: 8px; }\n\
+         .file-item-menu-hit {\n\
+           min-width: 48px;\n\
+           min-height: 48px;\n\
+           background-color: alpha(@window_bg_color, 0.82);\n\
+           border-radius: 24px;\n\
+         }",
+    );
     if let Some(display) = gtk::gdk::Display::default() {
         gtk::style_context_add_provider_for_display(
             &display,

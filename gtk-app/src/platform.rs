@@ -80,18 +80,29 @@ pub fn autostart_desktop_path() -> PathBuf {
 }
 
 pub fn set_autostart(enabled: bool) -> Result<(), String> {
-    if is_flatpak() {
-        if let Err(err) = request_background_portal(enabled) {
-            log::warn!("Flatpak Background portal failed, using XDG autostart: {err}");
+    #[cfg(target_os = "windows")]
+    {
+        return set_windows_autostart(enabled);
+    }
+    #[cfg(target_os = "macos")]
+    {
+        return set_macos_autostart(enabled);
+    }
+    #[cfg(not(any(target_os = "windows", target_os = "macos")))]
+    {
+        if is_flatpak() {
+            if let Err(err) = request_background_portal(enabled) {
+                log::warn!("Flatpak Background portal failed, using XDG autostart: {err}");
+            }
         }
+        let path = autostart_desktop_path();
+        if !enabled {
+            let _ = std::fs::remove_file(&path);
+            return Ok(());
+        }
+        let exec = current_exe_quoted();
+        write_executable(&path, &autostart_desktop_entry(&exec)).map_err(|e| e.to_string())
     }
-    let path = autostart_desktop_path();
-    if !enabled {
-        let _ = std::fs::remove_file(&path);
-        return Ok(());
-    }
-    let exec = current_exe_quoted();
-    write_executable(&path, &autostart_desktop_entry(&exec)).map_err(|e| e.to_string())
 }
 
 /// XDG autostart entry. `--tray` matches Tauri `tauri_plugin_autostart`.
@@ -150,7 +161,132 @@ pub fn request_background_portal(enable: bool) -> Result<String, String> {
 }
 
 pub fn autostart_enabled() -> bool {
-    autostart_desktop_path().exists()
+    #[cfg(target_os = "windows")]
+    {
+        return windows_autostart_enabled();
+    }
+    #[cfg(target_os = "macos")]
+    {
+        return macos_launch_agent_path().exists();
+    }
+    #[cfg(not(any(target_os = "windows", target_os = "macos")))]
+    {
+        autostart_desktop_path().exists()
+    }
+}
+
+pub const WINDOWS_RUN_VALUE_NAME: &str = "Rclone Manager";
+
+pub fn windows_autostart_command(exe: &str) -> String {
+    format!("\"{exe}\" --tray")
+}
+
+pub fn windows_autostart_enable_ps1(exe: &str) -> String {
+    let cmd = windows_autostart_command(exe).replace('\'', "''");
+    format!(
+        "New-Item -Path 'HKCU:\\Software\\Microsoft\\Windows\\CurrentVersion\\Run' -Force | Out-Null; \
+         Set-ItemProperty -Path 'HKCU:\\Software\\Microsoft\\Windows\\CurrentVersion\\Run' \
+         -Name '{WINDOWS_RUN_VALUE_NAME}' -Value '{cmd}'"
+    )
+}
+
+pub fn windows_autostart_disable_ps1() -> String {
+    format!(
+        "Remove-ItemProperty -Path 'HKCU:\\Software\\Microsoft\\Windows\\CurrentVersion\\Run' \
+         -Name '{WINDOWS_RUN_VALUE_NAME}' -ErrorAction SilentlyContinue"
+    )
+}
+
+pub fn windows_autostart_query_ps1() -> String {
+    format!(
+        "if (Get-ItemProperty -Path 'HKCU:\\Software\\Microsoft\\Windows\\CurrentVersion\\Run' \
+         -Name '{WINDOWS_RUN_VALUE_NAME}' -ErrorAction SilentlyContinue) {{ '1' }} else {{ '0' }}"
+    )
+}
+
+#[cfg(target_os = "windows")]
+fn set_windows_autostart(enabled: bool) -> Result<(), String> {
+    let exe = std::env::current_exe().map_err(|e| e.to_string())?;
+    let script = if enabled {
+        windows_autostart_enable_ps1(&exe.to_string_lossy())
+    } else {
+        windows_autostart_disable_ps1()
+    };
+    run_powershell(&script)
+}
+
+#[cfg(target_os = "windows")]
+fn windows_autostart_enabled() -> bool {
+    let exe = if which::which("powershell").is_ok() {
+        "powershell"
+    } else if which::which("pwsh").is_ok() {
+        "pwsh"
+    } else {
+        return false;
+    };
+    Command::new(exe)
+        .args(["-NoProfile", "-Command", &windows_autostart_query_ps1()])
+        .output()
+        .ok()
+        .is_some_and(|out| String::from_utf8_lossy(&out.stdout).contains('1'))
+}
+
+pub const MACOS_LAUNCH_AGENT_LABEL: &str = "io.github.zarestia_dev.rclone-manager";
+
+pub fn macos_launch_agent_path() -> PathBuf {
+    home_dir().join(format!(
+        "Library/LaunchAgents/{MACOS_LAUNCH_AGENT_LABEL}.plist"
+    ))
+}
+
+pub fn macos_launch_agent_plist(exe: &str) -> String {
+    format!(
+        r#"<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>Label</key>
+	<string>{MACOS_LAUNCH_AGENT_LABEL}</string>
+	<key>ProgramArguments</key>
+	<array>
+		<string>{}</string>
+		<string>--tray</string>
+	</array>
+	<key>RunAtLoad</key>
+	<true/>
+	<key>LimitLoadToSessionType</key>
+	<string>Aqua</string>
+</dict>
+</plist>
+"#,
+        escape_xml(exe)
+    )
+}
+
+#[cfg(target_os = "macos")]
+fn set_macos_autostart(enabled: bool) -> Result<(), String> {
+    let path = macos_launch_agent_path();
+    if path.exists() {
+        let _ = Command::new("launchctl")
+            .args(["unload", "-w"])
+            .arg(&path)
+            .status();
+    }
+    if !enabled {
+        let _ = std::fs::remove_file(&path);
+        return Ok(());
+    }
+    let exe = std::env::current_exe().map_err(|e| e.to_string())?;
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+    }
+    std::fs::write(&path, macos_launch_agent_plist(&exe.to_string_lossy()))
+        .map_err(|e| e.to_string())?;
+    let _ = Command::new("launchctl")
+        .args(["load", "-w"])
+        .arg(&path)
+        .status();
+    Ok(())
 }
 
 /// NetworkManager `Metered` values 1 (yes) and 3 (guess yes).
@@ -225,6 +361,7 @@ struct LogindInhibit {
 pub struct PowerInhibitor {
     child: Option<Child>,
     logind: Option<LogindInhibit>,
+    windows_held: bool,
 }
 
 impl Default for PowerInhibitor {
@@ -238,11 +375,12 @@ impl PowerInhibitor {
         Self {
             child: None,
             logind: None,
+            windows_held: false,
         }
     }
 
     pub fn is_inhibited(&self) -> bool {
-        self.child.is_some() || self.logind.is_some()
+        self.child.is_some() || self.logind.is_some() || self.windows_held
     }
 
     pub fn update(&mut self, should_inhibit: bool, reason: &str) {
@@ -257,35 +395,62 @@ impl PowerInhibitor {
         if self.is_inhibited() {
             return;
         }
-        if let Some(hold) = acquire_logind(reason) {
-            log::info!("logind power inhibitor acquired: {reason}");
-            self.logind = Some(hold);
+        #[cfg(target_os = "windows")]
+        {
+            windows_set_thread_execution_state(true);
+            log::info!("Windows SetThreadExecutionState acquired: {reason}");
+            self.windows_held = true;
             return;
         }
-        match Command::new("systemd-inhibit")
-            .args([
-                "--what=idle:sleep:shutdown",
-                "--who=Rclone Manager",
-                "--why",
-                reason,
-                "--mode=block",
-                "sleep",
-                "infinity",
-            ])
-            .stdin(Stdio::null())
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .spawn()
+        #[cfg(target_os = "macos")]
         {
-            Ok(child) => {
-                log::info!("power inhibitor acquired: {reason}");
-                self.child = Some(child);
+            match spawn_caffeinate() {
+                Ok(child) => {
+                    log::info!("macOS caffeinate power inhibitor acquired: {reason}");
+                    self.child = Some(child);
+                    return;
+                }
+                Err(err) => log::warn!("caffeinate unavailable: {err}"),
             }
-            Err(err) => log::warn!("systemd-inhibit unavailable: {err}"),
+        }
+        #[cfg(not(any(target_os = "windows", target_os = "macos")))]
+        {
+            if let Some(hold) = acquire_logind(reason) {
+                log::info!("logind power inhibitor acquired: {reason}");
+                self.logind = Some(hold);
+                return;
+            }
+            match Command::new("systemd-inhibit")
+                .args([
+                    "--what=idle:sleep:shutdown",
+                    "--who=Rclone Manager",
+                    "--why",
+                    reason,
+                    "--mode=block",
+                    "sleep",
+                    "infinity",
+                ])
+                .stdin(Stdio::null())
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .spawn()
+            {
+                Ok(child) => {
+                    log::info!("power inhibitor acquired: {reason}");
+                    self.child = Some(child);
+                }
+                Err(err) => log::warn!("systemd-inhibit unavailable: {err}"),
+            }
         }
     }
 
     pub fn release(&mut self) {
+        if self.windows_held {
+            #[cfg(target_os = "windows")]
+            windows_set_thread_execution_state(false);
+            self.windows_held = false;
+            log::info!("Windows SetThreadExecutionState released");
+        }
         if self.logind.take().is_some() {
             log::info!("logind power inhibitor released");
         }
@@ -295,6 +460,45 @@ impl PowerInhibitor {
             log::info!("power inhibitor released");
         }
     }
+}
+
+/// `ES_CONTINUOUS | ES_SYSTEM_REQUIRED | ES_AWAYMODE_REQUIRED` while jobs run.
+pub const ES_SYSTEM_REQUIRED: u32 = 0x0000_0001;
+pub const ES_AWAYMODE_REQUIRED: u32 = 0x0000_0040;
+pub const ES_CONTINUOUS: u32 = 0x8000_0000;
+
+pub fn windows_execution_state_flags(inhibit: bool) -> u32 {
+    if inhibit {
+        ES_CONTINUOUS | ES_SYSTEM_REQUIRED | ES_AWAYMODE_REQUIRED
+    } else {
+        ES_CONTINUOUS
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn windows_set_thread_execution_state(inhibit: bool) {
+    #[link(name = "kernel32")]
+    extern "system" {
+        fn SetThreadExecutionState(es_flags: u32) -> u32;
+    }
+    unsafe {
+        SetThreadExecutionState(windows_execution_state_flags(inhibit));
+    }
+}
+
+pub fn caffeinate_args() -> &'static [&'static str] {
+    &["-dims"]
+}
+
+#[cfg(target_os = "macos")]
+fn spawn_caffeinate() -> Result<Child, String> {
+    Command::new("caffeinate")
+        .args(caffeinate_args())
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .map_err(|e| e.to_string())
 }
 
 fn acquire_logind(reason: &str) -> Option<LogindInhibit> {
@@ -995,6 +1199,46 @@ mod tests {
         let entry = autostart_desktop_entry("\"/opt/rclone-manager-gtk\"");
         assert!(entry.contains("Exec=\"/opt/rclone-manager-gtk\" --tray"));
         assert!(entry.contains("X-GNOME-Autostart-enabled=true"));
+    }
+
+    #[test]
+    fn windows_autostart_scripts_use_run_key_and_tray() {
+        let enable = windows_autostart_enable_ps1(r"C:\Program Files\rclone-manager-gtk.exe");
+        assert!(enable.contains(r"HKCU:\Software\Microsoft\Windows\CurrentVersion\Run"));
+        assert!(enable.contains(WINDOWS_RUN_VALUE_NAME));
+        assert!(enable.contains("--tray"));
+        assert!(enable.contains(r"C:\Program Files\rclone-manager-gtk.exe"));
+        let disable = windows_autostart_disable_ps1();
+        assert!(disable.contains("Remove-ItemProperty"));
+        assert!(disable.contains(WINDOWS_RUN_VALUE_NAME));
+        assert_eq!(
+            windows_autostart_command(r"C:\app.exe"),
+            r#""C:\app.exe" --tray"#
+        );
+        assert!(windows_autostart_query_ps1().contains(WINDOWS_RUN_VALUE_NAME));
+    }
+
+    #[test]
+    fn macos_launch_agent_plist_uses_tray_and_escapes() {
+        let plist =
+            macos_launch_agent_plist("/Applications/Rclone & Manager.app/Contents/MacOS/app");
+        assert!(plist.contains(MACOS_LAUNCH_AGENT_LABEL));
+        assert!(plist.contains("--tray"));
+        assert!(plist.contains("RunAtLoad"));
+        assert!(plist.contains("Rclone &amp; Manager"));
+        assert!(macos_launch_agent_path()
+            .to_string_lossy()
+            .contains("Library/LaunchAgents/io.github.zarestia_dev.rclone-manager.plist"));
+    }
+
+    #[test]
+    fn prevent_sleep_flags_match_tauri_desktop() {
+        assert_eq!(
+            windows_execution_state_flags(true),
+            ES_CONTINUOUS | ES_SYSTEM_REQUIRED | ES_AWAYMODE_REQUIRED
+        );
+        assert_eq!(windows_execution_state_flags(false), ES_CONTINUOUS);
+        assert_eq!(caffeinate_args(), ["-dims"]);
     }
 
     #[test]
