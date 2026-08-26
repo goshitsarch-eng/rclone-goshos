@@ -131,6 +131,10 @@ impl NautilusView {
         ));
         let copy_btn = gtk::Button::from_icon_name("edit-copy-symbolic");
         copy_btn.set_tooltip_text(Some(&ctx.t_or("nautilus.contextMenu.copy", "Copy")));
+        let copy_to_btn = gtk::Button::from_icon_name("folder-copy-symbolic");
+        copy_to_btn.set_tooltip_text(Some(&ctx.t_or("nautilus.contextMenu.copyTo", "Copy to…")));
+        let move_to_btn = gtk::Button::from_icon_name("send-to-symbolic");
+        move_to_btn.set_tooltip_text(Some(&ctx.t_or("nautilus.contextMenu.moveTo", "Move to…")));
         let paste_btn = gtk::Button::from_icon_name("edit-paste-symbolic");
         paste_btn.set_tooltip_text(Some(&ctx.t_or("nautilus.contextMenu.paste", "Paste")));
         let upload = gtk::Button::from_icon_name("document-send-symbolic");
@@ -172,6 +176,8 @@ impl NautilusView {
         toolbar.append(&path_menu);
         toolbar.append(&new_folder);
         toolbar.append(&copy_btn);
+        toolbar.append(&copy_to_btn);
+        toolbar.append(&move_to_btn);
         toolbar.append(&paste_btn);
         toolbar.append(&upload);
         toolbar.append(&new_tab);
@@ -407,6 +413,14 @@ impl NautilusView {
         {
             let view = view.clone();
             copy_btn.connect_clicked(move |_| view.cut_or_copy(false));
+        }
+        {
+            let view = view.clone();
+            copy_to_btn.connect_clicked(move |_| view.copy_or_move_to(false));
+        }
+        {
+            let view = view.clone();
+            move_to_btn.connect_clicked(move |_| view.copy_or_move_to(true));
         }
         {
             let view = view.clone();
@@ -687,6 +701,14 @@ impl NautilusView {
                     "copyurl",
                 ),
             ]);
+            items.push((
+                self.ctx.t_or("nautilus.contextMenu.copyTo", "Copy to…"),
+                "copyto",
+            ));
+            items.push((
+                self.ctx.t_or("nautilus.contextMenu.moveTo", "Move to…"),
+                "moveto",
+            ));
             if !self.clipboard.borrow().is_empty() {
                 items.push((
                     self.ctx.t_or("nautilus.contextMenu.paste", "Paste"),
@@ -744,6 +766,8 @@ impl NautilusView {
                 "mkdir" => view.mkdir_prompt(),
                 "upload" => view.upload_prompt(),
                 "uploaddir" => view.upload_folder_prompt(),
+                "copyto" => view.copy_or_move_to(false),
+                "moveto" => view.copy_or_move_to(true),
                 "copyurl" => view.copy_url_prompt(),
                 "paste" => view.paste(),
                 "reload" => view.reload(),
@@ -1125,6 +1149,21 @@ impl NautilusView {
             });
         }
         widget.add_controller(drag);
+    }
+
+    fn attach_item_context(&self, widget: &impl IsA<gtk::Widget>, name: &str, primary: bool) {
+        let gesture = gtk::GestureClick::new();
+        gesture.set_button(3);
+        gesture.set_propagation_phase(gtk::PropagationPhase::Capture);
+        let view = self.clone();
+        let name = name.to_string();
+        let target = widget.clone().upcast::<gtk::Widget>();
+        gesture.connect_pressed(move |g, _, x, y| {
+            g.set_state(gtk::EventSequenceState::Claimed);
+            view.ensure_name_selected(&name, primary);
+            view.popup_context_at(&target, x, y);
+        });
+        widget.add_controller(gesture);
     }
 
     fn attach_item_dnd(
@@ -1552,6 +1591,10 @@ impl NautilusView {
             }
             if key == gtk::gdk::Key::F2 {
                 view.rename_selected();
+                return glib::Propagation::Stop;
+            }
+            if key == gtk::gdk::Key::Menu || (shift && key == gtk::gdk::Key::F10) {
+                view.popup_context();
                 return glib::Propagation::Stop;
             }
             if key == gtk::gdk::Key::space {
@@ -2537,6 +2580,7 @@ impl NautilusView {
         row.add_suffix(&modified);
         row.set_activatable(true);
         self.attach_item_dnd(&row, &entry, tab, primary);
+        self.attach_item_context(&row, &entry.name, primary);
         row
     }
 
@@ -2572,11 +2616,57 @@ impl NautilusView {
             tile.append(&meta);
         }
         self.attach_item_dnd(&tile, &entry, tab, primary);
+        self.attach_item_context(&tile, &entry.name, primary);
         tile
     }
 
     fn selected_name(&self) -> Option<String> {
         self.selected_names().into_iter().next()
+    }
+
+    fn ensure_name_selected(&self, name: &str, primary: bool) {
+        if self
+            .selected_names()
+            .iter()
+            .any(|existing| existing == name)
+        {
+            return;
+        }
+        if self.is_grid() {
+            let grid = if primary {
+                &self.grid
+            } else {
+                &self.grid_right
+            };
+            grid.unselect_all();
+            let mut child = grid.first_child();
+            while let Some(widget) = child {
+                if let Ok(flow) = widget.clone().downcast::<gtk::FlowBoxChild>() {
+                    if flow_child_name(&flow).as_deref() == Some(name) {
+                        grid.select_child(&flow);
+                        break;
+                    }
+                }
+                child = widget.next_sibling();
+            }
+            return;
+        }
+        let list = if primary {
+            &self.list
+        } else {
+            &self.list_right
+        };
+        list.unselect_all();
+        let mut child = list.first_child();
+        while let Some(widget) = child {
+            if let Ok(row) = widget.clone().downcast::<gtk::ListBoxRow>() {
+                if row_name(&row).as_deref() == Some(name) {
+                    list.select_row(Some(&row));
+                    break;
+                }
+            }
+            child = widget.next_sibling();
+        }
     }
 
     fn selected_names(&self) -> Vec<String> {
@@ -3418,32 +3508,14 @@ impl NautilusView {
     }
 
     fn cut_or_copy(&self, cut: bool) {
-        let names = self.selected_names();
-        if names.is_empty() {
+        let items = self.selection_clipboard_items(cut);
+        if items.is_empty() {
             self.toast.add_toast(adw::Toast::new(&self.ctx.t_or(
                 "nautilus.notifications.nothingSelected",
                 "Select a file or folder first",
             )));
             return;
         }
-        let current = self.current.borrow().clone();
-        let listing = self.last_listing.borrow().clone();
-        let items: Vec<(String, String, bool, bool)> = names
-            .into_iter()
-            .map(|name| {
-                let is_dir = listing
-                    .iter()
-                    .find(|entry| entry.name == name)
-                    .map(|entry| entry.is_dir)
-                    .unwrap_or(false);
-                (
-                    current.remote.clone(),
-                    join_remote_path(&current.path, &name),
-                    cut,
-                    is_dir,
-                )
-            })
-            .collect();
         *self.clipboard.borrow_mut() = items.clone();
         if let Some(display) = gtk::gdk::Display::default() {
             display
@@ -3463,9 +3535,6 @@ impl NautilusView {
             self.paste_system_clipboard();
             return;
         }
-        let Some(client) = self.ctx.client() else {
-            return;
-        };
         let current = self.current.borrow().clone();
         let listing_dirs: Vec<String> = self
             .last_listing
@@ -3481,23 +3550,80 @@ impl NautilusView {
             &listing_dirs,
             &items,
         );
-        let transfers: Vec<crate::fileops::TransferItem> = items
+        let transfers =
+            crate::fileops::transfers_from_clipboard(&items, &current.remote, &dest_dir);
+        self.start_grouped_file_transfers(transfers);
+    }
+
+    fn selection_clipboard_items(&self, cut: bool) -> Vec<(String, String, bool, bool)> {
+        let current = self.current.borrow().clone();
+        let listing = self.last_listing.borrow().clone();
+        self.selected_names()
             .into_iter()
-            .map(|(src_remote, src_path, cut, is_dir)| {
-                let name = src_path.rsplit('/').next().unwrap_or(&src_path).to_string();
-                let dst_path = join_remote_path(&dest_dir, &name);
-                let (src_fs, src_remote_path) = fs_remote(&src_remote, &src_path);
-                let (dst_fs, dst_remote_path) = fs_remote(&current.remote, &dst_path);
-                crate::fileops::TransferItem {
-                    src_fs,
-                    src: src_remote_path,
-                    dst_fs,
-                    dst: dst_remote_path,
+            .map(|name| {
+                let is_dir = listing
+                    .iter()
+                    .find(|entry| entry.name == name)
+                    .map(|entry| entry.is_dir)
+                    .unwrap_or(false);
+                (
+                    current.remote.clone(),
+                    join_remote_path(&current.path, &name),
                     cut,
                     is_dir,
-                }
+                )
             })
-            .collect();
+            .collect()
+    }
+
+    fn copy_or_move_to(&self, cut: bool) {
+        let items = self.selection_clipboard_items(cut);
+        if items.is_empty() {
+            self.toast.add_toast(adw::Toast::new(&self.ctx.t_or(
+                "nautilus.notifications.nothingSelected",
+                "Select a file or folder first",
+            )));
+            return;
+        }
+        let current = self.current.borrow().clone();
+        let mut config = crate::picker::FilePickerConfig::folders();
+        config.initial_location = Some(if current.remote == "local" {
+            if current.path.is_empty() {
+                "/".into()
+            } else {
+                current.path.clone()
+            }
+        } else if current.path.is_empty() {
+            format!("{}:", current.remote)
+        } else {
+            format!("{}:{}", current.remote, current.path)
+        });
+        let view = self.clone();
+        self.ctx.request_picker(
+            config,
+            Rc::new(move |result| {
+                if result.cancelled {
+                    return;
+                }
+                view.start_transfers_to(&items, &result.remote, &result.path);
+            }),
+        );
+    }
+
+    fn start_transfers_to(
+        &self,
+        items: &[(String, String, bool, bool)],
+        dest_remote: &str,
+        dest_dir: &str,
+    ) {
+        let transfers = crate::fileops::transfers_from_clipboard(items, dest_remote, dest_dir);
+        self.start_grouped_file_transfers(transfers);
+    }
+
+    fn start_grouped_file_transfers(&self, transfers: Vec<crate::fileops::TransferItem>) {
+        let Some(client) = self.ctx.client() else {
+            return;
+        };
         match crate::fileops::start_grouped_transfers(&client, &transfers, "filemanager") {
             Ok((group, ids)) => {
                 self.remember_file_jobs_ex(
@@ -3786,9 +3912,15 @@ impl NautilusView {
     }
 
     fn popup_context(&self) {
-        let Some(win) = self.root.root().and_downcast::<gtk::Window>() else {
-            return;
+        let list: gtk::Widget = if self.is_grid() {
+            self.grid.clone().upcast()
+        } else {
+            self.list.clone().upcast()
         };
+        self.popup_context_at(&list, 8.0, 8.0);
+    }
+
+    fn popup_context_at(&self, widget: &impl IsA<gtk::Widget>, x: f64, y: f64) {
         let popover = gtk::Popover::new();
         let box_ = gtk::Box::new(gtk::Orientation::Vertical, 4);
         let selected = self.selected_names();
@@ -3854,6 +3986,14 @@ impl NautilusView {
             (self.ctx.t_or("nautilus.contextMenu.copy", "Copy"), "copy"),
             (self.ctx.t_or("nautilus.contextMenu.cut", "Cut"), "cut"),
             (
+                self.ctx.t_or("nautilus.contextMenu.copyTo", "Copy to…"),
+                "copyto",
+            ),
+            (
+                self.ctx.t_or("nautilus.contextMenu.moveTo", "Move to…"),
+                "moveto",
+            ),
+            (
                 self.ctx.t_or("nautilus.contextMenu.paste", "Paste"),
                 "paste",
             ),
@@ -3905,6 +4045,11 @@ impl NautilusView {
             ));
         }
         items.extend([
+            (
+                self.ctx
+                    .t_or("nautilus.contextMenu.uploadFiles", "Upload Files"),
+                "upload",
+            ),
             (
                 self.ctx
                     .t_or("nautilus.contextMenu.uploadFolder", "Upload Folder"),
@@ -4002,6 +4147,8 @@ impl NautilusView {
                     "reload" => view.reload(),
                     "copy" => view.cut_or_copy(false),
                     "cut" => view.cut_or_copy(true),
+                    "copyto" => view.copy_or_move_to(false),
+                    "moveto" => view.copy_or_move_to(true),
                     "paste" => view.paste(),
                     "copypath" => view.copy_selected_path(),
                     "public" => view.copy_public_link(),
@@ -4017,6 +4164,7 @@ impl NautilusView {
                             view.open_name(&name);
                         }
                     }
+                    "upload" => view.upload_prompt(),
                     "uploaddir" => view.upload_folder_prompt(),
                     "togglestar" => view.toggle_star_selected(),
                     "star" => view.add_bookmark(),
@@ -4098,7 +4246,15 @@ impl NautilusView {
         }
         stack.set_visible_child_name("main");
         popover.set_child(Some(&stack));
-        popover.set_parent(&win);
+        popover.set_parent(widget);
+        popover.set_has_arrow(true);
+        popover.set_pointing_to(Some(&gtk::gdk::Rectangle::new(
+            x.round() as i32,
+            y.round() as i32,
+            1,
+            1,
+        )));
+        popover.connect_closed(|popover| popover.unparent());
         popover.popup();
     }
 

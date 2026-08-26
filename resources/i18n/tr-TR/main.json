@@ -2788,6 +2788,8 @@
       "delete": "Sil",
       "compress": "Sıkıştır",
       "copy": "Kopyala",
+      "copyTo": "Şuraya kopyala…",
+      "moveTo": "Şuraya taşı…",
       "cut": "Kes",
       "rename": "Yeniden Adlandır",
       "paste": "Yapıştır",

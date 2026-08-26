@@ -2788,6 +2788,8 @@
       "delete": "Apagar",
       "compress": "Compactar",
       "copy": "Cópia",
+      "copyTo": "Copiar para…",
+      "moveTo": "Mover para…",
       "cut": "Cortar",
       "rename": "Renomear",
       "paste": "Colar",

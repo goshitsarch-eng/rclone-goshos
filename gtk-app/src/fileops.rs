@@ -353,6 +353,47 @@ impl RenameItem {
     }
 }
 
+/// Build rclone transfer rows from Files clipboard tuples.
+pub fn transfers_from_clipboard(
+    items: &[(String, String, bool, bool)],
+    dest_remote: &str,
+    dest_dir: &str,
+) -> Vec<TransferItem> {
+    items
+        .iter()
+        .map(|(src_remote, src_path, cut, is_dir)| {
+            let name = src_path
+                .rsplit(['/', '\\'])
+                .next()
+                .unwrap_or(src_path.as_str());
+            let dest_dir = dest_dir.trim_end_matches(['/', '\\']);
+            let dst_path = if dest_dir.is_empty() {
+                name.to_string()
+            } else {
+                format!("{dest_dir}/{name}")
+            };
+            let (src_fs, src) = clipboard_fs_pair(src_remote, src_path);
+            let (dst_fs, dst) = clipboard_fs_pair(dest_remote, &dst_path);
+            TransferItem {
+                src_fs,
+                src,
+                dst_fs,
+                dst,
+                cut: *cut,
+                is_dir: *is_dir,
+            }
+        })
+        .collect()
+}
+
+fn clipboard_fs_pair(remote: &str, path: &str) -> (String, String) {
+    if remote == "local" {
+        ("/".into(), path.trim_start_matches(['/', '\\']).to_string())
+    } else {
+        (crate::rclone::remote_fs(remote, ""), path.to_string())
+    }
+}
+
 /// If exactly one destination folder is selected (and it is not a clipboard
 /// source), paste *into* that folder instead of the current listing.
 pub fn paste_dest_dir(
@@ -964,6 +1005,35 @@ mod tests {
         );
         assert_eq!(listing_row_name("GtkListBoxRow", ""), None);
         assert_eq!(listing_row_name("", "a.txt"), Some("a.txt".into()));
+    }
+
+    #[test]
+    fn transfers_from_clipboard_join_dest_and_local_fs() {
+        let items = vec![
+            ("testdrive".into(), "Photos".into(), false, true),
+            ("testdrive".into(), "Notes/a.txt".into(), true, false),
+        ];
+        let copy = transfers_from_clipboard(&items, "testdrive", "verify-gui-folder");
+        assert_eq!(copy[0].endpoint(), "sync/copy");
+        assert_eq!(copy[0].src_fs, "testdrive:");
+        assert_eq!(copy[0].src, "Photos");
+        assert_eq!(copy[0].dst, "verify-gui-folder/Photos");
+        assert_eq!(copy[1].endpoint(), "operations/movefile");
+        assert_eq!(copy[1].dst, "verify-gui-folder/a.txt");
+        let local = transfers_from_clipboard(
+            &[(
+                "local".into(),
+                "/tmp/rclone-test-remote/Photos".into(),
+                false,
+                true,
+            )],
+            "local",
+            "/tmp/out",
+        );
+        assert_eq!(local[0].src_fs, "/");
+        assert_eq!(local[0].src, "tmp/rclone-test-remote/Photos");
+        assert_eq!(local[0].dst, "tmp/out/Photos");
+        assert!(transfers_from_clipboard(&[], "testdrive", "").is_empty());
     }
 
     #[test]

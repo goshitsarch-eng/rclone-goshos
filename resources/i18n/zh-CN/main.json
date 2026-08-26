@@ -2788,6 +2788,8 @@
       "delete": "删除",
       "compress": "压缩",
       "copy": "复制",
+      "copyTo": "复制到…",
+      "moveTo": "移动到…",
       "cut": "剪切",
       "rename": "重命名",
       "paste": "粘贴",

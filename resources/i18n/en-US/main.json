@@ -2788,6 +2788,8 @@
       "delete": "Delete",
       "compress": "Compress",
       "copy": "Copy",
+      "copyTo": "Copy to…",
+      "moveTo": "Move to…",
       "cut": "Cut",
       "rename": "Rename",
       "paste": "Paste",
