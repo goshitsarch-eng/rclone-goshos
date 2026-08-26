@@ -604,3 +604,6 @@ This client is the GTK 4 + libadwaita desktop UI. It talks to a local `rclone rc
 - OS toasts use app name `Rclone Manager` and `folder-remote` icon
 - `rclone-manager://dashboard|flow|nautilus|preferences` deep links parse to the same `NavTarget`s as `#/` routes
 - `--import-config FILE` / MIME / `file://` open of rclone.conf shows Import remotes dialog and `config/create`s them
+- Live GUI: startup wrote `~/.local/share/applications/io.github.zarestia_dev.rclone-manager.desktop` (`Exec=…/rclone-manager-gtk %U`, `x-scheme-handler/rclone-manager`) and the shared-MIME package
+- Live GUI: `--import-config /tmp/rclone-import-gui.conf` listed `guiimport` (alias), Import created it (`Imported 1 remotes`, present in `rclone listremotes` + sidebar)
+- Live GUI: `rclone-manager://dashboard/mount/testdrive` selected testdrive and the Mount tab
