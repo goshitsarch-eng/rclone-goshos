@@ -2243,6 +2243,7 @@ pub fn profile_usage(
     remote: &str,
     profile: &str,
     op: Option<OperationType>,
+    alias: &str,
 ) -> ProfileUsage {
     let mut usage = ProfileUsage::default();
     match op {
@@ -2251,7 +2252,7 @@ pub fn profile_usage(
                 usage.jobs = 1;
             }
             if op == OperationType::Mount {
-                if let Some(mount) = find_active_mount(mounts, remote) {
+                if let Some(mount) = find_active_mount_for(mounts, remote, alias) {
                     if mount.profile.is_empty() || mount.profile == profile {
                         usage.mounts = 1;
                     }
@@ -2270,7 +2271,7 @@ pub fn profile_usage(
                         && (job.profile.is_empty() || job.profile == profile)
                 })
                 .count();
-            if let Some(mount) = find_active_mount(mounts, remote) {
+            if let Some(mount) = find_active_mount_for(mounts, remote, alias) {
                 if mount.profile.is_empty() || mount.profile == profile {
                     usage.mounts = 1;
                 }
@@ -4099,10 +4100,19 @@ mod tests {
             "drive",
             "nightly",
             Some(OperationType::Sync),
+            "",
         );
         assert!(usage.blocked());
         assert_eq!(usage.jobs, 1);
-        let idle = profile_usage(&[], &[], &[], "drive", "default", Some(OperationType::Sync));
+        let idle = profile_usage(
+            &[],
+            &[],
+            &[],
+            "drive",
+            "default",
+            Some(OperationType::Sync),
+            "",
+        );
         assert!(!idle.blocked());
     }
 
@@ -4531,6 +4541,32 @@ mod tests {
         assert_eq!(activity_remaining(13, 12), 1);
         assert_eq!(activity_remaining(12, 50), 0);
         assert_eq!(activity_visible_end(80, ACTIVITY_PAGE), 50);
+        let alias_mounts = [MountedRemote {
+            fs: "/tmp/rclone-test-remote".into(),
+            mount_point: "/tmp/rclone-testdrive-mnt".into(),
+            profile: "default".into(),
+            ..MountedRemote::default()
+        }];
+        assert!(profile_usage(
+            &[],
+            &alias_mounts,
+            &[],
+            "testdrive",
+            "default",
+            Some(OperationType::Mount),
+            "/tmp/rclone-test-remote",
+        )
+        .blocked());
+        assert!(!profile_usage(
+            &[],
+            &alias_mounts,
+            &[],
+            "testdrive",
+            "default",
+            Some(OperationType::Mount),
+            "",
+        )
+        .blocked());
     }
 
     #[test]

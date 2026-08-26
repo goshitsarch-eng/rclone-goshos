@@ -818,3 +818,4 @@ This client is the GTK 4 + libadwaita desktop UI. It talks to a local `rclone rc
 - Remote-config profile rename follows Angular: sync/job profiles cannot be renamed while a job is running; mount/serve rename still cascades into the live mount/serve cache
 - Delete stays blocked for any in-use job/mount/serve profile, with the same in-use tooltip as Angular
 - Dashboard and Flow transfer/check tables page like Angular (`displayLimit` 50 + Show N more) instead of silently dropping rows at 12/40; Job Information lists every check result
+- Live GUI: testdrive Copy `gui-copy-test` Transfer Activity lists `batch/file-01.txt` through `batch/file-15.txt` (beyond the old 12-row cap)

@@ -1746,6 +1746,7 @@ fn wire_profile_actions(
                         &remote,
                         &current,
                         op,
+                        &ctx.remote_cfg_alias(&remote),
                     );
                     drop(snap);
                     if crate::jobs::profile_rename_blocked(op, &usage) {
@@ -1831,6 +1832,7 @@ fn wire_profile_actions(
                         &remote,
                         &current,
                         op,
+                        &ctx.remote_cfg_alias(&remote),
                     );
                     drop(snap);
                     if usage.blocked() {
@@ -1902,8 +1904,15 @@ fn apply_profile_action_state(
     delete: &gtk::Button,
 ) {
     let snap = ctx.snapshot.borrow();
-    let usage =
-        crate::jobs::profile_usage(&snap.jobs, &snap.mounts, &snap.serves, remote, profile, op);
+    let usage = crate::jobs::profile_usage(
+        &snap.jobs,
+        &snap.mounts,
+        &snap.serves,
+        remote,
+        profile,
+        op,
+        &ctx.remote_cfg_alias(remote),
+    );
     drop(snap);
     let in_use = ctx.tf_or(
         "modals.remoteConfig.profile.disabledReason.inUse",
