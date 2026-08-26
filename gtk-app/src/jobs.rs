@@ -2811,6 +2811,28 @@ pub fn selected_profile_key(remote: &str, op: OperationType) -> String {
     format!("{remote}:{}", op.as_str())
 }
 
+/// Profile a General-detail chip should start/stop — Angular `onToggleAction`.
+pub fn chip_action_profile(
+    remote: &str,
+    op: OperationType,
+    configured: &[String],
+    jobs: &[JobInfo],
+) -> String {
+    if let Some(job) = jobs.iter().find(|job| {
+        job_is_running(job)
+            && job_belongs_to_remote(job, remote)
+            && job_operation_matches(&job.operation, op)
+    }) {
+        if !job.profile.is_empty() {
+            return job.profile.clone();
+        }
+    }
+    configured
+        .first()
+        .cloned()
+        .unwrap_or_else(|| "default".into())
+}
+
 /// Angular `enrichedProfiles` status: running, scheduled (cron/watch), or idle.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ProfilePillStatus {
@@ -4275,6 +4297,28 @@ mod tests {
         assert_eq!(
             job_origin_key("filemanager"),
             "generalOverview.jobs.originFiles"
+        );
+    }
+
+    #[test]
+    fn chip_action_profile_prefers_running_job() {
+        let running = running_job(1, "drive", "copy", "nightly");
+        assert_eq!(
+            chip_action_profile(
+                "drive",
+                OperationType::Copy,
+                &["gui-copy-test".into(), "nightly".into()],
+                &[running]
+            ),
+            "nightly"
+        );
+        assert_eq!(
+            chip_action_profile("drive", OperationType::Copy, &["gui-copy-test".into()], &[]),
+            "gui-copy-test"
+        );
+        assert_eq!(
+            chip_action_profile("drive", OperationType::Sync, &[], &[]),
+            "default"
         );
     }
 

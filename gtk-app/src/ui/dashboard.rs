@@ -3049,9 +3049,24 @@ impl Dashboard {
             let remote = name.to_string();
             let toast = self.toast.clone();
             let dash = self.clone();
+            let dry = self.dry_run.clone();
+            let resync = self.resync.clone();
+            let jobs = snap.jobs.clone();
             btn.connect_clicked(move |_| {
                 if op == OperationType::Mount {
                     toggle_mount(&ctx, &remote, mounted, &toast);
+                    dash.refresh();
+                    return;
+                }
+                if active {
+                    let profile = crate::jobs::chip_action_profile(&remote, op, &names, &jobs);
+                    toggle_profile(&ctx, &remote, op, &profile, &toast, false, false);
+                    dash.refresh();
+                    return;
+                }
+                if names.len() <= 1 {
+                    let profile = names.first().map(String::as_str).unwrap_or("default");
+                    toggle_profile(&ctx, &remote, op, profile, &toast, dry.get(), resync.get());
                     dash.refresh();
                     return;
                 }

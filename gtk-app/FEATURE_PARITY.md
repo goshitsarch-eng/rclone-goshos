@@ -780,3 +780,4 @@ This client is the GTK 4 + libadwaita desktop UI. It talks to a local `rclone rc
 - Configuration lists a settings panel per profile of the selected op (`Copy Settings (name)`), then Shared Settings once
 - Live GUI: testdrive Copy Monitoring shows **Selected Profile** / **2 profiles** pills (`gui-copy-nightly` clock, `gui-copy-test`); selecting test hides Daily at 2:00
 - Live GUI: Configuration lists both Copy Settings panels then Shared Settings once
+- General remote status chips stop an active mount/serve/job (Angular `onToggleAction`); idle chips start a single profile or open Start Operation when several exist
