@@ -3178,6 +3178,11 @@ impl NautilusView {
             let Ok(Some(text)) = result else {
                 return;
             };
+            if let Some(items) = crate::fileops::parse_manager_clipboard(&text) {
+                *view.clipboard.borrow_mut() = items;
+                view.paste();
+                return;
+            }
             let mut paths = Vec::new();
             for line in text.lines() {
                 let raw = line.trim();
@@ -3401,7 +3406,7 @@ impl NautilusView {
         }
         let current = self.current.borrow().clone();
         let listing = self.last_listing.borrow().clone();
-        let items = names
+        let items: Vec<(String, String, bool, bool)> = names
             .into_iter()
             .map(|name| {
                 let is_dir = listing
@@ -3417,7 +3422,12 @@ impl NautilusView {
                 )
             })
             .collect();
-        *self.clipboard.borrow_mut() = items;
+        *self.clipboard.borrow_mut() = items.clone();
+        if let Some(display) = gtk::gdk::Display::default() {
+            display
+                .clipboard()
+                .set_text(&crate::fileops::encode_manager_clipboard(&items));
+        }
         self.toast.add_toast(adw::Toast::new(&if cut {
             self.ctx.t_or("nautilus.contextMenu.cut", "Cut")
         } else {

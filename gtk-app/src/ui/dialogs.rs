@@ -2485,8 +2485,10 @@ pub fn backends(parent: &impl IsA<gtk::Widget>, ctx: AppCtx) {
     {
         let ctx = ctx.clone();
         let parent = parent.clone();
+        let dialog = dialog.clone();
         use_local.connect_clicked(move |_| {
             ctx.switch_backend("local");
+            dialog.close();
             backends(&parent, ctx.clone());
         });
     }
@@ -2631,8 +2633,10 @@ pub fn backends(parent: &impl IsA<gtk::Widget>, ctx: AppCtx) {
             let ctx = ctx.clone();
             let name = backend.name.clone();
             let parent = parent.clone();
+            let dialog = dialog.clone();
             use_btn.connect_clicked(move |_| {
                 ctx.switch_backend(&name);
+                dialog.close();
                 backends(&parent, ctx.clone());
             });
         }
@@ -2640,6 +2644,7 @@ pub fn backends(parent: &impl IsA<gtk::Widget>, ctx: AppCtx) {
             let ctx = ctx.clone();
             let name = backend.name.clone();
             let parent = parent.clone();
+            let dialog = dialog.clone();
             remove.connect_clicked(move |_| {
                 ctx.settings
                     .borrow_mut()
@@ -2650,6 +2655,7 @@ pub fn backends(parent: &impl IsA<gtk::Widget>, ctx: AppCtx) {
                     ctx.settings.borrow_mut().core.active_backend.clear();
                 }
                 ctx.persist();
+                dialog.close();
                 backends(&parent, ctx.clone());
             });
         }
@@ -2738,10 +2744,20 @@ pub fn backends(parent: &impl IsA<gtk::Widget>, ctx: AppCtx) {
             backend_editor(&parent, ctx.clone(), None);
         });
     }
+    let close = gtk::Button::with_label(&ctx.t_or("common.close", "Close"));
+    {
+        let dialog = dialog.clone();
+        close.connect_clicked(move |_| {
+            dialog.close();
+        });
+    }
+    let bar = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+    bar.append(&add);
+    bar.append(&close);
     let box_ = gtk::Box::new(gtk::Orientation::Vertical, 8);
     box_.set_margin_top(12);
     box_.append(&scrolled_list(&list));
-    box_.append(&add);
+    box_.append(&bar);
     dialog.set_child(Some(&box_));
     present_window_or_dialog(parent, &ctx, &dialog);
 }

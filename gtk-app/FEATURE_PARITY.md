@@ -523,6 +523,8 @@ This client is the GTK 4 + libadwaita desktop UI. It talks to a local `rclone rc
 - Switching extra RC backends parks `job_history` / `job_meta` (and in-session mounts/serves) per backend so job IDs do not bleed across rcd instances
 - Flag editors call `options/blocks` and keep empty named groups when `options/info` omits them
 - Live mounts keep profile/origin across RC refresh and backend switches (rclone has no profile field)
+- Backends dialog has a Close button and dismisses before reopening after Use/Remove
+- Files copy/cut also writes a recoverable clipboard payload so paste works after a view rebuild
 
 ## Still deepening
 

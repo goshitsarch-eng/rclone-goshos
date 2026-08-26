@@ -241,6 +241,45 @@ pub fn start_grouped_transfers(
     Ok((group, ids))
 }
 
+const MANAGER_CLIPBOARD_MARK: &str = "rclone-manager-clipboard";
+
+/// Encode Files copy/cut items so paste still works after a view rebuild.
+pub fn encode_manager_clipboard(items: &[(String, String, bool, bool)]) -> String {
+    let mut out = String::from(MANAGER_CLIPBOARD_MARK);
+    out.push('\n');
+    for (remote, path, cut, is_dir) in items {
+        out.push_str(&format!("{remote}\t{path}\t{cut}\t{is_dir}\n"));
+    }
+    out
+}
+
+pub fn parse_manager_clipboard(text: &str) -> Option<Vec<(String, String, bool, bool)>> {
+    let mut lines = text.lines();
+    if lines.next()?.trim() != MANAGER_CLIPBOARD_MARK {
+        return None;
+    }
+    let mut items = Vec::new();
+    for line in lines {
+        if line.trim().is_empty() {
+            continue;
+        }
+        let mut parts = line.split('\t');
+        let remote = parts.next()?.to_string();
+        let path = parts.next()?.to_string();
+        if remote.is_empty() || path.is_empty() {
+            continue;
+        }
+        let cut = parts.next().is_some_and(|v| v == "true");
+        let is_dir = parts.next().is_some_and(|v| v == "true");
+        items.push((remote, path, cut, is_dir));
+    }
+    if items.is_empty() {
+        None
+    } else {
+        Some(items)
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DeleteItem {
     pub fs: String,
@@ -849,6 +888,19 @@ pub fn open_file_natively(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn manager_clipboard_roundtrip_and_rejects_plain_text() {
+        let items = vec![
+            ("testdrive".into(), "Photos".into(), false, true),
+            ("testdrive".into(), "a.txt".into(), true, false),
+        ];
+        let encoded = encode_manager_clipboard(&items);
+        assert!(encoded.starts_with("rclone-manager-clipboard"));
+        assert_eq!(parse_manager_clipboard(&encoded).as_ref(), Some(&items));
+        assert!(parse_manager_clipboard("Photos\n/tmp/a.txt").is_none());
+        assert!(parse_manager_clipboard("").is_none());
+    }
 
     #[test]
     fn invert_rename_and_move() {
