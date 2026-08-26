@@ -316,7 +316,7 @@ fn present_ex(
     super::dialogs::attach_path_picker(
         &ctx,
         &mount,
-        crate::picker::FilePickerConfig::local_folders(),
+        crate::picker::FilePickerConfig::local_mount_folders(),
     );
     let src = adw::EntryRow::new();
     src.set_title(&ctx.t_or("remoteConfig.source", "Default source path"));
@@ -551,7 +551,7 @@ fn present_ex(
             super::dialogs::attach_path_picker(
                 &ctx,
                 &odst,
-                crate::picker::FilePickerConfig::local_folders(),
+                crate::picker::FilePickerConfig::local_mount_folders(),
             );
         } else if op != OperationType::Serve && op != OperationType::Delete {
             super::dialogs::attach_path_picker(

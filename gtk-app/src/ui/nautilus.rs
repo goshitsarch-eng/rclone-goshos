@@ -86,6 +86,7 @@ pub struct NautilusView {
     icon_btn: gtk::Button,
     actions_btn: gtk::MenuButton,
     send_to_btn: gtk::Button,
+    split: adw::OverlaySplitView,
 }
 
 impl NautilusView {
@@ -173,6 +174,9 @@ impl NautilusView {
         let icon_btn = gtk::Button::from_icon_name("zoom-in-symbolic");
         icon_btn.set_tooltip_text(Some(&ctx.t_or("nautilus.view.iconSize", "Icon size")));
 
+        let sidebar_btn = gtk::Button::from_icon_name("sidebar-show-symbolic");
+        sidebar_btn.set_tooltip_text(Some(&ctx.t_or("sidebar.toggleSidebar", "Toggle Sidebar")));
+        toolbar.append(&sidebar_btn);
         toolbar.append(&back);
         toolbar.append(&forward);
         toolbar.append(&up);
@@ -210,6 +214,7 @@ impl NautilusView {
 
         let split = adw::OverlaySplitView::new();
         split.set_min_sidebar_width(220.0);
+        split.set_show_sidebar(ctx.settings.borrow().nautilus.sidebar_visible);
         let sidebar = gtk::ListBox::new();
         sidebar.add_css_class("navigation-sidebar");
         let side_scroll = gtk::ScrolledWindow::new();
@@ -392,6 +397,7 @@ impl NautilusView {
             icon_btn: icon_btn.clone(),
             actions_btn: actions_btn.clone(),
             send_to_btn: send_to_btn.clone(),
+            split: split.clone(),
         };
         view.refresh_type_filters();
         {
@@ -403,6 +409,10 @@ impl NautilusView {
             });
         }
 
+        {
+            let view = view.clone();
+            sidebar_btn.connect_clicked(move |_| view.toggle_sidebar());
+        }
         {
             let view = view.clone();
             back.connect_clicked(move |_| view.go_back());
@@ -3385,6 +3395,13 @@ impl NautilusView {
                 .ctx
                 .t_or("nautilus.contextMenu.switchPane", "Switched split pane"),
         );
+    }
+
+    fn toggle_sidebar(&self) {
+        let next = !self.split.is_show_sidebar();
+        self.split.set_show_sidebar(next);
+        self.ctx.settings.borrow_mut().nautilus.sidebar_visible = next;
+        self.ctx.persist();
     }
 
     fn toggle_split(&self) {

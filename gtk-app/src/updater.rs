@@ -84,25 +84,124 @@ fn compare_semver(a: &str, b: &str) -> std::cmp::Ordering {
 }
 
 pub fn linux_asset_url(json: &Value) -> Option<String> {
+    pick_asset_url(
+        json,
+        &[
+            AssetWant {
+                suffix: ".appimage",
+                must_contain: None,
+            },
+            AssetWant {
+                suffix: ".tar.gz",
+                must_contain: Some("linux"),
+            },
+            AssetWant {
+                suffix: ".tgz",
+                must_contain: Some("linux"),
+            },
+            AssetWant {
+                suffix: ".deb",
+                must_contain: None,
+            },
+        ],
+    )
+}
+
+pub fn windows_asset_url(json: &Value) -> Option<String> {
+    pick_asset_url(
+        json,
+        &[
+            AssetWant {
+                suffix: ".msi",
+                must_contain: Some("windows"),
+            },
+            AssetWant {
+                suffix: ".exe",
+                must_contain: Some("windows"),
+            },
+            AssetWant {
+                suffix: ".zip",
+                must_contain: Some("windows"),
+            },
+            AssetWant {
+                suffix: ".msi",
+                must_contain: None,
+            },
+            AssetWant {
+                suffix: ".exe",
+                must_contain: None,
+            },
+        ],
+    )
+}
+
+pub fn macos_asset_url(json: &Value) -> Option<String> {
+    pick_asset_url(
+        json,
+        &[
+            AssetWant {
+                suffix: ".dmg",
+                must_contain: None,
+            },
+            AssetWant {
+                suffix: ".zip",
+                must_contain: Some("macos"),
+            },
+            AssetWant {
+                suffix: ".zip",
+                must_contain: Some("darwin"),
+            },
+            AssetWant {
+                suffix: ".tar.gz",
+                must_contain: Some("macos"),
+            },
+        ],
+    )
+}
+
+pub fn current_os_asset_url(json: &Value) -> Option<String> {
+    platform_asset_url(json, std::env::consts::OS)
+}
+
+pub fn platform_asset_url(json: &Value, os: &str) -> Option<String> {
+    match os {
+        "windows" => windows_asset_url(json),
+        "macos" => macos_asset_url(json),
+        _ => linux_asset_url(json),
+    }
+}
+
+struct AssetWant {
+    suffix: &'static str,
+    must_contain: Option<&'static str>,
+}
+
+fn pick_asset_url(json: &Value, wants: &[AssetWant]) -> Option<String> {
     let assets = json.get("assets")?.as_array()?;
-    let mut appimage = None;
-    let mut tarball = None;
-    let mut deb = None;
+    let mut found = vec![None; wants.len()];
     for asset in assets {
         let name = asset.get("name")?.as_str()?.to_ascii_lowercase();
         let url = asset.get("browser_download_url")?.as_str()?.to_string();
         if !asset_matches_arch(&name) {
             continue;
         }
-        if name.ends_with(".appimage") {
-            appimage = Some(url);
-        } else if name.contains("linux") && (name.ends_with(".tar.gz") || name.ends_with(".tgz")) {
-            tarball = Some(url);
-        } else if name.ends_with(".deb") {
-            deb = Some(url);
+        for (idx, want) in wants.iter().enumerate() {
+            if found[idx].is_some() {
+                continue;
+            }
+            if !name.ends_with(want.suffix) {
+                continue;
+            }
+            if want
+                .must_contain
+                .is_some_and(|needle| !name.contains(needle))
+            {
+                continue;
+            }
+            found[idx] = Some(url.clone());
         }
     }
-    appimage.or(tarball).or(deb)
+    found.into_iter().flatten().next()
 }
 
 fn asset_matches_arch(name: &str) -> bool {
@@ -127,7 +226,7 @@ pub fn parse_github_release(body: &Value, current: &str) -> Option<UpdateInfo> {
         latest: tag,
         current: current.to_string(),
         url,
-        download_url: linux_asset_url(body),
+        download_url: current_os_asset_url(body),
         notes: github_body_notes(body),
     })
 }
@@ -169,10 +268,29 @@ pub fn fetch_app_update(current: &str) -> Result<UpdateInfo, String> {
 }
 
 pub fn rclone_linux_zip_url() -> &'static str {
+    rclone_zip_url_for("linux", arch_slug())
+}
+
+pub fn rclone_zip_url() -> &'static str {
+    rclone_zip_url_for(std::env::consts::OS, arch_slug())
+}
+
+pub fn rclone_zip_url_for(os: &str, arch: &str) -> &'static str {
+    match (os, arch) {
+        ("windows", "arm64") => "https://downloads.rclone.org/rclone-current-windows-arm64.zip",
+        ("windows", _) => "https://downloads.rclone.org/rclone-current-windows-amd64.zip",
+        ("macos", "arm64") => "https://downloads.rclone.org/rclone-current-osx-arm64.zip",
+        ("macos", _) => "https://downloads.rclone.org/rclone-current-osx-amd64.zip",
+        (_, "arm64") => "https://downloads.rclone.org/rclone-current-linux-arm64.zip",
+        _ => "https://downloads.rclone.org/rclone-current-linux-amd64.zip",
+    }
+}
+
+fn arch_slug() -> &'static str {
     if cfg!(target_arch = "aarch64") {
-        "https://downloads.rclone.org/rclone-current-linux-arm64.zip"
+        "arm64"
     } else {
-        "https://downloads.rclone.org/rclone-current-linux-amd64.zip"
+        "amd64"
     }
 }
 
@@ -288,7 +406,7 @@ pub fn install_rclone_binary_ex(
 ) -> Result<PathBuf, String> {
     std::fs::create_dir_all(dest_dir).map_err(|e| e.to_string())?;
     let zip_path = dest_dir.join(".rclone-download.zip");
-    download_file(rclone_linux_zip_url(), &zip_path, cancel, progress)?;
+    download_file(rclone_zip_url(), &zip_path, cancel, progress)?;
     let bytes = std::fs::read(&zip_path).map_err(|e| e.to_string())?;
     let _ = std::fs::remove_file(&zip_path);
     let cursor = std::io::Cursor::new(bytes);
@@ -371,7 +489,7 @@ pub fn fetch_rclone_update(current: &str) -> Result<UpdateInfo, String> {
         latest,
         current: current.to_string(),
         url: "https://rclone.org/changelog/".into(),
-        download_url: Some(rclone_linux_zip_url().into()),
+        download_url: Some(rclone_zip_url().into()),
         notes: fetch_rclone_release_notes().ok(),
     })
 }
@@ -458,6 +576,53 @@ mod tests {
     #[test]
     fn linux_zip_url_is_official() {
         assert!(rclone_linux_zip_url().contains("downloads.rclone.org"));
+        assert!(rclone_zip_url_for("windows", "amd64").contains("windows-amd64"));
+        assert!(rclone_zip_url_for("macos", "arm64").contains("osx-arm64"));
+        assert!(rclone_zip_url_for("linux", "arm64").contains("linux-arm64"));
+    }
+
+    fn sample_release_assets() -> Value {
+        json!({
+            "assets": [
+                {
+                    "name": "rclone-manager_0.9.0_amd64.AppImage",
+                    "browser_download_url": "https://example.com/app.AppImage"
+                },
+                {
+                    "name": "rclone-manager-0.9.0-windows-x86_64.msi",
+                    "browser_download_url": "https://example.com/app.msi"
+                },
+                {
+                    "name": "rclone-manager-0.9.0-windows-x64.exe",
+                    "browser_download_url": "https://example.com/app.exe"
+                },
+                {
+                    "name": "rclone-manager-0.9.0-macos-x64.dmg",
+                    "browser_download_url": "https://example.com/app.dmg"
+                },
+                {
+                    "name": "rclone-manager-0.9.0-darwin-x86_64.zip",
+                    "browser_download_url": "https://example.com/app-mac.zip"
+                }
+            ]
+        })
+    }
+
+    #[test]
+    fn platform_assets_pick_os_specific_files() {
+        let json = sample_release_assets();
+        assert_eq!(
+            platform_asset_url(&json, "linux").as_deref(),
+            Some("https://example.com/app.AppImage")
+        );
+        assert_eq!(
+            platform_asset_url(&json, "windows").as_deref(),
+            Some("https://example.com/app.msi")
+        );
+        assert_eq!(
+            platform_asset_url(&json, "macos").as_deref(),
+            Some("https://example.com/app.dmg")
+        );
     }
 
     #[test]

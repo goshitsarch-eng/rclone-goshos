@@ -180,7 +180,8 @@ impl AppCtx {
     pub fn open_typed_path(&self, current_remote: &str, raw: &str) {
         let typed = crate::path_kind::parse_typed_path(raw, current_remote);
         if typed.kind == crate::path_kind::PathKind::Local {
-            if self.engine_os().eq_ignore_ascii_case(std::env::consts::OS) {
+            let host_path = std::path::Path::new(&typed.path);
+            if host_path.exists() || self.engine_os().eq_ignore_ascii_case(std::env::consts::OS) {
                 let _ = open::that(&typed.path);
                 return;
             }
@@ -188,6 +189,15 @@ impl AppCtx {
             return;
         }
         self.request_browse(&typed.remote, &typed.path);
+    }
+
+    pub fn backend_display_name(&self) -> String {
+        let active = self.settings.borrow().core.active_backend.clone();
+        if active.is_empty() {
+            "local".into()
+        } else {
+            active
+        }
     }
 
     pub fn browse_remote_home(&self, name: &str) {

@@ -2451,6 +2451,27 @@ pub fn action_order(
     dialog.present(Some(parent));
 }
 
+pub fn backend_switch_button(ctx: &AppCtx) -> gtk::Button {
+    let name = ctx.backend_display_name();
+    let label = format!(
+        "{} · {name}",
+        ctx.t_or("overviewHeader.manageBackends", "Manage Backends")
+    );
+    let btn = gtk::Button::with_label(&label);
+    btn.set_tooltip_text(Some(&ctx.tf_or(
+        "overviewHeader.backendSwitchAria",
+        "Current mode: {title} - Click to switch backend",
+        &[("title", &name)],
+    )));
+    let ctx = ctx.clone();
+    btn.connect_clicked(move |btn| {
+        if let Some(win) = btn.root().and_downcast::<gtk::Window>() {
+            backends(&win, ctx.clone());
+        }
+    });
+    btn
+}
+
 pub fn backends(parent: &impl IsA<gtk::Widget>, ctx: AppCtx) {
     if try_spawn_standalone(&ctx, "backend", serde_json::json!({})) {
         return;
@@ -3887,7 +3908,11 @@ pub fn start_operation(
         }
     });
     let dst_kind = if op == OperationType::Mount {
-        attach_path_picker(&ctx, &dst, crate::picker::FilePickerConfig::local_folders());
+        attach_path_picker(
+            &ctx,
+            &dst,
+            crate::picker::FilePickerConfig::local_mount_folders(),
+        );
         None
     } else if op == OperationType::Serve {
         None
@@ -11311,6 +11336,29 @@ fn cron_schedule_preview(ctx: &AppCtx, expression: &str) -> String {
     lines.join("\n")
 }
 
+fn toast_near(widget: &impl IsA<gtk::Widget>, message: &str) {
+    let mut current = widget.clone().upcast::<gtk::Widget>();
+    loop {
+        if let Ok(overlay) = current.clone().downcast::<adw::ToastOverlay>() {
+            overlay.add_toast(adw::Toast::new(message));
+            return;
+        }
+        match current.parent() {
+            Some(parent) => current = parent,
+            None => {
+                if let Some(root) = widget.root() {
+                    if let Ok(win) = root.downcast::<gtk::Window>() {
+                        let dialog = adw::AlertDialog::new(None, Some(message));
+                        dialog.add_response("ok", "OK");
+                        dialog.present(Some(&win));
+                    }
+                }
+                return;
+            }
+        }
+    }
+}
+
 pub(crate) fn attach_path_picker(
     ctx: &AppCtx,
     row: &adw::EntryRow,
@@ -11345,12 +11393,23 @@ pub(crate) fn attach_path_picker(
                     },
                 );
             } else {
+                let require_empty = config.require_empty;
+                let ctx = ctx.clone();
                 dialog.select_folder(
                     Some(&win),
                     None::<gio::Cancellable>.as_ref(),
                     move |result| {
                         if let Ok(file) = result {
                             if let Some(path) = file.path() {
+                                if let Some(key) =
+                                    crate::picker::local_folder_pick_error(&path, require_empty)
+                                {
+                                    toast_near(
+                                        &row,
+                                        &ctx.t_or(key, "Selected folder is not empty"),
+                                    );
+                                    return;
+                                }
                                 row.set_text(&path.to_string_lossy());
                             }
                         }

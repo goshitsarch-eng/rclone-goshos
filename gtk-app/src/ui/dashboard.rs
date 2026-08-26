@@ -496,6 +496,7 @@ impl Dashboard {
                 dash.refresh();
             });
         }
+        layout_bar.append(&dialogs::backend_switch_button(&self.ctx));
         layout_bar.append(&edit_btn);
         layout_bar.append(&order_btn);
         layout_bar.append(&reset);

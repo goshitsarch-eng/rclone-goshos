@@ -113,8 +113,21 @@ pub fn present_with(
     ));
     title.add_css_class("title-3");
     title.set_xalign(0.0);
-    title.set_margin_start(12);
-    title.set_margin_top(10);
+    title.set_hexpand(true);
+    let side_toggle = gtk::Button::from_icon_name("sidebar-show-symbolic");
+    side_toggle.set_tooltip_text(Some(&ctx.t_or("sidebar.toggleSidebar", "Toggle Sidebar")));
+    {
+        let split = split.clone();
+        side_toggle.connect_clicked(move |_| {
+            split.set_show_sidebar(!split.is_show_sidebar());
+        });
+    }
+    let title_row = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+    title_row.set_margin_start(12);
+    title_row.set_margin_end(12);
+    title_row.set_margin_top(10);
+    title_row.append(&side_toggle);
+    title_row.append(&title);
     let body = gtk::Box::new(gtk::Orientation::Vertical, 8);
     body.set_hexpand(true);
     body.set_vexpand(true);
@@ -130,7 +143,7 @@ pub fn present_with(
     let close = gtk::Button::with_label(&ctx.t_or("common.close", "Close"));
     save_bar.append(&save);
     save_bar.append(&close);
-    content.append(&title);
+    content.append(&title_row);
     content.append(&body_scroll);
     content.append(&save_bar);
     split.set_content(Some(&content));
@@ -839,7 +852,11 @@ fn operation_page(
     dst.set_text(&default_dest(remote, &rclone, op));
     dst.set_visible(op != OperationType::Delete);
     if op == OperationType::Mount {
-        dialogs::attach_path_picker(&ctx, &dst, crate::picker::FilePickerConfig::local_folders());
+        dialogs::attach_path_picker(
+            &ctx,
+            &dst,
+            crate::picker::FilePickerConfig::local_mount_folders(),
+        );
     } else if op != OperationType::Serve && op != OperationType::Delete {
         dialogs::attach_path_picker(&ctx, &dst, crate::picker::FilePickerConfig::folders());
     }

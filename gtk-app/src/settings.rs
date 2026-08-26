@@ -207,10 +207,11 @@ impl Default for RuntimeSettings {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct NautilusSettings {
     pub starred: Vec<serde_json::Value>,
     pub bookmarks: Vec<serde_json::Value>,
+    #[serde(default = "default_true")]
     pub sidebar_visible: bool,
     pub show_hidden: bool,
     pub layout: String,
@@ -235,6 +236,29 @@ pub struct NautilusSettings {
     pub split_secondary_path: String,
 }
 
+impl Default for NautilusSettings {
+    fn default() -> Self {
+        Self {
+            starred: vec![],
+            bookmarks: vec![],
+            sidebar_visible: true,
+            show_hidden: false,
+            layout: "list".into(),
+            sort_by: "name".into(),
+            sort_desc: false,
+            icon_size: 48,
+            sidebar_drive_order: vec![],
+            sidebar_hidden_drives: vec![],
+            file_type_filter: String::new(),
+            split_enabled: false,
+            grid_icon_size: 0,
+            split_divider_pos: 0,
+            split_secondary_remote: String::new(),
+            split_secondary_path: String::new(),
+        }
+    }
+}
+
 impl NautilusSettings {
     pub fn normalized(mut self) -> Self {
         if self.layout.is_empty() {
@@ -249,7 +273,6 @@ impl NautilusSettings {
         if self.grid_icon_size == 0 {
             self.grid_icon_size = self.icon_size.max(48);
         }
-        self.sidebar_visible = true;
         self
     }
 
@@ -539,6 +562,21 @@ mod tests {
         assert_eq!(loaded.nautilus.split_divider_pos, 0);
         assert!(loaded.nautilus.split_secondary_remote.is_empty());
         assert!(loaded.nautilus.split_secondary_path.is_empty());
+        assert!(loaded.nautilus.sidebar_visible);
+    }
+
+    #[test]
+    fn sidebar_visible_survives_normalize() {
+        let hidden = NautilusSettings {
+            sidebar_visible: false,
+            ..NautilusSettings::default()
+        }
+        .normalized();
+        assert!(!hidden.sidebar_visible);
+        assert!(NautilusSettings::default().sidebar_visible);
+        let missing: NautilusSettings =
+            serde_json::from_str(r#"{"starred":[],"bookmarks":[]}"#).unwrap();
+        assert!(missing.sidebar_visible);
     }
 
     #[test]

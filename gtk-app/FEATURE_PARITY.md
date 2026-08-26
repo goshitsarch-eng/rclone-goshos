@@ -609,3 +609,11 @@ This client is the GTK 4 + libadwaita desktop UI. It talks to a local `rclone rc
 - Live GUI: `rclone-manager://dashboard/mount/testdrive` selected testdrive and the Mount tab
 - Export Settings can write a standalone `rclone.conf` (INI) as well as the zip backup
 - Startup installs AppStream metainfo under `~/.local/share/metainfo/`
+- Live GUI: Export Format=`rclone.conf` saved `/tmp/gui-export.rclone.conf` (`rclone.conf exported`; `[dummyexport]` `[guiimport]` `[guilocal]` `[testdrive]` `[testdrive2]`)
+- Live GUI: AppStream metainfo installed at `~/.local/share/metainfo/io.github.zarestia_dev.rclone-manager.metainfo.xml`
+- Mount folder pickers reject non-empty destinations (`backendErrors.file.folderNotEmpty`) and Windows drive roots
+- Files sidebar toggle persists `nautilus.sidebar_visible` (setting is no longer forced on)
+- Dashboard and Flow overview headers open the Backends dialog (`overviewHeader.manageBackends`)
+- App/rclone update download URLs resolve Windows MSI/EXE and macOS DMG/zip assets; rclone zip is OS-specific
+- Host-local “Open folder” uses the system file manager when the path exists on this machine, even if the extra RC backend OS differs
+- Remote-config content header can collapse the profile sidebar

@@ -30,6 +30,7 @@ pub struct FilePickerConfig {
     pub allowed_remotes: Vec<String>,
     pub allowed_extensions: Vec<String>,
     pub initial_location: Option<String>,
+    pub require_empty: bool,
 }
 
 impl Default for FilePickerConfig {
@@ -41,6 +42,7 @@ impl Default for FilePickerConfig {
             allowed_remotes: vec![],
             allowed_extensions: vec![],
             initial_location: None,
+            require_empty: false,
         }
     }
 }
@@ -58,6 +60,14 @@ impl FilePickerConfig {
             mode: PickerMode::Local,
             selection: PickerSelection::Folders,
             ..Self::default()
+        }
+    }
+
+    /// Mount destinations: local folder that must be empty (Angular `requireEmpty`).
+    pub fn local_mount_folders() -> Self {
+        Self {
+            require_empty: true,
+            ..Self::local_folders()
         }
     }
 
@@ -168,6 +178,36 @@ fn extension_allowed(name: &str, cfg: &FilePickerConfig) -> bool {
         .any(|allowed| allowed.trim_start_matches('.').eq_ignore_ascii_case(&ext))
 }
 
+/// Reject a local folder pick the same way Tauri `get_folder_location` does.
+/// Returns an i18n key when the path cannot be used.
+pub fn local_folder_pick_error(
+    path: &std::path::Path,
+    require_empty: bool,
+) -> Option<&'static str> {
+    if is_windows_drive_root(path) {
+        return Some("backendErrors.file.driveRoot");
+    }
+    if require_empty && folder_has_entries(path) {
+        return Some("backendErrors.file.folderNotEmpty");
+    }
+    None
+}
+
+pub fn folder_has_entries(path: &std::path::Path) -> bool {
+    match std::fs::read_dir(path) {
+        Ok(mut entries) => entries.next().is_some(),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => false,
+        Err(_) => false,
+    }
+}
+
+pub fn is_windows_drive_root(path: &std::path::Path) -> bool {
+    let raw = path.to_string_lossy();
+    let trimmed = raw.trim_end_matches(['/', '\\']);
+    let bytes = trimmed.as_bytes();
+    bytes.len() == 2 && bytes[0].is_ascii_alphabetic() && bytes[1] == b':'
+}
+
 pub fn can_confirm_selection(
     selected_dirs: usize,
     selected_files: usize,
@@ -240,5 +280,39 @@ mod tests {
             .formatted_path(),
             "drive:a"
         );
+    }
+
+    #[test]
+    fn mount_folders_require_empty() {
+        assert!(FilePickerConfig::local_mount_folders().require_empty);
+        assert!(!FilePickerConfig::local_folders().require_empty);
+    }
+
+    #[test]
+    fn drive_root_and_empty_folder_errors() {
+        assert!(is_windows_drive_root(std::path::Path::new("D:")));
+        assert!(is_windows_drive_root(std::path::Path::new("D:\\")));
+        assert!(is_windows_drive_root(std::path::Path::new("C:/")));
+        assert!(!is_windows_drive_root(std::path::Path::new("D:\\mount")));
+        assert!(!is_windows_drive_root(std::path::Path::new("/mnt")));
+        assert_eq!(
+            local_folder_pick_error(std::path::Path::new("E:\\"), true),
+            Some("backendErrors.file.driveRoot")
+        );
+        let dir = std::env::temp_dir().join(format!("rm-gtk-empty-pick-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        assert!(!folder_has_entries(&dir));
+        assert_eq!(local_folder_pick_error(&dir, true), None);
+        std::fs::write(dir.join("file.txt"), b"x").unwrap();
+        assert!(folder_has_entries(&dir));
+        assert_eq!(
+            local_folder_pick_error(&dir, true),
+            Some("backendErrors.file.folderNotEmpty")
+        );
+        assert_eq!(local_folder_pick_error(&dir, false), None);
+        let missing = dir.join("does-not-exist");
+        assert_eq!(local_folder_pick_error(&missing, true), None);
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }
