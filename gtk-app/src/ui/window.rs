@@ -638,7 +638,7 @@ fn present_main_with(app: &adw::Application, ctx: AppCtx, hidden: bool) {
             ctx_poll.tick_automations();
             ctx_poll.refresh_runtime();
             dash_poll.poll_refresh();
-            flow_poll.refresh();
+            flow_poll.poll_refresh();
             if !first_refresh_done.get() {
                 first_refresh_done.set(true);
                 loading_poll.set_visible(false);

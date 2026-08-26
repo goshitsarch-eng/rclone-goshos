@@ -29,6 +29,8 @@ pub struct FlowView {
     transfer_query: Rc<RefCell<String>>,
     transfer_tab: Rc<RefCell<String>>,
     activity_limit: Rc<Cell<usize>>,
+    layout_sig: Rc<RefCell<String>>,
+    bandwidth_draft: Rc<RefCell<Option<String>>>,
     split: adw::OverlaySplitView,
 }
 
@@ -125,6 +127,8 @@ impl FlowView {
             transfer_query: Rc::new(RefCell::new(String::new())),
             transfer_tab: Rc::new(RefCell::new("active".into())),
             activity_limit: Rc::new(Cell::new(crate::jobs::ACTIVITY_PAGE)),
+            layout_sig: Rc::new(RefCell::new(String::new())),
+            bandwidth_draft: Rc::new(RefCell::new(None)),
             split,
         };
         {
@@ -181,6 +185,70 @@ impl FlowView {
     }
 
     pub fn refresh(&self) {
+        self.refresh_body();
+        *self.layout_sig.borrow_mut() = self.overview_signature();
+    }
+
+    pub fn poll_refresh(&self) {
+        if self.ctx.selected_quick_run.borrow().is_some()
+            || self.selected_flow_remote.borrow().is_some()
+        {
+            self.refresh();
+            return;
+        }
+        let sig = self.overview_signature();
+        if sig == *self.layout_sig.borrow() {
+            return;
+        }
+        self.refresh();
+    }
+
+    fn overview_signature(&self) -> String {
+        let snap = self.ctx.snapshot.borrow();
+        let remotes = snap
+            .remotes
+            .iter()
+            .map(|remote| remote.name.as_str())
+            .collect::<Vec<_>>()
+            .join(",");
+        let jobs = snap
+            .jobs
+            .iter()
+            .filter(|job| crate::jobs::is_overview_job(job))
+            .map(|job| format!("{}:{}", job.id, job.status))
+            .collect::<Vec<_>>()
+            .join(",");
+        let qrs = self
+            .ctx
+            .store
+            .borrow()
+            .quick_runs
+            .iter()
+            .map(|qr| format!("{}:{}", qr.id, qr.status))
+            .collect::<Vec<_>>()
+            .join(",");
+        let bw = self.ctx.settings.borrow().core.bandwidth_limit.clone();
+        format!(
+            "q{}:sel{}:rem{}:j{}:m{}:s{}:bw{}:qr{}:ed{}:orig{}:f{}",
+            self.search.text(),
+            self.ctx
+                .selected_quick_run
+                .borrow()
+                .clone()
+                .unwrap_or_default(),
+            remotes,
+            jobs,
+            snap.mounts.len(),
+            snap.serves.len(),
+            bw,
+            qrs,
+            *self.editing_layout.borrow(),
+            self.origin_filter.borrow().as_str(),
+            self.remote_filter.borrow().clone().unwrap_or_default(),
+        )
+    }
+
+    fn refresh_body(&self) {
         let scroll_y = self.content_scroll.vadjustment().value();
         while let Some(child) = self.sidebar.first_child() {
             self.sidebar.remove(&child);
@@ -606,6 +674,7 @@ impl FlowView {
             let value = (*value).to_string();
             btn.connect_clicked(move |btn| {
                 if apply_bandwidth(&ctx, &value, btn) {
+                    *view.bandwidth_draft.borrow_mut() = None;
                     view.refresh();
                 }
             });
@@ -617,15 +686,39 @@ impl FlowView {
             "dashboard.bandwidth.customLimit",
             "Custom limit (e.g. 2M or 1M:10M)",
         ));
-        custom.set_text(&limit);
+        let draft = self.bandwidth_draft.borrow().clone();
+        custom.set_text(&crate::jobs::bandwidth_draft_text(draft.as_deref(), &limit));
         let apply = gtk::Button::with_label(&self.ctx.t_or("common.apply", "Apply"));
         apply.set_valign(gtk::Align::Center);
+        let (valid, enabled) = crate::jobs::bandwidth_entry_state(&limit, &custom.text());
+        if !valid {
+            custom.add_css_class("error");
+        }
+        apply.set_sensitive(enabled);
+        {
+            let ctx = self.ctx.clone();
+            let draft = self.bandwidth_draft.clone();
+            let apply_btn = apply.clone();
+            custom.connect_changed(move |row| {
+                let text = row.text().to_string();
+                *draft.borrow_mut() = Some(text.clone());
+                let saved = ctx.settings.borrow().core.bandwidth_limit.clone();
+                let (valid, enabled) = crate::jobs::bandwidth_entry_state(&saved, &text);
+                if valid {
+                    row.remove_css_class("error");
+                } else {
+                    row.add_css_class("error");
+                }
+                apply_btn.set_sensitive(enabled);
+            });
+        }
         {
             let ctx = self.ctx.clone();
             let view = self.clone();
             let custom = custom.clone();
             apply.connect_clicked(move |btn| {
                 if apply_bandwidth(&ctx, &custom.text(), btn) {
+                    *view.bandwidth_draft.borrow_mut() = None;
                     view.refresh();
                 }
             });

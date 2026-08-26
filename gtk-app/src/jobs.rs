@@ -926,20 +926,60 @@ pub fn fs_belongs_to_remote(fs: &str, remote: &str) -> bool {
         || fs.contains(&format!("/{remote}"))
 }
 
-pub fn remote_activity_counts(
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct RemoteActivity {
+    pub mount_profiles: Vec<String>,
+    pub serve_labels: Vec<String>,
+    pub serve_first: Option<(String, String, String)>,
+    pub jobs: usize,
+}
+
+impl RemoteActivity {
+    pub fn mounts(&self) -> usize {
+        self.mount_profiles.len()
+    }
+
+    pub fn serves(&self) -> usize {
+        self.serve_labels.len()
+    }
+}
+
+fn profile_or_default(profile: &str) -> String {
+    if profile.trim().is_empty() {
+        "default".into()
+    } else {
+        profile.to_string()
+    }
+}
+
+/// Profile-aware mount/serve/job activity for sidebar badges (Angular
+/// `mountedWithProfile` / `servingWithProfile`).
+pub fn remote_activity(
     remote: &str,
     mounts: &[crate::rclone::MountedRemote],
     serves: &[crate::rclone::ServeItem],
     jobs: &[crate::store::JobInfo],
-) -> (usize, usize, usize) {
-    let mounts = mounts
+) -> RemoteActivity {
+    let mount_profiles: Vec<String> = mounts
         .iter()
         .filter(|item| fs_belongs_to_remote(&item.fs, remote))
-        .count();
-    let serves = serves
+        .map(|item| profile_or_default(&item.profile))
+        .collect();
+    let matched_serves: Vec<&ServeItem> = serves
         .iter()
         .filter(|item| fs_belongs_to_remote(&item.fs, remote))
-        .count();
+        .collect();
+    let serve_labels: Vec<String> = matched_serves
+        .iter()
+        .map(|item| profile_or_default(&item.profile))
+        .collect();
+    let serve_first = matched_serves.first().map(|item| {
+        (
+            profile_or_default(&item.profile),
+            item.serve_type.clone(),
+            item.addr.clone(),
+        )
+    });
     let jobs = jobs
         .iter()
         .filter(|job| {
@@ -947,7 +987,34 @@ pub fn remote_activity_counts(
                 && (job_is_running(job) || job_is_pending(job))
         })
         .count();
-    (mounts, serves, jobs)
+    RemoteActivity {
+        mount_profiles,
+        serve_labels,
+        serve_first,
+        jobs,
+    }
+}
+
+pub fn remote_activity_counts(
+    remote: &str,
+    mounts: &[crate::rclone::MountedRemote],
+    serves: &[crate::rclone::ServeItem],
+    jobs: &[crate::store::JobInfo],
+) -> (usize, usize, usize) {
+    let activity = remote_activity(remote, mounts, serves, jobs);
+    (activity.mounts(), activity.serves(), activity.jobs)
+}
+
+/// `(valid, apply_enabled)` for the dashboard/Flow custom bandwidth row.
+/// Apply is enabled only when the draft is valid and differs from the saved limit.
+pub fn bandwidth_entry_state(saved: &str, draft: &str) -> (bool, bool) {
+    let valid = crate::validators::validate_bandwidth_limit(draft).is_ok();
+    let dirty = normalize_bandwidth(draft) != normalize_bandwidth(saved);
+    (valid, valid && dirty)
+}
+
+pub fn bandwidth_draft_text(draft: Option<&str>, saved: &str) -> String {
+    draft.unwrap_or(saved).to_string()
 }
 
 pub fn origin_label_key(origin: &str) -> &'static str {
@@ -3904,6 +3971,14 @@ mod tests {
         assert_eq!(validated_bandwidth_limit("off").unwrap(), "off");
         assert_eq!(validated_bandwidth_limit("2M").unwrap(), "2M");
         assert!(validated_bandwidth_limit("xyz").is_err());
+        assert_eq!(bandwidth_entry_state("10M", "10M"), (true, false));
+        assert_eq!(bandwidth_entry_state("10M", "2M"), (true, true));
+        assert_eq!(bandwidth_entry_state("10M", "xyz"), (false, false));
+        assert_eq!(bandwidth_entry_state("10M", "off"), (true, true));
+        assert_eq!(bandwidth_entry_state("", "off"), (true, false));
+        assert_eq!(bandwidth_entry_state("10M", ""), (true, true));
+        assert_eq!(bandwidth_draft_text(Some("xyz"), "10M"), "xyz");
+        assert_eq!(bandwidth_draft_text(None, "10M"), "10M");
     }
 
     #[test]
@@ -4706,6 +4781,23 @@ mod tests {
         assert_eq!(
             remote_activity_counts("other", &mounts, &serves, &jobs),
             (0, 0, 0)
+        );
+        let mut home = crate::rclone::MountedRemote::new("drive:", "/mnt/a");
+        home.profile = "home".into();
+        let unnamed = crate::rclone::MountedRemote::new("drive:share", "/mnt/b");
+        let act = remote_activity("drive", &[home, unnamed], &serves, &jobs);
+        assert_eq!(act.mount_profiles, vec!["home", "default"]);
+        assert_eq!(act.serve_labels, vec!["web"]);
+        assert_eq!(
+            act.serve_first
+                .as_ref()
+                .map(|(p, t, a)| (p.as_str(), t.as_str(), a.as_str())),
+            Some(("web", "http", "127.0.0.1:8080"))
+        );
+        assert_eq!(act.jobs, 1);
+        assert_eq!(
+            remote_activity("other", &mounts, &serves, &jobs),
+            RemoteActivity::default()
         );
     }
 

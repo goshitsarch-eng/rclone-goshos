@@ -37,7 +37,17 @@ pub struct Dashboard {
     detail_page: Rc<RefCell<String>>,
     detail_sig: Rc<RefCell<String>>,
     sidebar_sig: Rc<RefCell<String>>,
+    overview_sig: Rc<RefCell<String>>,
+    bandwidth_draft: Rc<RefCell<Option<String>>>,
+    overview_live: Rc<RefCell<Option<OverviewLive>>>,
     split: adw::OverlaySplitView,
+}
+
+#[derive(Clone)]
+struct OverviewLive {
+    transfer: adw::ActionRow,
+    saved: adw::ActionRow,
+    live: Option<adw::ActionRow>,
 }
 
 impl Dashboard {
@@ -143,6 +153,9 @@ impl Dashboard {
             detail_page: Rc::new(RefCell::new("monitoring".into())),
             detail_sig: Rc::new(RefCell::new(String::new())),
             sidebar_sig: Rc::new(RefCell::new(String::new())),
+            overview_sig: Rc::new(RefCell::new(String::new())),
+            bandwidth_draft: Rc::new(RefCell::new(None)),
+            overview_live: Rc::new(RefCell::new(None)),
             split,
         };
         {
@@ -252,6 +265,7 @@ impl Dashboard {
     pub fn refresh(&self) {
         self.detail_sig.borrow_mut().clear();
         self.sidebar_sig.borrow_mut().clear();
+        self.overview_sig.borrow_mut().clear();
         self.refresh_inner();
     }
 
@@ -271,7 +285,106 @@ impl Dashboard {
         } else {
             self.detail_sig.borrow_mut().clear();
             self.content.set_visible_child_name("overview");
-            self.fill_overview();
+            if self.should_rebuild_overview() {
+                self.fill_overview();
+            } else {
+                self.update_overview_live();
+            }
+        }
+    }
+
+    fn overview_signature(&self) -> String {
+        let tab = *self.tab.borrow();
+        let snap = self.ctx.snapshot.borrow();
+        let remotes = snap
+            .remotes
+            .iter()
+            .map(|remote| {
+                format!(
+                    "{}:{}:{}:{}:{}:{}",
+                    remote.name,
+                    remote.r#type,
+                    remote.hidden,
+                    remote.mounted,
+                    remote.serving,
+                    remote.job_active
+                )
+            })
+            .collect::<Vec<_>>()
+            .join("|");
+        let jobs = snap
+            .jobs
+            .iter()
+            .filter(|job| crate::jobs::is_overview_job(job))
+            .map(|job| format!("{}:{}", job.id, job.status))
+            .collect::<Vec<_>>()
+            .join(",");
+        let bw = self.ctx.settings.borrow().core.bandwidth_limit.clone();
+        let layout = self
+            .ctx
+            .settings
+            .borrow()
+            .runtime
+            .dashboard_layout
+            .to_string();
+        let variant = self
+            .ctx
+            .settings
+            .borrow()
+            .runtime
+            .dashboard_card_variant
+            .clone();
+        format!(
+            "{tab:?}:{remotes}:j{jobs}:m{}:s{}:bw{bw}:ed{}:orig{}:lay{layout}:var{variant}",
+            snap.mounts.len(),
+            snap.serves.len(),
+            *self.editing_layout.borrow(),
+            self.origin_filter.borrow().as_str(),
+        )
+    }
+
+    fn should_rebuild_overview(&self) -> bool {
+        let sig = self.overview_signature();
+        let mut prev = self.overview_sig.borrow_mut();
+        if *prev == sig {
+            return false;
+        }
+        *prev = sig;
+        true
+    }
+
+    fn update_overview_live(&self) {
+        let Some(live) = self.overview_live.borrow().clone() else {
+            return;
+        };
+        let snap = self.ctx.snapshot.borrow();
+        let bytes = snap
+            .stats
+            .get("bytes")
+            .and_then(|x| x.as_i64())
+            .unwrap_or(0);
+        let speed = snap
+            .stats
+            .get("speed")
+            .and_then(|x| x.as_f64())
+            .unwrap_or(0.0);
+        live.transfer.set_subtitle(&format!(
+            "{} transferred · {:.1} KiB/s",
+            format_bytes(bytes),
+            speed / 1024.0
+        ));
+        let limit = ctx_settings_bandwidth(&self.ctx);
+        live.saved
+            .set_subtitle(&bandwidth_limit_subtitle(&self.ctx, &limit));
+        if let Some(row) = &live.live {
+            if let Some(bw) = self
+                .ctx
+                .client()
+                .and_then(|c| c.bwlimit(None).ok())
+                .map(|v| crate::jobs::parse_bwlimit(&v))
+            {
+                row.set_subtitle(&bandwidth_live_subtitle(&self.ctx, &bw));
+            }
         }
     }
 
@@ -352,6 +465,7 @@ impl Dashboard {
                     .unwrap_or(usize::MAX)
             });
         }
+        let mut shown = 0usize;
         for remote in remotes {
             if !query.is_empty()
                 && !remote.name.to_lowercase().contains(&query)
@@ -359,6 +473,7 @@ impl Dashboard {
             {
                 continue;
             }
+            shown += 1;
             let row = gtk::ListBoxRow::new();
             let box_ = gtk::Box::new(gtk::Orientation::Horizontal, 8);
             box_.set_margin_top(6);
@@ -381,13 +496,9 @@ impl Dashboard {
                 row.set_tooltip_text(Some(&hidden));
             }
             box_.append(&name);
-            let (mounts, serves, jobs) = crate::jobs::remote_activity_counts(
-                &remote.name,
-                &snap.mounts,
-                &snap.serves,
-                &snap.jobs,
-            );
-            append_status_badges(&box_, &self.ctx, mounts, serves, jobs);
+            let activity =
+                crate::jobs::remote_activity(&remote.name, &snap.mounts, &snap.serves, &snap.jobs);
+            append_status_badges(&box_, &self.ctx, &activity);
             row.set_child(Some(&box_));
             row.set_widget_name(&remote.name);
             if self.ctx.selected_remote.borrow().as_deref() == Some(remote.name.as_str()) {
@@ -405,6 +516,15 @@ impl Dashboard {
             empty.set_subtitle(&self.ctx.t_or(
                 "flow.quickRun.editor.noRemotes",
                 "Use Quick Add or Detailed Config",
+            ));
+            self.sidebar_list.append(&empty);
+        } else if shown == 0 && !query.is_empty() {
+            let empty = adw::ActionRow::new();
+            empty.set_activatable(false);
+            empty.set_title(&self.ctx.tf_or(
+                "sidebar.noRemotesFound",
+                "No remotes found matching \"{{term}}\"",
+                &[("term", &self.search.text())],
             ));
             self.sidebar_list.append(&empty);
         }
@@ -491,6 +611,7 @@ impl Dashboard {
 
     fn fill_overview(&self) {
         clear_box(&self.overview);
+        *self.overview_live.borrow_mut() = None;
         let tab = *self.tab.borrow();
         let remotes = self.remotes_for_display();
         let snap = self.ctx.snapshot.borrow().clone();
@@ -1438,32 +1559,25 @@ impl Dashboard {
                 .ctx
                 .t_or("dashboard.bandwidth.savedLimit", "Saved limit"),
         );
-        limit_row.set_subtitle(&if limit.is_empty() || limit == "off" {
-            self.ctx.t_or("dashboard.bandwidth.unlimited", "Unlimited")
-        } else {
-            limit.clone()
-        });
+        limit_row.set_subtitle(&bandwidth_limit_subtitle(&self.ctx, &limit));
         bw_group.append(&limit_row);
-        if let Some(live) = self
+        let live_row = self
             .ctx
             .client()
             .and_then(|c| c.bwlimit(None).ok())
             .map(|v| crate::jobs::parse_bwlimit(&v))
-        {
-            let live_row = adw::ActionRow::new();
-            live_row.set_title(&self.ctx.t_or("dashboard.bandwidth.liveLimit", "Live limit"));
-            live_row.set_subtitle(&format!(
-                "{} · tx {}/s · rx {}/s",
-                if live.rate == "off" {
-                    self.ctx.t_or("dashboard.bandwidth.unlimited", "Unlimited")
-                } else {
-                    live.rate.clone()
-                },
-                format_bytes(live.bytes_per_sec_tx),
-                format_bytes(live.bytes_per_sec_rx)
-            ));
-            bw_group.append(&live_row);
-        }
+            .map(|live| {
+                let live_row = adw::ActionRow::new();
+                live_row.set_title(&self.ctx.t_or("dashboard.bandwidth.liveLimit", "Live limit"));
+                live_row.set_subtitle(&bandwidth_live_subtitle(&self.ctx, &live));
+                bw_group.append(&live_row);
+                live_row
+            });
+        *self.overview_live.borrow_mut() = Some(OverviewLive {
+            transfer: current,
+            saved: limit_row,
+            live: live_row,
+        });
         self.host().append(&bw_group);
         let presets = gtk::Box::new(gtk::Orientation::Horizontal, 6);
         presets.set_margin_top(8);
@@ -1475,6 +1589,7 @@ impl Dashboard {
             let value = (*value).to_string();
             btn.connect_clicked(move |btn| {
                 if apply_bandwidth(&ctx, &value, btn) {
+                    *dash.bandwidth_draft.borrow_mut() = None;
                     dash.refresh();
                 }
             });
@@ -1486,15 +1601,39 @@ impl Dashboard {
             "dashboard.bandwidth.customLimit",
             "Custom limit (e.g. 2M or 1M:10M)",
         ));
-        custom.set_text(&limit);
+        let draft = self.bandwidth_draft.borrow().clone();
+        custom.set_text(&crate::jobs::bandwidth_draft_text(draft.as_deref(), &limit));
         let apply = gtk::Button::with_label(&self.ctx.t_or("common.apply", "Apply"));
         apply.set_valign(gtk::Align::Center);
+        let (valid, enabled) = crate::jobs::bandwidth_entry_state(&limit, &custom.text());
+        if !valid {
+            custom.add_css_class("error");
+        }
+        apply.set_sensitive(enabled);
+        {
+            let ctx = self.ctx.clone();
+            let draft = self.bandwidth_draft.clone();
+            let apply_btn = apply.clone();
+            custom.connect_changed(move |row| {
+                let text = row.text().to_string();
+                *draft.borrow_mut() = Some(text.clone());
+                let saved = ctx.settings.borrow().core.bandwidth_limit.clone();
+                let (valid, enabled) = crate::jobs::bandwidth_entry_state(&saved, &text);
+                if valid {
+                    row.remove_css_class("error");
+                } else {
+                    row.add_css_class("error");
+                }
+                apply_btn.set_sensitive(enabled);
+            });
+        }
         {
             let ctx = self.ctx.clone();
             let dash = self.clone();
             let custom = custom.clone();
             apply.connect_clicked(move |btn| {
                 if apply_bandwidth(&ctx, &custom.text(), btn) {
+                    *dash.bandwidth_draft.borrow_mut() = None;
                     dash.refresh();
                 }
             });
@@ -3934,7 +4073,7 @@ fn toggle_mount(ctx: &AppCtx, name: &str, mounted: bool, toast: &adw::ToastOverl
                     &[("remote", name), ("profile", pname.as_str())],
                 )));
             }
-            Err(e) => toast.add_toast(adw::Toast::new(&e)),
+            Err(e) => toast_start_failed(ctx, toast, OperationType::Mount.api_label(), name, &e),
         }
         ctx.refresh_runtime();
         return;
@@ -3954,7 +4093,13 @@ fn toggle_mount(ctx: &AppCtx, name: &str, mounted: bool, toast: &adw::ToastOverl
                 ],
             )));
         }
-        Err(e) => toast.add_toast(adw::Toast::new(&e.to_string())),
+        Err(e) => toast_start_failed(
+            ctx,
+            toast,
+            OperationType::Mount.api_label(),
+            name,
+            &e.to_string(),
+        ),
     }
     ctx.refresh_runtime();
 }
@@ -4053,7 +4198,7 @@ fn toggle_profile(
                 ],
             )));
         }
-        Err(e) => toast.add_toast(adw::Toast::new(&e)),
+        Err(e) => toast_start_failed(ctx, toast, op.api_label(), name, &e),
     }
     ctx.refresh_runtime();
 }
@@ -4163,7 +4308,13 @@ fn start_quick_run(ctx: &AppCtx, qr: &crate::store::QuickRun, toast: &adw::Toast
                 ],
             )));
         }
-        Err(e) => toast.add_toast(adw::Toast::new(&ctx.translate_error(&e))),
+        Err(e) => toast_start_failed(
+            ctx,
+            toast,
+            qr.operation_type.api_label(),
+            &qr.remote_name,
+            &ctx.translate_error(&e),
+        ),
     }
     ctx.refresh_runtime();
 }
@@ -4215,13 +4366,10 @@ fn default_mount_point(name: &str) -> String {
     crate::path_inspection::suggest_default_mount_path(name, &crate::store::AppStore::default())
 }
 
-fn append_status_badges(
-    parent: &gtk::Box,
-    ctx: &AppCtx,
-    mounts: usize,
-    serves: usize,
-    jobs: usize,
-) {
+fn append_status_badges(parent: &gtk::Box, ctx: &AppCtx, activity: &crate::jobs::RemoteActivity) {
+    let mounts = activity.mounts();
+    let serves = activity.serves();
+    let jobs = activity.jobs;
     let badges = gtk::Box::new(gtk::Orientation::Horizontal, 2);
     badges.set_valign(gtk::Align::Center);
     badges.set_tooltip_text(Some(&remote_state_label(
@@ -4233,15 +4381,7 @@ fn append_status_badges(
     if mounts > 0 {
         let icon = gtk::Image::from_icon_name("drive-harddisk-symbolic");
         icon.set_pixel_size(12);
-        let tip = if mounts > 1 {
-            format!(
-                "{} ({mounts})",
-                ctx.t_or("overviews.status.labels.mounted", "Mounted")
-            )
-        } else {
-            ctx.t_or("overviews.status.labels.mounted", "Mounted")
-        };
-        icon.set_tooltip_text(Some(&tip));
+        icon.set_tooltip_text(Some(&mount_badge_tooltip(ctx, &activity.mount_profiles)));
         badges.append(&icon);
         if mounts > 1 {
             let count = gtk::Label::new(Some(&mounts.to_string()));
@@ -4253,12 +4393,7 @@ fn append_status_badges(
     if serves > 0 {
         let icon = gtk::Image::from_icon_name("network-server-symbolic");
         icon.set_pixel_size(12);
-        let tip = if serves > 1 {
-            format!("{} ({serves})", ctx.t_or("serve.serving", "Serving"))
-        } else {
-            ctx.t_or("serve.serving", "Serving")
-        };
-        icon.set_tooltip_text(Some(&tip));
+        icon.set_tooltip_text(Some(&serve_badge_tooltip(ctx, activity)));
         badges.append(&icon);
         if serves > 1 {
             let count = gtk::Label::new(Some(&serves.to_string()));
@@ -4293,6 +4428,55 @@ fn append_status_badges(
         badges.append(&idle);
     }
     parent.append(&badges);
+}
+
+fn mount_badge_tooltip(ctx: &AppCtx, profiles: &[String]) -> String {
+    match profiles {
+        [] => ctx.t_or("overviews.status.labels.mounted", "Mounted"),
+        [one] => ctx.tf_or(
+            "mount.mountedWithProfile",
+            "Mounted: {{profile}}",
+            &[("profile", one)],
+        ),
+        many => ctx.tf_or(
+            "mount.mountedMultiple",
+            "Mounted ({{count}}): {{profiles}}",
+            &[
+                ("count", &many.len().to_string()),
+                ("profiles", &many.join(", ")),
+            ],
+        ),
+    }
+}
+
+fn serve_badge_tooltip(ctx: &AppCtx, activity: &crate::jobs::RemoteActivity) -> String {
+    match activity.serve_labels.as_slice() {
+        [] => ctx.t_or("serve.serving", "Serving"),
+        [_] => {
+            let (profile, typ, addr) = activity.serve_first.clone().unwrap_or_default();
+            ctx.tf_or(
+                "serve.servingWithProfile",
+                "Serving ({{profile}}): {{type}} on {{addr}}",
+                &[("profile", &profile), ("type", &typ), ("addr", &addr)],
+            )
+        }
+        labels => ctx.tf_or(
+            "serve.servingMultiple",
+            "Serves ({{count}}): {{profiles}}",
+            &[
+                ("count", &labels.len().to_string()),
+                ("profiles", &labels.join(", ")),
+            ],
+        ),
+    }
+}
+
+fn toast_start_failed(ctx: &AppCtx, toast: &adw::ToastOverlay, op: &str, remote: &str, err: &str) {
+    toast.add_toast(adw::Toast::new(&ctx.tf_or(
+        "operations.failedStart",
+        "Failed to start {{type}} for {{remote}}: {{error}}",
+        &[("type", op), ("remote", remote), ("error", err)],
+    )));
 }
 
 fn remote_sync_op_running(remote: &str, op: OperationType, jobs: &[crate::store::JobInfo]) -> bool {
@@ -4430,6 +4614,27 @@ fn clear_box(box_: &gtk::Box) {
 
 fn ctx_settings_bandwidth(ctx: &AppCtx) -> String {
     ctx.settings.borrow().core.bandwidth_limit.clone()
+}
+
+fn bandwidth_limit_subtitle(ctx: &AppCtx, limit: &str) -> String {
+    if limit.is_empty() || limit == "off" {
+        ctx.t_or("dashboard.bandwidth.unlimited", "Unlimited")
+    } else {
+        limit.to_string()
+    }
+}
+
+fn bandwidth_live_subtitle(ctx: &AppCtx, live: &crate::jobs::BwLimitStatus) -> String {
+    format!(
+        "{} · tx {}/s · rx {}/s",
+        if live.rate == "off" {
+            ctx.t_or("dashboard.bandwidth.unlimited", "Unlimited")
+        } else {
+            live.rate.clone()
+        },
+        format_bytes(live.bytes_per_sec_tx),
+        format_bytes(live.bytes_per_sec_rx)
+    )
 }
 
 fn apply_bandwidth(

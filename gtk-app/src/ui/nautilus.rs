@@ -1206,6 +1206,24 @@ impl NautilusView {
         parts.join(", ")
     }
 
+    fn picker_prompt(&self) -> Option<String> {
+        self.ctx
+            .pending_picker
+            .borrow()
+            .as_ref()
+            .map(|req| match req.config.selection {
+                crate::picker::PickerSelection::Folders => self
+                    .ctx
+                    .t_or("nautilus.titles.selectFolder", "Select a folder"),
+                crate::picker::PickerSelection::Files => {
+                    self.ctx.t_or("nautilus.titles.selectFile", "Select a file")
+                }
+                crate::picker::PickerSelection::Both => self
+                    .ctx
+                    .t_or("nautilus.titles.selectItems", "Select a file or folder"),
+            })
+    }
+
     fn refresh_selection_status(&self) {
         let text = self.selection_status();
         if text.is_empty() {
@@ -1213,6 +1231,12 @@ impl NautilusView {
                 .set_text(&self.listing_count_label(self.last_listing.borrow().len()));
         } else {
             self.status.set_text(&text);
+        }
+        if let Some(prompt) = self.picker_prompt() {
+            let label = crate::picker::picker_bar_label(&prompt, &text);
+            if self.picker_label.text().as_str() != label {
+                self.picker_label.set_text(&label);
+            }
         }
     }
 
@@ -2638,21 +2662,8 @@ impl NautilusView {
             self.reload_sidebar();
             self.reload();
         }
-        if let Some(req) = self.ctx.pending_picker.borrow().as_ref() {
-            let text = match req.config.selection {
-                crate::picker::PickerSelection::Folders => self
-                    .ctx
-                    .t_or("nautilus.titles.selectFolder", "Select a folder"),
-                crate::picker::PickerSelection::Files => {
-                    self.ctx.t_or("nautilus.titles.selectFile", "Select a file")
-                }
-                crate::picker::PickerSelection::Both => self
-                    .ctx
-                    .t_or("nautilus.titles.selectItems", "Select a file or folder"),
-            };
-            if self.picker_label.text().as_str() != text {
-                self.picker_label.set_text(&text);
-            }
+        if self.ctx.pending_picker.borrow().is_some() {
+            self.refresh_selection_status();
         }
     }
 

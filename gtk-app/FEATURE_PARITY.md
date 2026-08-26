@@ -831,3 +831,9 @@ This client is the GTK 4 + libadwaita desktop UI. It talks to a local `rclone rc
 - Embedded folder pickers honor Angular `FilePickerConfig.multi`: extra selected paths fill Additional source rows on Copy/Sync/Move
 - Live GUI: `--file-viewer testdrive:Photos/preview.pdf` shows Remote PDF preview, 552 B, 1 pages, and rendered page text Remote PDF Preview
 - Live GUI: dashboard Bandwidth Limit presets change Saved/Live limit (1 MB/s → 1M, 10 MB/s → 10M)
+- Dashboard/Flow poll no longer rebuilds the overview on every stats tick; custom bandwidth EntryRow keeps a draft so typing `xyz` / `2M` survives the poller
+- Custom bandwidth Apply is enabled only when the draft is valid and dirty (Angular `isCustomBandwidthChanged`); invalid drafts get the error CSS class
+- Operation start failures toast `operations.failedStart` (`Failed to start {{type}} for {{remote}}: {{error}}`)
+- Sidebar search with no matches shows `sidebar.noRemotesFound` instead of a blank list
+- Embedded file-picker chrome appends the live selection summary (`Select a folder · 2 folders selected`)
+- Sidebar mount/serve badges use `mount.mountedWithProfile` / `mountedMultiple` and `serve.servingWithProfile` / `servingMultiple`

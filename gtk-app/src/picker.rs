@@ -121,6 +121,16 @@ impl PickerResult {
     }
 }
 
+/// Picker chrome: keep the prompt, then append the live selection summary.
+pub fn picker_bar_label(prompt: &str, selection: &str) -> String {
+    let selection = selection.trim();
+    if selection.is_empty() {
+        prompt.to_string()
+    } else {
+        format!("{prompt} · {selection}")
+    }
+}
+
 pub fn format_picker_path(remote: &str, path: &str) -> String {
     if remote == "local" || remote.is_empty() {
         if path.is_empty() {
@@ -240,6 +250,15 @@ pub fn can_confirm_selection(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn picker_bar_appends_selection_summary() {
+        assert_eq!(picker_bar_label("Select a folder", ""), "Select a folder");
+        assert_eq!(
+            picker_bar_label("Select a folder", "  2 folders selected  "),
+            "Select a folder · 2 folders selected"
+        );
+    }
 
     #[test]
     fn location_rules_match_angular() {
