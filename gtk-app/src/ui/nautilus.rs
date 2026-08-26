@@ -67,6 +67,7 @@ pub struct NautilusView {
     skip_lasso: Rc<Cell<bool>>,
     ignore_activate: Rc<Cell<bool>>,
     listing_menu_open: Rc<Cell<bool>>,
+    listing_popover: gtk::Popover,
     hover_open: Rc<RefCell<Option<String>>>,
     undo: Rc<RefCell<Vec<String>>>,
     redo: Rc<RefCell<Vec<String>>>,
@@ -339,6 +340,11 @@ impl NautilusView {
             }
         }
 
+        let listing_popover = gtk::Popover::new();
+        listing_popover.set_autohide(true);
+        listing_popover.set_has_arrow(true);
+        listing_popover.set_parent(&root);
+
         let view = Self {
             root,
             ctx,
@@ -367,6 +373,7 @@ impl NautilusView {
             skip_lasso: Rc::new(Cell::new(false)),
             ignore_activate: Rc::new(Cell::new(false)),
             listing_menu_open: Rc::new(Cell::new(false)),
+            listing_popover,
             hover_open: Rc::new(RefCell::new(None)),
             undo: Rc::new(RefCell::new(vec![])),
             redo: Rc::new(RefCell::new(vec![])),
@@ -387,6 +394,14 @@ impl NautilusView {
             send_to_btn: send_to_btn.clone(),
         };
         view.refresh_type_filters();
+        {
+            let view = view.clone();
+            view.listing_popover.connect_closed(move |_| {
+                view.listing_menu_open.set(false);
+                view.ignore_activate.set(false);
+                view.skip_lasso.set(false);
+            });
+        }
 
         {
             let view = view.clone();
@@ -825,21 +840,10 @@ impl NautilusView {
     fn attach_selection_actions(&self, button: &gtk::MenuButton) {
         let popover = gtk::Popover::new();
         button.set_popover(Some(&popover));
-        {
-            let view = self.clone();
-            popover.connect_show(move |popover| {
-                view.listing_menu_open.set(true);
-                popover.set_child(Some(&view.build_context_menu(popover)));
-            });
-        }
-        {
-            let view = self.clone();
-            popover.connect_closed(move |_| {
-                view.listing_menu_open.set(false);
-                view.ignore_activate.set(false);
-                view.skip_lasso.set(false);
-            });
-        }
+        let view = self.clone();
+        popover.connect_show(move |popover| {
+            popover.set_child(Some(&view.build_selection_actions()));
+        });
     }
 
     fn build_selection_actions(&self) -> gtk::Box {
@@ -1320,13 +1324,19 @@ impl NautilusView {
         {
             let view = self.clone();
             let name = name.to_string();
+            let target = more.clone();
             more.connect_clicked(move |_| {
                 view.skip_lasso.set(true);
                 view.ignore_activate.set(true);
                 view.ensure_name_selected(&name, primary);
                 let view = view.clone();
+                let target = target.clone();
                 glib::timeout_add_local_once(std::time::Duration::from_millis(50), move || {
-                    view.popup_context();
+                    view.popup_context_at(
+                        &target,
+                        f64::from(crate::fileops::FILE_ITEM_MENU_HIT_PX) / 2.0,
+                        f64::from(crate::fileops::FILE_ITEM_MENU_HIT_PX) / 2.0,
+                    );
                 });
             });
         }
@@ -4256,9 +4266,43 @@ impl NautilusView {
         });
     }
 
-    fn popup_context_at(&self, _widget: &impl IsA<gtk::Widget>, _x: f64, _y: f64) {
+    fn listing_popover_host(&self, widget: &gtk::Widget) -> gtk::Widget {
+        widget
+            .root()
+            .and_then(|root| root.downcast::<gtk::Window>().ok())
+            .map(|window| window.upcast::<gtk::Widget>())
+            .or_else(|| {
+                widget
+                    .ancestor(gtk::Window::static_type())
+                    .and_then(|w| w.downcast::<gtk::Widget>().ok())
+            })
+            .unwrap_or_else(|| self.root.clone().upcast())
+    }
+
+    fn popup_context_at(&self, widget: &impl IsA<gtk::Widget>, x: f64, y: f64) {
+        let widget = widget.upcast_ref::<gtk::Widget>();
+        let host = self.listing_popover_host(widget);
+        let (px, py) = widget
+            .compute_bounds(&host)
+            .map(|bounds| {
+                crate::fileops::pointing_in_parent(
+                    x,
+                    y,
+                    f64::from(bounds.x()),
+                    f64::from(bounds.y()),
+                )
+            })
+            .unwrap_or((x.round() as i32, y.round() as i32));
+        if self.listing_popover.parent().as_ref() != Some(&host) {
+            self.listing_popover.unparent();
+            self.listing_popover.set_parent(&host);
+        }
         self.listing_menu_open.set(true);
-        self.actions_btn.popup();
+        self.listing_popover
+            .set_child(Some(&self.build_context_menu(&self.listing_popover)));
+        self.listing_popover
+            .set_pointing_to(Some(&gtk::gdk::Rectangle::new(px, py, 1, 1)));
+        self.listing_popover.popup();
     }
 
     fn build_context_menu(&self, popover: &gtk::Popover) -> gtk::Widget {
