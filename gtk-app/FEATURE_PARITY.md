@@ -792,3 +792,6 @@ This client is the GTK 4 + libadwaita desktop UI. It talks to a local `rclone rc
 - Cards sit after disk usage and before Jobs, matching Angular `general-detail`
 - Live GUI: testdrive General **Quick Runs (1)** shows `gui-qr-copy` Copy · testdrive with cron clock, Start, Edit, and folder popover (Source `testdrive:Photos` / Destination `testdrive:verify-qr`); title opens Flow detail; Edit opens the Quick Run editor (`0 7 * * *`)
 - Settings previews use Angular’s expandable `settings-panel` (count subtitle, app/rclone groups, Edit) instead of a flat ActionRow list
+- Live GUI: testdrive General **Remote Configuration** expander shows **2 settings** (`remote` `/tmp/rclone-test-remote`, `type` `alias`) and Edit Settings
+- Live GUI: Operations Copy Configuration expanders list **Copy Settings (gui-copy-nightly/test)** with Application Settings + Rclone Options
+- Live GUI: Flow `gui-qr-copy` Configuration expander shows Application Settings + Rclone Options (`srcFs` `testdrive:Photos`, `dstFs` `testdrive:verify-qr`)
