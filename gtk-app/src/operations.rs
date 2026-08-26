@@ -355,6 +355,11 @@ impl AppTab {
         }
     }
 
+    /// Configuration / Monitoring lists — Angular `currentOpType()` scoping.
+    pub fn lists_profile_op(self, detail_op: OperationType, op: OperationType) -> bool {
+        self == Self::General || op == detail_op
+    }
+
     pub fn default_operation(self) -> OperationType {
         match self {
             Self::Mount => OperationType::Mount,
@@ -727,6 +732,11 @@ mod tests {
         assert!(!AppTab::Mount.includes_operation(OperationType::Sync));
         assert!(AppTab::Operations.includes_operation(OperationType::Bisync));
         assert!(!AppTab::Operations.includes_operation(OperationType::Serve));
+        assert!(AppTab::General.lists_profile_op(OperationType::Check, OperationType::Copy));
+        assert!(AppTab::Operations.lists_profile_op(OperationType::Check, OperationType::Check));
+        assert!(!AppTab::Operations.lists_profile_op(OperationType::Check, OperationType::Copy));
+        assert!(AppTab::Mount.lists_profile_op(OperationType::Mount, OperationType::Mount));
+        assert!(!AppTab::Mount.lists_profile_op(OperationType::Mount, OperationType::Sync));
         assert_eq!(AppTab::Serve.default_operation(), OperationType::Serve);
         assert!(AppTab::Mount.remote_is_active(true, false, false));
         assert!(!AppTab::Serve.remote_is_active(true, false, true));

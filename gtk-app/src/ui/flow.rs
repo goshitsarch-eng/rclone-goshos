@@ -978,6 +978,7 @@ impl FlowView {
                 &crate::jobs::history_with_meta(&store.job_history, &store.job_meta),
                 name,
                 None,
+                None,
             )
         };
         self.append_transfers(&self.content, &jobs);

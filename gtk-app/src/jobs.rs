@@ -1378,6 +1378,7 @@ pub fn merge_overview_jobs(
     history: &[JobInfo],
     remote: &str,
     profile: Option<&str>,
+    operation: Option<OperationType>,
 ) -> Vec<JobInfo> {
     let matches = |job: &JobInfo| {
         is_overview_job(job)
@@ -1385,6 +1386,7 @@ pub fn merge_overview_jobs(
             && profile.is_none_or(|wanted| {
                 job.profile == wanted || job.profile.is_empty() || job.profile == "default"
             })
+            && operation.is_none_or(|op| job_operation_matches(&job.operation, op))
     };
     let mut out: Vec<JobInfo> = live.iter().filter(|job| matches(job)).cloned().collect();
     let ids: HashSet<u64> = out.iter().map(|job| job.id).collect();
@@ -4132,7 +4134,7 @@ mod tests {
             "completed"
         );
         assert!(find_job_by_id(&[], &history, 99).is_none());
-        let merged = merge_overview_jobs(&[live.clone()], &history, "drive", None);
+        let merged = merge_overview_jobs(&[live.clone()], &history, "drive", None, None);
         assert_eq!(
             merged.iter().map(|job| job.id).collect::<Vec<_>>(),
             vec![1, 2]
@@ -4143,7 +4145,28 @@ mod tests {
             .unwrap()
             .with_timezone(&Utc);
         let history = vec![finished.clone(), other, child, weekly];
-        let nightly = merge_overview_jobs(&[live.clone()], &history, "drive", Some("nightly"));
+        let nightly =
+            merge_overview_jobs(&[live.clone()], &history, "drive", Some("nightly"), None);
+        let sync_only = merge_overview_jobs(
+            &[live.clone()],
+            &history,
+            "drive",
+            None,
+            Some(OperationType::Sync),
+        );
+        assert_eq!(
+            sync_only.iter().map(|job| job.id).collect::<Vec<_>>(),
+            vec![1, 5]
+        );
+        assert!(!sync_only.iter().any(|job| job.id == 2));
+        let check_only = merge_overview_jobs(
+            &[live.clone()],
+            &history,
+            "drive",
+            Some("default"),
+            Some(OperationType::Check),
+        );
+        assert!(check_only.is_empty());
         assert_eq!(
             nightly.iter().map(|job| job.id).collect::<Vec<_>>(),
             vec![1, 2]

@@ -1753,7 +1753,10 @@ impl Dashboard {
 
         let selected_profile = (tab == AppTab::Operations)
             .then(|| self.selected_profile_name(&name, self.selected_sync_op(&name)));
-        if let Some(job) = remote_jobs_preview(&snap.jobs, &name, selected_profile.as_deref()) {
+        let scoped_op = (tab != AppTab::General).then_some(detail_op);
+        if let Some(job) =
+            remote_jobs_preview(&snap.jobs, &name, selected_profile.as_deref(), scoped_op)
+        {
             self.detail_box()
                 .append(&job_panels::job_info_group(&self.ctx, job));
             self.detail_box()
@@ -1780,6 +1783,7 @@ impl Dashboard {
                 &crate::jobs::history_with_meta(&store.job_history, &store.job_meta),
                 &name,
                 None,
+                scoped_op,
             )
         };
         if remote_jobs.is_empty() {
@@ -1864,7 +1868,7 @@ impl Dashboard {
             activity.append(&serve_card_row(&self.ctx, &serve, move || dash.refresh()));
         }
         self.detail_box().append(&activity);
-        self.append_transfer_activity(&name, &snap, selected_profile.as_deref());
+        self.append_transfer_activity(&name, &snap, selected_profile.as_deref(), scoped_op);
         if tab == AppTab::General {
             self.append_remote_automations(&name);
         }
@@ -1892,7 +1896,7 @@ impl Dashboard {
                 let Some(op_ty) = crate::operations::OperationType::parse(op) else {
                     continue;
                 };
-                if !tab.includes_operation(op_ty) {
+                if !tab.lists_profile_op(detail_op, op_ty) {
                     continue;
                 }
                 for (pname, profile) in profiles {
@@ -3487,6 +3491,7 @@ impl Dashboard {
         name: &str,
         snap: &crate::store::RuntimeSnapshot,
         profile: Option<&str>,
+        operation: Option<OperationType>,
     ) {
         let jobs = {
             let store = self.ctx.store.borrow();
@@ -3495,6 +3500,7 @@ impl Dashboard {
                 &crate::jobs::history_with_meta(&store.job_history, &store.job_meta),
                 name,
                 profile,
+                operation,
             )
         };
         let mut rows = Vec::new();
@@ -4119,6 +4125,7 @@ fn remote_jobs_preview<'a>(
     jobs: &'a [crate::store::JobInfo],
     name: &str,
     profile: Option<&str>,
+    operation: Option<OperationType>,
 ) -> Option<&'a crate::store::JobInfo> {
     jobs.iter()
         .filter(|j| j.remote == name)
@@ -4127,6 +4134,7 @@ fn remote_jobs_preview<'a>(
                 j.profile == wanted || j.profile.is_empty() || j.profile == "default"
             })
         })
+        .filter(|j| operation.is_none_or(|op| crate::jobs::job_operation_matches(&j.operation, op)))
         .max_by_key(|j| j.id)
 }
 

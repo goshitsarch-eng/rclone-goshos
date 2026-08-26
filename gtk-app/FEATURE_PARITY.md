@@ -774,3 +774,4 @@ This client is the GTK 4 + libadwaita desktop UI. It talks to a local `rclone rc
 - Live GUI: testdrive Operations shows Sync / Bisync / Copy + **More**; More lists Move, Check, Delete, Copy URL, Archive, Cryptcheck
 - Live GUI: More → Check highlights More and shows **Check Settings**; More → Move shows **Move Settings**; Sync primary toggle restores **Sync Settings**
 - Transfer rows offer Angular fallback copy-URL / download / delete when rclone omits `srcFs`/`dstFs`, using the job remote + transfer name
+- Operations Configuration / Monitoring / activity / transfers scope to the selected sync op (Check no longer lists Copy profiles or Copy jobs)
