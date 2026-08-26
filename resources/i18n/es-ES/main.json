@@ -2846,6 +2846,7 @@
       "nothingToRedo": "Nada que rehacer",
       "cannotUndo": "Esta acción no se puede deshacer",
       "selectValid": "Seleccione un elemento válido para continuar",
+      "nothingSelected": "Seleccione primero un archivo o carpeta",
       "selectNewFolderItems": "Seleccione elementos para mover a una carpeta nueva",
       "selectToDownload": "Seleccione un archivo para descargar",
       "selectToShare": "Seleccione un archivo para compartir",

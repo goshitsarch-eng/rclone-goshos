@@ -2846,6 +2846,7 @@
       "nothingToRedo": "Nothing to redo",
       "cannotUndo": "This action cannot be undone",
       "selectValid": "Select a valid item to continue",
+      "nothingSelected": "Select a file or folder first",
       "selectNewFolderItems": "Select items to move into a new folder",
       "selectToDownload": "Select a file to download",
       "selectToShare": "Select a file to share",

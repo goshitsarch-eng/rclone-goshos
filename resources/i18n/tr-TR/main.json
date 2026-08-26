@@ -2846,6 +2846,7 @@
       "nothingToRedo": "Yinelenecek işlem yok",
       "cannotUndo": "Bu işlem geri alınamaz",
       "selectValid": "Devam etmek için geçerli bir öğe seçin",
+      "nothingSelected": "Önce bir dosya veya klasör seçin",
       "selectNewFolderItems": "Yeni klasöre taşınacak öğeleri seçin",
       "selectToDownload": "İndirilecek bir dosya seçin",
       "selectToShare": "Paylaşılacak bir dosya seçin",

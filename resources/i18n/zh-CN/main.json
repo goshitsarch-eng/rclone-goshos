@@ -2846,6 +2846,7 @@
       "nothingToRedo": "没有可重做的操作",
       "cannotUndo": "此操作无法撤销",
       "selectValid": "请选择有效项目以继续",
+      "nothingSelected": "请先选择一个文件或文件夹",
       "selectNewFolderItems": "选择要移入新文件夹的项目",
       "selectToDownload": "选择要下载的文件",
       "selectToShare": "选择要共享的文件",

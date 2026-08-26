@@ -2846,6 +2846,7 @@
       "nothingToRedo": "やり直す操作はありません",
       "cannotUndo": "この操作は元に戻せません",
       "selectValid": "続行するには有効な項目を選択してください",
+      "nothingSelected": "先にファイルまたはフォルダーを選択してください",
       "selectNewFolderItems": "新しいフォルダに移動する項目を選択",
       "selectToDownload": "ダウンロードするファイルを選択",
       "selectToShare": "共有するファイルを選択",

@@ -3416,6 +3416,10 @@ impl NautilusView {
     fn cut_or_copy(&self, cut: bool) {
         let names = self.selected_names();
         if names.is_empty() {
+            self.toast.add_toast(adw::Toast::new(&self.ctx.t_or(
+                "nautilus.notifications.nothingSelected",
+                "Select a file or folder first",
+            )));
             return;
         }
         let current = self.current.borrow().clone();

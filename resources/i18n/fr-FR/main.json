@@ -2846,6 +2846,7 @@
       "nothingToRedo": "Rien à rétablir",
       "cannotUndo": "Cette action ne peut pas être annulée",
       "selectValid": "Sélectionnez un élément valide pour continuer",
+      "nothingSelected": "Sélectionnez d'abord un fichier ou un dossier",
       "selectNewFolderItems": "Sélectionnez les éléments à déplacer dans un nouveau dossier",
       "selectToDownload": "Sélectionnez un fichier à télécharger",
       "selectToShare": "Sélectionnez un fichier à partager",
