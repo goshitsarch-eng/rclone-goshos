@@ -92,7 +92,7 @@ impl AppCtx {
             pending_reopen_prefs: Rc::new(Cell::new(false)),
             reload_destroy: Rc::new(Cell::new(false)),
             ui_generation: Rc::new(Cell::new(0)),
-            active_workspace: Rc::new(RefCell::new(String::new())),
+            active_workspace: Rc::new(RefCell::new("main_menu".into())),
             shutdown_prompt_open: Rc::new(Cell::new(false)),
             inhibitor: Rc::new(RefCell::new(PowerInhibitor::new())),
             watch_mtimes: Rc::new(RefCell::new(HashMap::new())),

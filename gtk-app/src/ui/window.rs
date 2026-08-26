@@ -405,11 +405,14 @@ fn present_main_with(app: &adw::Application, ctx: AppCtx, hidden: bool) {
         MainView::Nautilus
     };
     let restore = ctx.active_workspace.borrow().clone();
-    if !restore.is_empty() && view_stack.child_by_name(&restore).is_some() {
+    let shown = if !restore.is_empty() && view_stack.child_by_name(&restore).is_some() {
         view_stack.set_visible_child_name(&restore);
+        restore
     } else {
         view_stack.set_visible_child_name(default_view.as_str());
-    }
+        default_view.as_str().to_string()
+    };
+    *ctx.active_workspace.borrow_mut() = shown;
     {
         let ctx = ctx.clone();
         let stack = view_stack.clone();
