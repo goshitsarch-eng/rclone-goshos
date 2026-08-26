@@ -241,7 +241,14 @@ pub fn present_standalone(
             let existing = serde_json::from_value::<QuickRun>(req.data.clone()).ok();
             quick_run_editor(&window, ctx.clone(), existing, noop);
         }
-        "template-manager" => templates(&window, ctx.clone()),
+        "template-manager" => {
+            let save = req
+                .data
+                .get("mode")
+                .and_then(|v| v.as_str())
+                .is_some_and(|mode| mode == "save" || mode == "new");
+            templates_open(&window, ctx.clone(), save);
+        }
         "delete-remote" => delete_remote(&window, ctx.clone(), &remote, noop),
         "remote-config" => remote_config_open(
             &window,
@@ -6702,6 +6709,29 @@ pub fn job_detail(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, job_id: u64) {
     stats_label.set_xalign(0.0);
     box_.append(&stats_label);
     box_.append(&stats);
+    let error_group = adw::PreferencesGroup::new();
+    error_group.set_title(&ctx.t_or("modals.jobDetail.sections.errors", "Error"));
+    error_group.set_visible(false);
+    let error_view = gtk::TextView::new();
+    error_view.set_editable(false);
+    error_view.set_monospace(true);
+    error_view.set_wrap_mode(gtk::WrapMode::WordChar);
+    error_view.set_hexpand(true);
+    let error_scroll = gtk::ScrolledWindow::new();
+    error_scroll.set_min_content_height(96);
+    error_scroll.set_child(Some(&error_view));
+    error_group.add(&error_scroll);
+    let copy_error = gtk::Button::with_label(&ctx.t_or("common.copy", "Copy"));
+    {
+        let error_view = error_view.clone();
+        copy_error.connect_clicked(move |_| {
+            if let Some(display) = gtk::gdk::Display::default() {
+                display.clipboard().set_text(&text_view_get(&error_view));
+            }
+        });
+    }
+    error_group.add(&copy_error);
+    box_.append(&error_group);
     let open_box = gtk::Box::new(gtk::Orientation::Horizontal, 8);
     let populate_opens: Rc<dyn Fn(&str, &str)> = Rc::new({
         let open_box = open_box.clone();
@@ -6773,6 +6803,8 @@ pub fn job_detail(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, job_id: u64) {
         let filter = filter.clone();
         let dialog = dialog.clone();
         let populate_opens = populate_opens.clone();
+        let error_view = error_view.clone();
+        let error_group = error_group.clone();
         move || {
             while let Some(child) = meta.first_child() {
                 meta.remove(&child);
@@ -7063,6 +7095,13 @@ pub fn job_detail(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, job_id: u64) {
                 row.set_subtitle(&value);
                 row.set_subtitle_lines(2);
                 stats.append(&row);
+            }
+            if let Some(err) = job.error.as_deref().filter(|e| !e.is_empty()) {
+                text_view_set(&error_view, &ctx.translate_error(err));
+                error_group.set_visible(true);
+            } else {
+                text_view_set(&error_view, "");
+                error_group.set_visible(false);
             }
             let query = filter.text().to_lowercase();
             append_transfer_rows(
@@ -7549,9 +7588,13 @@ fn pdf_panel(path: Option<std::path::PathBuf>, name: &str, ctx: &AppCtx) -> gtk:
         let nav = gtk::Box::new(gtk::Orientation::Horizontal, 8);
         nav.set_halign(gtk::Align::Center);
         let prev = gtk::Button::from_icon_name("go-previous-symbolic");
-        prev.set_tooltip_text(Some("Previous page"));
+        prev.set_tooltip_text(Some(
+            &ctx.t_or("fileBrowser.fileViewer.previousPage", "Previous page"),
+        ));
         let next = gtk::Button::from_icon_name("go-next-symbolic");
-        next.set_tooltip_text(Some("Next page"));
+        next.set_tooltip_text(Some(
+            &ctx.t_or("fileBrowser.fileViewer.nextPage", "Next page"),
+        ));
         {
             let show = show.clone();
             let page = page.clone();
@@ -8793,7 +8836,15 @@ pub(crate) fn download_file(
 }
 
 pub fn templates(parent: &impl IsA<gtk::Widget>, ctx: AppCtx) {
-    if try_spawn_standalone(&ctx, "template-manager", serde_json::json!({})) {
+    templates_open(parent, ctx, false);
+}
+
+pub fn templates_open(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, save: bool) {
+    if try_spawn_standalone(
+        &ctx,
+        "template-manager",
+        serde_json::json!({ "mode": if save { "save" } else { "manage" } }),
+    ) {
         return;
     }
     let dialog = adw::Dialog::new();
@@ -8860,7 +8911,7 @@ pub fn templates(parent: &impl IsA<gtk::Widget>, ctx: AppCtx) {
         Some("manage"),
         &ctx.t_or("templates.manageTitle", "Manage Templates"),
     );
-    stack.set_visible_child_name("manage");
+    stack.set_visible_child_name(if save { "save" } else { "manage" });
 
     let box_ = gtk::Box::new(gtk::Orientation::Vertical, 8);
     box_.set_margin_top(8);
@@ -10660,22 +10711,39 @@ fn populate_template_key_rows(
         list.remove(&child);
     }
     rows.borrow_mut().clear();
+    let mut grouped: std::collections::BTreeMap<String, Vec<(String, String)>> =
+        std::collections::BTreeMap::new();
     for (path, value) in crate::user_templates::flatten_leaf_paths(source) {
-        let row = adw::SwitchRow::builder()
-            .title(&path)
-            .subtitle(&value)
-            .active(true)
-            .build();
-        {
-            let ctx = ctx.clone();
-            let rows = rows.clone();
-            let count = count.clone();
-            row.connect_active_notify(move |_| {
-                update_template_key_count(&ctx, &rows, &count);
-            });
+        let category = path.split('.').next().unwrap_or(path.as_str()).to_string();
+        grouped.entry(category).or_default().push((path, value));
+    }
+    for (category, entries) in grouped {
+        let expander = adw::ExpanderRow::new();
+        expander.set_title(&category);
+        expander.set_subtitle(&template_keys_label(ctx, entries.len()));
+        expander.set_expanded(true);
+        for (path, value) in entries {
+            let leaf = path
+                .strip_prefix(&format!("{category}."))
+                .unwrap_or(path.as_str());
+            let row = adw::SwitchRow::builder()
+                .title(leaf)
+                .subtitle(&value)
+                .active(true)
+                .build();
+            row.set_widget_name(&path);
+            {
+                let ctx = ctx.clone();
+                let rows = rows.clone();
+                let count = count.clone();
+                row.connect_active_notify(move |_| {
+                    update_template_key_count(&ctx, &rows, &count);
+                });
+            }
+            expander.add_row(&row);
+            rows.borrow_mut().push((path, row));
         }
-        list.append(&row);
-        rows.borrow_mut().push((path, row));
+        list.append(&expander);
     }
     if rows.borrow().is_empty() {
         let empty = adw::ActionRow::new();
@@ -11021,19 +11089,85 @@ fn build_capture_page(
     keys_scroll.set_max_content_height(260);
     keys_scroll.set_vexpand(true);
     keys_scroll.set_child(Some(&keys_list));
-    let save = gtk::Button::with_label(&ctx.t("common.save"));
-    save.add_css_class("suggested-action");
+    let add_key = adw::EntryRow::new();
+    add_key.set_title(&ctx.t_or("templates.key", "Key"));
+    add_key.set_text("vfs.dir_cache_time");
+    let add_value = adw::EntryRow::new();
+    add_value.set_title(&ctx.t_or("templates.value", "Value"));
+    let add_btn = gtk::Button::with_label(&ctx.t_or("templates.addKey", "Add Key"));
+    add_btn.set_valign(gtk::Align::Center);
     {
         let ctx = ctx.clone();
-        let parent = parent.clone();
-        let name = name.clone();
-        let description = description.clone();
-        let key_rows = key_rows.clone();
         let source = source.clone();
-        save.connect_clicked(move |_| {
-            let title = name.text().to_string();
-            if title.trim().is_empty() {
-                template_error(&parent, &ctx, &ctx.t_or("templates.templateName", "Name"));
+        let keys_list = keys_list.clone();
+        let key_rows = key_rows.clone();
+        let count = count.clone();
+        let key_search = key_search.clone();
+        let add_key = add_key.clone();
+        let add_value = add_value.clone();
+        add_btn.connect_clicked(move |_| {
+            let path = add_key.text().trim().to_string();
+            if path.is_empty() {
+                return;
+            }
+            crate::user_templates::set_leaf(
+                &mut source.borrow_mut(),
+                &path,
+                serde_json::json!(add_value.text().to_string()),
+            );
+            populate_template_key_rows(&ctx, &keys_list, &key_rows, &count, &source.borrow());
+            filter_template_key_rows(&key_rows.borrow(), &key_search.text());
+        });
+    }
+    let add_box = gtk::Box::new(gtk::Orientation::Vertical, 4);
+    add_box.append(&add_key);
+    add_box.append(&add_value);
+    add_box.append(&add_btn);
+    let json_view = gtk::TextView::new();
+    json_view.set_monospace(true);
+    json_view.set_wrap_mode(gtk::WrapMode::WordChar);
+    json_view.set_hexpand(true);
+    json_view.set_vexpand(true);
+    let json_scroll = gtk::ScrolledWindow::new();
+    json_scroll.set_min_content_height(180);
+    json_scroll.set_vexpand(true);
+    json_scroll.set_child(Some(&json_view));
+    let view_stack = gtk::Stack::new();
+    view_stack.add_named(&keys_scroll, Some("visual"));
+    view_stack.add_named(&json_scroll, Some("json"));
+    view_stack.set_visible_child_name("visual");
+    let visual_btn = gtk::ToggleButton::with_label(&ctx.t_or("templates.visualView", "Visual"));
+    let json_btn = gtk::ToggleButton::with_label(&ctx.t_or("templates.jsonView", "JSON"));
+    json_btn.set_group(Some(&visual_btn));
+    visual_btn.set_active(true);
+    {
+        let view_stack = view_stack.clone();
+        let json_view = json_view.clone();
+        let source = source.clone();
+        let key_rows = key_rows.clone();
+        let ctx = ctx.clone();
+        let keys_list = keys_list.clone();
+        let count = count.clone();
+        let key_search = key_search.clone();
+        visual_btn.connect_toggled(move |btn| {
+            if !btn.is_active() {
+                return;
+            }
+            if let Ok(map) = crate::flags::parse_json_object(&text_view_get(&json_view)) {
+                *source.borrow_mut() = serde_json::Value::Object(map);
+                populate_template_key_rows(&ctx, &keys_list, &key_rows, &count, &source.borrow());
+                filter_template_key_rows(&key_rows.borrow(), &key_search.text());
+            }
+            view_stack.set_visible_child_name("visual");
+        });
+    }
+    {
+        let view_stack = view_stack.clone();
+        let json_view = json_view.clone();
+        let source = source.clone();
+        let key_rows = key_rows.clone();
+        json_btn.connect_toggled(move |btn| {
+            if !btn.is_active() {
                 return;
             }
             let paths: Vec<String> = key_rows
@@ -11043,6 +11177,50 @@ fn build_capture_page(
                 .map(|(path, _)| path.clone())
                 .collect();
             let values = crate::user_templates::filter_by_paths(&source.borrow(), &paths);
+            text_view_set(
+                &json_view,
+                &serde_json::to_string_pretty(&values).unwrap_or_else(|_| "{}".into()),
+            );
+            view_stack.set_visible_child_name("json");
+        });
+    }
+    let view_switch = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+    view_switch.append(&visual_btn);
+    view_switch.append(&json_btn);
+    let save = gtk::Button::with_label(&ctx.t("common.save"));
+    save.add_css_class("suggested-action");
+    {
+        let ctx = ctx.clone();
+        let parent = parent.clone();
+        let name = name.clone();
+        let description = description.clone();
+        let key_rows = key_rows.clone();
+        let source = source.clone();
+        let view_stack = view_stack.clone();
+        let json_view = json_view.clone();
+        save.connect_clicked(move |_| {
+            let title = name.text().to_string();
+            if title.trim().is_empty() {
+                template_error(&parent, &ctx, &ctx.t_or("templates.templateName", "Name"));
+                return;
+            }
+            let values = if view_stack.visible_child_name().as_deref() == Some("json") {
+                match crate::flags::parse_json_object(&text_view_get(&json_view)) {
+                    Ok(map) => serde_json::Value::Object(map),
+                    Err(e) => {
+                        template_error(&parent, &ctx, &e);
+                        return;
+                    }
+                }
+            } else {
+                let paths: Vec<String> = key_rows
+                    .borrow()
+                    .iter()
+                    .filter(|(_, row)| row.is_active())
+                    .map(|(path, _)| path.clone())
+                    .collect();
+                crate::user_templates::filter_by_paths(&source.borrow(), &paths)
+            };
             persist_user_template(
                 &ctx,
                 UserTemplate {
@@ -11070,7 +11248,9 @@ fn build_capture_page(
     box_.append(&count);
     box_.append(&key_search);
     box_.append(&key_buttons);
-    box_.append(&keys_scroll);
+    box_.append(&add_box);
+    box_.append(&view_switch);
+    box_.append(&view_stack);
     box_.append(&save);
     box_
 }
@@ -11780,6 +11960,18 @@ const ORIGINS: &[&str] = &[
     "quickrun",
 ];
 
+fn action_kind_label(ctx: &AppCtx, kind: &str) -> String {
+    ctx.t_or(&format!("alerts.action.{kind}"), kind)
+}
+
+fn severity_label(ctx: &AppCtx, severity: &str) -> String {
+    ctx.t_or(&format!("alerts.severityLevels.{severity}"), severity)
+}
+
+fn origin_label(ctx: &AppCtx, origin: &str) -> String {
+    ctx.t_or(&format!("alerts.origins.{origin}"), origin)
+}
+
 fn alert_rule_editor(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, existing_id: Option<String>) {
     let dialog = adw::Dialog::new();
     dialog.set_title(&ctx.t_or("alerts.rule.editorTitle", "Alert rule"));
@@ -11815,7 +12007,12 @@ fn alert_rule_editor(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, existing_id: O
     );
     let severity = adw::ComboRow::new();
     severity.set_title(&ctx.t_or("alerts.rule.severityMin", "Minimum severity"));
-    severity.set_model(Some(&gtk::StringList::new(SEVERITIES)));
+    let severity_labels: Vec<String> = SEVERITIES
+        .iter()
+        .map(|sev| severity_label(&ctx, sev))
+        .collect();
+    let severity_refs: Vec<&str> = severity_labels.iter().map(|s| s.as_str()).collect();
+    severity.set_model(Some(&gtk::StringList::new(&severity_refs)));
     if let Some(rule) = &existing {
         if let Some(idx) = SEVERITIES
             .iter()
@@ -11892,6 +12089,9 @@ fn alert_rule_editor(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, existing_id: O
         &ORIGINS.iter().map(|s| (*s).to_string()).collect::<Vec<_>>(),
         existing.as_ref().map(|r| r.origin_filter.as_slice()),
     );
+    for (id, row) in &origin_switches {
+        row.set_title(&origin_label(&ctx, id));
+    }
     let event_switches: Vec<(AlertEventKind, adw::SwitchRow)> = EVENT_KINDS
         .iter()
         .map(|kind| {
@@ -12098,11 +12298,45 @@ fn alert_action_editor(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, existing_id:
     enabled.set_active(existing.as_ref().map(|a| a.enabled).unwrap_or(true));
     let kind = adw::ComboRow::new();
     kind.set_title(&ctx.t_or("alerts.action.kind", "Kind"));
-    kind.set_model(Some(&gtk::StringList::new(ACTION_KINDS)));
+    let kind_labels: Vec<String> = ACTION_KINDS
+        .iter()
+        .map(|k| action_kind_label(&ctx, k))
+        .collect();
+    let kind_refs: Vec<&str> = kind_labels.iter().map(|s| s.as_str()).collect();
+    kind.set_model(Some(&gtk::StringList::new(&kind_refs)));
+    kind.set_visible(false);
     if let Some(action) = &existing {
         if let Some(idx) = ACTION_KINDS.iter().position(|k| *k == action.kind) {
             kind.set_selected(idx as u32);
         }
+    }
+    let kind_chips = gtk::FlowBox::new();
+    kind_chips.set_max_children_per_line(4);
+    kind_chips.set_selection_mode(gtk::SelectionMode::None);
+    kind_chips.set_homogeneous(false);
+    kind_chips.set_column_spacing(6);
+    kind_chips.set_row_spacing(6);
+    let mut kind_first: Option<gtk::ToggleButton> = None;
+    for (idx, kind_id) in ACTION_KINDS.iter().enumerate() {
+        let btn = gtk::ToggleButton::with_label(&kind_labels[idx]);
+        btn.set_tooltip_text(Some(*kind_id));
+        if let Some(first) = &kind_first {
+            btn.set_group(Some(first));
+        } else {
+            kind_first = Some(btn.clone());
+        }
+        if idx as u32 == kind.selected() {
+            btn.set_active(true);
+        }
+        {
+            let kind = kind.clone();
+            btn.connect_toggled(move |btn| {
+                if btn.is_active() {
+                    kind.set_selected(idx as u32);
+                }
+            });
+        }
+        kind_chips.append(&btn);
     }
     let url = adw::EntryRow::new();
     url.set_title(&ctx.t_or("alerts.action.url", "URL"));
@@ -12116,6 +12350,77 @@ fn alert_action_editor(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, existing_id:
     extra2.set_title(&ctx.t_or("alerts.action.from", "From"));
     let headers = adw::EntryRow::new();
     headers.set_title(&ctx.t_or("alerts.action.headers", "Headers (Key: Value)"));
+    headers.set_visible(false);
+    let header_list = gtk::Box::new(gtk::Orientation::Vertical, 4);
+    let header_rows: Rc<RefCell<Vec<(adw::EntryRow, adw::EntryRow)>>> =
+        Rc::new(RefCell::new(Vec::new()));
+    let add_header_row = {
+        let header_list = header_list.clone();
+        let header_rows = header_rows.clone();
+        let ctx = ctx.clone();
+        Rc::new(move |key: String, value: String| {
+            let key_row = adw::EntryRow::new();
+            key_row.set_title(&ctx.t_or("alerts.action.headerKey", "Header Name"));
+            key_row.set_text(&key);
+            let value_row = adw::EntryRow::new();
+            value_row.set_title(&ctx.t_or("alerts.action.headerValue", "Value"));
+            value_row.set_text(&value);
+            let remove = gtk::Button::from_icon_name("user-trash-symbolic");
+            remove.set_valign(gtk::Align::Center);
+            remove.set_tooltip_text(Some(&ctx.t_or("templates.removeKey", "Remove")));
+            value_row.add_suffix(&remove);
+            header_list.append(&key_row);
+            header_list.append(&value_row);
+            header_rows
+                .borrow_mut()
+                .push((key_row.clone(), value_row.clone()));
+            {
+                let header_list = header_list.clone();
+                let header_rows = header_rows.clone();
+                let key_row = key_row.clone();
+                let value_row = value_row.clone();
+                remove.connect_clicked(move |_| {
+                    header_list.remove(&key_row);
+                    header_list.remove(&value_row);
+                    header_rows
+                        .borrow_mut()
+                        .retain(|(k, v)| !k.eq(&key_row) && !v.eq(&value_row));
+                });
+            }
+        }) as Rc<dyn Fn(String, String)>
+    };
+    if let Some(action) = &existing {
+        for (key, value) in crate::store::header_pairs(&action.config) {
+            add_header_row(key, value);
+        }
+    }
+    if header_rows.borrow().is_empty() {
+        add_header_row(String::new(), String::new());
+    }
+    let add_header = gtk::Button::with_label(&ctx.t_or("alerts.action.addHeader", "Add header"));
+    {
+        let add_header_row = add_header_row.clone();
+        add_header.connect_clicked(move |_| add_header_row(String::new(), String::new()));
+    }
+    header_list.append(&add_header);
+    let refill_headers = {
+        let header_list = header_list.clone();
+        let header_rows = header_rows.clone();
+        let add_header_row = add_header_row.clone();
+        Rc::new(move |text: String| {
+            for (key_row, value_row) in header_rows.borrow().iter() {
+                header_list.remove(key_row);
+                header_list.remove(value_row);
+            }
+            header_rows.borrow_mut().clear();
+            for (key, value) in crate::store::header_pairs_from_text(&text) {
+                add_header_row(key, value);
+            }
+            if header_rows.borrow().is_empty() {
+                add_header_row(String::new(), String::new());
+            }
+        }) as Rc<dyn Fn(String)>
+    };
     let telegram_mode = adw::ComboRow::new();
     telegram_mode.set_title(&ctx.t_or("alerts.action.telegramMode", "Telegram mode"));
     let telegram_bot = ctx.t_or("alerts.action.telegram_bot", "Bot API");
@@ -12179,10 +12484,13 @@ fn alert_action_editor(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, existing_id:
     );
     let encryption = adw::ComboRow::new();
     encryption.set_title(&ctx.t_or("alerts.action.encryption", "Encryption"));
+    let enc_none = ctx.t_or("alerts.action.encryptionNone", "None");
+    let enc_tls = ctx.t_or("alerts.action.encryptionTls", "TLS (Port 465)");
+    let enc_starttls = ctx.t_or("alerts.action.encryptionStarttls", "StartTLS (Port 587)");
     encryption.set_model(Some(&gtk::StringList::new(&[
-        "None",
-        "TLS (Port 465)",
-        "StartTLS (Port 587)",
+        enc_none.as_str(),
+        enc_tls.as_str(),
+        enc_starttls.as_str(),
     ])));
     encryption.set_selected(
         match existing
@@ -12247,9 +12555,11 @@ fn alert_action_editor(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, existing_id:
     presets.append(&slack_btn);
     let wa_provider = adw::ComboRow::new();
     wa_provider.set_title(&ctx.t_or("alerts.action.whatsappProvider", "WhatsApp provider"));
+    let wa_call = ctx.t_or("alerts.action.callMeBot", "CallMeBot");
+    let wa_custom = ctx.t_or("alerts.action.customGateway", "Custom gateway");
     wa_provider.set_model(Some(&gtk::StringList::new(&[
-        "CallMeBot",
-        "Custom gateway",
+        wa_call.as_str(),
+        wa_custom.as_str(),
     ])));
     if existing
         .as_ref()
@@ -12357,7 +12667,7 @@ fn alert_action_editor(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, existing_id:
         let token = token.clone();
         let extra = extra.clone();
         let extra2 = extra2.clone();
-        let headers = headers.clone();
+        let header_rows = header_rows.clone();
         let body = body.clone();
         let retries = retries.clone();
         let timeout = timeout.clone();
@@ -12400,7 +12710,14 @@ fn alert_action_editor(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, existing_id:
                     token: token.text().to_string(),
                     extra: extra.text().to_string(),
                     extra2: extra2.text().to_string(),
-                    headers: headers.text().to_string(),
+                    headers: {
+                        let pairs: Vec<(String, String)> = header_rows
+                            .borrow()
+                            .iter()
+                            .map(|(k, v)| (k.text().to_string(), v.text().to_string()))
+                            .collect();
+                        crate::store::pairs_to_header_text(&pairs)
+                    },
                     body: text_view_get(&body),
                     retry_count: retries.value() as u32,
                     timeout_secs: timeout.value() as u32,
@@ -12499,20 +12816,42 @@ fn alert_action_editor(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, existing_id:
         let method = method.clone();
         let body = body.clone();
         let headers = headers.clone();
+        let header_rows = header_rows.clone();
+        let refill_headers = refill_headers.clone();
         discord_btn.connect_clicked(move |_| {
             method.set_text("POST");
             text_view_set(&body, &crate::store::webhook_preset_body("discord"));
-            headers.set_text(&crate::store::ensure_content_type_json(&headers.text()));
+            let current = crate::store::pairs_to_header_text(
+                &header_rows
+                    .borrow()
+                    .iter()
+                    .map(|(k, v)| (k.text().to_string(), v.text().to_string()))
+                    .collect::<Vec<_>>(),
+            );
+            let next = crate::store::ensure_content_type_json(&current);
+            headers.set_text(&next);
+            refill_headers(next);
         });
     }
     {
         let method = method.clone();
         let body = body.clone();
         let headers = headers.clone();
+        let header_rows = header_rows.clone();
+        let refill_headers = refill_headers.clone();
         slack_btn.connect_clicked(move |_| {
             method.set_text("POST");
             text_view_set(&body, &crate::store::webhook_preset_body("slack"));
-            headers.set_text(&crate::store::ensure_content_type_json(&headers.text()));
+            let current = crate::store::pairs_to_header_text(
+                &header_rows
+                    .borrow()
+                    .iter()
+                    .map(|(k, v)| (k.text().to_string(), v.text().to_string()))
+                    .collect::<Vec<_>>(),
+            );
+            let next = crate::store::ensure_content_type_json(&current);
+            headers.set_text(&next);
+            refill_headers(next);
         });
     }
     let sync_fields = {
@@ -12522,6 +12861,7 @@ fn alert_action_editor(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, existing_id:
         let extra = extra.clone();
         let extra2 = extra2.clone();
         let headers = headers.clone();
+        let header_list = header_list.clone();
         let timeout = timeout.clone();
         let tls_verify = tls_verify.clone();
         let subject = subject.clone();
@@ -12557,6 +12897,7 @@ fn alert_action_editor(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, existing_id:
                     extra.set_visible(false);
                     extra2.set_visible(false);
                     headers.set_visible(false);
+                    header_list.set_visible(false);
                     timeout.set_visible(false);
                     tls_verify.set_visible(false);
                     body_group.set_visible(true);
@@ -12574,7 +12915,8 @@ fn alert_action_editor(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, existing_id:
                     token.set_visible(false);
                     extra.set_visible(false);
                     extra2.set_visible(false);
-                    headers.set_visible(true);
+                    headers.set_visible(false);
+                    header_list.set_visible(true);
                     timeout.set_visible(true);
                     tls_verify.set_visible(true);
                     body_group.set_visible(true);
@@ -12593,6 +12935,7 @@ fn alert_action_editor(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, existing_id:
                     extra.set_title(&ctx.t_or("alerts.action.chatId", "Chat ID"));
                     extra2.set_visible(false);
                     headers.set_visible(false);
+                    header_list.set_visible(false);
                     timeout.set_visible(true);
                     tls_verify.set_visible(false);
                     body_group.set_visible(true);
@@ -12612,6 +12955,7 @@ fn alert_action_editor(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, existing_id:
                     extra.set_title(&ctx.t_or("alerts.action.phone", "Phone number"));
                     extra2.set_visible(false);
                     headers.set_visible(false);
+                    header_list.set_visible(false);
                     timeout.set_visible(true);
                     tls_verify.set_visible(false);
                     body_group.set_visible(true);
@@ -12629,6 +12973,7 @@ fn alert_action_editor(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, existing_id:
                     extra2.set_visible(true);
                     extra2.set_title(&ctx.t_or("alerts.action.args", "Arguments"));
                     headers.set_visible(false);
+                    header_list.set_visible(false);
                     timeout.set_visible(true);
                     tls_verify.set_visible(false);
                     body_group.set_visible(true);
@@ -12648,6 +12993,7 @@ fn alert_action_editor(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, existing_id:
                     extra2.set_visible(true);
                     extra2.set_title(&ctx.t_or("alerts.action.from", "From"));
                     headers.set_visible(false);
+                    header_list.set_visible(false);
                     timeout.set_visible(true);
                     tls_verify.set_visible(false);
                     body_group.set_visible(true);
@@ -12665,6 +13011,7 @@ fn alert_action_editor(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, existing_id:
                     extra.set_visible(false);
                     extra2.set_visible(false);
                     headers.set_visible(false);
+                    header_list.set_visible(false);
                     timeout.set_visible(true);
                     tls_verify.set_visible(false);
                     body_group.set_visible(true);
@@ -12741,9 +13088,15 @@ fn alert_action_editor(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, existing_id:
     buttons.append(&delete);
     let box_ = gtk::Box::new(gtk::Orientation::Vertical, 8);
     box_.set_margin_top(12);
+    let kind_heading = gtk::Label::new(Some(&ctx.t_or("alerts.action.kind", "Kind")));
+    kind_heading.add_css_class("heading");
+    kind_heading.set_xalign(0.0);
     let inner = gtk::Box::new(gtk::Orientation::Vertical, 8);
     inner.append(&presets);
+    inner.append(&kind_heading);
+    inner.append(&kind_chips);
     inner.append(&group);
+    inner.append(&header_list);
     inner.append(&body_group);
     let scroll = gtk::ScrolledWindow::new();
     scroll.set_vexpand(true);

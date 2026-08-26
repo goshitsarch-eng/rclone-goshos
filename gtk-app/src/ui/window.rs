@@ -1614,10 +1614,13 @@ fn apply_nav(
             | NavTarget::Shortcuts
             | NavTarget::Backends
             | NavTarget::Flags
-            | NavTarget::Templates
+            | NavTarget::Templates { .. }
             | NavTarget::Export
             | NavTarget::Repair
             | NavTarget::Job { .. }
+            | NavTarget::QuickAdd
+            | NavTarget::WhatsNew { .. }
+            | NavTarget::Properties { .. }
     ) && !window.is_mapped()
     {
         let ctx = ctx.clone();
@@ -1754,9 +1757,16 @@ fn apply_nav(
         NavTarget::Shortcuts => dialogs::shortcuts(window, ctx),
         NavTarget::Backends => dialogs::backends(window, ctx.clone()),
         NavTarget::Flags => dialogs::rclone_flags(window, ctx.clone()),
-        NavTarget::Templates => dialogs::templates(window, ctx.clone()),
+        NavTarget::Templates { save } => dialogs::templates_open(window, ctx.clone(), save),
         NavTarget::Export => dialogs::export_backup(window, ctx.clone(), toast.clone(), None),
         NavTarget::Repair => dialogs::repair(window, ctx.clone(), toast.clone()),
+        NavTarget::QuickAdd => dialogs::quick_add_remote(window, ctx.clone(), Rc::new(|| ())),
+        NavTarget::WhatsNew { rclone } => {
+            dialogs::whats_new(window, ctx.clone(), if rclone { "rclone" } else { "app" })
+        }
+        NavTarget::Properties { remote, path, name } => {
+            dialogs::properties(window, ctx.clone(), &remote, &path, &name)
+        }
     }
 }
 

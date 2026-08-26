@@ -45,9 +45,20 @@ pub enum NavTarget {
     Shortcuts,
     Backends,
     Flags,
-    Templates,
+    Templates {
+        save: bool,
+    },
     Export,
     Repair,
+    QuickAdd,
+    WhatsNew {
+        rclone: bool,
+    },
+    Properties {
+        remote: String,
+        path: String,
+        name: String,
+    },
 }
 
 impl NavTarget {
@@ -309,7 +320,36 @@ pub fn parse_launch_args(args: &[String], standalone_dialogs: bool) -> Option<La
             "--shortcuts" => target = Some(NavTarget::Shortcuts),
             "--backends" => target = Some(NavTarget::Backends),
             "--rclone-flags" | "--flags" => target = Some(NavTarget::Flags),
-            "--templates" => target = Some(NavTarget::Templates),
+            "--templates" => {
+                let save = value.as_deref().is_some_and(|v| {
+                    v.eq_ignore_ascii_case("save") || v.eq_ignore_ascii_case("new")
+                });
+                target = Some(NavTarget::Templates { save });
+            }
+            "--quick-add" | "--quickadd" => target = Some(NavTarget::QuickAdd),
+            "--whats-new" => {
+                let rclone = value.as_deref().is_some_and(|v| {
+                    v.eq_ignore_ascii_case("rclone") || v.eq_ignore_ascii_case("whats-new-rclone")
+                });
+                target = Some(NavTarget::WhatsNew { rclone });
+            }
+            "--whats-new-app" => target = Some(NavTarget::WhatsNew { rclone: false }),
+            "--whats-new-rclone" => target = Some(NavTarget::WhatsNew { rclone: true }),
+            "--properties" => {
+                if let Some(spec) = value.filter(|v| !v.is_empty() && !v.starts_with('-')) {
+                    let (remote, rest) = crate::rclone::split_remote_path(&spec);
+                    let name = rest
+                        .rsplit_once('/')
+                        .map(|(_, name)| name.to_string())
+                        .filter(|name| !name.is_empty())
+                        .unwrap_or_else(|| rest.clone());
+                    target = Some(NavTarget::Properties {
+                        remote,
+                        path: rest,
+                        name,
+                    });
+                }
+            }
             "--export" => target = Some(NavTarget::Export),
             "--repair" => target = Some(NavTarget::Repair),
             "--auto-add" => auto_add = true,
@@ -456,7 +496,34 @@ pub fn parse_route_url(input: &str) -> Option<NavTarget> {
         "shortcuts" | "keyboard-shortcuts" => Some(NavTarget::Shortcuts),
         "backends" | "backend" => Some(NavTarget::Backends),
         "flags" | "rclone-flags" => Some(NavTarget::Flags),
-        "templates" => Some(NavTarget::Templates),
+        "templates" => {
+            let save = query_string(input)
+                .and_then(|q| query_param(&q, "mode"))
+                .is_some_and(|mode| {
+                    mode.eq_ignore_ascii_case("save") || mode.eq_ignore_ascii_case("new")
+                });
+            Some(NavTarget::Templates { save })
+        }
+        "quick-add" | "quickadd" => Some(NavTarget::QuickAdd),
+        "whats-new" | "whats-new-app" => Some(NavTarget::WhatsNew { rclone: false }),
+        "whats-new-rclone" => Some(NavTarget::WhatsNew { rclone: true }),
+        "properties" => {
+            let remote = parts
+                .next()
+                .map(decode_segment)
+                .and_then(|s| nonempty(&s))?;
+            let path = parts
+                .map(decode_segment)
+                .filter(|s| !s.is_empty())
+                .collect::<Vec<_>>()
+                .join("/");
+            let name = path
+                .rsplit_once('/')
+                .map(|(_, name)| name.to_string())
+                .filter(|name| !name.is_empty())
+                .unwrap_or_else(|| path.clone());
+            Some(NavTarget::Properties { remote, path, name })
+        }
         "export" => Some(NavTarget::Export),
         "repair" => Some(NavTarget::Repair),
         _ => None,
@@ -806,7 +873,27 @@ mod tests {
             parse_route_url("rclone-manager://flags"),
             Some(NavTarget::Flags)
         );
-        assert_eq!(parse_route_url("#/templates"), Some(NavTarget::Templates));
+        assert_eq!(
+            parse_route_url("#/templates"),
+            Some(NavTarget::Templates { save: false })
+        );
+        assert_eq!(
+            parse_route_url("#/templates?mode=save"),
+            Some(NavTarget::Templates { save: true })
+        );
+        assert_eq!(parse_route_url("#/quick-add"), Some(NavTarget::QuickAdd));
+        assert_eq!(
+            parse_route_url("#/whats-new-rclone"),
+            Some(NavTarget::WhatsNew { rclone: true })
+        );
+        assert_eq!(
+            parse_route_url("#/properties/testdrive/Photos/README.txt"),
+            Some(NavTarget::Properties {
+                remote: "testdrive".into(),
+                path: "Photos/README.txt".into(),
+                name: "README.txt".into(),
+            })
+        );
         assert_eq!(parse_route_url("#/export"), Some(NavTarget::Export));
         assert_eq!(parse_route_url("#/repair"), Some(NavTarget::Repair));
         assert_eq!(

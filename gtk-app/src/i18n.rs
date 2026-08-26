@@ -382,6 +382,31 @@ mod tests {
     }
 
     #[test]
+    fn template_alert_and_pdf_keys_exist_in_all_catalogs() {
+        if i18n_dir().is_none() {
+            return;
+        }
+        const KEYS: &[&str] = &[
+            "fileBrowser.fileViewer.previousPage",
+            "fileBrowser.fileViewer.nextPage",
+            "alerts.action.encryptionNone",
+            "alerts.action.encryptionTls",
+            "alerts.action.encryptionStarttls",
+            "alerts.action.callMeBot",
+            "alerts.action.addHeader",
+            "templates.visualView",
+            "templates.jsonView",
+            "templates.addKey",
+        ];
+        for lang in SUPPORTED_LANGUAGES {
+            let i18n = I18n::load(lang);
+            for key in KEYS {
+                assert!(i18n.has(key), "{key} missing in {lang}");
+            }
+        }
+    }
+
+    #[test]
     fn detect_language_falls_back() {
         assert!(
             SUPPORTED_LANGUAGES.contains(&I18n::detect_language().as_str())

@@ -284,6 +284,37 @@ pub fn template_matches_query(template: &UserTemplate, query: &str) -> bool {
         })
 }
 
+/// Set a dotted leaf path, creating parent objects as needed.
+pub fn set_leaf(dest: &mut Value, path: &str, leaf: Value) {
+    if path.trim().is_empty() {
+        return;
+    }
+    set_path(dest, path, leaf);
+}
+
+/// Remove a dotted leaf path. Empty parent objects are left in place.
+pub fn remove_leaf(dest: &mut Value, path: &str) {
+    let mut parts: Vec<&str> = path.split('.').collect();
+    let Some(last) = parts.pop() else {
+        return;
+    };
+    let mut cursor = dest;
+    for part in parts {
+        match cursor.as_object_mut() {
+            Some(map) => {
+                cursor = match map.get_mut(part) {
+                    Some(child) => child,
+                    None => return,
+                };
+            }
+            None => return,
+        }
+    }
+    if let Some(map) = cursor.as_object_mut() {
+        map.remove(last);
+    }
+}
+
 /// Keep only the selected dotted leaf paths.
 pub fn filter_by_paths(value: &Value, paths: &[String]) -> Value {
     let mut out = json!({});
@@ -468,6 +499,21 @@ mod tests {
         assert!(filtered["main"].get("checkers").is_none());
         assert!(flatten_leaf_paths(&json!({})).is_empty());
         assert!(flatten_leaf_paths(&json!(null)).is_empty());
+    }
+
+    #[test]
+    fn set_and_remove_leaf_paths() {
+        let mut value = json!({ "vfs": { "vfs_cache_mode": "off" } });
+        set_leaf(&mut value, "vfs.vfs_read_ahead", json!("128M"));
+        set_leaf(&mut value, "mount.attr_timeout", json!("10s"));
+        assert_eq!(value["vfs"]["vfs_read_ahead"], "128M");
+        assert_eq!(value["mount"]["attr_timeout"], "10s");
+        remove_leaf(&mut value, "vfs.vfs_cache_mode");
+        assert!(value["vfs"].get("vfs_cache_mode").is_none());
+        assert_eq!(value["vfs"]["vfs_read_ahead"], "128M");
+        remove_leaf(&mut value, "missing.path");
+        set_leaf(&mut value, "", json!("ignored"));
+        assert_eq!(value["vfs"]["vfs_read_ahead"], "128M");
     }
 
     #[test]

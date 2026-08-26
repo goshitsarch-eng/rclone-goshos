@@ -685,3 +685,8 @@ This client is the GTK 4 + libadwaita desktop UI. It talks to a local `rclone rc
 - Live GUI: hamburger badge shows for the outdated-rclone notice
 - Live GUI: application menu stays open (Export, Templates, Alerts, About); Remotes omitted while on the Remotes workspace
 - Application menu model is not rebuilt on every poll (popover stays open); badge does not steal clicks
+- Template capture groups keys by category expander, supports Add Key, and toggles Visual / JSON (JSON edits rehydrate the visual list)
+- Alert action editor uses wrapping kind chips, translated encryption/WhatsApp labels, and key/value webhook header rows (Discord/Slack presets refill them)
+- Deep links and CLI: `#/templates?mode=save`, `#/quick-add`, `#/whats-new-app`, `#/whats-new-rclone`, `#/properties/{remote}/{path}`
+- Job detail shows a copyable monospace error block when a job has an error
+- PDF viewer prev/next tooltips use `fileBrowser.fileViewer.previousPage` / `nextPage` in all locales

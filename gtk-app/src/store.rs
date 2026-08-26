@@ -562,6 +562,34 @@ pub fn parse_header_lines(text: &str) -> serde_json::Map<String, Value> {
     map
 }
 
+pub fn header_pairs(config: &Value) -> Vec<(String, String)> {
+    config
+        .get("headers")
+        .and_then(|h| h.as_object())
+        .map(|map| {
+            map.iter()
+                .map(|(k, v)| (k.clone(), v.as_str().unwrap_or("").to_string()))
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+pub fn pairs_to_header_text(pairs: &[(String, String)]) -> String {
+    pairs
+        .iter()
+        .filter(|(k, _)| !k.trim().is_empty())
+        .map(|(k, v)| format!("{}: {}", k.trim(), v.trim()))
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+pub fn header_pairs_from_text(text: &str) -> Vec<(String, String)> {
+    parse_header_lines(text)
+        .into_iter()
+        .map(|(k, v)| (k, v.as_str().unwrap_or("").to_string()))
+        .collect()
+}
+
 pub fn headers_to_text(config: &Value) -> String {
     config
         .get("headers")
@@ -2035,6 +2063,33 @@ pub fn sort_entries(entries: &mut [DirEntry], sort_by: &str, desc: bool) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn header_pairs_roundtrip_skips_empty_keys() {
+        let config = json!({
+            "headers": {
+                "Content-Type": "application/json",
+                "X-Token": "abc"
+            }
+        });
+        let pairs = header_pairs(&config);
+        assert_eq!(pairs.len(), 2);
+        let text = pairs_to_header_text(&[
+            ("Content-Type".into(), "application/json".into()),
+            ("  ".into(), "ignored".into()),
+            ("X-Token".into(), "abc".into()),
+        ]);
+        assert!(text.contains("Content-Type: application/json"));
+        assert!(text.contains("X-Token: abc"));
+        assert!(!text.contains("ignored"));
+        assert_eq!(parse_header_lines(&text).len(), 2);
+        let from_text =
+            header_pairs_from_text("Content-Type: application/json\n: skip\nX-Token: abc");
+        assert_eq!(from_text.len(), 2);
+        assert!(from_text
+            .iter()
+            .any(|(k, v)| k == "Content-Type" && v == "application/json"));
+    }
 
     #[test]
     fn mounts_alias_target_and_named_point() {
