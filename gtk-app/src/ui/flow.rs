@@ -1565,24 +1565,11 @@ impl FlowView {
         run_actions.append(&stop);
         monitoring.append(&run_actions);
 
-        if let Some(job) = qr.last_job_id.and_then(|id| {
-            self.ctx
-                .snapshot
-                .borrow()
-                .jobs
-                .iter()
-                .find(|j| j.id == id)
-                .cloned()
-                .or_else(|| {
-                    self.ctx
-                        .store
-                        .borrow()
-                        .job_history
-                        .iter()
-                        .find(|j| j.id == id)
-                        .cloned()
-                })
-        }) {
+        if let Some(job) = {
+            let live = self.ctx.snapshot.borrow().jobs.clone();
+            let history = self.ctx.store.borrow().job_history.clone();
+            crate::jobs::find_quick_run_job(&live, &history, qr)
+        } {
             monitoring.append(&super::job_panels::job_info_group(&self.ctx, &job));
             monitoring.append(&super::job_panels::job_stats_group(&self.ctx, &job));
             let open =

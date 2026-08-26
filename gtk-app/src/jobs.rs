@@ -1260,6 +1260,7 @@ fn merge_rc_with_stored(mut rc: JobInfo, stored: JobInfo) -> JobInfo {
     {
         rc.completed = stored.completed;
     }
+    scope_job_transfers(&mut rc);
     rc
 }
 
@@ -1775,6 +1776,7 @@ pub fn decorate_job_transfers(
     if let Some(updated) = jobs.into_iter().find(|item| item.id == job.id) {
         *job = updated;
     }
+    scope_job_transfers(job);
 }
 
 fn apply_hydrated_rows(
@@ -2300,6 +2302,137 @@ pub fn stop_profile_ex(
     }
 }
 
+/// Drop rclone `core/stats` leftovers that belong to a different job.
+/// rclone 1.60 often returns the global transfer list when a finished
+/// group's stats are gone, which mixed e.g. `#14781` files into `#22718`.
+pub fn transfer_item_matches_job(item: &Value, job: &JobInfo) -> bool {
+    if let Some(id) = item
+        .get("jobid")
+        .or_else(|| item.get("id"))
+        .and_then(|value| value.as_u64())
+    {
+        if id != 0 {
+            return id == job.id;
+        }
+    }
+    if let Some(group) = item.get("group").and_then(|value| value.as_str()) {
+        if !group.is_empty() {
+            if group == job.group || group == format!("job/{}", job.id) {
+                return true;
+            }
+            if group.starts_with("job/") {
+                return false;
+            }
+        }
+    }
+    let parsed = crate::transfers::parse_completed_transfer_row(item);
+    if path_belongs_to_job(&parsed.src, job)
+        || path_belongs_to_job(&parsed.dst, job)
+        || path_belongs_to_job(&parsed.name, job)
+    {
+        return true;
+    }
+    let foreign_src = path_looks_located(&parsed.src) && !path_belongs_to_job(&parsed.src, job);
+    let foreign_dst = path_looks_located(&parsed.dst) && !path_belongs_to_job(&parsed.dst, job);
+    !foreign_src && !foreign_dst
+}
+
+fn path_looks_located(path: &str) -> bool {
+    let path = path.trim();
+    path.contains(':') || path.starts_with('/') || path.starts_with('\\')
+}
+
+fn path_belongs_to_job(path: &str, job: &JobInfo) -> bool {
+    let path = path.trim();
+    if path.is_empty() || path == "—" {
+        return false;
+    }
+    let mut bases = vec![&job.src, &job.dst];
+    if job.src.is_empty() && job.dst.is_empty() {
+        bases.push(&job.remote);
+    }
+    for base in bases {
+        let base = base.trim().trim_end_matches('/');
+        if base.is_empty() {
+            continue;
+        }
+        if path == base
+            || path.starts_with(&format!("{base}/"))
+            || path.starts_with(&format!("{base}:"))
+            || (base.ends_with(':') && path.starts_with(base))
+        {
+            return true;
+        }
+    }
+    false
+}
+
+pub fn filter_transfer_list(list: &Value, job: &JobInfo) -> Value {
+    let Some(arr) = list.as_array() else {
+        return list.clone();
+    };
+    if job.src.is_empty() && job.dst.is_empty() && job.remote.is_empty() && job.group.is_empty() {
+        return list.clone();
+    }
+    Value::Array(
+        arr.iter()
+            .filter(|item| transfer_item_matches_job(item, job))
+            .cloned()
+            .collect(),
+    )
+}
+
+pub fn scope_job_transfers(job: &mut JobInfo) {
+    let transferring = filter_transfer_list(&job.transferring, job);
+    let completed = filter_transfer_list(&job.completed, job);
+    let stats_transferring = job
+        .stats
+        .get("transferring")
+        .cloned()
+        .map(|value| filter_transfer_list(&value, job));
+    let stats_completed = job
+        .stats
+        .get("completed")
+        .cloned()
+        .map(|value| filter_transfer_list(&value, job));
+    job.transferring = transferring;
+    job.completed = completed;
+    if let Some(obj) = job.stats.as_object_mut() {
+        if let Some(value) = stats_transferring {
+            obj.insert("transferring".into(), value);
+        }
+        if let Some(value) = stats_completed {
+            obj.insert("completed".into(), value);
+        }
+    }
+}
+
+pub fn find_quick_run_job(live: &[JobInfo], history: &[JobInfo], qr: &QuickRun) -> Option<JobInfo> {
+    if let Some(job) = find_active_quick_run(live, qr) {
+        return Some(job.clone());
+    }
+    if let Some(id) = qr.last_job_id {
+        if let Some(job) = live.iter().chain(history.iter()).find(|job| job.id == id) {
+            return Some(job.clone());
+        }
+    }
+    let (src, dst) = qr.paths();
+    live.iter()
+        .chain(history.iter())
+        .find(|job| {
+            (job.origin == "quick-run" || job.origin == "quickrun" || job.origin == "flow")
+                && job_belongs_to_remote(job, &qr.remote_name)
+                && job_operation_matches(&job.operation, qr.operation_type)
+                && src
+                    .as_ref()
+                    .is_none_or(|path| job.src == *path || job.src.starts_with(path))
+                && dst
+                    .as_ref()
+                    .is_none_or(|path| job.dst == *path || job.dst.starts_with(path))
+        })
+        .cloned()
+}
+
 pub fn find_active_quick_run<'a>(jobs: &'a [JobInfo], qr: &QuickRun) -> Option<&'a JobInfo> {
     if let Some(id) = qr.last_job_id {
         if let Some(job) = jobs.iter().find(|j| j.id == id && job_is_running(j)) {
@@ -2441,6 +2574,7 @@ pub fn job_from_status(jobid: u64, status: &Value, stats: Option<&Value>) -> Job
     {
         job.status = "preparing".into();
     }
+    scope_job_transfers(&mut job);
     job
 }
 
@@ -4691,5 +4825,93 @@ mod tests {
         assert!(profile_pill_has_watcher(false, "", true));
         assert!(!profile_pill_has_watcher(true, "0 7 * * *", true));
         assert!(!profile_pill_has_watcher(true, "0 7 * * *", false));
+    }
+
+    fn sample_job(id: u64, src: &str, dst: &str) -> JobInfo {
+        JobInfo {
+            id,
+            operation: "copy".into(),
+            remote: "testdrive".into(),
+            profile: "default".into(),
+            status: "completed".into(),
+            origin: "quick-run".into(),
+            start_time: Utc::now(),
+            error: None,
+            dry_run: false,
+            src: src.into(),
+            dst: dst.into(),
+            group: format!("job/{id}"),
+            stats: json!({}),
+            transferring: json!([]),
+            duration: 1.0,
+            progress: 1.0,
+            output: json!({}),
+            completed: json!([]),
+            parent_job_id: None,
+        }
+    }
+
+    #[test]
+    fn scopes_completed_transfers_to_the_open_job() {
+        let mut job = sample_job(22718, "testdrive:Photos", "testdrive:verify-qr");
+        job.completed = json!([
+            {
+                "name": "README.txt",
+                "srcFs": "testdrive:Photos",
+                "dstFs": "testdrive:verify-qr"
+            },
+            {
+                "name": "other.jpg",
+                "srcFs": "testdrive:",
+                "dstFs": "testdrive:verify-copy-to"
+            },
+            { "name": "stale", "group": "job/14781" }
+        ]);
+        scope_job_transfers(&mut job);
+        let names: Vec<_> = job
+            .completed
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter_map(|item| item.get("name").and_then(|v| v.as_str()))
+            .collect();
+        assert_eq!(names, vec!["README.txt"]);
+    }
+
+    #[test]
+    fn job_from_status_drops_global_stats_from_another_job() {
+        let status = json!({
+            "finished": true,
+            "success": true,
+            "group": "job/22718",
+            "output": { "operation": "copy", "srcFs": "testdrive:Photos", "dstFs": "testdrive:verify-qr" }
+        });
+        let stats = json!({
+            "completed": [
+                { "name": "README.txt", "srcFs": "testdrive:Photos", "dstFs": "testdrive:verify-qr" },
+                { "name": "leaked.jpg", "srcFs": "testdrive:", "dstFs": "testdrive:other", "jobid": 14781 }
+            ]
+        });
+        let job = job_from_status(22718, &status, Some(&stats));
+        assert_eq!(job.completed.as_array().unwrap().len(), 1);
+        assert_eq!(job.completed[0]["name"], "README.txt");
+    }
+
+    #[test]
+    fn find_quick_run_job_prefers_live_then_last_id() {
+        let mut qr = crate::store::QuickRun::new(
+            "gui-qr-copy".into(),
+            OperationType::Copy,
+            "testdrive".into(),
+        );
+        qr.last_job_id = Some(22718);
+        qr.config.rclone = json!({ "srcFs": "testdrive:Photos", "dstFs": "testdrive:verify-qr" });
+        let mut live = sample_job(9, "testdrive:Photos", "testdrive:verify-qr");
+        live.status = "running".into();
+        let history = vec![sample_job(22718, "testdrive:Photos", "testdrive:verify-qr")];
+        let found = find_quick_run_job(&[live], &history, &qr).unwrap();
+        assert_eq!(found.id, 9);
+        let found = find_quick_run_job(&[], &history, &qr).unwrap();
+        assert_eq!(found.id, 22718);
     }
 }
