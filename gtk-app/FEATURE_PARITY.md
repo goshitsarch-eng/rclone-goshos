@@ -583,4 +583,5 @@ This client is the GTK 4 + libadwaita desktop UI. It talks to a local `rclone rc
 - Windows autostart writes `HKCU\...\Run` `Rclone Manager` → `"exe" --tray` (PowerShell)
 - macOS autostart writes `~/Library/LaunchAgents/io.github.zarestia_dev.rclone-manager.plist` (`RunAtLoad`, `--tray`)
 - Prevent-sleep: Windows `SetThreadExecutionState(ES_CONTINUOUS|SYSTEM|AWAYMODE)`, macOS `caffeinate -dims`, Linux logind / systemd-inhibit
-- Live GUI: testdrive Photos ⋮ is hittable (Actions tooltip + “Photos” selected). The full listing context popover still does not stay open after the click in this desktop
+- Live GUI: testdrive Photos ⋮ opens the full listing context menu and it stays open (Open / Copy to… / Star / Compress / Share)
+- Live GUI: testdrive Photos right-click opens the same scrolled menu (Open in New Tab / Refresh / Copy to…)
