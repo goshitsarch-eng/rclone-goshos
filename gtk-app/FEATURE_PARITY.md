@@ -526,6 +526,8 @@ This client is the GTK 4 + libadwaita desktop UI. It talks to a local `rclone rc
 - Backends dialog has a Close button and dismisses before reopening after Use/Remove
 - Files copy/cut also writes a recoverable clipboard payload so paste works after a view rebuild
 - Files toolbar has Copy and Paste buttons next to New Folder
+- Files list selection reads `AdwActionRow` widget names (the row *is* the ListBoxRow); single-click selects, double-click opens
+- Files paste drops into a selected destination folder (unless that folder is the copy source)
 
 ## Still deepening
 

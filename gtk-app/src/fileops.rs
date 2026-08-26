@@ -280,6 +280,28 @@ pub fn parse_manager_clipboard(text: &str) -> Option<Vec<(String, String, bool, 
     }
 }
 
+/// Name stored on a Files list row. `AdwActionRow` is itself a `ListBoxRow`,
+/// so callers must read `widget_name` from the row, not from its inner child.
+pub fn listing_row_name(widget_name: &str, title: &str) -> Option<String> {
+    if widget_name == "column-header" {
+        return None;
+    }
+    if !widget_name.is_empty()
+        && !matches!(
+            widget_name,
+            "AdwActionRow" | "GtkListBoxRow" | "GtkBox" | "GtkFlowBoxChild"
+        )
+    {
+        return Some(widget_name.to_string());
+    }
+    let title = title.trim();
+    if title.is_empty() {
+        None
+    } else {
+        Some(title.to_string())
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DeleteItem {
     pub fs: String,
@@ -328,6 +350,36 @@ impl RenameItem {
             from: self.from.clone(),
             to: self.to.clone(),
         }
+    }
+}
+
+/// If exactly one destination folder is selected (and it is not a clipboard
+/// source), paste *into* that folder instead of the current listing.
+pub fn paste_dest_dir(
+    current_remote: &str,
+    current_path: &str,
+    selected: &[String],
+    listing_dirs: &[String],
+    clipboard: &[(String, String, bool, bool)],
+) -> String {
+    if selected.len() != 1 {
+        return current_path.to_string();
+    }
+    let name = &selected[0];
+    if name.is_empty() || !listing_dirs.iter().any(|dir| dir == name) {
+        return current_path.to_string();
+    }
+    let into_source = clipboard.iter().any(|(remote, path, _, _)| {
+        remote == current_remote && path.rsplit('/').next() == Some(name.as_str())
+    });
+    if into_source {
+        return current_path.to_string();
+    }
+    let path = current_path.trim_end_matches('/');
+    if path.is_empty() {
+        name.clone()
+    } else {
+        format!("{path}/{name}")
     }
 }
 
@@ -900,6 +952,57 @@ mod tests {
         assert_eq!(parse_manager_clipboard(&encoded).as_ref(), Some(&items));
         assert!(parse_manager_clipboard("Photos\n/tmp/a.txt").is_none());
         assert!(parse_manager_clipboard("").is_none());
+    }
+
+    #[test]
+    fn listing_row_name_reads_widget_name_not_inner_child() {
+        assert_eq!(listing_row_name("Photos", "Photos"), Some("Photos".into()));
+        assert_eq!(listing_row_name("column-header", "Name"), None);
+        assert_eq!(
+            listing_row_name("AdwActionRow", "Photos"),
+            Some("Photos".into())
+        );
+        assert_eq!(listing_row_name("GtkListBoxRow", ""), None);
+        assert_eq!(listing_row_name("", "a.txt"), Some("a.txt".into()));
+    }
+
+    #[test]
+    fn paste_into_selected_folder_unless_it_is_the_source() {
+        let clip = vec![("testdrive".into(), "Photos".into(), false, true)];
+        assert_eq!(
+            paste_dest_dir(
+                "testdrive",
+                "",
+                &["verify-gui-folder".into()],
+                &["Photos".into(), "verify-gui-folder".into()],
+                &clip
+            ),
+            "verify-gui-folder"
+        );
+        assert_eq!(
+            paste_dest_dir(
+                "testdrive",
+                "Inbox",
+                &["verify-gui-folder".into()],
+                &["verify-gui-folder".into()],
+                &clip
+            ),
+            "Inbox/verify-gui-folder"
+        );
+        assert_eq!(
+            paste_dest_dir(
+                "testdrive",
+                "",
+                &["Photos".into()],
+                &["Photos".into()],
+                &clip
+            ),
+            ""
+        );
+        assert_eq!(
+            paste_dest_dir("testdrive", "Inbox", &[], &["Photos".into()], &clip),
+            "Inbox"
+        );
     }
 
     #[test]

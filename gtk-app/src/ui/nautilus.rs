@@ -193,6 +193,7 @@ impl NautilusView {
         let list = gtk::ListBox::new();
         list.add_css_class("boxed-list");
         list.set_selection_mode(gtk::SelectionMode::Multiple);
+        list.set_activate_on_single_click(false);
         let grid = make_flow();
         let left_stack = gtk::Stack::new();
         left_stack.add_named(&list, Some("list"));
@@ -203,6 +204,7 @@ impl NautilusView {
         let list_right = gtk::ListBox::new();
         list_right.add_css_class("boxed-list");
         list_right.set_selection_mode(gtk::SelectionMode::Multiple);
+        list_right.set_activate_on_single_click(false);
         let grid_right = make_flow();
         let right_stack = gtk::Stack::new();
         right_stack.add_named(&list_right, Some("list"));
@@ -2579,23 +2581,25 @@ impl NautilusView {
 
     fn selected_names(&self) -> Vec<String> {
         if self.is_grid() {
-            self.grid
+            let mut names: Vec<String> = self
+                .grid
                 .selected_children()
                 .into_iter()
                 .filter_map(|child| flow_child_name(&child))
-                .collect()
+                .collect();
+            if names.is_empty() && *self.split_enabled.borrow() {
+                names = self
+                    .grid_right
+                    .selected_children()
+                    .into_iter()
+                    .filter_map(|child| flow_child_name(&child))
+                    .collect();
+            }
+            names
         } else {
-            let mut names = Vec::new();
-            let mut child = self.list.first_child();
-            while let Some(widget) = child {
-                if let Ok(row) = widget.clone().downcast::<gtk::ListBoxRow>() {
-                    if row.is_selected() {
-                        if let Some(name) = row_name(&row) {
-                            names.push(name);
-                        }
-                    }
-                }
-                child = widget.next_sibling();
+            let mut names = selected_list_names(&self.list);
+            if names.is_empty() && *self.split_enabled.borrow() {
+                names = selected_list_names(&self.list_right);
             }
             names
         }
@@ -3463,11 +3467,25 @@ impl NautilusView {
             return;
         };
         let current = self.current.borrow().clone();
+        let listing_dirs: Vec<String> = self
+            .last_listing
+            .borrow()
+            .iter()
+            .filter(|entry| entry.is_dir)
+            .map(|entry| entry.name.clone())
+            .collect();
+        let dest_dir = crate::fileops::paste_dest_dir(
+            &current.remote,
+            &current.path,
+            &self.selected_names(),
+            &listing_dirs,
+            &items,
+        );
         let transfers: Vec<crate::fileops::TransferItem> = items
             .into_iter()
             .map(|(src_remote, src_path, cut, is_dir)| {
                 let name = src_path.rsplit('/').next().unwrap_or(&src_path).to_string();
-                let dst_path = join_remote_path(&current.path, &name);
+                let dst_path = join_remote_path(&dest_dir, &name);
                 let (src_fs, src_remote_path) = fs_remote(&src_remote, &src_path);
                 let (dst_fs, dst_remote_path) = fs_remote(&current.remote, &dst_path);
                 crate::fileops::TransferItem {
@@ -4576,16 +4594,24 @@ fn fs_remote(remote: &str, path: &str) -> (String, String) {
     }
 }
 
+fn selected_list_names(list: &gtk::ListBox) -> Vec<String> {
+    list.selected_rows()
+        .into_iter()
+        .filter_map(|row| row_name(&row))
+        .collect()
+}
+
 fn row_name(row: &gtk::ListBoxRow) -> Option<String> {
-    let child = row.child()?.downcast::<adw::ActionRow>().ok()?;
-    if child.widget_name() == "column-header" {
-        return None;
+    if let Ok(action) = row.clone().downcast::<adw::ActionRow>() {
+        return crate::fileops::listing_row_name(&action.widget_name(), &action.title());
     }
-    let named = child.widget_name().to_string();
-    if !named.is_empty() && named != "AdwActionRow" {
-        return Some(named);
+    if let Some(child) = row.child() {
+        if let Ok(action) = child.clone().downcast::<adw::ActionRow>() {
+            return crate::fileops::listing_row_name(&action.widget_name(), &action.title());
+        }
+        return crate::fileops::listing_row_name(&child.widget_name(), "");
     }
-    Some(child.title().to_string())
+    crate::fileops::listing_row_name(&row.widget_name(), "")
 }
 
 fn make_flow() -> gtk::FlowBox {
