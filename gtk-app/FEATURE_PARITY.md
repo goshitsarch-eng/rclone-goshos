@@ -763,4 +763,5 @@ This client is the GTK 4 + libadwaita desktop UI. It talks to a local `rclone rc
 - Live GUI: About Rclone page title is **About Rclone** with v1.60.1-DEV · Beta, Go, PID, Memory, Cache
 - Live GUI: `--about app` opens **About App** (Up to Date, Check for Updates, Release Channel Stable)
 - Bare optional CLI flags (`--about`, `--preferences`, `--logs`, `--templates`, `--export`, `--whats-new`, `--quick-run-editor`, `--standalone`) register as GLib booleans so GIO no longer requires a value; leftover tokens stay after the re-inserted flag
-- Live GUI: `--about` opens the About home list; `--about rclone` still opens About Rclone; `--preferences` opens Preferences; `--preferences security` opens Security
+- Live GUI: `--about` opens the About home list (Details / About Rclone / About App / Credits / Legal); `--about rclone` as a second instance opens About Rclone
+- Live GUI: `--preferences` opens Preferences; `--preferences security` opens Security (Not Encrypted); `--logs` opens the logs dialog
