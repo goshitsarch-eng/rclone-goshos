@@ -198,19 +198,12 @@ pub fn join_fs_name(fs: &str, name: &str) -> String {
     }
 }
 
-pub fn can_delete_source(job_type: &str) -> bool {
-    !matches!(
-        job_type.to_ascii_lowercase().as_str(),
-        "delete" | "purge" | "rmdirs" | "cleanup" | "cryptcheck"
-    )
+pub fn can_delete_source(job_type: &str, status: &str) -> bool {
+    can_do_source_action(job_type, status)
 }
 
-pub fn can_delete_dest(job_type: &str, completed: bool) -> bool {
-    completed
-        && !matches!(
-            job_type.to_ascii_lowercase().as_str(),
-            "delete" | "purge" | "rmdirs" | "cleanup" | "check" | "cryptcheck"
-        )
+pub fn can_delete_dest(job_type: &str, completed: bool, status: &str) -> bool {
+    can_do_dest_action(completed, status) && !is_delete_job(job_type)
 }
 
 pub fn browse_for(path: &str) -> Option<(String, String)> {
@@ -283,11 +276,10 @@ pub fn can_copy_url_source(
     src: &str,
     job_type: &str,
     info: Option<&crate::rclone::FsInfo>,
+    status: &str,
 ) -> bool {
-    if is_move_job(job_type) || is_delete_job(job_type) {
-        return false;
-    }
-    remote_name_from_path(src).is_some_and(|remote| can_public_link(&remote, info))
+    can_do_source_action(job_type, status)
+        && remote_name_from_path(src).is_some_and(|remote| can_public_link(&remote, info))
 }
 
 pub fn can_copy_url_dest(
@@ -295,24 +287,48 @@ pub fn can_copy_url_dest(
     job_type: &str,
     completed: bool,
     info: Option<&crate::rclone::FsInfo>,
+    status: &str,
 ) -> bool {
-    completed
+    can_do_dest_action(completed, status)
         && !is_delete_job(job_type)
         && remote_name_from_path(dst).is_some_and(|remote| can_public_link(&remote, info))
 }
 
-pub fn can_download_source(src: &str, job_type: &str) -> bool {
-    if is_move_job(job_type) || is_delete_job(job_type) {
-        return false;
-    }
-    remote_name_from_path(src).is_some() && download_target(src).is_some()
+pub fn can_download_source(src: &str, job_type: &str, status: &str) -> bool {
+    can_do_source_action(job_type, status)
+        && remote_name_from_path(src).is_some()
+        && download_target(src).is_some()
 }
 
-pub fn can_download_dest(dst: &str, job_type: &str, completed: bool) -> bool {
-    completed
+pub fn can_download_dest(dst: &str, job_type: &str, completed: bool, status: &str) -> bool {
+    can_do_dest_action(completed, status)
         && !is_delete_job(job_type)
         && remote_name_from_path(dst).is_some()
         && download_target(dst).is_some()
+}
+
+/// Angular `TransferOperationsService.canDo` source-side gates.
+pub fn can_do_source_action(job_type: &str, status: &str) -> bool {
+    if status == "missing_src" {
+        return false;
+    }
+    if (is_move_job(job_type) || is_delete_job(job_type)) && status != "failed" {
+        return false;
+    }
+    true
+}
+
+/// Angular `canDo` dest-side gates (`isCompleted || completedAt || status`).
+pub fn can_do_dest_action(completed: bool, status: &str) -> bool {
+    if status == "failed" || status == "missing_dst" {
+        return false;
+    }
+    completed || !status.is_empty()
+}
+
+/// Angular `canDo` fallback-side gates.
+pub fn can_do_fallback_action(job_type: &str, remote: &str, status: &str) -> bool {
+    !remote.trim().is_empty() && status != "failed" && !is_delete_job(job_type)
 }
 
 /// Join `remote` + transfer name when rclone omits `srcFs`/`dstFs`.
@@ -373,26 +389,23 @@ pub fn can_copy_url_fallback(
     name: &str,
     job_type: &str,
     info: Option<&crate::rclone::FsInfo>,
+    status: &str,
 ) -> bool {
-    if is_delete_job(job_type) {
-        return false;
-    }
-    fallback_transfer_path(remote, name)
-        .and_then(|path| remote_name_from_path(&path))
-        .is_some_and(|remote| can_public_link(&remote, info))
+    can_do_fallback_action(job_type, remote, status)
+        && fallback_transfer_path(remote, name)
+            .and_then(|path| remote_name_from_path(&path))
+            .is_some_and(|remote| can_public_link(&remote, info))
 }
 
-pub fn can_download_fallback(remote: &str, name: &str, job_type: &str) -> bool {
-    if is_delete_job(job_type) {
-        return false;
-    }
-    fallback_transfer_path(remote, name).is_some_and(|path| {
-        remote_name_from_path(&path).is_some() && download_target(&path).is_some()
-    })
+pub fn can_download_fallback(remote: &str, name: &str, job_type: &str, status: &str) -> bool {
+    can_do_fallback_action(job_type, remote, status)
+        && fallback_transfer_path(remote, name).is_some_and(|path| {
+            remote_name_from_path(&path).is_some() && download_target(&path).is_some()
+        })
 }
 
-pub fn can_delete_fallback(remote: &str, name: &str, job_type: &str) -> bool {
-    can_download_fallback(remote, name, job_type)
+pub fn can_delete_fallback(remote: &str, name: &str, job_type: &str, status: &str) -> bool {
+    can_download_fallback(remote, name, job_type, status)
 }
 
 #[cfg(test)]
@@ -458,11 +471,13 @@ mod tests {
 
     #[test]
     fn delete_capabilities_match_job_type() {
-        assert!(can_delete_source("sync"));
-        assert!(!can_delete_source("delete"));
-        assert!(can_delete_dest("copy", true));
-        assert!(!can_delete_dest("copy", false));
-        assert!(!can_delete_dest("check", true));
+        assert!(can_delete_source("sync", ""));
+        assert!(!can_delete_source("delete", ""));
+        assert!(can_delete_dest("copy", true, ""));
+        assert!(!can_delete_dest("copy", false, ""));
+        assert!(can_delete_dest("check", true, ""));
+        assert!(!can_delete_dest("check", true, "missing_dst"));
+        assert!(!can_delete_source("check", "missing_src"));
     }
 
     #[test]
@@ -478,16 +493,28 @@ mod tests {
 
     #[test]
     fn src_dst_actions_match_angular_rules() {
-        assert!(can_copy_url_source("drive:Photos/a.jpg", "copy", None));
-        assert!(!can_copy_url_source("/tmp/a.jpg", "copy", None));
-        assert!(!can_copy_url_source("drive:Photos/a.jpg", "move", None));
-        assert!(!can_copy_url_dest("box:out/a.jpg", "copy", false, None));
-        assert!(can_copy_url_dest("box:out/a.jpg", "copy", true, None));
-        assert!(!can_copy_url_dest("box:out/a.jpg", "delete", true, None));
-        assert!(can_download_source("drive:Photos/a.jpg", "sync"));
-        assert!(!can_download_source("drive:Photos/a.jpg", "delete"));
-        assert!(!can_download_dest("box:out/a.jpg", "copy", false));
-        assert!(can_download_dest("box:out/a.jpg", "copy", true));
+        assert!(can_copy_url_source("drive:Photos/a.jpg", "copy", None, ""));
+        assert!(!can_copy_url_source("/tmp/a.jpg", "copy", None, ""));
+        assert!(!can_copy_url_source("drive:Photos/a.jpg", "move", None, ""));
+        assert!(can_copy_url_source(
+            "drive:Photos/a.jpg",
+            "move",
+            None,
+            "failed"
+        ));
+        assert!(!can_copy_url_dest("box:out/a.jpg", "copy", false, None, ""));
+        assert!(can_copy_url_dest("box:out/a.jpg", "copy", true, None, ""));
+        assert!(!can_copy_url_dest(
+            "box:out/a.jpg",
+            "delete",
+            true,
+            None,
+            ""
+        ));
+        assert!(can_download_source("drive:Photos/a.jpg", "sync", ""));
+        assert!(!can_download_source("drive:Photos/a.jpg", "delete", ""));
+        assert!(!can_download_dest("box:out/a.jpg", "copy", false, ""));
+        assert!(can_download_dest("box:out/a.jpg", "copy", true, ""));
         assert_eq!(remote_name_from_path("drive:x").as_deref(), Some("drive"));
         assert!(remote_name_from_path("/tmp/x").is_none());
         assert!(is_move_job("copy/move"));
@@ -505,14 +532,39 @@ mod tests {
         assert!(needs_fallback_actions("a.jpg", "a.jpg"));
         assert!(needs_fallback_actions("/tmp/a.jpg", "a.jpg"));
         assert!(!needs_fallback_actions("drive:a.jpg", "box:a.jpg"));
-        assert!(can_copy_url_fallback("testdrive", "a.jpg", "copy", None));
-        assert!(can_copy_url_fallback("testdrive", "a.jpg", "move", None));
-        assert!(!can_copy_url_fallback("testdrive", "a.jpg", "delete", None));
-        assert!(!can_copy_url_fallback("local", "a.jpg", "copy", None));
-        assert!(can_download_fallback("testdrive", "a.jpg", "sync"));
-        assert!(!can_download_fallback("testdrive", "a.jpg", "delete"));
-        assert!(can_delete_fallback("testdrive", "a.jpg", "copy"));
-        assert!(!can_delete_fallback("/", "a.jpg", "copy"));
+        assert!(can_copy_url_fallback(
+            "testdrive",
+            "a.jpg",
+            "copy",
+            None,
+            ""
+        ));
+        assert!(can_copy_url_fallback(
+            "testdrive",
+            "a.jpg",
+            "move",
+            None,
+            ""
+        ));
+        assert!(!can_copy_url_fallback(
+            "testdrive",
+            "a.jpg",
+            "delete",
+            None,
+            ""
+        ));
+        assert!(!can_copy_url_fallback("local", "a.jpg", "copy", None, ""));
+        assert!(!can_copy_url_fallback(
+            "testdrive",
+            "a.jpg",
+            "copy",
+            None,
+            "failed"
+        ));
+        assert!(can_download_fallback("testdrive", "a.jpg", "sync", ""));
+        assert!(!can_download_fallback("testdrive", "a.jpg", "delete", ""));
+        assert!(can_delete_fallback("testdrive", "a.jpg", "copy", ""));
+        assert!(!can_delete_fallback("/", "a.jpg", "copy", ""));
         let fallback_only =
             transfer_action_paths("Photos/a.jpg", "Photos/a.jpg", "testdrive", "Photos/a.jpg");
         assert_eq!(fallback_only, vec![("testdrive:Photos/a.jpg".into(), true)]);
@@ -521,6 +573,19 @@ mod tests {
             both,
             vec![("drive:a.jpg".into(), false), ("box:a.jpg".into(), false)]
         );
+        assert!(!can_download_source("drive:a.jpg", "check", "missing_src"));
+        assert!(can_download_source("drive:a.jpg", "check", "missing_dst"));
+        assert!(!can_download_dest(
+            "box:a.jpg",
+            "check",
+            true,
+            "missing_dst"
+        ));
+        assert!(!can_download_dest("box:a.jpg", "check", true, "failed"));
+        assert!(can_download_dest("box:a.jpg", "check", true, "checked"));
+        assert!(can_download_dest("box:a.jpg", "check", false, "differ"));
+        assert!(!can_delete_dest("cryptcheck", true, "failed"));
+        assert!(can_delete_dest("cryptcheck", true, "checked"));
     }
 
     #[test]

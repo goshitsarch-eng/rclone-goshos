@@ -8242,6 +8242,7 @@ pub(crate) fn transfer_activity_row(
         completed,
         remote_name,
         None,
+        "",
     ));
     wrap.append(&row);
     if !completed {
@@ -8330,6 +8331,7 @@ pub(crate) fn transfer_row_actions(
     completed: bool,
     remote_name: &str,
     on_deleted: Option<Rc<dyn Fn(bool)>>,
+    status: &str,
 ) -> gtk::Box {
     let actions = gtk::Box::new(gtk::Orientation::Horizontal, 8);
     actions.set_valign(gtk::Align::Center);
@@ -8350,6 +8352,7 @@ pub(crate) fn transfer_row_actions(
             is_source,
             is_fallback,
             on_deleted.clone(),
+            status,
         ));
     }
     actions
@@ -8364,6 +8367,7 @@ fn transfer_side_actions(
     is_source: bool,
     is_fallback: bool,
     on_deleted: Option<Rc<dyn Fn(bool)>>,
+    status: &str,
 ) -> gtk::Box {
     let side = gtk::Box::new(gtk::Orientation::Horizontal, 2);
     side.add_css_class("linked");
@@ -8371,28 +8375,30 @@ fn transfer_side_actions(
     let info = path_fs_info(ctx, path);
     let copy_url = if is_fallback {
         crate::transfers::remote_name_from_path(path).is_some_and(|remote| {
-            crate::transfers::can_copy_url_fallback(&remote, path, job_type, info.as_ref())
+            crate::transfers::can_copy_url_fallback(&remote, path, job_type, info.as_ref(), status)
         })
     } else if is_source {
-        crate::transfers::can_copy_url_source(path, job_type, info.as_ref())
+        crate::transfers::can_copy_url_source(path, job_type, info.as_ref(), status)
     } else {
-        crate::transfers::can_copy_url_dest(path, job_type, allow_dest_ops, info.as_ref())
+        crate::transfers::can_copy_url_dest(path, job_type, allow_dest_ops, info.as_ref(), status)
     };
     let can_download = if is_fallback {
-        crate::transfers::remote_name_from_path(path)
-            .is_some_and(|remote| crate::transfers::can_download_fallback(&remote, path, job_type))
+        crate::transfers::remote_name_from_path(path).is_some_and(|remote| {
+            crate::transfers::can_download_fallback(&remote, path, job_type, status)
+        })
     } else if is_source {
-        crate::transfers::can_download_source(path, job_type)
+        crate::transfers::can_download_source(path, job_type, status)
     } else {
-        crate::transfers::can_download_dest(path, job_type, allow_dest_ops)
+        crate::transfers::can_download_dest(path, job_type, allow_dest_ops, status)
     };
     let can_delete = if is_fallback {
-        crate::transfers::remote_name_from_path(path)
-            .is_some_and(|remote| crate::transfers::can_delete_fallback(&remote, path, job_type))
+        crate::transfers::remote_name_from_path(path).is_some_and(|remote| {
+            crate::transfers::can_delete_fallback(&remote, path, job_type, status)
+        })
     } else if is_source {
-        crate::transfers::can_delete_source(job_type) && !path.is_empty()
+        crate::transfers::can_delete_source(job_type, status) && !path.is_empty()
     } else {
-        crate::transfers::can_delete_dest(job_type, allow_dest_ops) && !path.is_empty()
+        crate::transfers::can_delete_dest(job_type, allow_dest_ops, status) && !path.is_empty()
     };
     if let Some((remote, _rest)) = crate::transfers::browse_for(path) {
         let open = gtk::Button::from_icon_name("folder-open-symbolic");
@@ -11698,14 +11704,20 @@ pub(super) fn check_result_row(
     let check_remote = crate::transfers::remote_name_from_path(&item.src_fs)
         .or_else(|| crate::transfers::remote_name_from_path(&item.dst_fs))
         .unwrap_or_default();
+    let job_type = if item.job_type.is_empty() {
+        "check"
+    } else {
+        item.job_type.as_str()
+    };
     row.add_suffix(&transfer_row_actions(
         ctx,
         parent,
         &parsed,
-        "copy",
+        job_type,
         true,
         &check_remote,
         Some(on_deleted),
+        &item.status,
     ));
     wrap.append(&row);
     if let Some(job) = resolve_job {

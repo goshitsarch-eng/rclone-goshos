@@ -11,6 +11,7 @@ pub struct CheckResult {
     pub dst_fs: String,
     pub job_id: Option<u64>,
     pub completed_at: Option<chrono::DateTime<chrono::Utc>>,
+    pub job_type: String,
 }
 
 impl CheckResult {
@@ -72,6 +73,7 @@ fn parse_one(item: &Value, fallback_src: &str, fallback_dst: &str) -> Option<Che
     Some(CheckResult {
         name,
         status: normalize_status(&status),
+        job_type: String::new(),
         src_fs: item
             .get("srcFs")
             .or_else(|| item.get("src_fs"))
@@ -114,6 +116,7 @@ fn parse_combined_line(line: &str, fallback_src: &str, fallback_dst: &str) -> Op
         dst_fs: fallback_dst.into(),
         job_id: None,
         completed_at: None,
+        job_type: String::new(),
     })
 }
 
@@ -193,6 +196,7 @@ pub fn with_job_id(mut item: CheckResult, job_id: u64) -> CheckResult {
 
 pub fn with_job(mut item: CheckResult, job: &crate::store::JobInfo) -> CheckResult {
     item.job_id = Some(job.id);
+    item.job_type = job.operation.clone();
     if job.start_time.timestamp() > 0 {
         item.completed_at = Some(job.start_time);
     }
@@ -355,6 +359,7 @@ mod tests {
             dst_fs: "/tmp/out".into(),
             job_id: None,
             completed_at: None,
+            job_type: String::new(),
         };
         assert_eq!(
             crate::transfers::join_fs_name(&item.src_fs, &item.name),
@@ -377,6 +382,7 @@ mod tests {
                 dst_fs: "dst:".into(),
                 job_id: Some(9),
                 completed_at: None,
+                job_type: "check".into(),
             },
             CheckResult {
                 name: "gone.txt".into(),
@@ -385,6 +391,7 @@ mod tests {
                 dst_fs: "dst:".into(),
                 job_id: Some(9),
                 completed_at: None,
+                job_type: "check".into(),
             },
             CheckResult {
                 name: "other.bin".into(),
@@ -393,6 +400,7 @@ mod tests {
                 dst_fs: "dst:".into(),
                 job_id: Some(9),
                 completed_at: None,
+                job_type: "check".into(),
             },
         ];
         let mut hidden = HashSet::new();
