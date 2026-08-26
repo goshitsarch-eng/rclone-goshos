@@ -310,6 +310,10 @@ pub fn point_in_rect(x: f64, y: f64, left: f64, top: f64, width: f64, height: f6
 /// Minimum pointer target for the Files listing ⋮ control. Adwaita circular
 /// icon buttons are ~24px, which is easy to miss on a FlowBox tile.
 pub const FILE_ITEM_MENU_HIT_PX: i32 = 48;
+/// Full listing menus have ~30 actions; without a cap the popover is taller
+/// than the window and GTK presents nothing.
+pub const FILE_CONTEXT_MENU_MIN_WIDTH_PX: i32 = 260;
+pub const FILE_CONTEXT_MENU_MAX_HEIGHT_PX: i32 = 420;
 
 pub fn file_item_menu_widget_name(entry_name: &str) -> String {
     format!("file-menu-{entry_name}")
@@ -1050,6 +1054,9 @@ mod tests {
         assert!(!is_file_item_menu_widget("file-menu"));
         assert_eq!(pointing_in_parent(24.0, 16.0, 400.0, 300.0), (424, 316));
         assert_eq!(pointing_in_parent(0.4, 0.6, 10.0, 20.0), (10, 21));
+        assert!(FILE_CONTEXT_MENU_MAX_HEIGHT_PX >= 300);
+        assert!(FILE_CONTEXT_MENU_MAX_HEIGHT_PX < 800);
+        assert!(FILE_CONTEXT_MENU_MIN_WIDTH_PX >= 200);
     }
 
     #[test]

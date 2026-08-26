@@ -4530,7 +4530,18 @@ impl NautilusView {
             });
             box_.append(&btn);
         }
-        box_.upcast()
+        let scroll = gtk::ScrolledWindow::new();
+        scroll.set_policy(gtk::PolicyType::Never, gtk::PolicyType::Automatic);
+        scroll.set_min_content_width(crate::fileops::FILE_CONTEXT_MENU_MIN_WIDTH_PX);
+        scroll.set_max_content_height(crate::fileops::FILE_CONTEXT_MENU_MAX_HEIGHT_PX);
+        scroll.set_propagate_natural_width(true);
+        scroll.set_propagate_natural_height(true);
+        scroll.set_size_request(
+            crate::fileops::FILE_CONTEXT_MENU_MIN_WIDTH_PX,
+            crate::fileops::FILE_CONTEXT_MENU_MAX_HEIGHT_PX,
+        );
+        scroll.set_child(Some(&box_));
+        scroll.upcast()
     }
 
     fn selected_is_dir(&self) -> bool {
