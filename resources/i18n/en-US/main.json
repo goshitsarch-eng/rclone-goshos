@@ -1612,6 +1612,7 @@
         "profile": "Restore Specific Profile"
       },
       "selectProfile": "Select Profile",
+      "restoreAs": "Restore as (optional rename)",
       "note": "Backup Note",
       "passwordRequired": "Password Required",
       "encryptedWarning": "This backup is encrypted. Enter the correct password to decrypt and restore.",

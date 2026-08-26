@@ -5611,7 +5611,7 @@ pub fn restore_preview(
     scope.set_model(Some(&gtk::StringList::new(&scope_refs)));
     let as_name = adw::EntryRow::new();
     as_name.set_title(&ctx.t_or(
-        "backup.restore.selectProfile",
+        "backup.restore.restoreAs",
         "Restore as (optional rename)",
     ));
     options.add(&password);

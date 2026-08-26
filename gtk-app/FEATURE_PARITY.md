@@ -566,3 +566,4 @@ This client is the GTK 4 + libadwaita desktop UI. It talks to a local `rclone rc
 - GApplication re-forwards `--dialog` / `--dialog-data` / `--dialog-result` to the running instance
 - Restore preview puts scope / restore-as options above the contents list
 - Live GUI: Detailed Remote created `guilocal` (type=local); Quick Add is OAuth-only
+- Live GUI: Restore Backup preview opens via `--dialog restore-preview` and shows scope options above contents
