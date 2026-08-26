@@ -302,6 +302,7 @@ fn present_main_with(app: &adw::Application, ctx: AppCtx, hidden: bool) {
     menu_badge.add_css_class("numeric");
     menu_badge.set_valign(gtk::Align::Start);
     menu_badge.set_halign(gtk::Align::End);
+    menu_badge.set_can_target(false);
     menu_badge.set_visible(false);
     let menu_wrap = gtk::Overlay::new();
     menu_wrap.set_child(Some(&menu_btn));
@@ -514,6 +515,7 @@ fn present_main_with(app: &adw::Application, ctx: AppCtx, hidden: bool) {
     let notice_btn_poll = notice_btn.clone();
     let menu_badge_poll = menu_badge.clone();
     let menu_btn_poll = menu_btn.clone();
+    let last_menu_sig = Rc::new(RefCell::new(menu_signature(&ctx)));
     {
         let ctx_nav = ctx.clone();
         let stack_nav = view_stack.clone();
@@ -627,7 +629,11 @@ fn present_main_with(app: &adw::Application, ctx: AppCtx, hidden: bool) {
             sync_home_button(&ctx_poll, &home_btn_poll);
             sync_notice_button(&ctx_poll, &notice_btn_poll);
             sync_menu_badge(&ctx_poll, &menu_badge_poll);
-            menu_btn_poll.set_menu_model(Some(&app_menu(&ctx_poll)));
+            let menu_sig = menu_signature(&ctx_poll);
+            if *last_menu_sig.borrow() != menu_sig {
+                *last_menu_sig.borrow_mut() = menu_sig;
+                menu_btn_poll.set_menu_model(Some(&app_menu(&ctx_poll)));
+            }
             update_banner(&ctx_poll, &banner_poll, &banner_kind_poll);
         }
         poll_tick.set(tick.wrapping_add(1));
@@ -1869,6 +1875,16 @@ fn update_banner(ctx: &AppCtx, banner: &adw::Banner, kind: &Rc<std::cell::RefCel
 
 fn sync_home_button(ctx: &AppCtx, btn: &gtk::Button) {
     btn.set_visible(ctx.selected_remote.borrow().is_some());
+}
+
+fn menu_signature(ctx: &AppCtx) -> String {
+    format!(
+        "{}|{}|{}|{}",
+        ctx.active_workspace.borrow(),
+        menu_notice_text(ctx).unwrap_or_default(),
+        ctx.store.borrow().unacknowledged_alerts(),
+        u8::from(ctx.settings.borrow().runtime.rclone_restart_required),
+    )
 }
 
 fn menu_notice_text(ctx: &AppCtx) -> Option<String> {

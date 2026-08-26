@@ -680,3 +680,7 @@ This client is the GTK 4 + libadwaita desktop UI. It talks to a local `rclone rc
 - Template manager has Save / Manage tabs, search, and Apply Default Presets on capture and edit
 - Debug Info uses i18n for rclone path rows and the encrypted-config flag
 - Files path bar fades at the scroll edges when breadcrumbs overflow
+- Live GUI: Templates Save/Manage tabs, search, Apply Default Presets (236 keys including backend.buffer_size)
+- Live GUI: Export Encrypt reveals password + secrets; Type includes Backend
+- Live GUI: hamburger badge shows for the outdated-rclone notice
+- Application menu model is not rebuilt on every poll (popover stays open); badge does not steal clicks
