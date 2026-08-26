@@ -3398,7 +3398,7 @@ impl NautilusView {
     }
 
     fn toggle_sidebar(&self) {
-        let next = !self.split.is_show_sidebar();
+        let next = !self.split.shows_sidebar();
         self.split.set_show_sidebar(next);
         self.ctx.settings.borrow_mut().nautilus.sidebar_visible = next;
         self.ctx.persist();

@@ -119,7 +119,7 @@ pub fn present_with(
     {
         let split = split.clone();
         side_toggle.connect_clicked(move |_| {
-            split.set_show_sidebar(!split.is_show_sidebar());
+            split.set_show_sidebar(!split.shows_sidebar());
         });
     }
     let title_row = gtk::Box::new(gtk::Orientation::Horizontal, 8);

@@ -574,8 +574,10 @@ mod tests {
         .normalized();
         assert!(!hidden.sidebar_visible);
         assert!(NautilusSettings::default().sidebar_visible);
-        let missing: NautilusSettings =
-            serde_json::from_str(r#"{"starred":[],"bookmarks":[]}"#).unwrap();
+        let missing: NautilusSettings = serde_json::from_str(
+            r#"{"starred":[],"bookmarks":[],"show_hidden":false,"layout":"list","sort_by":"name","sort_desc":false,"icon_size":48}"#,
+        )
+        .unwrap();
         assert!(missing.sidebar_visible);
     }
 
