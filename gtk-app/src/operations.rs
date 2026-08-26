@@ -43,6 +43,19 @@ impl OperationType {
         Self::Cryptcheck,
     ];
 
+    /// Same order as Angular `SYNC_TYPES` (registry `isSyncType` keys).
+    pub const SYNC_TYPES: [OperationType; 9] = [
+        Self::Sync,
+        Self::Copy,
+        Self::Move,
+        Self::Bisync,
+        Self::Check,
+        Self::Delete,
+        Self::Copyurl,
+        Self::Archivecreate,
+        Self::Cryptcheck,
+    ];
+
     pub const SERVE_TYPES: [&'static str; 8] = [
         "http", "webdav", "ftp", "sftp", "nfs", "dlna", "restic", "s3",
     ];
@@ -451,6 +464,29 @@ impl AppTab {
         seen
     }
 
+    /// Operations-tab primary toggles — Angular `primarySyncOps`.
+    pub fn primary_sync_ops(sync_actions: &[String]) -> Vec<OperationType> {
+        let custom: Vec<OperationType> = sync_actions
+            .iter()
+            .filter_map(|s| OperationType::parse(s))
+            .filter(|op| op.is_sync_type())
+            .collect();
+        if custom.is_empty() {
+            Self::Operations.mode_defaults().to_vec()
+        } else {
+            custom.into_iter().take(3).collect()
+        }
+    }
+
+    /// Overflow operations for the More menu — Angular `moreSyncOps`.
+    pub fn more_sync_ops(primary: &[OperationType]) -> Vec<OperationType> {
+        OperationType::SYNC_TYPES
+            .iter()
+            .copied()
+            .filter(|op| !primary.contains(op))
+            .collect()
+    }
+
     pub fn idle_section_key(self) -> &'static str {
         match self {
             Self::General => "generalOverview.inactive",
@@ -735,6 +771,60 @@ mod tests {
             AppTab::Serve.compact_primary_ops(&[], &[], 1),
             vec![OperationType::Serve]
         );
+        assert_eq!(
+            AppTab::primary_sync_ops(&[]),
+            vec![
+                OperationType::Sync,
+                OperationType::Bisync,
+                OperationType::Copy
+            ]
+        );
+        assert_eq!(
+            AppTab::more_sync_ops(&AppTab::primary_sync_ops(&[])),
+            vec![
+                OperationType::Move,
+                OperationType::Check,
+                OperationType::Delete,
+                OperationType::Copyurl,
+                OperationType::Archivecreate,
+                OperationType::Cryptcheck
+            ]
+        );
+        assert_eq!(
+            AppTab::primary_sync_ops(&["mount".into(), "copy".into()]),
+            vec![OperationType::Copy]
+        );
+        assert_eq!(
+            AppTab::primary_sync_ops(&[
+                "check".into(),
+                "delete".into(),
+                "copyurl".into(),
+                "sync".into()
+            ]),
+            vec![
+                OperationType::Check,
+                OperationType::Delete,
+                OperationType::Copyurl
+            ]
+        );
+        let more = AppTab::more_sync_ops(&AppTab::primary_sync_ops(&[
+            "check".into(),
+            "delete".into(),
+            "copyurl".into(),
+            "sync".into(),
+        ]));
+        assert!(more.contains(&OperationType::Sync));
+        assert!(!more.contains(&OperationType::Check));
+        assert_eq!(more.len(), 6);
+        assert_eq!(
+            AppTab::primary_sync_ops(&["mount".into()]),
+            vec![
+                OperationType::Sync,
+                OperationType::Bisync,
+                OperationType::Copy
+            ]
+        );
+        assert_eq!(OperationType::SYNC_TYPES.len(), 9);
     }
 
     #[test]

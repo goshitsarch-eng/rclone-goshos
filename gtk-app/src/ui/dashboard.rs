@@ -2648,28 +2648,123 @@ impl Dashboard {
             .unwrap_or(OperationType::Sync)
     }
 
+    fn select_sync_op(&self, remote: &str, op: OperationType) {
+        self.ctx
+            .settings
+            .borrow_mut()
+            .runtime
+            .selected_sync_ops
+            .insert(remote.to_string(), op.as_str().to_string());
+        self.ctx.persist();
+        self.refresh();
+    }
+
     fn append_sync_op_picker(&self, name: &str) {
         let selected = self.selected_sync_op(name);
+        let sync_actions = self
+            .ctx
+            .store
+            .borrow()
+            .remotes
+            .get(name)
+            .map(|meta| meta.sync_actions.clone())
+            .unwrap_or_default();
+        let primary = AppTab::primary_sync_ops(&sync_actions);
+        let more = AppTab::more_sync_ops(&primary);
+        let snap = self.ctx.snapshot.borrow().clone();
         let row = gtk::Box::new(gtk::Orientation::Horizontal, 6);
         let toggles = gtk::Box::new(gtk::Orientation::Horizontal, 6);
         toggles.add_css_class("linked");
-        for op in OperationType::PRIMARY_SYNC {
-            let btn = gtk::ToggleButton::with_label(op.api_label());
+        for op in primary {
+            let btn = gtk::ToggleButton::with_label(
+                &self.ctx.t_or(op.action_label_key(), op.api_label()),
+            );
             btn.set_active(op == selected);
-            btn.set_tooltip_text(Some(op.as_str()));
-            let ctx = self.ctx.clone();
-            let remote = name.to_string();
+            let running = remote_sync_op_running(name, op, &snap.jobs);
+            btn.set_tooltip_text(Some(&if running {
+                format!(
+                    "{} · {}",
+                    self.ctx.t_or(op.action_label_key(), op.api_label()),
+                    self.ctx.t_or("automation.status.running", "Running")
+                )
+            } else {
+                self.ctx.t_or(op.action_label_key(), op.api_label())
+            }));
             let dash = self.clone();
+            let remote = name.to_string();
             btn.connect_clicked(move |_| {
-                ctx.settings
-                    .borrow_mut()
-                    .runtime
-                    .selected_sync_ops
-                    .insert(remote.clone(), op.as_str().to_string());
-                ctx.persist();
-                dash.refresh();
+                dash.select_sync_op(&remote, op);
             });
             toggles.append(&btn);
+        }
+        if !more.is_empty() {
+            let more_selected = more.contains(&selected);
+            let more_running = more
+                .iter()
+                .any(|op| remote_sync_op_running(name, *op, &snap.jobs));
+            let more_label = self.ctx.t_or("modals.actionSelection.moreButton", "More");
+            let tooltip_base = self.ctx.t_or(
+                "modals.actionSelection.moreButtonTooltip",
+                "More Operations",
+            );
+            let tooltip = if more_selected {
+                format!(
+                    "{} · {}",
+                    tooltip_base,
+                    self.ctx
+                        .t_or(selected.action_label_key(), selected.api_label())
+                )
+            } else {
+                tooltip_base
+            };
+            let more_btn = gtk::MenuButton::new();
+            more_btn.set_label(&more_label);
+            more_btn.set_always_show_arrow(true);
+            more_btn.set_tooltip_text(Some(&tooltip));
+            if more_selected {
+                more_btn.add_css_class("suggested-action");
+            }
+            if more_running {
+                more_btn.add_css_class("accent");
+            }
+            let list = gtk::Box::new(gtk::Orientation::Vertical, 2);
+            list.set_margin_top(6);
+            list.set_margin_bottom(6);
+            list.set_margin_start(6);
+            list.set_margin_end(6);
+            let popover = gtk::Popover::new();
+            for op in more {
+                let item = gtk::Button::new();
+                item.add_css_class("flat");
+                item.set_hexpand(true);
+                let item_row = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+                let icon = gtk::Image::from_icon_name(op.icon_name());
+                let label =
+                    gtk::Label::new(Some(&self.ctx.t_or(op.action_label_key(), op.api_label())));
+                label.set_xalign(0.0);
+                label.set_hexpand(true);
+                item_row.append(&icon);
+                item_row.append(&label);
+                if op == selected {
+                    item_row.append(&gtk::Image::from_icon_name("object-select-symbolic"));
+                }
+                if remote_sync_op_running(name, op, &snap.jobs) {
+                    let dot = gtk::Image::from_icon_name("media-playback-start-symbolic");
+                    item_row.append(&dot);
+                }
+                item.set_child(Some(&item_row));
+                let dash = self.clone();
+                let remote = name.to_string();
+                let popover = popover.clone();
+                item.connect_clicked(move |_| {
+                    popover.popdown();
+                    dash.select_sync_op(&remote, op);
+                });
+                list.append(&item);
+            }
+            popover.set_child(Some(&list));
+            more_btn.set_popover(Some(&popover));
+            toggles.append(&more_btn);
         }
         let gear = gtk::Button::from_icon_name("emblem-system-symbolic");
         gear.set_tooltip_text(Some(&self.ctx.t_or(
@@ -4108,6 +4203,14 @@ fn append_status_badges(
         badges.append(&idle);
     }
     parent.append(&badges);
+}
+
+fn remote_sync_op_running(remote: &str, op: OperationType, jobs: &[crate::store::JobInfo]) -> bool {
+    jobs.iter().any(|job| {
+        crate::jobs::job_is_running(job)
+            && crate::jobs::job_belongs_to_remote(job, remote)
+            && crate::jobs::job_operation_matches(&job.operation, op)
+    })
 }
 
 fn remote_state_label(ctx: &AppCtx, mounted: bool, serving: bool, job: bool) -> String {
