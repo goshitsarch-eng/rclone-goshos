@@ -3243,11 +3243,21 @@ pub const BANDWIDTH_PRESETS: &[(&str, &str)] = &[
 
 pub fn normalize_bandwidth(value: &str) -> String {
     let trimmed = value.trim();
-    if trimmed.is_empty() || trimmed.eq_ignore_ascii_case("off") || trimmed == "0" {
+    if trimmed.is_empty()
+        || trimmed.eq_ignore_ascii_case("off")
+        || trimmed == "0"
+        || trimmed.eq_ignore_ascii_case("off:off")
+    {
         "off".into()
     } else {
         trimmed.to_string()
     }
+}
+
+/// Normalize a custom bandwidth limit after Angular-style format validation.
+pub fn validated_bandwidth_limit(value: &str) -> Result<String, String> {
+    crate::validators::validate_bandwidth_limit(value)?;
+    Ok(normalize_bandwidth(value))
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -3889,7 +3899,11 @@ mod tests {
     fn bandwidth_off_aliases() {
         assert_eq!(normalize_bandwidth(""), "off");
         assert_eq!(normalize_bandwidth("OFF"), "off");
+        assert_eq!(normalize_bandwidth("off:off"), "off");
         assert_eq!(normalize_bandwidth("10M"), "10M");
+        assert_eq!(validated_bandwidth_limit("off").unwrap(), "off");
+        assert_eq!(validated_bandwidth_limit("2M").unwrap(), "2M");
+        assert!(validated_bandwidth_limit("xyz").is_err());
     }
 
     #[test]

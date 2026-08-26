@@ -700,9 +700,6 @@ fn operation_page(
     } else {
         src.set_text(&default_source(remote, &rclone));
     }
-    if op != OperationType::Copyurl {
-        dialogs::attach_path_picker(&ctx, &src, crate::picker::FilePickerConfig::folders());
-    }
     let extra_sources: Rc<RefCell<Vec<adw::EntryRow>>> = Rc::new(RefCell::new(Vec::new()));
     if listed.len() > 1 {
         for extra in listed.iter().skip(1) {
@@ -944,6 +941,49 @@ fn operation_page(
         add_row.set_title(&ctx.t_or("remoteConfig.multipleSources", "Multiple sources"));
         add_row.add_suffix(&add_src);
         identity.add(&add_row);
+    }
+    if op != OperationType::Copyurl {
+        let extra_sources = extra_sources.clone();
+        let extra_filenames = extra_filenames.clone();
+        let identity_for_pick = identity.clone();
+        let ctx_pick = ctx.clone();
+        let src_row = src.clone();
+        let refresh_guidance = refresh_guidance.clone();
+        let is_copyurl = op == OperationType::Copyurl;
+        let mut cfg = crate::picker::FilePickerConfig::folders();
+        cfg.multi = op.supports_multi_source();
+        dialogs::attach_path_picker_with(
+            &ctx,
+            &src,
+            cfg,
+            Some(Rc::new(move |extras| {
+                for path in extras {
+                    if path.is_empty() || src_row.text() == path.as_str() {
+                        continue;
+                    }
+                    if extra_sources
+                        .borrow()
+                        .iter()
+                        .any(|row| row.text() == path.as_str())
+                    {
+                        continue;
+                    }
+                    let row = extra_source_row(&ctx_pick, &path, !is_copyurl);
+                    {
+                        let refresh_guidance = refresh_guidance.clone();
+                        row.connect_changed(move |_| refresh_guidance());
+                    }
+                    identity_for_pick.add(&row);
+                    extra_sources.borrow_mut().push(row);
+                    if is_copyurl {
+                        let name = filename_row(&ctx_pick, "");
+                        identity_for_pick.add(&name);
+                        extra_filenames.borrow_mut().push(name);
+                    }
+                    refresh_guidance();
+                }
+            })),
+        );
     }
     if let Some(kind) = &dst_kind {
         identity.add(kind);
@@ -1331,14 +1371,36 @@ fn operation_page(
                     flags.extend(map);
                 }
             } else {
+                if let Some((row, field, msg)) =
+                    dialogs::first_invalid_flag(flag_rows.borrow().iter().map(
+                        |(field, row, type_name)| (field.clone(), row.clone(), type_name.clone()),
+                    ))
+                {
+                    dialogs::toast_near(&row, &format!("{field}: {msg}"));
+                    return;
+                }
+                let selected_serve =
+                    crate::operations::selected_or(&serve_types, serve.selected(), "webdav");
+                if let Some((row, field, msg)) =
+                    dialogs::first_invalid_flag(serve_flag_rows.borrow().iter().filter_map(
+                        |(serve_type, field, row, type_name)| {
+                            (serve_type == selected_serve).then_some((
+                                field.clone(),
+                                row.clone(),
+                                type_name.clone(),
+                            ))
+                        },
+                    ))
+                {
+                    dialogs::toast_near(&row, &format!("{field}: {msg}"));
+                    return;
+                }
                 for (field, row, type_name) in flag_rows.borrow().iter() {
                     let text = row.text().to_string();
                     if !text.is_empty() {
                         flags.insert(field.clone(), parse_flag_value(type_name, &text));
                     }
                 }
-                let selected_serve =
-                    crate::operations::selected_or(&serve_types, serve.selected(), "webdav");
                 for (serve_type, field, row, type_name) in serve_flag_rows.borrow().iter() {
                     if serve_type != selected_serve {
                         continue;
@@ -1546,6 +1608,20 @@ fn helper_page(
                 return;
             }
             let mut obj = Map::new();
+            if let Some((row, field, msg)) =
+                dialogs::first_invalid_flag(flag_rows.borrow().iter().filter_map(
+                    |(field, row, type_name)| {
+                        (field != "_json").then_some((
+                            field.clone(),
+                            row.clone(),
+                            type_name.clone(),
+                        ))
+                    },
+                ))
+            {
+                dialogs::toast_near(&row, &format!("{field}: {msg}"));
+                return;
+            }
             for (field, row, type_name) in flag_rows.borrow().iter() {
                 let text = row.text().to_string();
                 if field == "_json" {

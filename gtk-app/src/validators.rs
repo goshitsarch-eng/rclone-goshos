@@ -231,6 +231,19 @@ pub fn validate_bandwidth(value: &str) -> Result<(), String> {
     }
 }
 
+/// Dashboard / Flow apply: empty, `off`, `0`, and `off:off` mean unlimited.
+pub fn validate_bandwidth_limit(value: &str) -> Result<(), String> {
+    let trimmed = value.trim();
+    if trimmed.is_empty()
+        || trimmed.eq_ignore_ascii_case("off")
+        || trimmed == "0"
+        || trimmed.eq_ignore_ascii_case("off:off")
+    {
+        return Ok(());
+    }
+    validate_bandwidth(value)
+}
+
 pub fn validate_bw_timetable(value: &str, default: Option<&str>) -> Result<(), String> {
     if empty_or_default(value, default) {
         return Ok(());
@@ -331,6 +344,39 @@ pub fn validate_enum(value: &str, allowed: &[String]) -> Result<(), String> {
     }
 }
 
+/// Validate a typed rclone flag / provider value (empty values are accepted).
+pub fn validate_typed_value(
+    type_name: &str,
+    value: &str,
+    exclusive: bool,
+    examples: &[(String, String)],
+    default: Option<&str>,
+) -> Result<(), String> {
+    if value.trim().is_empty() {
+        return Ok(());
+    }
+    match type_name.to_ascii_lowercase().as_str() {
+        "int" | "int64" | "uint32" | "uint64" => validate_integer(value, default)?,
+        "float" | "float64" => validate_float(value, default)?,
+        "duration" => validate_duration(value, default)?,
+        "sizesuffix" | "size" => validate_size_suffix(value, default)?,
+        "time" => validate_time(value, default)?,
+        "filemode" | "bits" => validate_file_mode(value, default)?,
+        "bwtimetable" => validate_bw_timetable(value, default)?,
+        _ => {}
+    }
+    if exclusive && !examples.is_empty() {
+        let allowed: Vec<String> = examples.iter().map(|(v, _)| v.clone()).collect();
+        validate_enum(value, &allowed)?;
+    }
+    Ok(())
+}
+
+/// Type-check a non-empty flag editor value (no exclusive examples).
+pub fn validate_flag_text(type_name: &str, value: &str) -> Result<(), String> {
+    validate_typed_value(type_name, value, false, &[], None)
+}
+
 /// Validate a rclone provider option using its `Type` and exclusive examples.
 pub fn validate_option(option: &ProviderOption, value: &str) -> Result<(), String> {
     if value.trim().is_empty() {
@@ -347,21 +393,13 @@ pub fn validate_option(option: &ProviderOption, value: &str) -> Result<(), Strin
     } else {
         Some(option.default_str.as_str())
     };
-    match option.type_name.to_ascii_lowercase().as_str() {
-        "int" | "int64" | "uint32" | "uint64" => validate_integer(value, default)?,
-        "float" | "float64" => validate_float(value, default)?,
-        "duration" => validate_duration(value, default)?,
-        "sizesuffix" | "size" => validate_size_suffix(value, default)?,
-        "time" => validate_time(value, default)?,
-        "filemode" | "bits" => validate_file_mode(value, default)?,
-        "bwtimetable" => validate_bw_timetable(value, default)?,
-        _ => {}
-    }
-    if option.exclusive && !option.examples.is_empty() {
-        let allowed: Vec<String> = option.examples.iter().map(|(v, _)| v.clone()).collect();
-        validate_enum(value, &allowed)?;
-    }
-    Ok(())
+    validate_typed_value(
+        &option.type_name,
+        value,
+        option.exclusive,
+        &option.examples,
+        default,
+    )
 }
 
 #[cfg(test)]
@@ -414,6 +452,19 @@ mod tests {
         assert!(validate_bandwidth("10M").is_ok());
         assert!(validate_bandwidth("1G:100K").is_ok());
         assert!(validate_bandwidth("xyz").is_err());
+        assert!(validate_bandwidth("off").is_err());
+        assert!(validate_bandwidth_limit("off").is_ok());
+        assert!(validate_bandwidth_limit("0").is_ok());
+        assert!(validate_bandwidth_limit("off:off").is_ok());
+        assert!(validate_bandwidth_limit("").is_ok());
+        assert!(validate_bandwidth_limit("10M").is_ok());
+        assert!(validate_bandwidth_limit("xyz").is_err());
+        assert!(validate_flag_text("int", "").is_ok());
+        assert!(validate_flag_text("int", "12").is_ok());
+        assert!(validate_flag_text("int", "nope").is_err());
+        assert!(validate_flag_text("Duration", "5m").is_ok());
+        assert!(validate_flag_text("Duration", "soon").is_err());
+        assert!(validate_typed_value("string", "any", false, &[], None).is_ok());
         assert!(validate_url("https://example.com/a").is_ok());
         assert!(validate_url("ftp://x").is_err());
         assert!(validate_absolute_path("/tmp/out").is_ok());

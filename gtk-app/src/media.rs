@@ -95,6 +95,21 @@ pub fn should_warn_remote_preview(size: Option<i64>) -> bool {
     size.unwrap_or(0) >= REMOTE_PREVIEW_WARN_BYTES
 }
 
+pub fn looks_like_pdf(bytes: &[u8]) -> bool {
+    bytes.starts_with(b"%PDF")
+}
+
+/// Write preview bytes to a temp file named after the remote item.
+pub fn write_preview_temp(name: &str, bytes: &[u8]) -> Option<PathBuf> {
+    if bytes.is_empty() {
+        return None;
+    }
+    let safe = name.replace(['/', '\\', ':'], "_");
+    let dest = std::env::temp_dir().join(format!("rclone-md-preview-{safe}"));
+    std::fs::write(&dest, bytes).ok()?;
+    dest.is_file().then_some(dest)
+}
+
 pub fn read_remote_prefix(
     binary: &Path,
     extra_flags: &[String],
@@ -494,6 +509,18 @@ mod tests {
         assert!(pic.mime_type.contains("jpeg"));
         assert!(!should_warn_remote_preview(Some(1024)));
         assert!(should_warn_remote_preview(Some(REMOTE_PREVIEW_WARN_BYTES)));
+        assert!(looks_like_pdf(b"%PDF-1.4\n%"));
+        assert!(!looks_like_pdf(b"%!PS"));
+        assert!(!looks_like_pdf(b""));
+        let dest = write_preview_temp("Docs/a.pdf", b"%PDF-1.4\n").unwrap();
+        assert!(dest
+            .file_name()
+            .unwrap()
+            .to_string_lossy()
+            .contains("a.pdf"));
+        assert_eq!(std::fs::read(&dest).unwrap(), b"%PDF-1.4\n");
+        let _ = std::fs::remove_file(&dest);
+        assert!(write_preview_temp("empty.pdf", b"").is_none());
     }
 
     #[test]

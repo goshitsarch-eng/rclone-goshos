@@ -1109,7 +1109,7 @@ fn add_spin(
 }
 
 fn validate_bandwidth_row(row: &adw::EntryRow) -> bool {
-    match crate::validators::validate_bandwidth(&row.text()) {
+    match crate::validators::validate_bandwidth_limit(&row.text()) {
         Ok(()) => {
             row.remove_css_class("error");
             row.set_tooltip_text(None);

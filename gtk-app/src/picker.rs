@@ -88,6 +88,14 @@ impl FilePickerConfig {
             ..Self::default()
         }
     }
+
+    /// Folder picker that can return extra paths (Angular `FilePickerConfig.multi`).
+    pub fn folders_multi() -> Self {
+        Self {
+            multi: true,
+            ..Self::folders()
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
@@ -96,11 +104,20 @@ pub struct PickerResult {
     pub path: String,
     pub is_dir: bool,
     pub cancelled: bool,
+    /// Additional selected paths (relative to `remote`) when `FilePickerConfig.multi`.
+    pub extra_paths: Vec<String>,
 }
 
 impl PickerResult {
     pub fn formatted_path(&self) -> String {
         format_picker_path(&self.remote, &self.path)
+    }
+
+    pub fn extra_formatted_paths(&self) -> Vec<String> {
+        self.extra_paths
+            .iter()
+            .map(|path| format_picker_path(&self.remote, path))
+            .collect()
     }
 }
 
@@ -276,10 +293,23 @@ mod tests {
                 path: "a".into(),
                 is_dir: true,
                 cancelled: false,
+                extra_paths: vec!["b".into()],
             }
             .formatted_path(),
             "drive:a"
         );
+        assert_eq!(
+            PickerResult {
+                remote: "drive".into(),
+                path: "Photos".into(),
+                extra_paths: vec!["Docs".into(), String::new()],
+                ..Default::default()
+            }
+            .extra_formatted_paths(),
+            vec!["drive:Docs".to_string(), "drive:".to_string()]
+        );
+        assert!(FilePickerConfig::folders_multi().multi);
+        assert!(!FilePickerConfig::folders().multi);
     }
 
     #[test]

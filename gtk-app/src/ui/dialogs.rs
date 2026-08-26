@@ -4936,7 +4936,6 @@ pub fn start_operation(
     });
     src.set_text(&default_source(remote, &rclone));
     let src_kind = if op != OperationType::Copyurl {
-        attach_path_picker(&ctx, &src, crate::picker::FilePickerConfig::folders());
         Some(attach_path_kind(&ctx, &src, remote))
     } else {
         None
@@ -5200,6 +5199,31 @@ pub fn start_operation(
                 )));
                 return;
             };
+            if let Some((_, field, msg)) = first_invalid_flag(
+                flag_rows
+                    .borrow()
+                    .iter()
+                    .map(|(field, row, type_name)| (field.clone(), row.clone(), type_name.clone())),
+            ) {
+                toast.add_toast(adw::Toast::new(&format!("{field}: {msg}")));
+                return;
+            }
+            let selected_serve =
+                crate::operations::selected_or(&serve_types, serve.selected(), "webdav");
+            if let Some((_, field, msg)) =
+                first_invalid_flag(serve_flag_rows.borrow().iter().filter_map(
+                    |(serve_type, field, row, type_name)| {
+                        (serve_type == selected_serve).then_some((
+                            field.clone(),
+                            row.clone(),
+                            type_name.clone(),
+                        ))
+                    },
+                ))
+            {
+                toast.add_toast(adw::Toast::new(&format!("{field}: {msg}")));
+                return;
+            }
             let mut rclone = serde_json::Map::new();
             if op == OperationType::Serve {
                 rclone.insert(
@@ -5236,8 +5260,6 @@ pub fn start_operation(
                     );
                 }
             }
-            let selected_serve =
-                crate::operations::selected_or(&serve_types, serve.selected(), "webdav");
             for (serve_type, field, row, type_name) in serve_flag_rows.borrow().iter() {
                 if serve_type != selected_serve {
                     continue;
@@ -5372,6 +5394,40 @@ pub fn start_operation(
         add_row.set_title(&ctx.t_or("remoteConfig.multipleSources", "Multiple sources"));
         add_row.add_suffix(&add_src);
         identity.add(&add_row);
+    }
+    if op != OperationType::Copyurl {
+        let extra_sources = extra_sources.clone();
+        let identity_for_pick = identity.clone();
+        let ctx_pick = ctx.clone();
+        let src_row = src.clone();
+        let mut cfg = crate::picker::FilePickerConfig::folders();
+        cfg.multi = op.supports_multi_source();
+        attach_path_picker_with(
+            &ctx,
+            &src,
+            cfg,
+            Some(Rc::new(move |extras| {
+                let title = ctx_pick.t_or("wizards.appOperation.addSource", "Additional source");
+                for path in extras {
+                    if path.is_empty() || src_row.text() == path.as_str() {
+                        continue;
+                    }
+                    if extra_sources
+                        .borrow()
+                        .iter()
+                        .any(|row| row.text() == path.as_str())
+                    {
+                        continue;
+                    }
+                    let row = adw::EntryRow::new();
+                    row.set_title(&title);
+                    row.set_text(&path);
+                    attach_path_picker(&ctx_pick, &row, crate::picker::FilePickerConfig::folders());
+                    identity_for_pick.add(&row);
+                    extra_sources.borrow_mut().push(row);
+                }
+            })),
+        );
     }
     if let Some(kind) = &dst_kind {
         identity.add(kind);
@@ -5733,9 +5789,6 @@ pub fn quick_run_editor(
         .as_ref()
         .map(|qr| qr.operation_type)
         .unwrap_or(OperationType::Sync);
-    if initial_op != OperationType::Copyurl {
-        attach_path_picker(&ctx, &src, crate::picker::FilePickerConfig::folders());
-    }
     apply_quick_run_path_titles(&ctx, initial_op, &src, &dst);
     url_filename.set_visible(initial_op == OperationType::Copyurl);
     let src_kind = attach_path_kind(&ctx, &src, &remote.text());
@@ -5807,6 +5860,60 @@ pub fn quick_run_editor(
     add_src_row.add_suffix(&add_src);
     add_src_row.set_visible(initial_op.supports_multi_source());
     group.add(&add_src_row);
+    if initial_op != OperationType::Copyurl {
+        let extra_sources = extra_sources.clone();
+        let extra_filenames = extra_filenames.clone();
+        let group_for_pick = group.clone();
+        let ctx_pick = ctx.clone();
+        let src_row = src.clone();
+        let refresh_guidance = refresh_guidance.clone();
+        let current_op = current_op.clone();
+        let mut cfg = crate::picker::FilePickerConfig::folders();
+        cfg.multi = initial_op.supports_multi_source();
+        attach_path_picker_with(
+            &ctx,
+            &src,
+            cfg,
+            Some(Rc::new(move |extras| {
+                let title = ctx_pick.t_or("wizards.appOperation.addSource", "Additional source");
+                let op = current_op();
+                for path in extras {
+                    if path.is_empty() || src_row.text() == path.as_str() {
+                        continue;
+                    }
+                    if extra_sources
+                        .borrow()
+                        .iter()
+                        .any(|row| row.text() == path.as_str())
+                    {
+                        continue;
+                    }
+                    let row = adw::EntryRow::new();
+                    row.set_title(&title);
+                    row.set_text(&path);
+                    if op != OperationType::Copyurl {
+                        attach_path_picker(
+                            &ctx_pick,
+                            &row,
+                            crate::picker::FilePickerConfig::folders(),
+                        );
+                    }
+                    {
+                        let refresh_guidance = refresh_guidance.clone();
+                        row.connect_changed(move |_| refresh_guidance());
+                    }
+                    group_for_pick.add(&row);
+                    extra_sources.borrow_mut().push(row);
+                    if op == OperationType::Copyurl {
+                        let name = quick_run_filename_row(&ctx_pick, "");
+                        group_for_pick.add(&name);
+                        extra_filenames.borrow_mut().push(name);
+                    }
+                    refresh_guidance();
+                }
+            })),
+        );
+    }
     group.add(&dst_kind);
     group.add(&dst);
     group.add(&cron);
@@ -6203,27 +6310,74 @@ pub fn quick_run_editor(
                 helper_selected(&backend_profile, &backend_names.borrow());
             qr.config.app.runtime_remote_profile =
                 helper_selected(&runtime_profile, &runtime_names.borrow());
-            save_helper_from_rows(
+            if let Some((_, field, msg)) = first_invalid_flag(
+                flag_rows
+                    .borrow()
+                    .iter()
+                    .map(|(field, row, type_name)| (field.clone(), row.clone(), type_name.clone())),
+            ) {
+                let err = adw::AlertDialog::new(
+                    Some(&ctx.t_or("remoteConfig.flags", "Flags")),
+                    Some(&format!("{field}: {msg}")),
+                );
+                err.add_response("ok", &ctx.t_or("common.ok", "OK"));
+                err.present(Some(&dialog));
+                return;
+            }
+            let selected_serve =
+                crate::operations::selected_or(&serve_types, serve.selected(), "http");
+            if let Some((_, field, msg)) =
+                first_invalid_flag(serve_flag_rows.borrow().iter().filter_map(
+                    |(serve_type, field, row, type_name)| {
+                        (serve_type == selected_serve).then_some((
+                            field.clone(),
+                            row.clone(),
+                            type_name.clone(),
+                        ))
+                    },
+                ))
+            {
+                let err = adw::AlertDialog::new(
+                    Some(&ctx.t_or("remoteConfig.flags", "Flags")),
+                    Some(&format!("{field}: {msg}")),
+                );
+                err.add_response("ok", &ctx.t_or("common.ok", "OK"));
+                err.present(Some(&dialog));
+                return;
+            }
+            if let Err(msg) = save_helper_from_rows(
                 &ctx,
                 &remote.text(),
                 "vfs",
                 &qr.config.app.vfs_profile,
                 &vfs_flag_rows.borrow(),
-            );
-            save_helper_from_rows(
-                &ctx,
-                &remote.text(),
-                "filter",
-                &qr.config.app.filter_profile,
-                &filter_flag_rows.borrow(),
-            );
-            save_helper_from_rows(
-                &ctx,
-                &remote.text(),
-                "backend",
-                &qr.config.app.backend_profile,
-                &backend_flag_rows.borrow(),
-            );
+            )
+            .and_then(|_| {
+                save_helper_from_rows(
+                    &ctx,
+                    &remote.text(),
+                    "filter",
+                    &qr.config.app.filter_profile,
+                    &filter_flag_rows.borrow(),
+                )
+            })
+            .and_then(|_| {
+                save_helper_from_rows(
+                    &ctx,
+                    &remote.text(),
+                    "backend",
+                    &qr.config.app.backend_profile,
+                    &backend_flag_rows.borrow(),
+                )
+            }) {
+                let err = adw::AlertDialog::new(
+                    Some(&ctx.t_or("remoteConfig.flags", "Flags")),
+                    Some(&msg),
+                );
+                err.add_response("ok", &ctx.t_or("common.ok", "OK"));
+                err.present(Some(&dialog));
+                return;
+            }
             qr.show_on_tray = tray.is_active();
             let mut sources = vec![src.text().to_string()];
             for row in extra_sources.borrow().iter() {
@@ -6283,8 +6437,6 @@ pub fn quick_run_editor(
                     crate::flags::parse_flag_value(type_name, &text),
                 );
             }
-            let selected_serve =
-                crate::operations::selected_or(&serve_types, serve.selected(), "http");
             for (serve_type, field, row, type_name) in serve_flag_rows.borrow().iter() {
                 if serve_type != selected_serve {
                     continue;
@@ -9144,6 +9296,32 @@ fn append_download_preview_button(
     actions.append(&fetch);
 }
 
+fn materialize_remote_pdf(
+    client: &crate::rclone::RcClient,
+    remote: &str,
+    path: &str,
+    name: &str,
+    fs: &str,
+    remote_size: Option<i64>,
+) -> Option<std::path::PathBuf> {
+    let limit = crate::media::REMOTE_PREVIEW_WARN_BYTES.max(1) as u64;
+    if let Ok(bytes) = client.preview_bytes(remote, path, limit) {
+        if crate::media::looks_like_pdf(&bytes) {
+            if let Some(dest) = crate::media::write_preview_temp(name, &bytes) {
+                return Some(dest);
+            }
+        }
+    }
+    if crate::media::should_warn_remote_preview(remote_size) {
+        return None;
+    }
+    let dest = std::env::temp_dir().join(name.replace(['/', '\\', ':'], "_"));
+    client
+        .copy_file(fs, path, "/", &dest.to_string_lossy())
+        .ok()
+        .and_then(|_| dest.is_file().then_some(dest))
+}
+
 fn attach_local_media_preview(
     parent: &gtk::Box,
     local: &std::path::Path,
@@ -9631,6 +9809,32 @@ pub fn file_viewer(
                         );
                         append_markdown_targets(&box_, name, &text, remote, path, &ctx, parent);
                     }
+                }
+            } else if matches!(category, crate::operations::FileTypeCategory::Pdf) {
+                if let Some(dest) =
+                    materialize_remote_pdf(&client, remote, path, name, &fs, remote_size)
+                {
+                    info.set_text(&ctx.t_or(
+                        "fileBrowser.fileViewer.remotePdfPreview",
+                        "Remote PDF preview",
+                    ));
+                    preview_path = Some(dest);
+                } else if crate::media::should_warn_remote_preview(remote_size) {
+                    let size_label = remote_size
+                        .map(crate::rclone::format_bytes)
+                        .unwrap_or_else(|| "?".into());
+                    info.set_text(&ctx.tf(
+                        "fileBrowser.fileViewer.largeRemotePreview",
+                        &[("size", &size_label)],
+                    ));
+                    if info.text().contains("{{") {
+                        info.set_text(&format!(
+                            "This remote file is {size_label}. Downloading the whole file for preview may take a while."
+                        ));
+                    }
+                    append_download_preview_button(
+                        &actions, &ctx, &box_, &fs, path, name, category,
+                    );
                 }
             } else if category.can_stream_preview()
                 && client.probe_rc_serve(&client.rc_serve_url(remote, path))
@@ -12810,9 +13014,12 @@ fn save_helper_from_rows(
     kind: &str,
     name: &str,
     rows: &[(String, adw::EntryRow, String)],
-) {
+) -> Result<(), String> {
     if remote.is_empty() || name.is_empty() {
-        return;
+        return Ok(());
+    }
+    if let Some((_, field, msg)) = first_invalid_flag(rows.iter().cloned()) {
+        return Err(format!("{field}: {msg}"));
     }
     let mut map = serde_json::Map::new();
     for (field, row, type_name) in rows {
@@ -12828,6 +13035,7 @@ fn save_helper_from_rows(
     if let Some(meta) = ctx.store.borrow_mut().remotes.get_mut(remote) {
         meta.upsert_helper(kind, name, serde_json::Value::Object(map));
     }
+    Ok(())
 }
 
 pub(crate) fn helper_combo(title: &str, names: &[String], selected: &str) -> adw::ComboRow {
@@ -13256,7 +13464,7 @@ fn cron_schedule_preview(ctx: &AppCtx, expression: &str) -> String {
     lines.join("\n")
 }
 
-fn toast_near(widget: &impl IsA<gtk::Widget>, message: &str) {
+pub(crate) fn toast_near(widget: &impl IsA<gtk::Widget>, message: &str) {
     let mut current = widget.clone().upcast::<gtk::Widget>();
     loop {
         if let Ok(overlay) = current.clone().downcast::<adw::ToastOverlay>() {
@@ -13283,6 +13491,15 @@ pub(crate) fn attach_path_picker(
     ctx: &AppCtx,
     row: &adw::EntryRow,
     config: crate::picker::FilePickerConfig,
+) {
+    attach_path_picker_with(ctx, row, config, None);
+}
+
+pub(crate) fn attach_path_picker_with(
+    ctx: &AppCtx,
+    row: &adw::EntryRow,
+    config: crate::picker::FilePickerConfig,
+    on_extra: Option<Rc<dyn Fn(Vec<String>)>>,
 ) {
     let btn = gtk::Button::from_icon_name("folder-open-symbolic");
     btn.set_valign(gtk::Align::Center);
@@ -13339,16 +13556,39 @@ pub(crate) fn attach_path_picker(
             return;
         }
         let row = picked.clone();
+        let on_extra = on_extra.clone();
         ctx.request_picker(
             config.clone(),
             Rc::new(move |result| {
                 if !result.cancelled {
                     row.set_text(&result.formatted_path());
+                    if let Some(on_extra) = &on_extra {
+                        let extras = result.extra_formatted_paths();
+                        if !extras.is_empty() {
+                            on_extra(extras);
+                        }
+                    }
                 }
             }),
         );
     });
     row.add_suffix(&btn);
+}
+
+pub(crate) fn first_invalid_flag(
+    rows: impl IntoIterator<Item = (String, adw::EntryRow, String)>,
+) -> Option<(adw::EntryRow, String, String)> {
+    for (field, row, type_name) in rows {
+        let text = row.text().to_string();
+        match crate::validators::validate_flag_text(&type_name, &text) {
+            Ok(()) => row.remove_css_class("error"),
+            Err(msg) => {
+                row.add_css_class("error");
+                return Some((row, field, msg));
+            }
+        }
+    }
+    None
 }
 
 fn ensure_syntax_tags(buffer: &gtk::TextBuffer) {

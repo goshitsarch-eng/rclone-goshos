@@ -1473,9 +1473,10 @@ impl Dashboard {
             let ctx = self.ctx.clone();
             let dash = self.clone();
             let value = (*value).to_string();
-            btn.connect_clicked(move |_| {
-                apply_bandwidth(&ctx, &value);
-                dash.refresh();
+            btn.connect_clicked(move |btn| {
+                if apply_bandwidth(&ctx, &value, btn) {
+                    dash.refresh();
+                }
             });
             presets.append(&btn);
         }
@@ -1492,9 +1493,10 @@ impl Dashboard {
             let ctx = self.ctx.clone();
             let dash = self.clone();
             let custom = custom.clone();
-            apply.connect_clicked(move |_| {
-                apply_bandwidth(&ctx, &custom.text());
-                dash.refresh();
+            apply.connect_clicked(move |btn| {
+                if apply_bandwidth(&ctx, &custom.text(), btn) {
+                    dash.refresh();
+                }
             });
         }
         custom.add_suffix(&apply);
@@ -4430,8 +4432,24 @@ fn ctx_settings_bandwidth(ctx: &AppCtx) -> String {
     ctx.settings.borrow().core.bandwidth_limit.clone()
 }
 
-fn apply_bandwidth(ctx: &AppCtx, value: &str) {
-    let rate = crate::jobs::normalize_bandwidth(value);
+fn apply_bandwidth(
+    ctx: &AppCtx,
+    value: &str,
+    widget: &impl gtk::prelude::IsA<gtk::Widget>,
+) -> bool {
+    let rate = match crate::jobs::validated_bandwidth_limit(value) {
+        Ok(rate) => rate,
+        Err(_) => {
+            super::dialogs::toast_near(
+                widget,
+                &ctx.t_or(
+                    "validators.bandwidth",
+                    "Invalid bandwidth format. Use: 10M, 1G, 100K or combinations",
+                ),
+            );
+            return false;
+        }
+    };
     ctx.settings.borrow_mut().core.bandwidth_limit = if rate == "off" {
         String::new()
     } else {
@@ -4439,4 +4457,5 @@ fn apply_bandwidth(ctx: &AppCtx, value: &str) {
     };
     ctx.persist();
     ctx.apply_effective_bandwidth();
+    true
 }

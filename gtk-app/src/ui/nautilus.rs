@@ -92,6 +92,52 @@ pub struct NautilusView {
     split: adw::OverlaySplitView,
 }
 
+fn picker_result_from_selection(
+    remote: &str,
+    current_path: &str,
+    listing: &[DirEntry],
+    names: &[String],
+    config: &crate::picker::FilePickerConfig,
+) -> crate::picker::PickerResult {
+    let is_dir_of = |name: &str| {
+        listing
+            .iter()
+            .find(|entry| entry.name == name)
+            .map(|entry| entry.is_dir)
+            .unwrap_or(true)
+    };
+    let chosen: Vec<(String, bool)> = names
+        .iter()
+        .filter(|name| crate::picker::is_entry_allowed(name, is_dir_of(name), config))
+        .map(|name| (join_remote_path(current_path, name), is_dir_of(name)))
+        .collect();
+    if chosen.is_empty() {
+        return crate::picker::PickerResult {
+            remote: remote.to_string(),
+            path: current_path.to_string(),
+            is_dir: true,
+            cancelled: false,
+            extra_paths: vec![],
+        };
+    }
+    let extra_paths = if config.multi {
+        chosen
+            .iter()
+            .skip(1)
+            .map(|(path, _)| path.clone())
+            .collect()
+    } else {
+        vec![]
+    };
+    crate::picker::PickerResult {
+        remote: remote.to_string(),
+        path: chosen[0].0.clone(),
+        is_dir: chosen[0].1,
+        cancelled: false,
+        extra_paths,
+    }
+}
+
 impl NautilusView {
     pub fn new(ctx: AppCtx, toast: adw::ToastOverlay) -> Self {
         let root = gtk::Box::new(gtk::Orientation::Vertical, 0);
@@ -2631,26 +2677,16 @@ impl NautilusView {
                 path: join_remote_path(&current.path, &name),
                 is_dir,
                 cancelled: false,
-            }
-        } else if let Some(name) = self.selected_name() {
-            let is_dir = listing
-                .iter()
-                .find(|e| e.name == name)
-                .map(|e| e.is_dir)
-                .unwrap_or(true);
-            crate::picker::PickerResult {
-                remote: current.remote.clone(),
-                path: join_remote_path(&current.path, &name),
-                is_dir,
-                cancelled: false,
+                extra_paths: vec![],
             }
         } else {
-            crate::picker::PickerResult {
-                remote: current.remote.clone(),
-                path: current.path.clone(),
-                is_dir: true,
-                cancelled: false,
-            }
+            picker_result_from_selection(
+                &current.remote,
+                &current.path,
+                &listing,
+                &self.selected_names(),
+                &req.config,
+            )
         };
         let dirs = usize::from(result.is_dir);
         let files = usize::from(!result.is_dir);
