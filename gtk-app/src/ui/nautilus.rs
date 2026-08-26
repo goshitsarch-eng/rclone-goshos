@@ -4294,23 +4294,18 @@ impl NautilusView {
     }
 
     fn popup_context_at(&self, widget: &impl IsA<gtk::Widget>, x: f64, y: f64) {
-        let Some(win) = self.root.root().and_downcast::<gtk::Window>() else {
-            return;
-        };
-        let (px, py) = widget
-            .compute_bounds(&win)
-            .map(|bounds| {
-                (
-                    bounds.x() as i32 + x.round() as i32,
-                    bounds.y() as i32 + y.round() as i32,
-                )
-            })
-            .unwrap_or((x.round() as i32, y.round() as i32));
+        let widget = widget.upcast_ref::<gtk::Widget>();
         let popover = gtk::Popover::new();
         popover.set_child(Some(&self.build_context_menu(&popover)));
-        popover.set_parent(&win);
+        popover.set_parent(widget);
+        popover.set_autohide(true);
         popover.set_has_arrow(true);
-        popover.set_pointing_to(Some(&gtk::gdk::Rectangle::new(px, py, 1, 1)));
+        popover.set_pointing_to(Some(&gtk::gdk::Rectangle::new(
+            x.round() as i32,
+            y.round() as i32,
+            1,
+            1,
+        )));
         popover.connect_closed(|popover| popover.unparent());
         popover.popup();
     }
