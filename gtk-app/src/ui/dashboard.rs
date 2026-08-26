@@ -376,13 +376,13 @@ impl Dashboard {
                 row.set_tooltip_text(Some(&hidden));
             }
             box_.append(&name);
-            append_status_badges(
-                &box_,
-                &self.ctx,
-                remote.mounted,
-                remote.serving,
-                remote.job_active,
+            let (mounts, serves, jobs) = crate::jobs::remote_activity_counts(
+                &remote.name,
+                &snap.mounts,
+                &snap.serves,
+                &snap.jobs,
             );
+            append_status_badges(&box_, &self.ctx, mounts, serves, jobs);
             row.set_child(Some(&box_));
             row.set_widget_name(&remote.name);
             if self.ctx.selected_remote.borrow().as_deref() == Some(remote.name.as_str()) {
@@ -3110,7 +3110,7 @@ impl Dashboard {
             row.add_row(&path_row);
         }
         if op == OperationType::Mount {
-            if let Some(usage) = self.mount_usage_row(name, &snap) {
+            for usage in self.mount_usage_rows(name, &snap) {
                 row.add_row(&usage);
             }
         }
@@ -3284,31 +3284,42 @@ impl Dashboard {
         rows
     }
 
-    fn mount_usage_row(
+    fn mount_usage_rows(
         &self,
         name: &str,
         snap: &crate::store::RuntimeSnapshot,
-    ) -> Option<adw::ActionRow> {
-        let mount = snap
-            .mounts
+    ) -> Vec<adw::ActionRow> {
+        let Some(client) = self.ctx.client() else {
+            return Vec::new();
+        };
+        snap.mounts
             .iter()
-            .find(|item| item.fs.contains(name) || item.fs.starts_with(&format!("{name}:")))?;
-        let client = self.ctx.client()?;
-        let usage = client.du(Some(&mount.mount_point)).ok()?;
-        let row = adw::ActionRow::new();
-        row.set_title(
-            &self
-                .ctx
-                .t_or("dashboard.appDetail.mountDiskUsage", "Mount point usage"),
-        );
-        row.set_subtitle(&format!(
-            "{} · {} used / {} free · {}",
-            mount.mount_point,
-            crate::rclone::format_bytes(usage.used),
-            crate::rclone::format_bytes(usage.free),
-            crate::rclone::format_bytes(usage.total)
-        ));
-        Some(row)
+            .filter(|item| crate::jobs::fs_belongs_to_remote(&item.fs, name))
+            .filter_map(|mount| {
+                let usage = client.du(Some(&mount.mount_point)).ok()?;
+                let row = adw::ActionRow::new();
+                let title = if mount.profile.is_empty() {
+                    self.ctx
+                        .t_or("dashboard.appDetail.mountDiskUsage", "Mount point usage")
+                } else {
+                    format!(
+                        "{} · {}",
+                        self.ctx
+                            .t_or("dashboard.appDetail.mountDiskUsage", "Mount point usage"),
+                        mount.profile
+                    )
+                };
+                row.set_title(&title);
+                row.set_subtitle(&format!(
+                    "{} · {} used / {} free · {}",
+                    mount.mount_point,
+                    crate::rclone::format_bytes(usage.used),
+                    crate::rclone::format_bytes(usage.free),
+                    crate::rclone::format_bytes(usage.total)
+                ));
+                Some(row)
+            })
+            .collect()
     }
 
     fn append_configuration_links(&self, name: &str) {
@@ -3360,40 +3371,50 @@ impl Dashboard {
     }
 
     fn append_mount_disk_usage(&self, name: &str, snap: &crate::store::RuntimeSnapshot) {
-        let Some(mount) = snap
-            .mounts
-            .iter()
-            .find(|item| item.fs.contains(name) || item.fs.starts_with(&format!("{name}:")))
-        else {
-            return;
-        };
         let Some(client) = self.ctx.client() else {
             return;
         };
-        let Ok(usage) = client.du(Some(&mount.mount_point)) else {
+        let mounts: Vec<_> = snap
+            .mounts
+            .iter()
+            .filter(|item| crate::jobs::fs_belongs_to_remote(&item.fs, name))
+            .collect();
+        if mounts.is_empty() {
             return;
-        };
-        let row = adw::ActionRow::new();
-        row.set_title(
-            &self
-                .ctx
-                .t_or("dashboard.appDetail.mountDiskUsage", "Mount point usage"),
-        );
-        row.set_subtitle(&format!(
-            "{} · {} used / {} free · {}",
-            mount.mount_point,
-            crate::rclone::format_bytes(usage.used),
-            crate::rclone::format_bytes(usage.free),
-            crate::rclone::format_bytes(usage.total)
-        ));
-        self.detail_box().append(&row);
-        if usage.total > 0 {
-            let bar = gtk::LevelBar::new();
-            bar.set_min_value(0.0);
-            bar.set_max_value(1.0);
-            bar.set_value(usage.used as f64 / usage.total as f64);
-            bar.set_hexpand(true);
-            self.detail_box().append(&bar);
+        }
+        for mount in mounts {
+            let Ok(usage) = client.du(Some(&mount.mount_point)) else {
+                continue;
+            };
+            let row = adw::ActionRow::new();
+            let title = if mount.profile.is_empty() {
+                self.ctx
+                    .t_or("dashboard.appDetail.mountDiskUsage", "Mount point usage")
+            } else {
+                format!(
+                    "{} · {}",
+                    self.ctx
+                        .t_or("dashboard.appDetail.mountDiskUsage", "Mount point usage"),
+                    mount.profile
+                )
+            };
+            row.set_title(&title);
+            row.set_subtitle(&format!(
+                "{} · {} used / {} free · {}",
+                mount.mount_point,
+                crate::rclone::format_bytes(usage.used),
+                crate::rclone::format_bytes(usage.free),
+                crate::rclone::format_bytes(usage.total)
+            ));
+            self.detail_box().append(&row);
+            if usage.total > 0 {
+                let bar = gtk::LevelBar::new();
+                bar.set_min_value(0.0);
+                bar.set_max_value(1.0);
+                bar.set_value(usage.used as f64 / usage.total as f64);
+                bar.set_hexpand(true);
+                self.detail_box().append(&bar);
+            }
         }
     }
 
@@ -4133,31 +4154,79 @@ fn default_mount_point(name: &str) -> String {
     crate::path_inspection::suggest_default_mount_path(name, &crate::store::AppStore::default())
 }
 
-fn append_status_badges(parent: &gtk::Box, ctx: &AppCtx, mounted: bool, serving: bool, job: bool) {
+fn append_status_badges(
+    parent: &gtk::Box,
+    ctx: &AppCtx,
+    mounts: usize,
+    serves: usize,
+    jobs: usize,
+) {
     let badges = gtk::Box::new(gtk::Orientation::Horizontal, 2);
     badges.set_valign(gtk::Align::Center);
-    badges.set_tooltip_text(Some(&remote_state_label(ctx, mounted, serving, job)));
-    if mounted {
+    badges.set_tooltip_text(Some(&remote_state_label(
+        ctx,
+        mounts > 0,
+        serves > 0,
+        jobs > 0,
+    )));
+    if mounts > 0 {
         let icon = gtk::Image::from_icon_name("drive-harddisk-symbolic");
         icon.set_pixel_size(12);
-        icon.set_tooltip_text(Some(
-            &ctx.t_or("overviews.status.labels.mounted", "Mounted"),
-        ));
+        let tip = if mounts > 1 {
+            format!(
+                "{} ({mounts})",
+                ctx.t_or("overviews.status.labels.mounted", "Mounted")
+            )
+        } else {
+            ctx.t_or("overviews.status.labels.mounted", "Mounted")
+        };
+        icon.set_tooltip_text(Some(&tip));
         badges.append(&icon);
+        if mounts > 1 {
+            let count = gtk::Label::new(Some(&mounts.to_string()));
+            count.add_css_class("caption");
+            count.add_css_class("numeric");
+            badges.append(&count);
+        }
     }
-    if serving {
+    if serves > 0 {
         let icon = gtk::Image::from_icon_name("network-server-symbolic");
         icon.set_pixel_size(12);
-        icon.set_tooltip_text(Some(&ctx.t_or("serve.serving", "Serving")));
+        let tip = if serves > 1 {
+            format!("{} ({serves})", ctx.t_or("serve.serving", "Serving"))
+        } else {
+            ctx.t_or("serve.serving", "Serving")
+        };
+        icon.set_tooltip_text(Some(&tip));
         badges.append(&icon);
+        if serves > 1 {
+            let count = gtk::Label::new(Some(&serves.to_string()));
+            count.add_css_class("caption");
+            count.add_css_class("numeric");
+            badges.append(&count);
+        }
     }
-    if job {
+    if jobs > 0 {
         let icon = gtk::Image::from_icon_name("media-playback-start-symbolic");
         icon.set_pixel_size(12);
-        icon.set_tooltip_text(Some(&ctx.t_or("automation.status.running", "Running")));
+        let tip = if jobs > 1 {
+            format!(
+                "{} ({jobs})",
+                ctx.t_or("automation.status.running", "Running")
+            )
+        } else {
+            ctx.t_or("automation.status.running", "Running")
+        };
+        icon.set_tooltip_text(Some(&tip));
         badges.append(&icon);
+        if jobs > 1 {
+            let count = gtk::Label::new(Some(&jobs.to_string()));
+            count.add_css_class("caption");
+            count.add_css_class("numeric");
+            badges.append(&count);
+        }
     }
-    if !mounted && !serving && !job {
+    if mounts == 0 && serves == 0 && jobs == 0 {
         let idle = gtk::Label::new(Some("·"));
         idle.add_css_class("dim-label");
         badges.append(&idle);

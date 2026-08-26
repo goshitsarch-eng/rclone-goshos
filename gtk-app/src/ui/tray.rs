@@ -251,13 +251,22 @@ fn plan_status(ctx: &AppCtx) -> (Vec<TrayMenuItem>, String, String, String, bool
     drop(store);
     localize_plan(ctx, &mut items);
     let busy = ctx.runtime_busy();
-    let icon = tray_icon_name(&ctx.settings.borrow().general.tray_icon_theme, busy).into();
+    let alerts = ctx.store.borrow().unacknowledged_alerts();
+    let attention = busy || alerts > 0;
+    let icon = tray_icon_name(&ctx.settings.borrow().general.tray_icon_theme, attention).into();
+    let mut tooltip = tray_tooltip(ctx, busy);
+    if alerts > 0 {
+        tooltip = format!(
+            "{tooltip} · {} ({alerts})",
+            ctx.t_or("alerts.unacknowledged", "Unacknowledged")
+        );
+    }
     (
         items,
         icon,
         ctx.t_or("tray.tooltipDefault", "RClone Manager"),
-        tray_tooltip(ctx, busy),
-        busy,
+        tooltip,
+        attention,
     )
 }
 

@@ -36,6 +36,7 @@ pub fn export_categories() -> Vec<(&'static str, &'static str)> {
         ("alerts", "Alert rules and actions"),
         ("rclone", "Rclone remotes"),
         ("connections", "Saved remote connections"),
+        ("backend", "Backend"),
     ]
 }
 
@@ -51,6 +52,7 @@ pub fn export_category_label(id: &str, i18n: &crate::i18n::I18n) -> String {
         "connections" | "nautilus" => {
             i18n.t_or("modals.export.categories.connections.label", "Connections")
         }
+        "backend" => i18n.t_or("modals.export.categories.backend.label", "Backend"),
         _ => id.to_string(),
     }
 }
@@ -86,6 +88,7 @@ pub fn includes_file(export_type: &str, file: &str) -> bool {
     match export_type {
         "" | "FullBackup" | "All" | "full" => true,
         "settings" | "Settings" | "connections" | "nautilus" => file == "settings.json",
+        "backend" => file == "settings.json" || file == "backend.json",
         "store" | "alerts" => file == "store.json",
         "rclone" | "remotes" => file == "rclone.json",
         other if other.starts_with("remote:") => file == "rclone.json",
@@ -116,6 +119,17 @@ pub fn filter_settings_category(settings: &AppSettings, export_type: &str) -> Ap
         "nautilus" => {
             let mut scoped = AppSettings::default();
             scoped.nautilus = settings.nautilus.clone();
+            scoped
+        }
+        "backend" => {
+            let mut scoped = AppSettings::default();
+            scoped.core.extra_backends = settings.core.extra_backends.clone();
+            scoped.core.rclone_binary = settings.core.rclone_binary.clone();
+            scoped.core.rclone_additional_flags = settings.core.rclone_additional_flags.clone();
+            scoped.core.rclone_env_vars = settings.core.rclone_env_vars.clone();
+            scoped.core.bandwidth_limit = settings.core.bandwidth_limit.clone();
+            scoped.core.metered_bandwidth_limit = settings.core.metered_bandwidth_limit.clone();
+            scoped.core.connection_check_urls = settings.core.connection_check_urls.clone();
             scoped
         }
         _ => settings.clone(),
@@ -171,6 +185,17 @@ pub fn merge_settings(
         "nautilus" => {
             let mut out = current.clone();
             out.nautilus = incoming.nautilus.clone();
+            out
+        }
+        "backend" => {
+            let mut out = current.clone();
+            out.core.extra_backends = incoming.core.extra_backends.clone();
+            out.core.rclone_binary = incoming.core.rclone_binary.clone();
+            out.core.rclone_additional_flags = incoming.core.rclone_additional_flags.clone();
+            out.core.rclone_env_vars = incoming.core.rclone_env_vars.clone();
+            out.core.bandwidth_limit = incoming.core.bandwidth_limit.clone();
+            out.core.metered_bandwidth_limit = incoming.core.metered_bandwidth_limit.clone();
+            out.core.connection_check_urls = incoming.core.connection_check_urls.clone();
             out
         }
         "alerts" | "store" | "rclone" | "remotes" | "remote" | "profile" => current.clone(),
@@ -314,8 +339,19 @@ pub fn create_backup(
             .map_err(|e| e.to_string())?;
     }
 
-    if includes_file(export_type, "rclone.json") {
+    if includes_file(export_type, "rclone.json") && export_type != "backend" {
         zip.start_file("rclone.json", options)
+            .map_err(|e| e.to_string())?;
+        zip.write_all(
+            serde_json::to_string_pretty(&rclone_dump)
+                .unwrap()
+                .as_bytes(),
+        )
+        .map_err(|e| e.to_string())?;
+    }
+
+    if includes_file(export_type, "backend.json") && export_type == "backend" {
+        zip.start_file("backend.json", options)
             .map_err(|e| e.to_string())?;
         zip.write_all(
             serde_json::to_string_pretty(&rclone_dump)
@@ -805,6 +841,44 @@ mod tests {
         let restored = restored.expect("store");
         assert!(restored.remotes.is_empty());
         assert_eq!(restored.alert_actions.len(), 1);
+    }
+
+    #[test]
+    fn backend_backup_writes_settings_and_options() {
+        let dir = tempfile::tempdir().unwrap();
+        let dest = dir.path().join("backend.zip");
+        let mut settings = AppSettings::default();
+        settings.core.rclone_additional_flags = vec!["--transfers".into(), "8".into()];
+        settings.general.language = "tr-TR".into();
+        create_backup(
+            &dest,
+            &settings,
+            &AppStore::default(),
+            &serde_json::json!({ "main": { "transfers": 8 } }),
+            "backend",
+            "backend only",
+            None,
+        )
+        .unwrap();
+        let analysis = analyze_backup(&dest).unwrap();
+        assert!(analysis.has_settings);
+        assert!(!analysis.has_store);
+        assert!(!analysis.has_rclone_config);
+        assert!(analysis.categories.iter().any(|n| n == "backend.json"));
+        assert_eq!(analysis.manifest.export_type, "backend");
+        let scoped = filter_settings_category(&settings, "backend");
+        assert_eq!(
+            scoped.core.rclone_additional_flags,
+            vec!["--transfers", "8"]
+        );
+        assert_ne!(scoped.general.language, "tr-TR");
+        let mut incoming = AppSettings::default();
+        incoming.core.rclone_additional_flags = vec!["--fast-list".into()];
+        let merged = merge_settings(&settings, &incoming, "backend");
+        assert_eq!(merged.general.language, "tr-TR");
+        assert_eq!(merged.core.rclone_additional_flags, vec!["--fast-list"]);
+        assert!(includes_file("backend", "backend.json"));
+        assert!(!includes_file("backend", "rclone.json"));
     }
 
     #[test]

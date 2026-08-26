@@ -2290,6 +2290,7 @@
       "externalConfig": "Fichier de configuration externe",
       "profiles": "Inclure des profils",
       "profilesHint": "Sélectionnez des profils spécifiques à inclure dans la sauvegarde.",
+      "encryptBackup": "Encrypt backup",
       "categories": {
         "settings": {
           "label": "Paramètres de l'application",

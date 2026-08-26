@@ -2289,7 +2289,8 @@
       "configFiles": "Configuration files",
       "externalConfig": "External configuration file",
       "profiles": "Include Profiles",
-      "profilesHint": "Select specific profiles to include in the backup.",
+      "profilesHint": "Select specific remotes to include in a full backup.",
+      "encryptBackup": "Encrypt backup",
       "categories": {
         "settings": {
           "label": "Application Settings",

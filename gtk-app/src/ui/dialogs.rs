@@ -5404,17 +5404,38 @@ pub fn export_backup(
     }
     let note = adw::EntryRow::new();
     note.set_title(&ctx.t_or("modals.export.noteLabel", "Note"));
+    let encrypt = adw::SwitchRow::new();
+    encrypt.set_title(&ctx.t_or("modals.export.encryptBackup", "Encrypt backup"));
+    encrypt.set_subtitle(&ctx.t_or(
+        "modals.export.passwordLabel",
+        "Zip password (optional, 4+ chars)",
+    ));
     let password = adw::PasswordEntryRow::new();
     password.set_title(&ctx.t_or(
         "modals.export.passwordLabel",
         "Zip password (optional, 4+ chars)",
     ));
+    password.set_visible(false);
     let secrets = adw::SwitchRow::new();
     secrets.set_title(&ctx.t_or(
         "modals.export.includeSecrets",
         "Include secrets in rclone dump",
     ));
-    secrets.set_active(true);
+    secrets.set_active(false);
+    secrets.set_visible(false);
+    {
+        let password = password.clone();
+        let secrets = secrets.clone();
+        encrypt.connect_active_notify(move |row| {
+            let on = row.is_active();
+            password.set_visible(on);
+            secrets.set_visible(on);
+            if !on {
+                password.set_text("");
+                secrets.set_active(false);
+            }
+        });
+    }
     let format_row = adw::ComboRow::new();
     format_row.set_title(&ctx.t_or("modals.export.format", "Format"));
     format_row.set_model(Some(&gtk::StringList::new(&[
@@ -5439,7 +5460,10 @@ pub fn export_backup(
     let selected_profiles: Rc<RefCell<HashSet<String>>> =
         Rc::new(RefCell::new(remotes.iter().cloned().collect()));
     let profiles_group = adw::PreferencesGroup::new();
-    profiles_group.set_title(&ctx.t_or("modals.export.profiles", "Profiles"));
+    profiles_group.set_title(&ctx.t_or(
+        "modals.export.categories.remotes.label",
+        "Remotes to include",
+    ));
     profiles_group.set_description(Some(&ctx.t_or(
         "modals.export.profilesHint",
         "Choose which remotes to include in a full backup.",
@@ -5566,7 +5590,14 @@ pub fn export_backup(
                                 })
                             };
                             let mut dump = dump_client
-                                .and_then(|c| c.dump_config().ok())
+                                .as_ref()
+                                .and_then(|c| {
+                                    if export_type == "backend" {
+                                        c.options_get().ok()
+                                    } else {
+                                        c.dump_config().ok()
+                                    }
+                                })
                                 .unwrap_or(serde_json::json!({}));
                             let store = if !specific.is_active() && export_type == "FullBackup" {
                                 let names: Vec<String> =
@@ -5640,6 +5671,7 @@ pub fn export_backup(
     group.add(&specific);
     group.add(&remote_row);
     group.add(&note);
+    group.add(&encrypt);
     group.add(&password);
     group.add(&secrets);
     group.add(&backend_row);

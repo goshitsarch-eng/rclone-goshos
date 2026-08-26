@@ -2290,6 +2290,7 @@
       "externalConfig": "Внешний файл конфигурации",
       "profiles": "Включить профили",
       "profilesHint": "Выберите профили, которые нужно включить в резервную копию.",
+      "encryptBackup": "Encrypt backup",
       "categories": {
         "settings": {
           "label": "Настройки приложения",

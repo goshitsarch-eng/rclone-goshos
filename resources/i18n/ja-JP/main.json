@@ -2290,6 +2290,7 @@
       "externalConfig": "外部設定ファイル",
       "profiles": "プロファイルを含める",
       "profilesHint": "バックアップに含める特定のプロファイルを選択します。",
+      "encryptBackup": "Encrypt backup",
       "categories": {
         "settings": {
           "label": "アプリケーション設定",

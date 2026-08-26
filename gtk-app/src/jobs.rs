@@ -887,6 +887,43 @@ pub fn preferred_mount_profile_name(meta: Option<&RemoteMeta>) -> String {
         .unwrap_or_else(|| "default".into())
 }
 
+/// True when an rclone fs string belongs to `remote` (`drive`, `drive:`, `drive:path`).
+pub fn fs_belongs_to_remote(fs: &str, remote: &str) -> bool {
+    let fs = fs.trim();
+    let remote = remote.trim();
+    if remote.is_empty() || fs.is_empty() {
+        return false;
+    }
+    fs == remote
+        || fs == format!("{remote}:")
+        || fs.starts_with(&format!("{remote}:"))
+        || fs.contains(&format!("/{remote}"))
+}
+
+pub fn remote_activity_counts(
+    remote: &str,
+    mounts: &[crate::rclone::MountedRemote],
+    serves: &[crate::rclone::ServeItem],
+    jobs: &[crate::store::JobInfo],
+) -> (usize, usize, usize) {
+    let mounts = mounts
+        .iter()
+        .filter(|item| fs_belongs_to_remote(&item.fs, remote))
+        .count();
+    let serves = serves
+        .iter()
+        .filter(|item| fs_belongs_to_remote(&item.fs, remote))
+        .count();
+    let jobs = jobs
+        .iter()
+        .filter(|job| {
+            (job.remote == remote || fs_belongs_to_remote(&job.src, remote))
+                && (job_is_running(job) || job_is_pending(job))
+        })
+        .count();
+    (mounts, serves, jobs)
+}
+
 pub fn origin_label_key(origin: &str) -> &'static str {
     match origin.trim().to_ascii_lowercase().as_str() {
         "quick-run" | "quickrun" | "flow" => "generalOverview.jobs.originQuickRun",
@@ -3889,6 +3926,36 @@ mod tests {
         assert_eq!(
             active_remote_ops("drive", true, true, &[]),
             vec![OperationType::Mount, OperationType::Serve]
+        );
+    }
+
+    #[test]
+    fn fs_and_activity_counts_match_remote() {
+        assert!(fs_belongs_to_remote("drive:", "drive"));
+        assert!(fs_belongs_to_remote("drive:Photos", "drive"));
+        assert!(fs_belongs_to_remote("drive", "drive"));
+        assert!(!fs_belongs_to_remote("other:", "drive"));
+        let mounts = vec![
+            crate::rclone::MountedRemote::new("drive:", "/mnt/a"),
+            crate::rclone::MountedRemote::new("drive:share", "/mnt/b"),
+        ];
+        let serves = vec![crate::rclone::ServeItem {
+            id: "1".into(),
+            addr: "127.0.0.1:8080".into(),
+            fs: "drive:web".into(),
+            serve_type: "http".into(),
+            origin: "dashboard".into(),
+            profile: "web".into(),
+            option_count: 0,
+        }];
+        let jobs = vec![running_job(1, "drive", "copy", "nightly")];
+        assert_eq!(
+            remote_activity_counts("drive", &mounts, &serves, &jobs),
+            (2, 1, 1)
+        );
+        assert_eq!(
+            remote_activity_counts("other", &mounts, &serves, &jobs),
+            (0, 0, 0)
         );
     }
 

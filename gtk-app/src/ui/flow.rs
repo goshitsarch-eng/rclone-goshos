@@ -259,14 +259,28 @@ impl FlowView {
         let row = adw::ActionRow::new();
         row.set_title(&qr.name);
         let mut badges = vec![qr.operation_type.as_str().to_string()];
+        let running = qr.status == "running"
+            || qr.status == "starting"
+            || self
+                .ctx
+                .is_busy(&qr.remote_name, qr.operation_type.as_str(), &qr.id);
+        if running {
+            badges.push(self.ctx.t_or("flow.quickRun.status.running", "running"));
+            let dot = gtk::Image::from_icon_name("media-playback-start-symbolic");
+            dot.set_pixel_size(12);
+            dot.set_tooltip_text(Some(
+                &self.ctx.t_or("flow.quickRun.status.running", "running"),
+            ));
+            row.add_prefix(&dot);
+        }
         if qr.config.app.cron_enabled {
-            badges.push("cron".into());
+            badges.push(self.ctx.t_or("flow.quickRun.badges.cron", "cron"));
         }
         if qr.config.app.watch_enabled {
-            badges.push("watch".into());
+            badges.push(self.ctx.t_or("flow.quickRun.badges.watcher", "watch"));
         }
         if qr.config.app.auto_start {
-            badges.push("autostart".into());
+            badges.push(self.ctx.t_or("flow.quickRun.badges.autostart", "autostart"));
         }
         row.set_subtitle(&format!("{} · {}", qr.remote_name, badges.join(" · ")));
         let view = self.clone();

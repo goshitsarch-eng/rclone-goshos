@@ -2290,6 +2290,7 @@
       "externalConfig": "外部配置文件",
       "profiles": "包含配置文件",
       "profilesHint": "选择要包含在备份中的指定配置文件。",
+      "encryptBackup": "Encrypt backup",
       "categories": {
         "settings": {
           "label": "应用设置",

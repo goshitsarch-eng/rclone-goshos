@@ -668,3 +668,11 @@ This client is the GTK 4 + libadwaita desktop UI. It talks to a local `rclone rc
 - Live GUI: `win.inspector` opens GTK Inspector (Objects tree: AdwApplication / AdwApplicationWindow)
 - Live GUI: testdrive remote-config sidenav shows Obscure / Clear / Apply plus the result row
 - Live GUI: Preferences General lists Restrict, Prevent Sleep, Detached Dialogs, theme, and tray icon theme
+- Hamburger menu shows a badge for restart / updates / unacknowledged alerts; Alerts and About/Updates menu labels include counts
+- Application menu omits the workspace that is already open
+- Tray NeedsAttention when unacknowledged alerts exist (not only busy jobs)
+- Flow sidebar quick runs show a running indicator and translated cron/watch/autostart badges
+- Sidebar remotes show numeric badges when more than one mount, serve, or job is active
+- Mount monitoring lists every mount point for a remote (profile subtitle when set)
+- Export includes a Backend category (`settings` slice + `backend.json` from `options/get`)
+- Export Encrypt switch reveals the zip password and secrets rows; remotes subset is labeled as remotes

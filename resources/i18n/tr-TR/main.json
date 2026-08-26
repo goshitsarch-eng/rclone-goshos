@@ -2290,6 +2290,7 @@
       "externalConfig": "Harici yapılandırma dosyası",
       "profiles": "Profilleri Dahil Et",
       "profilesHint": "Yedeklemeye dahil edilecek belirli profilleri seçin.",
+      "encryptBackup": "Encrypt backup",
       "categories": {
         "settings": {
           "label": "Uygulama Ayarları",

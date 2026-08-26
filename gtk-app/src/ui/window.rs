@@ -297,7 +297,17 @@ fn present_main_with(app: &adw::Application, ctx: AppCtx, hidden: bool) {
         .tooltip_text(&ctx.t_or("titlebar.appMenu", "Application menu"))
         .build();
     menu_btn.set_menu_model(Some(&app_menu(&ctx)));
-    header.pack_end(&menu_btn);
+    let menu_badge = gtk::Label::new(None);
+    menu_badge.add_css_class("osd");
+    menu_badge.add_css_class("numeric");
+    menu_badge.set_valign(gtk::Align::Start);
+    menu_badge.set_halign(gtk::Align::End);
+    menu_badge.set_visible(false);
+    let menu_wrap = gtk::Overlay::new();
+    menu_wrap.set_child(Some(&menu_btn));
+    menu_wrap.add_overlay(&menu_badge);
+    header.pack_end(&menu_wrap);
+    sync_menu_badge(&ctx, &menu_badge);
 
     let detach_btn = gtk::Button::from_icon_name("view-restore-symbolic");
     detach_btn.add_css_class("flat");
@@ -502,6 +512,8 @@ fn present_main_with(app: &adw::Application, ctx: AppCtx, hidden: bool) {
     let conn_btn_poll = conn_btn.clone();
     let home_btn_poll = home_btn.clone();
     let notice_btn_poll = notice_btn.clone();
+    let menu_badge_poll = menu_badge.clone();
+    let menu_btn_poll = menu_btn.clone();
     {
         let ctx_nav = ctx.clone();
         let stack_nav = view_stack.clone();
@@ -614,6 +626,8 @@ fn present_main_with(app: &adw::Application, ctx: AppCtx, hidden: bool) {
             sync_connection_button(&ctx_poll, &conn_btn_poll);
             sync_home_button(&ctx_poll, &home_btn_poll);
             sync_notice_button(&ctx_poll, &notice_btn_poll);
+            sync_menu_badge(&ctx_poll, &menu_badge_poll);
+            menu_btn_poll.set_menu_model(Some(&app_menu(&ctx_poll)));
             update_banner(&ctx_poll, &banner_poll, &banner_kind_poll);
         }
         poll_tick.set(tick.wrapping_add(1));
@@ -700,10 +714,13 @@ fn app_menu(ctx: &AppCtx) -> gio::Menu {
         Some(&ctx.t_or("titlebar.menu.backends", "Backends")),
         Some("win.backends"),
     );
-    prefs.append(
-        Some(&ctx.t_or("alerts.title", "Alerts")),
-        Some("win.alerts"),
-    );
+    let alerts = ctx.store.borrow().unacknowledged_alerts();
+    let alerts_label = if alerts > 0 {
+        format!("{} ({alerts})", ctx.t_or("alerts.title", "Alerts"))
+    } else {
+        ctx.t_or("alerts.title", "Alerts")
+    };
+    prefs.append(Some(&alerts_label), Some("win.alerts"));
     prefs.append(
         Some(&ctx.t_or("modals.logs.terminalOutput", "Logs")),
         Some("win.logs"),
@@ -716,10 +733,20 @@ fn app_menu(ctx: &AppCtx) -> gio::Menu {
         Some(&ctx.t_or("titlebar.menu.templates", "Templates")),
         Some("win.templates"),
     );
-    prefs.append(
-        Some(&ctx.t_or("modals.updates.title", "Updates")),
-        Some("win.updates"),
-    );
+    let updates_label = if ctx.settings.borrow().runtime.rclone_restart_required {
+        format!(
+            "{} (!)",
+            ctx.t_or(
+                "modals.about.rcloneRestartRequired",
+                "Rclone Restart Required"
+            )
+        )
+    } else if ctx.updates.borrow().has_updates() {
+        format!("{} (!)", ctx.t_or("modals.updates.title", "Updates"))
+    } else {
+        ctx.t_or("modals.updates.title", "Updates")
+    };
+    prefs.append(Some(&updates_label), Some("win.updates"));
     prefs.append(
         Some(&ctx.t_or("modals.about.whatsNew", "What's New")),
         Some("win.whats-new"),
@@ -781,21 +808,28 @@ fn app_menu(ctx: &AppCtx) -> gio::Menu {
     );
 
     let views = gio::Menu::new();
-    views.append(
-        Some(&ctx.t_or(
-            "settings.general.default_view.options.main_menu",
-            "Main Menu",
-        )),
-        Some("win.view::main_menu"),
-    );
-    views.append(
-        Some(&ctx.t_or("titlebar.menu.fileBrowser", "File Browser")),
-        Some("win.view::nautilus"),
-    );
-    views.append(
-        Some(&ctx.t_or("titlebar.menu.flowWorkspace", "Flow")),
-        Some("win.view::flow"),
-    );
+    let current = ctx.active_workspace.borrow().clone();
+    if current != "main_menu" {
+        views.append(
+            Some(&ctx.t_or(
+                "settings.general.default_view.options.main_menu",
+                "Main Menu",
+            )),
+            Some("win.view::main_menu"),
+        );
+    }
+    if current != "nautilus" {
+        views.append(
+            Some(&ctx.t_or("titlebar.menu.fileBrowser", "File Browser")),
+            Some("win.view::nautilus"),
+        );
+    }
+    if current != "flow" {
+        views.append(
+            Some(&ctx.t_or("titlebar.menu.flowWorkspace", "Flow")),
+            Some("win.view::flow"),
+        );
+    }
     views.append(
         Some(&ctx.t_or("titlebar.detach", "Detach workspace")),
         Some("win.detach-workspace"),
@@ -828,10 +862,14 @@ fn app_menu(ctx: &AppCtx) -> gio::Menu {
     );
 
     let about = gio::Menu::new();
-    about.append(
-        Some(&ctx.t_or("titlebar.menu.about", "About")),
-        Some("win.about"),
-    );
+    let about_label = if ctx.updates.borrow().has_updates()
+        || ctx.settings.borrow().runtime.rclone_restart_required
+    {
+        format!("{} (!)", ctx.t_or("titlebar.menu.about", "About"))
+    } else {
+        ctx.t_or("titlebar.menu.about", "About")
+    };
+    about.append(Some(&about_label), Some("win.about"));
     about.append(Some(&ctx.t_or("tray.quit", "Quit")), Some("win.quit"));
     menu.append_section(None, &about);
     menu
@@ -1831,6 +1869,29 @@ fn update_banner(ctx: &AppCtx, banner: &adw::Banner, kind: &Rc<std::cell::RefCel
 
 fn sync_home_button(ctx: &AppCtx, btn: &gtk::Button) {
     btn.set_visible(ctx.selected_remote.borrow().is_some());
+}
+
+fn menu_notice_text(ctx: &AppCtx) -> Option<String> {
+    let alerts = ctx.store.borrow().unacknowledged_alerts();
+    if ctx.settings.borrow().runtime.rclone_restart_required {
+        Some("!".into())
+    } else if ctx.updates.borrow().has_updates() {
+        Some("!".into())
+    } else if alerts > 0 {
+        Some(alerts.to_string())
+    } else {
+        None
+    }
+}
+
+fn sync_menu_badge(ctx: &AppCtx, badge: &gtk::Label) {
+    match menu_notice_text(ctx) {
+        Some(text) => {
+            badge.set_text(&text);
+            badge.set_visible(true);
+        }
+        None => badge.set_visible(false),
+    }
 }
 
 fn sync_notice_button(ctx: &AppCtx, btn: &gtk::Button) {
