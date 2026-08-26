@@ -570,3 +570,6 @@ This client is the GTK 4 + libadwaita desktop UI. It talks to a local `rclone rc
 - Standalone `--dialog restore-preview` closes the leftover window after a successful restore
 - Flow overview automations have pause/resume and Run now (same controls as the dashboard)
 - Live GUI: Quick Run `gui-qr-copy` cron saved as `0 7 * * *` (Daily at 7:00); sidebar/card show the cron badge
+- Live GUI: Flow Automations **Pause** writes `automation_paused` `quick:050de334-2571-4ead-ac77-1fb23e16b0c6` and shows Resume + paused; **Resume** clears the list
+- Live GUI: Files testdrive toolbar **Add to File Manager Menu** writes Nautilus/KIO/Nemo send-to entries; **Remove** deletes them
+- Send-to toasts use `tf_or` so a missing catalog key still shows the English sentence

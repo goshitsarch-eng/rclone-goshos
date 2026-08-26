@@ -241,6 +241,10 @@ impl AppCtx {
         self.i18n.borrow().tf(key, params)
     }
 
+    pub fn tf_or(&self, key: &str, fallback: &str, params: &[(&str, &str)]) -> String {
+        self.i18n.borrow().tf_or(key, fallback, params)
+    }
+
     pub fn option_label(&self, name: &str, kind: &str, fallback: &str) -> String {
         self.i18n.borrow().option_label(name, kind, fallback, None)
     }

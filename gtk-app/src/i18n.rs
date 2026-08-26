@@ -93,12 +93,11 @@ impl I18n {
     }
 
     pub fn tf(&self, key: &str, params: &[(&str, &str)]) -> String {
-        let mut out = self.t(key);
-        for (name, value) in params {
-            out = out.replace(&format!("{{{{{name}}}}}"), value);
-            out = out.replace(&format!("{{{name}}}"), value);
-        }
-        out
+        interpolate(&self.t(key), params)
+    }
+
+    pub fn tf_or(&self, key: &str, fallback: &str, params: &[(&str, &str)]) -> String {
+        interpolate(&self.t_or(key, fallback), params)
     }
 
     pub fn has(&self, key: &str) -> bool {
@@ -234,6 +233,15 @@ fn looks_like_key(message: &str) -> bool {
             .all(|c| c.is_ascii_alphanumeric() || c == '.' || c == '_')
 }
 
+fn interpolate(template: &str, params: &[(&str, &str)]) -> String {
+    let mut out = template.to_string();
+    for (name, value) in params {
+        out = out.replace(&format!("{{{{{name}}}}}"), value);
+        out = out.replace(&format!("{{{name}}}"), value);
+    }
+    out
+}
+
 fn flatten_json(prefix: &str, value: &Value, out: &mut HashMap<String, String>) {
     match value {
         Value::Object(map) => {
@@ -315,6 +323,35 @@ mod tests {
         assert_eq!(
             i18n.tf("hello", &[("name", "Ada"), ("id", "7")]),
             "Hello Ada, id=7"
+        );
+        assert_eq!(
+            i18n.tf_or(
+                "missing.sendTo",
+                "Added '{{remote}}{{path}}' to File Manager menu",
+                &[("remote", "testdrive"), ("path", "")]
+            ),
+            "Added 'testdrive' to File Manager menu"
+        );
+    }
+
+    #[test]
+    fn send_to_catalog_keys_interpolate() {
+        let i18n = I18n::load("en-US");
+        if i18n_dir().is_none() {
+            return;
+        }
+        assert!(
+            i18n.has("fileBrowser.messages.sendToAdded"),
+            "fileBrowser.messages.sendToAdded must exist in en-US"
+        );
+        assert!(i18n.has("fileBrowser.messages.sendToRemoved"));
+        assert!(i18n.has("fileBrowser.errors.sendToFailed"));
+        assert_eq!(
+            i18n.tf(
+                "fileBrowser.messages.sendToAdded",
+                &[("remote", "testdrive"), ("path", "")]
+            ),
+            "Added 'testdrive' to File Manager menu"
         );
     }
 
