@@ -170,6 +170,28 @@ pub fn install_user_mime_package() -> Result<PathBuf, String> {
     Ok(path)
 }
 
+pub const METAINFO_ID: &str = "io.github.zarestia_dev.rclone-manager.metainfo.xml";
+
+pub fn metainfo_dir() -> PathBuf {
+    std::env::var("XDG_DATA_HOME")
+        .map(PathBuf::from)
+        .unwrap_or_else(|_| home_dir().join(".local/share"))
+        .join("metainfo")
+}
+
+/// AppStream metainfo so software centers can list the GTK desktop client.
+pub fn install_user_metainfo() -> Result<PathBuf, String> {
+    let path = metainfo_dir().join(METAINFO_ID);
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+    }
+    let content = include_str!("../data/io.github.zarestia_dev.rclone-manager.metainfo.xml");
+    if std::fs::read_to_string(&path).ok().as_deref() != Some(content) {
+        std::fs::write(&path, content).map_err(|e| e.to_string())?;
+    }
+    Ok(path)
+}
+
 pub fn show_os_notification(title: &str, body: &str) -> bool {
     notify_rust::Notification::new()
         .appname("Rclone Manager")
@@ -1872,6 +1894,10 @@ mod tests {
         assert!(mime_packages_dir()
             .to_string_lossy()
             .contains("mime/packages"));
+        let metainfo = include_str!("../data/io.github.zarestia_dev.rclone-manager.metainfo.xml");
+        assert!(metainfo.contains("io.github.zarestia_dev.rclone-manager"));
+        assert!(metainfo.contains("application/x-rclone-config"));
+        assert!(metainfo_dir().to_string_lossy().contains("metainfo"));
     }
 
     #[test]

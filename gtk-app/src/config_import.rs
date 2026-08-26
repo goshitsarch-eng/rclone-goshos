@@ -117,6 +117,52 @@ pub fn parse_rclone_conf(text: &str) -> Result<Value, String> {
     Ok(Value::Object(map))
 }
 
+fn value_to_conf(value: &Value) -> String {
+    match value {
+        Value::Null => String::new(),
+        Value::Bool(flag) => flag.to_string(),
+        Value::Number(number) => number.to_string(),
+        Value::String(text) => text.clone(),
+        other => other.to_string(),
+    }
+}
+
+/// Write a dump (`config/dump` JSON) as rclone.conf INI.
+pub fn dump_to_rclone_conf(dump: &Value) -> String {
+    let mut out = String::new();
+    for name in dump_remote_names(dump) {
+        if !out.is_empty() {
+            out.push('\n');
+        }
+        out.push('[');
+        out.push_str(&name);
+        out.push_str("]\n");
+        let Some(obj) = dump.get(&name).and_then(|value| value.as_object()) else {
+            continue;
+        };
+        let mut keys: Vec<_> = obj.keys().cloned().collect();
+        keys.sort();
+        for key in keys {
+            let value = value_to_conf(&obj[&key]);
+            if value.is_empty() {
+                continue;
+            }
+            out.push_str(&key);
+            out.push_str(" = ");
+            out.push_str(&value);
+            out.push('\n');
+        }
+    }
+    out
+}
+
+pub fn write_rclone_conf(path: &Path, dump: &Value) -> Result<(), String> {
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+    }
+    std::fs::write(path, dump_to_rclone_conf(dump)).map_err(|e| e.to_string())
+}
+
 pub fn dump_remote_names(dump: &Value) -> Vec<String> {
     let mut names = dump
         .as_object()
@@ -350,6 +396,26 @@ mod tests {
     #[test]
     fn rejects_encrypted_parse() {
         assert!(parse_rclone_conf("RCLONE_ENCRYPT_V0:xyz").is_err());
+    }
+
+    #[test]
+    fn ini_roundtrip_preserves_remotes() {
+        let dump = parse_rclone_conf(
+            "[photos]\ntype = drive\nscope = drive\n\n[inbox]\ntype = alias\nremote = /tmp\n",
+        )
+        .unwrap();
+        let text = dump_to_rclone_conf(&dump);
+        assert!(text.contains("[photos]"));
+        assert!(text.contains("type = drive"));
+        assert!(text.contains("[inbox]"));
+        let again = parse_rclone_conf(&text).unwrap();
+        assert_eq!(again["photos"]["scope"], "drive");
+        assert_eq!(again["inbox"]["remote"], "/tmp");
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("export.rclone.conf");
+        write_rclone_conf(&path, &dump).unwrap();
+        assert!(path_looks_like_rclone_config(&path));
+        assert_eq!(load_config_dump(&path).unwrap()["photos"]["type"], "drive");
     }
 
     #[test]

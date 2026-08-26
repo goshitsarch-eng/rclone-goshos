@@ -75,6 +75,9 @@ fn main() {
     if let Err(err) = platform::install_user_mime_package() {
         log::debug!("mime package not installed: {err}");
     }
+    if let Err(err) = platform::install_user_metainfo() {
+        log::debug!("metainfo not installed: {err}");
+    }
     if let Some(files) = platform::parse_share_intake_args(&args) {
         platform::enqueue_share_intake(&files);
     }

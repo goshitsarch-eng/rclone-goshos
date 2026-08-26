@@ -5312,6 +5312,12 @@ pub fn export_backup(
         "Include secrets in rclone dump",
     ));
     secrets.set_active(true);
+    let format_row = adw::ComboRow::new();
+    format_row.set_title(&ctx.t_or("modals.export.format", "Format"));
+    format_row.set_model(Some(&gtk::StringList::new(&[
+        &ctx.t_or("modals.export.formatZip", "Zip backup"),
+        &ctx.t_or("modals.export.formatConf", "rclone.conf"),
+    ])));
     let extra_backends = ctx.settings.borrow().core.extra_backends.clone();
     let mut backend_labels = vec!["local".to_string()];
     backend_labels.extend(
@@ -5370,6 +5376,15 @@ pub fn export_backup(
         specific.connect_active_notify(move |_| refresh());
     }
     refresh_profiles();
+    {
+        let password = password.clone();
+        let note = note.clone();
+        format_row.connect_selected_notify(move |row| {
+            let conf = row.selected() == 1;
+            password.set_sensitive(!conf);
+            note.set_sensitive(!conf);
+        });
+    }
     let save = gtk::Button::with_label(&ctx.t_or("modals.export.exportNow", "Choose file…"));
     save.add_css_class("suggested-action");
     {
@@ -5384,6 +5399,7 @@ pub fn export_backup(
         let note = note.clone();
         let password = password.clone();
         let secrets = secrets.clone();
+        let format_row = format_row.clone();
         let backend_row = backend_row.clone();
         let extra_backends = extra_backends.clone();
         let selected_profiles = selected_profiles.clone();
@@ -5400,8 +5416,21 @@ pub fn export_backup(
             let note_text = note.text().to_string();
             let zip_pass = password.text().to_string();
             let include_secrets = secrets.is_active();
+            let as_conf = format_row.selected() == 1;
             let file_dialog = gtk::FileDialog::new();
-            file_dialog.set_initial_name(Some("rclone-manager-backup.zip"));
+            if as_conf {
+                let name = if specific.is_active() {
+                    remotes
+                        .get(remote_row.selected() as usize)
+                        .map(|name| format!("{name}.rclone.conf"))
+                        .unwrap_or_else(|| "rclone.conf".into())
+                } else {
+                    "rclone.conf".into()
+                };
+                file_dialog.set_initial_name(Some(&name));
+            } else {
+                file_dialog.set_initial_name(Some("rclone-manager-backup.zip"));
+            }
             let ctx = ctx.clone();
             let toast = toast.clone();
             let backend_row = backend_row.clone();
@@ -5462,6 +5491,17 @@ pub fn export_backup(
                                     }
                                 }
                             }
+                            if as_conf {
+                                let dump = crate::backup::filter_rclone_dump(&dump, &export_type);
+                                match crate::config_import::write_rclone_conf(&path, &dump) {
+                                    Ok(()) => toast.add_toast(adw::Toast::new(&ctx.t_or(
+                                        "modals.export.confSuccess",
+                                        "rclone.conf exported",
+                                    ))),
+                                    Err(e) => toast.add_toast(adw::Toast::new(&e)),
+                                }
+                                return;
+                            }
                             let pw = if zip_pass.trim().len() >= 4 {
                                 Some(zip_pass.as_str())
                             } else {
@@ -5493,6 +5533,7 @@ pub fn export_backup(
     }
     let group = adw::PreferencesGroup::new();
     group.add(&type_row);
+    group.add(&format_row);
     group.add(&specific);
     group.add(&remote_row);
     group.add(&note);

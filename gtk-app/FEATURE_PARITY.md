@@ -607,3 +607,5 @@ This client is the GTK 4 + libadwaita desktop UI. It talks to a local `rclone rc
 - Live GUI: startup wrote `~/.local/share/applications/io.github.zarestia_dev.rclone-manager.desktop` (`Exec=…/rclone-manager-gtk %U`, `x-scheme-handler/rclone-manager`) and the shared-MIME package
 - Live GUI: `--import-config /tmp/rclone-import-gui.conf` listed `guiimport` (alias), Import created it (`Imported 1 remotes`, present in `rclone listremotes` + sidebar)
 - Live GUI: `rclone-manager://dashboard/mount/testdrive` selected testdrive and the Mount tab
+- Export Settings can write a standalone `rclone.conf` (INI) as well as the zip backup
+- Startup installs AppStream metainfo under `~/.local/share/metainfo/`

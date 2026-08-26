@@ -1,0 +1,49 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>io.github.zarestia_dev.rclone-manager</id>
+  <name>Rclone Manager</name>
+  <summary>GTK 4 + libadwaita client for rclone remotes, mounts, and transfers</summary>
+  <metadata_license>MIT</metadata_license>
+  <project_license>GPL-3.0-or-later</project_license>
+  <developer id="io.github.zarestia_dev.rclone-manager">
+    <name>Zarestia Dev</name>
+  </developer>
+  <launchable type="desktop-id">io.github.zarestia_dev.rclone-manager.desktop</launchable>
+  <provides>
+    <mediatype>application/x-rclone-config</mediatype>
+  </provides>
+  <supports>
+    <control>pointing</control>
+    <control>keyboard</control>
+    <control>touch</control>
+  </supports>
+  <description>
+    <p>
+      A native GTK 4 + libadwaita desktop client for rclone. Manage remotes, mount
+      cloud storage, run sync/copy/move jobs, browse files, and restore backups
+      without using the command line.
+    </p>
+    <ul>
+      <li>File browser with copy, move, preview, and Send-to</li>
+      <li>Mount remotes as local folders</li>
+      <li>Scheduled jobs, serves, and alerts</li>
+      <li>Import and export rclone.conf</li>
+      <li>System tray, notifications, and encrypted config support</li>
+    </ul>
+  </description>
+  <categories>
+    <category>Network</category>
+    <category>Utility</category>
+    <category>FileTransfer</category>
+  </categories>
+  <keywords>
+    <keyword>rclone</keyword>
+    <keyword>cloud</keyword>
+    <keyword>backup</keyword>
+    <keyword>sync</keyword>
+    <keyword>mount</keyword>
+  </keywords>
+  <url type="homepage">https://github.com/Zarestia-Dev/rclone-manager</url>
+  <url type="bugtracker">https://github.com/Zarestia-Dev/rclone-manager/issues</url>
+  <content_rating type="oars-1.1" />
+</component>
