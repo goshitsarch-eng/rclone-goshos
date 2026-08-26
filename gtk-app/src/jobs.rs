@@ -1919,6 +1919,85 @@ pub fn find_active_mount_for<'a>(
         .find(|m| crate::store::mount_matches_remote(&m.fs, &m.mount_point, remote, alias))
 }
 
+fn paths_equivalent_point(left: &str, right: &str) -> bool {
+    left.trim_end_matches('/') == right.trim_end_matches('/')
+}
+
+/// Mount-point candidates when RC/list matching misses (alias remotes, default dest).
+pub fn mount_unmount_fallbacks(remote: &str, profile: Option<&ProfileConfig>) -> Vec<String> {
+    let mut out = Vec::new();
+    if let Some(profile) = profile {
+        let dest = default_dest(remote, &profile.rclone, OperationType::Mount);
+        if !dest.is_empty() {
+            out.push(dest);
+        }
+    }
+    let suggested = crate::path_inspection::suggest_default_mount_path(
+        remote,
+        &crate::store::AppStore::default(),
+    );
+    if !suggested.is_empty()
+        && !out
+            .iter()
+            .any(|point| paths_equivalent_point(point, &suggested))
+    {
+        out.push(suggested);
+    }
+    out
+}
+
+/// Resolve a live mount point for `remote`, including alias + host fuse fallbacks.
+pub fn resolve_unmount_point(
+    mounts: &[MountedRemote],
+    remote: &str,
+    alias: &str,
+    fallbacks: &[String],
+) -> Option<String> {
+    resolve_unmount_point_in(
+        mounts,
+        remote,
+        alias,
+        fallbacks,
+        &crate::rclone::host_fuse_mounts(),
+    )
+}
+
+pub fn resolve_unmount_point_in(
+    mounts: &[MountedRemote],
+    remote: &str,
+    alias: &str,
+    fallbacks: &[String],
+    host_mounts: &[MountedRemote],
+) -> Option<String> {
+    if let Some(mount) = find_active_mount_for(mounts, remote, alias) {
+        return Some(mount.mount_point.clone());
+    }
+    if alias.is_empty() {
+        if let Some(mount) = find_active_mount(mounts, remote) {
+            return Some(mount.mount_point.clone());
+        }
+    }
+    for extra in host_mounts {
+        if crate::store::mount_matches_remote(&extra.fs, &extra.mount_point, remote, alias) {
+            return Some(extra.mount_point.clone());
+        }
+    }
+    for point in fallbacks {
+        let point = point.trim();
+        if point.is_empty() {
+            continue;
+        }
+        if mounts
+            .iter()
+            .chain(host_mounts.iter())
+            .any(|mount| paths_equivalent_point(&mount.mount_point, point))
+        {
+            return Some(point.to_string());
+        }
+    }
+    None
+}
+
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct ProfileUsage {
     pub jobs: usize,
@@ -2050,13 +2129,27 @@ pub fn stop_profile(
     mounts: &[MountedRemote],
     serves: &[ServeItem],
 ) -> Result<String, String> {
+    stop_profile_ex(client, remote, op, profile, jobs, mounts, serves, "", &[])
+}
+
+pub fn stop_profile_ex(
+    client: &RcClient,
+    remote: &str,
+    op: OperationType,
+    profile: &str,
+    jobs: &[JobInfo],
+    mounts: &[MountedRemote],
+    serves: &[ServeItem],
+    alias: &str,
+    fallbacks: &[String],
+) -> Result<String, String> {
     match op {
         OperationType::Mount => {
-            let mount = find_active_mount(mounts, remote)
+            let point = resolve_unmount_point(mounts, remote, alias, fallbacks)
                 .ok_or_else(|| format!("{remote} is not mounted"))?;
             client
-                .unmount(&mount.mount_point)
-                .map(|_| format!("Unmounted {}", mount.mount_point))
+                .unmount(&point)
+                .map(|_| format!("Unmounted {point}"))
                 .map_err(|e| e.to_string())
         }
         OperationType::Serve => {
@@ -3487,6 +3580,52 @@ mod tests {
             find_active_mount_for(&alias_mounts, "testdrive", "/tmp/rclone-test-remote").is_some()
         );
         assert!(find_active_mount(&alias_mounts, "dummyexport").is_none());
+        let default_point = vec![MountedRemote::new(
+            "/tmp/rclone-test-remote",
+            "/tmp/rclone-testdrive-mnt",
+        )];
+        assert!(find_active_mount(&default_point, "testdrive").is_none());
+        assert!(
+            find_active_mount_for(&default_point, "testdrive", "/tmp/rclone-test-remote").is_some()
+        );
+        assert_eq!(
+            resolve_unmount_point_in(
+                &default_point,
+                "testdrive",
+                "/tmp/rclone-test-remote",
+                &[],
+                &[]
+            )
+            .as_deref(),
+            Some("/tmp/rclone-testdrive-mnt")
+        );
+        assert_eq!(
+            resolve_unmount_point_in(
+                &[],
+                "testdrive",
+                "/tmp/rclone-test-remote",
+                &["/tmp/rclone-testdrive-mnt".into()],
+                &default_point
+            )
+            .as_deref(),
+            Some("/tmp/rclone-testdrive-mnt")
+        );
+        assert!(resolve_unmount_point_in(
+            &[],
+            "testdrive",
+            "",
+            &["/tmp/rclone-testdrive-mnt".into()],
+            &[]
+        )
+        .is_none());
+        let profile = ProfileConfig {
+            name: "default".into(),
+            rclone: json!({ "mountPoint": "/tmp/rclone-testdrive-mnt" }),
+            ..ProfileConfig::default()
+        };
+        assert!(mount_unmount_fallbacks("testdrive", Some(&profile))
+            .iter()
+            .any(|point| point == "/tmp/rclone-testdrive-mnt"));
         let serves = vec![ServeItem {
             id: "abc".into(),
             addr: "127.0.0.1:8080".into(),

@@ -235,6 +235,21 @@ impl AppCtx {
         dump
     }
 
+    pub fn config_dump(&self) -> serde_json::Value {
+        self.client()
+            .map(|client| self.cached_dump(&client))
+            .unwrap_or(serde_json::json!({}))
+    }
+
+    pub fn remote_cfg_alias(&self, name: &str) -> String {
+        self.config_dump()
+            .get(name)
+            .and_then(|cfg| cfg.get("remote"))
+            .and_then(|value| value.as_str())
+            .unwrap_or("")
+            .to_string()
+    }
+
     pub fn runtime_busy(&self) -> bool {
         let snap = self.snapshot.borrow();
         crate::refresh::runtime_busy(

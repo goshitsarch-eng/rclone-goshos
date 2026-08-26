@@ -1138,12 +1138,15 @@ fn merge_host_mounts(mounts: &mut Vec<MountedRemote>) {
     }
 }
 
+pub fn host_fuse_mounts() -> Vec<MountedRemote> {
+    std::fs::read_to_string("/proc/mounts")
+        .map(|text| parse_proc_mounts(&text))
+        .unwrap_or_default()
+}
+
 pub fn host_fuse_mounted(mount_point: &str) -> bool {
-    let Ok(text) = std::fs::read_to_string("/proc/mounts") else {
-        return false;
-    };
     let want = mount_point.trim_end_matches('/');
-    parse_proc_mounts(&text)
+    host_fuse_mounts()
         .iter()
         .any(|m| m.mount_point.trim_end_matches('/') == want)
 }

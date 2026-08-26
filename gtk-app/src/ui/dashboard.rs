@@ -1767,7 +1767,7 @@ impl Dashboard {
         }
 
         self.append_disk_usage(&name);
-        if tab == AppTab::Mount {
+        if tab == AppTab::Mount || tab == AppTab::General {
             self.append_mount_disk_usage(&name, &snap);
         }
 
@@ -1871,6 +1871,7 @@ impl Dashboard {
         self.append_transfer_activity(&name, &snap, selected_profile.as_deref(), scoped_op);
         if tab == AppTab::General {
             self.append_remote_automations(&name);
+            self.append_remote_configuration_preview(&name);
         }
 
         if tab == AppTab::General || detail_op.supports_vfs() {
@@ -3566,10 +3567,13 @@ impl Dashboard {
         let Some(client) = self.ctx.client() else {
             return;
         };
+        let alias = self.ctx.remote_cfg_alias(name);
         let mounts: Vec<_> = snap
             .mounts
             .iter()
-            .filter(|item| crate::jobs::fs_belongs_to_remote(&item.fs, name))
+            .filter(|item| {
+                crate::store::mount_matches_remote(&item.fs, &item.mount_point, name, &alias)
+            })
             .collect();
         if mounts.is_empty() {
             return;
@@ -3912,6 +3916,46 @@ impl Dashboard {
                 selected.as_deref(),
             ));
     }
+
+    fn append_remote_configuration_preview(&self, name: &str) {
+        self.detail_box().append(&section_label(&self.ctx.t_or(
+            "dashboard.generalDetail.remoteConfiguration",
+            "Remote Configuration",
+        )));
+        let dump = self.ctx.config_dump();
+        let params =
+            crate::providers::dump_remote_params(&dump, name).unwrap_or(serde_json::json!({}));
+        self.detail_box()
+            .append(&dialogs::settings_list(&self.ctx, &params, 24));
+        let edit = gtk::Button::with_label(&self.ctx.t_or(
+            "dashboard.generalDetail.editConfiguration",
+            "Edit Configuration",
+        ));
+        edit.add_css_class("suggested-action");
+        {
+            let ctx = self.ctx.clone();
+            let remote = name.to_string();
+            let dash = self.clone();
+            edit.connect_clicked(move |_| {
+                if let Some(win) = dash.root.root().and_downcast::<gtk::Window>() {
+                    super::remote_config::present_with(
+                        &win,
+                        ctx.clone(),
+                        remote.clone(),
+                        super::remote_config::RemoteConfigOpen {
+                            initial: Some("remote".into()),
+                            ..Default::default()
+                        },
+                        {
+                            let dash = dash.clone();
+                            Rc::new(move || dash.refresh())
+                        },
+                    );
+                }
+            });
+        }
+        self.detail_box().append(&edit);
+    }
 }
 
 fn append_open_folder_suffix(row: &adw::ActionRow, ctx: &AppCtx, remote: &str, paths: &[String]) {
@@ -3998,7 +4042,9 @@ fn toggle_mount(ctx: &AppCtx, name: &str, mounted: bool, toast: &adw::ToastOverl
         .filter(|s| !s.is_empty())
         .unwrap_or_else(|| "default".into());
     if mounted {
-        match crate::jobs::stop_profile(
+        let alias = ctx.remote_cfg_alias(name);
+        let fallbacks = crate::jobs::mount_unmount_fallbacks(name, profile.as_ref());
+        match crate::jobs::stop_profile_ex(
             &client,
             name,
             OperationType::Mount,
@@ -4006,6 +4052,8 @@ fn toggle_mount(ctx: &AppCtx, name: &str, mounted: bool, toast: &adw::ToastOverl
             &snap.jobs,
             &snap.mounts,
             &snap.serves,
+            &alias,
+            &fallbacks,
         ) {
             Ok(msg) => toast.add_toast(adw::Toast::new(&msg)),
             Err(e) => toast.add_toast(adw::Toast::new(&e)),
@@ -4096,7 +4144,19 @@ fn toggle_profile(
         &snap.mounts,
         &snap.serves,
     ) {
-        match crate::jobs::stop_profile(
+        let alias = if op == OperationType::Mount {
+            ctx.remote_cfg_alias(name)
+        } else {
+            String::new()
+        };
+        let meta = ctx.store.borrow().remotes.get(name).cloned();
+        let mount_profile = meta.as_ref().and_then(|m| m.get_profile(op, profile_name));
+        let fallbacks = if op == OperationType::Mount {
+            crate::jobs::mount_unmount_fallbacks(name, mount_profile.as_ref())
+        } else {
+            Vec::new()
+        };
+        match crate::jobs::stop_profile_ex(
             &client,
             name,
             op,
@@ -4104,6 +4164,8 @@ fn toggle_profile(
             &snap.jobs,
             &snap.mounts,
             &snap.serves,
+            &alias,
+            &fallbacks,
         ) {
             Ok(msg) => toast.add_toast(adw::Toast::new(&msg)),
             Err(e) => toast.add_toast(adw::Toast::new(&e)),
