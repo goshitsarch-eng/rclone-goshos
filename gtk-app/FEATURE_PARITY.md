@@ -520,6 +520,8 @@ This client is the GTK 4 + libadwaita desktop UI. It talks to a local `rclone rc
 - Tray menu and icon refresh on each poll; left-click Show Window; busy icon/tooltip from live jobs/mounts/serves
 - Alert titles/bodies use `notification.title.*` / `notification.body.*` i18n keys
 - Engine online/offline transitions emit alert events
+- Switching extra RC backends parks `job_history` / `job_meta` (and in-session mounts/serves) per backend so job IDs do not bleed across rcd instances
+- Flag editors call `options/blocks` and keep empty named groups when `options/info` omits them
 
 ## Still deepening
 

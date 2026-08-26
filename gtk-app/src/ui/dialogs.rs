@@ -2118,9 +2118,8 @@ pub fn rclone_flags(parent: &impl IsA<gtk::Widget>, ctx: AppCtx) {
         dialog.present(Some(parent));
         return;
     };
-    let info = client.options_info().unwrap_or(serde_json::json!({}));
     let current = client.options_get().unwrap_or(serde_json::json!({}));
-    let mut blocks = crate::flags::parse_options_info(&info);
+    let mut blocks = client.option_flag_blocks();
     crate::flags::merge_current_values(&mut blocks, &current);
     let edits: Rc<RefCell<Vec<(String, String, serde_json::Value)>>> =
         Rc::new(RefCell::new(Vec::new()));
@@ -3980,8 +3979,8 @@ pub fn start_operation(
         Rc::new(RefCell::new(Vec::new()));
     if op == OperationType::Serve {
         if let Some(client) = ctx.client() {
-            if let Ok(info) = client.options_info() {
-                let blocks = crate::flags::parse_options_info(&info);
+            {
+                let blocks = client.option_flag_blocks();
                 for serve_type in serve_types.iter() {
                     for flag in crate::flags::collect_serve_flags(&blocks, serve_type) {
                         let row = adw::EntryRow::new();
@@ -9156,8 +9155,7 @@ fn scrolled_list(list: &gtk::ListBox) -> gtk::ScrolledWindow {
 
 fn operation_flag_blocks(ctx: &AppCtx) -> Vec<crate::flags::FlagBlock> {
     ctx.client()
-        .and_then(|c| c.options_info().ok())
-        .map(|info| crate::flags::parse_options_info(&info))
+        .map(|c| c.option_flag_blocks())
         .unwrap_or_default()
 }
 

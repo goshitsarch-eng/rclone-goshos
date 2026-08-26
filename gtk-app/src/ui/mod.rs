@@ -490,8 +490,29 @@ impl AppCtx {
     }
 
     pub fn switch_backend(&self, name: &str) {
+        let from = self.settings.borrow().core.active_backend.clone();
+        let from_key = crate::layout::backend_key(&from);
+        let to_key = crate::layout::backend_key(name);
         self.fsinfo_cache.borrow_mut().clear();
         self.save_remote_layout();
+        if from_key != to_key {
+            let (from_mounts, from_serves) = {
+                let mut snap = self.snapshot.borrow_mut();
+                snap.jobs.clear();
+                snap.remotes.clear();
+                (
+                    std::mem::take(&mut snap.mounts),
+                    std::mem::take(&mut snap.serves),
+                )
+            };
+            let (mounts, serves) =
+                self.store
+                    .borrow_mut()
+                    .swap_backend_state(&from, name, from_mounts, from_serves);
+            let mut snap = self.snapshot.borrow_mut();
+            snap.mounts = mounts;
+            snap.serves = serves;
+        }
         self.settings.borrow_mut().core.active_backend = if name == "local" {
             String::new()
         } else {

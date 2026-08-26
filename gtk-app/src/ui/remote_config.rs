@@ -5,8 +5,8 @@ use super::dialogs;
 use super::interactive::InteractivePanel;
 use super::AppCtx;
 use crate::flags::{
-    flag_category_for_op, options_for_category, parse_flag_value, parse_options_info,
-    static_flags_for, FlagBlock, FlagOption,
+    flag_category_for_op, options_for_category, parse_flag_value, static_flags_for, FlagBlock,
+    FlagOption,
 };
 use crate::jobs::{
     assemble_rclone, default_dest, default_source, extra_flags, flatten_rclone, path_list,
@@ -138,8 +138,7 @@ pub fn present_with(
 
     let flag_blocks: Rc<Vec<FlagBlock>> = Rc::new(
         ctx.client()
-            .and_then(|c| c.options_info().ok())
-            .map(|v| parse_options_info(&v))
+            .map(|c| c.option_flag_blocks())
             .unwrap_or_default(),
     );
 

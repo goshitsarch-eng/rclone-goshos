@@ -109,6 +109,49 @@ pub fn parse_options_info(value: &Value) -> Vec<FlagBlock> {
     blocks
 }
 
+/// rclone `options/blocks` is `{ "options": ["main", "vfs", ...] }` or a raw array.
+pub fn parse_options_blocks(value: &Value) -> Vec<String> {
+    let arr = value
+        .get("options")
+        .and_then(|v| v.as_array())
+        .or_else(|| value.as_array());
+    let Some(arr) = arr else {
+        return Vec::new();
+    };
+    let mut names: Vec<String> = arr
+        .iter()
+        .filter_map(|v| v.as_str().map(|s| s.to_string()))
+        .filter(|name| !name.is_empty())
+        .collect();
+    names.sort_by(|a, b| a.to_lowercase().cmp(&b.to_lowercase()));
+    names.dedup();
+    names
+}
+
+pub fn ensure_named_blocks(blocks: &mut Vec<FlagBlock>, names: &[String]) {
+    for name in names {
+        if name.is_empty() {
+            continue;
+        }
+        if !blocks
+            .iter()
+            .any(|block| block.name.eq_ignore_ascii_case(name))
+        {
+            blocks.push(FlagBlock {
+                name: name.clone(),
+                options: Vec::new(),
+            });
+        }
+    }
+    blocks.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
+}
+
+pub fn option_blocks_from_rc(info: &Value, blocks: &Value) -> Vec<FlagBlock> {
+    let mut parsed = parse_options_info(info);
+    ensure_named_blocks(&mut parsed, &parse_options_blocks(blocks));
+    parsed
+}
+
 fn parse_flag_option(value: &Value) -> Option<FlagOption> {
     let name = value
         .get("Name")
@@ -601,6 +644,47 @@ mod tests {
         assert_eq!(payload["HTTP"]["ListenAddr"], ":8080");
         let dotted = set_option_payload("main", "a.b", json!(1));
         assert_eq!(dotted["main"]["a"]["b"], 1);
+    }
+
+    #[test]
+    fn parses_options_blocks_and_fills_empty() {
+        let names = parse_options_blocks(&json!({ "options": ["main", "vfs", "HTTP"] }));
+        assert_eq!(names, vec!["HTTP", "main", "vfs"]);
+        assert_eq!(
+            parse_options_blocks(&json!(["rc", "log"])),
+            vec!["log", "rc"]
+        );
+        assert!(parse_options_blocks(&json!({})).is_empty());
+        let mut blocks = parse_options_info(&json!({
+            "main": [{
+                "Name": "transfers",
+                "FieldName": "transfers",
+                "Type": "int",
+                "Groups": "Performance"
+            }]
+        }));
+        ensure_named_blocks(&mut blocks, &names);
+        assert!(blocks
+            .iter()
+            .any(|b| b.name == "main" && !b.options.is_empty()));
+        assert!(blocks
+            .iter()
+            .any(|b| b.name == "vfs" && b.options.is_empty()));
+        assert!(blocks
+            .iter()
+            .any(|b| b.name == "HTTP" && b.options.is_empty()));
+        let merged = option_blocks_from_rc(
+            &json!({
+                "main": [{
+                    "Name": "transfers",
+                    "FieldName": "transfers",
+                    "Type": "int"
+                }]
+            }),
+            &json!({ "options": ["main", "filter"] }),
+        );
+        assert!(merged.iter().any(|b| b.name == "filter"));
+        assert_eq!(merged.iter().filter(|b| b.name == "main").count(), 1);
     }
 
     #[test]

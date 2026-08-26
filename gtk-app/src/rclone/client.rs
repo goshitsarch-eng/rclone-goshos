@@ -892,6 +892,22 @@ impl RcClient {
         self.call("options/info", json!({}))
     }
 
+    pub fn options_blocks(&self) -> Result<Vec<String>, RcError> {
+        let value = self.call("options/blocks", json!({}))?;
+        Ok(crate::flags::parse_options_blocks(&value))
+    }
+
+    /// `options/info` plus empty groups named by `options/blocks`.
+    pub fn option_flag_blocks(&self) -> Vec<crate::flags::FlagBlock> {
+        crate::flags::option_blocks_from_rc(
+            &self.options_info().unwrap_or(json!({})),
+            &self
+                .options_blocks()
+                .map(|names| json!({ "options": names }))
+                .unwrap_or(json!({})),
+        )
+    }
+
     pub fn local_disks(&self) -> Result<Vec<String>, RcError> {
         let v = self.call("core/disks", json!({}))?;
         Ok(v.get("disks")

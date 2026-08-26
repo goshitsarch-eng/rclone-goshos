@@ -925,8 +925,48 @@ pub struct AppStore {
     pub pending_share_paths: Vec<String>,
     #[serde(default)]
     pub job_meta: HashMap<u64, JobMeta>,
+    /// Jobs and in-session mount/serve context for backends that are not active.
+    #[serde(default)]
+    pub backend_states: HashMap<String, BackendUiState>,
     #[serde(default, skip)]
     pub notifications_enabled: bool,
+}
+
+/// Per-backend UI working set (Tauri `BackendState` / `RemoteCacheContext`).
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct BackendUiState {
+    #[serde(default)]
+    pub job_history: Vec<JobInfo>,
+    #[serde(default)]
+    pub job_meta: HashMap<u64, JobMeta>,
+    #[serde(default, skip)]
+    pub mounts: Vec<MountedRemote>,
+    #[serde(default, skip)]
+    pub serves: Vec<ServeItem>,
+}
+
+fn finalize_stale_jobs(jobs: &mut [JobInfo], meta: &HashMap<u64, JobMeta>) {
+    let has_snapshot = |id: u64| {
+        meta.get(&id).is_some_and(|entry| {
+            entry
+                .transfer_snapshot
+                .as_array()
+                .is_some_and(|arr| !arr.is_empty())
+        })
+    };
+    for job in jobs {
+        if job.status != "preparing" && job.status != "starting" {
+            continue;
+        }
+        let done =
+            !job.completed.as_array().is_some_and(|arr| arr.is_empty()) || has_snapshot(job.id);
+        job.status = if done { "completed" } else { "failed" }.into();
+    }
+}
+
+fn sanitize_backend_jobs(state: &mut BackendUiState) {
+    finalize_stale_jobs(&mut state.job_history, &state.job_meta);
+    state.job_history.retain(crate::jobs::is_managed_job);
 }
 
 impl AppStore {
@@ -946,8 +986,10 @@ impl AppStore {
             .iter()
             .map(|job| (job.id, job.status.clone()))
             .collect();
-        store.finalize_stale_preparing();
-        store.job_history.retain(crate::jobs::is_managed_job);
+        store.sanitize_job_history();
+        for state in store.backend_states.values_mut() {
+            sanitize_backend_jobs(state);
+        }
         if store.job_history.len() != before.len()
             || store.job_history.iter().any(|job| {
                 before
@@ -960,24 +1002,44 @@ impl AppStore {
         store
     }
 
+    pub fn sanitize_job_history(&mut self) {
+        finalize_stale_jobs(&mut self.job_history, &self.job_meta);
+        self.job_history.retain(crate::jobs::is_managed_job);
+    }
+
     /// Preparing rows from a previous process cannot be live; keep their
     /// snapshots but do not re-inject them as in-progress after restart.
     pub fn finalize_stale_preparing(&mut self) {
-        let has_snapshot = |id: u64| {
-            self.job_meta.get(&id).is_some_and(|meta| {
-                meta.transfer_snapshot
-                    .as_array()
-                    .is_some_and(|arr| !arr.is_empty())
-            })
-        };
-        for job in &mut self.job_history {
-            if job.status != "preparing" && job.status != "starting" {
-                continue;
-            }
-            let done =
-                !job.completed.as_array().is_some_and(|arr| arr.is_empty()) || has_snapshot(job.id);
-            job.status = if done { "completed" } else { "failed" }.into();
+        finalize_stale_jobs(&mut self.job_history, &self.job_meta);
+    }
+
+    /// Park the active job/mount/serve working set and restore the target backend.
+    pub fn swap_backend_state(
+        &mut self,
+        from: &str,
+        to: &str,
+        from_mounts: Vec<MountedRemote>,
+        from_serves: Vec<ServeItem>,
+    ) -> (Vec<MountedRemote>, Vec<ServeItem>) {
+        let from_key = crate::layout::backend_key(from);
+        let to_key = crate::layout::backend_key(to);
+        if from_key == to_key {
+            return (from_mounts, from_serves);
         }
+        self.backend_states.insert(
+            from_key,
+            BackendUiState {
+                job_history: std::mem::take(&mut self.job_history),
+                job_meta: std::mem::take(&mut self.job_meta),
+                mounts: from_mounts,
+                serves: from_serves,
+            },
+        );
+        let incoming = self.backend_states.remove(&to_key).unwrap_or_default();
+        self.job_history = incoming.job_history;
+        self.job_meta = incoming.job_meta;
+        self.sanitize_job_history();
+        (incoming.mounts, incoming.serves)
     }
 
     pub fn seed_alert_defaults(&mut self, notifications_on: bool) -> bool {
@@ -2266,6 +2328,75 @@ mod tests {
             parent_job_id: None,
         });
         assert!(store.job_history.iter().all(|job| job.id != 540356));
+    }
+
+    #[test]
+    fn swap_backend_state_isolates_jobs() {
+        let mk = |id: u64, status: &str, remote: &str| JobInfo {
+            id,
+            operation: "copy".into(),
+            remote: remote.into(),
+            profile: "default".into(),
+            status: status.into(),
+            origin: "dashboard".into(),
+            start_time: Utc::now(),
+            error: None,
+            dry_run: false,
+            src: String::new(),
+            dst: String::new(),
+            group: format!("job/{id}"),
+            stats: json!({}),
+            transferring: json!([]),
+            duration: 0.0,
+            progress: 0.0,
+            output: json!({}),
+            completed: json!([]),
+            parent_job_id: None,
+        };
+        let mut store = AppStore::default();
+        store.remember_job(mk(11, "completed", "localdrive"));
+        store.job_meta.insert(
+            11,
+            JobMeta {
+                origin: "dashboard".into(),
+                backend: "local".into(),
+                ..Default::default()
+            },
+        );
+        let (mounts, serves) = store.swap_backend_state("local", "office", vec![], vec![]);
+        assert!(mounts.is_empty());
+        assert!(serves.is_empty());
+        assert!(store.job_history.is_empty());
+        assert!(store.job_meta.is_empty());
+        store.remember_job(mk(11, "running", "officedrive"));
+        store.job_meta.insert(
+            11,
+            JobMeta {
+                origin: "dashboard".into(),
+                backend: "office".into(),
+                ..Default::default()
+            },
+        );
+        store.swap_backend_state("office", "local", vec![], vec![]);
+        assert_eq!(store.job_history.len(), 1);
+        assert_eq!(store.job_history[0].remote, "localdrive");
+        assert_eq!(store.job_history[0].status, "completed");
+        assert_eq!(store.job_meta[&11].backend, "local");
+        store.swap_backend_state("local", "office", vec![], vec![]);
+        assert_eq!(store.job_history[0].remote, "officedrive");
+        assert_eq!(store.job_history[0].status, "running");
+        assert_eq!(store.job_meta[&11].backend, "office");
+        let same = store.swap_backend_state("office", "office", vec![], vec![]);
+        assert_eq!(store.job_history[0].id, 11);
+        assert!(same.0.is_empty());
+        let text = serde_json::to_string(&store).unwrap();
+        let loaded: AppStore = serde_json::from_str(&text).unwrap();
+        assert!(loaded.backend_states.contains_key("local"));
+        assert_eq!(
+            loaded.backend_states["local"].job_history[0].remote,
+            "localdrive"
+        );
+        assert!(loaded.backend_states["local"].mounts.is_empty());
     }
 
     #[test]
