@@ -67,7 +67,8 @@ pub struct NautilusView {
     skip_lasso: Rc<Cell<bool>>,
     ignore_activate: Rc<Cell<bool>>,
     listing_menu_open: Rc<Cell<bool>>,
-    listing_popover: gtk::Popover,
+    listing_menu_btn: gtk::MenuButton,
+    files_overlay: gtk::Overlay,
     hover_open: Rc<RefCell<Option<String>>>,
     undo: Rc<RefCell<Vec<String>>>,
     redo: Rc<RefCell<Vec<String>>>,
@@ -254,9 +255,24 @@ impl NautilusView {
         tab_bar.add_css_class("linked");
         tab_bar.set_margin_start(8);
         tab_bar.set_margin_end(8);
+        let listing_menu_btn = gtk::MenuButton::new();
+        listing_menu_btn.set_icon_name("view-more-symbolic");
+        listing_menu_btn.add_css_class("flat");
+        listing_menu_btn.add_css_class("circular");
+        listing_menu_btn.set_halign(gtk::Align::Start);
+        listing_menu_btn.set_valign(gtk::Align::Start);
+        listing_menu_btn.set_can_target(false);
+        listing_menu_btn.set_focus_on_click(false);
+        listing_menu_btn.set_opacity(0.0);
+        listing_menu_btn.set_size_request(1, 1);
+        let files_overlay = gtk::Overlay::new();
+        files_overlay.set_hexpand(true);
+        files_overlay.set_vexpand(true);
+        files_overlay.set_child(Some(&paned));
+        files_overlay.add_overlay(&listing_menu_btn);
         let files_col = gtk::Box::new(gtk::Orientation::Vertical, 4);
         files_col.append(&tab_bar);
-        files_col.append(&paned);
+        files_col.append(&files_overlay);
         split.set_content(Some(&files_col));
 
         let ops = gtk::ListBox::new();
@@ -340,11 +356,6 @@ impl NautilusView {
             }
         }
 
-        let listing_popover = gtk::Popover::new();
-        listing_popover.set_autohide(true);
-        listing_popover.set_has_arrow(true);
-        listing_popover.set_parent(&root);
-
         let view = Self {
             root,
             ctx,
@@ -373,7 +384,8 @@ impl NautilusView {
             skip_lasso: Rc::new(Cell::new(false)),
             ignore_activate: Rc::new(Cell::new(false)),
             listing_menu_open: Rc::new(Cell::new(false)),
-            listing_popover,
+            listing_menu_btn: listing_menu_btn.clone(),
+            files_overlay: files_overlay.clone(),
             hover_open: Rc::new(RefCell::new(None)),
             undo: Rc::new(RefCell::new(vec![])),
             redo: Rc::new(RefCell::new(vec![])),
@@ -394,14 +406,6 @@ impl NautilusView {
             send_to_btn: send_to_btn.clone(),
         };
         view.refresh_type_filters();
-        {
-            let view = view.clone();
-            view.listing_popover.connect_closed(move |_| {
-                view.listing_menu_open.set(false);
-                view.ignore_activate.set(false);
-                view.skip_lasso.set(false);
-            });
-        }
 
         {
             let view = view.clone();
@@ -582,6 +586,7 @@ impl NautilusView {
         view.attach_view_options(&sort_btn);
         view.attach_path_options(&path_menu);
         view.attach_selection_actions(&actions_btn);
+        view.attach_listing_menu();
         {
             let view = view.clone();
             view.list
@@ -844,6 +849,25 @@ impl NautilusView {
         popover.connect_show(move |popover| {
             popover.set_child(Some(&view.build_selection_actions()));
         });
+    }
+
+    fn attach_listing_menu(&self) {
+        let popover = gtk::Popover::new();
+        self.listing_menu_btn.set_popover(Some(&popover));
+        {
+            let view = self.clone();
+            popover.connect_show(move |popover| {
+                popover.set_child(Some(&view.build_context_menu(popover)));
+            });
+        }
+        {
+            let view = self.clone();
+            popover.connect_closed(move |_| {
+                view.listing_menu_open.set(false);
+                view.ignore_activate.set(false);
+                view.skip_lasso.set(false);
+            });
+        }
     }
 
     fn build_selection_actions(&self) -> gtk::Box {
@@ -4282,24 +4306,10 @@ impl NautilusView {
         });
     }
 
-    fn listing_popover_host(&self, widget: &gtk::Widget) -> gtk::Widget {
-        widget
-            .root()
-            .and_then(|root| root.downcast::<gtk::Window>().ok())
-            .map(|window| window.upcast::<gtk::Widget>())
-            .or_else(|| {
-                widget
-                    .ancestor(gtk::Window::static_type())
-                    .and_then(|w| w.downcast::<gtk::Widget>().ok())
-            })
-            .unwrap_or_else(|| self.root.clone().upcast())
-    }
-
     fn popup_context_at(&self, widget: &impl IsA<gtk::Widget>, x: f64, y: f64) {
         let widget = widget.upcast_ref::<gtk::Widget>();
-        let host = self.listing_popover_host(widget);
         let (px, py) = widget
-            .compute_bounds(&host)
+            .compute_bounds(&self.files_overlay)
             .map(|bounds| {
                 crate::fileops::pointing_in_parent(
                     x,
@@ -4309,16 +4319,15 @@ impl NautilusView {
                 )
             })
             .unwrap_or((x.round() as i32, y.round() as i32));
-        if self.listing_popover.parent().as_ref() != Some(&host) {
-            self.listing_popover.unparent();
-            self.listing_popover.set_parent(&host);
-        }
+        self.listing_menu_btn.set_margin_start(px.clamp(0, 4000));
+        self.listing_menu_btn.set_margin_top(py.clamp(0, 4000));
         self.listing_menu_open.set(true);
-        self.listing_popover
-            .set_child(Some(&self.build_context_menu(&self.listing_popover)));
-        self.listing_popover
-            .set_pointing_to(Some(&gtk::gdk::Rectangle::new(px, py, 1, 1)));
-        self.listing_popover.popup();
+        self.status.set_text(&format!(
+            "{} · {}",
+            self.ctx.t_or("nautilus.contextMenu.moreActions", "Actions"),
+            self.ctx.t_or("nautilus.contextMenu.open", "Open")
+        ));
+        self.listing_menu_btn.popup();
     }
 
     fn build_context_menu(&self, popover: &gtk::Popover) -> gtk::Widget {
