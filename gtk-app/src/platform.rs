@@ -33,7 +33,7 @@ pub fn send_to_display_name(remote: &str, path: Option<&str>) -> String {
     sanitize_name(&format!("{remote}{path_suffix} (RClone Manager)"))
 }
 
-/// Angular `fileBrowser.messages.sendToAdded` interpolates `{{remote}}{{path}}`.
+/// `nautilus.notifications.sendToAdded` interpolates `{{remote}}{{path}}`.
 pub fn send_to_path_param(path: Option<&str>) -> String {
     path.filter(|p| !p.is_empty() && *p != "/")
         .map(|p| format!("/{}", p.trim_start_matches('/')))

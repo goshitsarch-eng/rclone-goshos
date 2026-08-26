@@ -560,7 +560,7 @@ This client is the GTK 4 + libadwaita desktop UI. It talks to a local `rclone rc
 - Live GUI: Bandwidth preset 10 MB/s saved as `10M`
 - Wizard provider list pins local/alias/drive/s3/sftp ahead of alphabetical leftovers
 - StatusNotifier tray includes ARGB32 icon pixmaps so the panel can draw the icon without a theme name
-- Files Send-to add/remove toasts use `fileBrowser.messages.sendToAdded` / `sendToRemoved`
+- Files Send-to add/remove toasts use `nautilus.notifications.sendToAdded` / `sendToRemoved`
 - Detailed Remote wizard title is Remote Configuration; Quick Add keeps its own title
 - Scoped backup restore merges the renamed remote into the live store (does not replace settings)
 - GApplication re-forwards `--dialog` / `--dialog-data` / `--dialog-result` to the running instance
@@ -572,4 +572,4 @@ This client is the GTK 4 + libadwaita desktop UI. It talks to a local `rclone rc
 - Live GUI: Quick Run `gui-qr-copy` cron saved as `0 7 * * *` (Daily at 7:00); sidebar/card show the cron badge
 - Live GUI: Flow Automations **Pause** writes `automation_paused` `quick:050de334-2571-4ead-ac77-1fb23e16b0c6` and shows Resume + paused; **Resume** clears the list
 - Live GUI: Files testdrive toolbar **Add to File Manager Menu** writes Nautilus/KIO/Nemo send-to entries; **Remove** deletes them
-- Send-to toasts use `tf_or` so a missing catalog key still shows the English sentence
+- Send-to toasts use `nautilus.notifications.sendToAdded` / `sendToRemoved` (with `tf_or` English fallback)

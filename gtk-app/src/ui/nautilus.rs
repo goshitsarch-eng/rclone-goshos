@@ -3612,19 +3612,19 @@ impl NautilusView {
         match result {
             Ok(_) => self.toast.add_toast(adw::Toast::new(&if registered {
                 self.ctx.tf_or(
-                    "fileBrowser.messages.sendToRemoved",
+                    "nautilus.notifications.sendToRemoved",
                     "Removed '{{remote}}{{path}}' from File Manager menu",
                     &params,
                 )
             } else {
                 self.ctx.tf_or(
-                    "fileBrowser.messages.sendToAdded",
+                    "nautilus.notifications.sendToAdded",
                     "Added '{{remote}}{{path}}' to File Manager menu",
                     &params,
                 )
             })),
             Err(e) => self.toast.add_toast(adw::Toast::new(&self.ctx.tf_or(
-                "fileBrowser.errors.sendToFailed",
+                "nautilus.errors.sendToFailed",
                 "Failed to update File Manager menu: {{error}}",
                 &[("error", &e)],
             ))),

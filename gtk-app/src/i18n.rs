@@ -341,14 +341,14 @@ mod tests {
             return;
         }
         assert!(
-            i18n.has("fileBrowser.messages.sendToAdded"),
-            "fileBrowser.messages.sendToAdded must exist in en-US"
+            i18n.has("nautilus.notifications.sendToAdded"),
+            "nautilus.notifications.sendToAdded must exist in en-US"
         );
-        assert!(i18n.has("fileBrowser.messages.sendToRemoved"));
-        assert!(i18n.has("fileBrowser.errors.sendToFailed"));
+        assert!(i18n.has("nautilus.notifications.sendToRemoved"));
+        assert!(i18n.has("nautilus.errors.sendToFailed"));
         assert_eq!(
             i18n.tf(
-                "fileBrowser.messages.sendToAdded",
+                "nautilus.notifications.sendToAdded",
                 &[("remote", "testdrive"), ("path", "")]
             ),
             "Added 'testdrive' to File Manager menu"
@@ -478,6 +478,9 @@ mod tests {
             "home.options.cloneFailed",
             "modals.about.killRclone",
             "modals.about.backendCache",
+            "nautilus.notifications.sendToAdded",
+            "nautilus.notifications.sendToRemoved",
+            "nautilus.errors.sendToFailed",
         ] {
             assert!(i18n.has(key), "missing i18n key {key}");
         }
