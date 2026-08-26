@@ -861,7 +861,8 @@
       "memoryUnavailable": "Bellek istatistikleri kullanılamıyor",
       "remoteVisible": "Kenar çubuğunda ve genel bakışta görünür"
     },
-    "detach": "Detach the current workspace into a new window"
+    "detach": "Detach the current workspace into a new window",
+    "closeOverlay": "Close overlay and return to the base view"
   },
   "onboarding": {
     "loadingTitle": "RClone Yöneticisi Başlatılıyor",

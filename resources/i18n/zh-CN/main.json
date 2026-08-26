@@ -861,7 +861,8 @@
       "memoryUnavailable": "内存统计不可用",
       "remoteVisible": "在侧栏和总览中可见"
     },
-    "detach": "Detach the current workspace into a new window"
+    "detach": "Detach the current workspace into a new window",
+    "closeOverlay": "Close overlay and return to the base view"
   },
   "onboarding": {
     "loadingTitle": "正在初始化 RClone Manager",

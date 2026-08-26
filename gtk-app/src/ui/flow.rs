@@ -21,6 +21,9 @@ pub struct FlowView {
     remote_filter: Rc<RefCell<Option<String>>>,
     selected_flow_remote: Rc<RefCell<Option<String>>>,
     detail_page: Rc<RefCell<String>>,
+    origin_filter: Rc<RefCell<String>>,
+    transfer_query: Rc<RefCell<String>>,
+    transfer_tab: Rc<RefCell<String>>,
     split: adw::OverlaySplitView,
 }
 
@@ -113,6 +116,9 @@ impl FlowView {
             remote_filter: Rc::new(RefCell::new(None)),
             selected_flow_remote: Rc::new(RefCell::new(None)),
             detail_page: Rc::new(RefCell::new("monitoring".into())),
+            origin_filter: Rc::new(RefCell::new("all".into())),
+            transfer_query: Rc::new(RefCell::new(String::new())),
+            transfer_tab: Rc::new(RefCell::new("active".into())),
             split,
         };
         {
@@ -384,6 +390,16 @@ impl FlowView {
         layout_bar.append(&edit_btn);
         layout_bar.append(&reset);
         self.content.append(&layout_bar);
+        let view = self.clone();
+        self.content
+            .append(&super::dashboard::Dashboard::origin_filter_bar(
+                &self.ctx,
+                &self.origin_filter.borrow(),
+                move |id| {
+                    *view.origin_filter.borrow_mut() = id;
+                    view.refresh();
+                },
+            ));
         for (id, visible) in layout.resolve(crate::layout::QUICK_RUN_PANELS) {
             if !visible && !editing {
                 continue;
@@ -440,10 +456,14 @@ impl FlowView {
                     );
                 }
                 "jobs" => {
+                    let filter = self.origin_filter.borrow().clone();
                     let filtered: Vec<_> = snap
                         .jobs
                         .iter()
-                        .filter(|job| crate::jobs::is_overview_job(job))
+                        .filter(|job| {
+                            crate::jobs::is_overview_job(job)
+                                && crate::jobs::origin_matches(&job.origin, &filter)
+                        })
                         .cloned()
                         .collect();
                     let view = self.clone();
@@ -464,7 +484,14 @@ impl FlowView {
                 "serves" => {
                     let serves = gtk::ListBox::new();
                     serves.add_css_class("boxed-list");
-                    if snap.serves.is_empty() {
+                    let filter = self.origin_filter.borrow().clone();
+                    let filtered: Vec<_> = snap
+                        .serves
+                        .iter()
+                        .filter(|serve| crate::jobs::origin_matches(&serve.origin, &filter))
+                        .cloned()
+                        .collect();
+                    if filtered.is_empty() {
                         let row = adw::ActionRow::new();
                         row.set_title(
                             &self
@@ -473,7 +500,7 @@ impl FlowView {
                         );
                         serves.append(&row);
                     } else {
-                        for serve in &snap.serves {
+                        for serve in &filtered {
                             let view = self.clone();
                             serves.append(&super::dashboard::serve_card_row(
                                 &self.ctx,
@@ -493,7 +520,16 @@ impl FlowView {
                 "automations" => {
                     let autos = gtk::ListBox::new();
                     autos.add_css_class("boxed-list");
-                    let records = crate::automation::collect(&self.ctx.store.borrow());
+                    let filter = self.origin_filter.borrow().clone();
+                    let records: Vec<_> = crate::automation::collect(&self.ctx.store.borrow())
+                        .into_iter()
+                        .filter(|record| {
+                            crate::jobs::origin_matches(
+                                crate::jobs::automation_origin(&record.id),
+                                &filter,
+                            )
+                        })
+                        .collect();
                     if records.is_empty() {
                         let row = adw::ActionRow::new();
                         row.set_title(
@@ -1052,7 +1088,6 @@ impl FlowView {
                 }
             }
         }
-        rows.truncate(12);
         let mut check_items = Vec::new();
         for job in jobs {
             if crate::checks::is_check_operation(&job.operation) {
@@ -1065,7 +1100,10 @@ impl FlowView {
             }
         }
         check_items.truncate(40);
-        if rows.is_empty() && check_items.is_empty() {
+        let has_live_job = jobs
+            .iter()
+            .any(|job| crate::jobs::job_is_running(job) || crate::jobs::job_is_pending(job));
+        if rows.is_empty() && check_items.is_empty() && !has_live_job {
             return;
         }
         let title = if jobs
@@ -1079,12 +1117,73 @@ impl FlowView {
                 .t_or("shared.transferActivity.title", "Transfer Activity")
         };
         host.append(&self.heading(&title));
+        let search = gtk::SearchEntry::new();
+        search.set_placeholder_text(Some(
+            &self.ctx.t_or("shared.search.toggle", "Search transfers"),
+        ));
+        search.set_text(&self.transfer_query.borrow());
+        {
+            let view = self.clone();
+            search.connect_search_changed(move |entry| {
+                let text = entry.text().to_string();
+                if *view.transfer_query.borrow() == text {
+                    return;
+                }
+                *view.transfer_query.borrow_mut() = text;
+                view.refresh();
+            });
+        }
+        host.append(&search);
+        let active_count = rows.iter().filter(|(_, _, completed)| !*completed).count();
+        let done_count = rows.iter().filter(|(_, _, completed)| *completed).count();
+        if active_count > 0 && done_count > 0 {
+            let tabs = gtk::Box::new(gtk::Orientation::Horizontal, 0);
+            tabs.add_css_class("linked");
+            let current = self.transfer_tab.borrow().clone();
+            for (id, key, fallback, count) in [
+                (
+                    "active",
+                    "shared.transferActivity.tabs.active",
+                    "Active",
+                    active_count,
+                ),
+                (
+                    "recent",
+                    "shared.transferActivity.tabs.recent",
+                    "Recent",
+                    done_count,
+                ),
+            ] {
+                let template = self.ctx.t_or(key, fallback);
+                let count_s = count.to_string();
+                let label = if template.contains("{{count}}") || template.contains("{count}") {
+                    template
+                        .replace("{{count}}", &count_s)
+                        .replace("{count}", &count_s)
+                } else {
+                    format!("{template} ({count})")
+                };
+                let btn = gtk::ToggleButton::with_label(&label);
+                btn.set_active(current == id);
+                {
+                    let view = self.clone();
+                    let id = id.to_string();
+                    btn.connect_clicked(move |_| {
+                        *view.transfer_tab.borrow_mut() = id.clone();
+                        view.refresh();
+                    });
+                }
+                tabs.append(&btn);
+            }
+            host.append(&tabs);
+        }
         if !check_items.is_empty() {
+            let query = self.transfer_query.borrow().clone();
             let check_items = crate::checks::visible_check_items(
                 check_items,
                 &self.ctx.hidden_check_ids.borrow(),
                 &self.ctx.check_status_overrides.borrow(),
-                "",
+                &query,
             );
             if !check_items.is_empty() {
                 let list = gtk::ListBox::new();
@@ -1098,37 +1197,30 @@ impl FlowView {
         if rows.is_empty() {
             return;
         }
+        let query = self.transfer_query.borrow().to_ascii_lowercase();
+        let tab = self.transfer_tab.borrow().clone();
         let list = gtk::ListBox::new();
         list.add_css_class("boxed-list");
         for (operation, row, completed) in rows {
-            let item = adw::ActionRow::new();
-            item.set_title(&row.name);
-            let src = if row.src.is_empty() {
-                "—".into()
-            } else {
-                row.src.clone()
-            };
-            let dst = if row.dst.is_empty() {
-                "—".into()
-            } else {
-                row.dst.clone()
-            };
-            let state = if completed {
-                self.ctx
-                    .t_or("shared.transferActivity.status.completed", "Completed")
-            } else {
-                format!("{}%", row.percentage)
-            };
-            item.set_subtitle(&format!("{state} · {src} → {dst}"));
-            item.add_suffix(&dialogs::transfer_row_actions(
+            if tab == "active" && completed {
+                continue;
+            }
+            if tab == "recent" && !completed {
+                continue;
+            }
+            if !query.is_empty() {
+                let hay = format!("{} {} {}", row.name, row.src, row.dst).to_ascii_lowercase();
+                if !hay.contains(&query) {
+                    continue;
+                }
+            }
+            list.append(&dialogs::transfer_activity_row(
                 &self.ctx,
-                &self.toast,
                 &row,
-                &operation,
                 completed,
-                None,
+                &operation,
+                &self.toast,
             ));
-            list.append(&item);
         }
         host.append(&list);
     }

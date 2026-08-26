@@ -278,6 +278,19 @@ pub fn provider_index_by_name(providers: &[Provider], type_name: &str) -> Option
         .position(|p| p.name.eq_ignore_ascii_case(wanted) || p.prefix.eq_ignore_ascii_case(wanted))
 }
 
+/// Password-typed provider options for the Angular obscure apply-to-field list.
+pub fn sensitive_field_labels(providers: &[Provider], type_name: &str) -> Vec<(String, String)> {
+    let Some(idx) = provider_index_by_name(providers, type_name) else {
+        return Vec::new();
+    };
+    providers[idx]
+        .options
+        .iter()
+        .filter(|option| option.is_password)
+        .map(|option| (option.name.clone(), option.name.clone()))
+        .collect()
+}
+
 pub fn dump_field_text(params: &Value, name: &str) -> Option<String> {
     match params.get(name)? {
         Value::Null => None,
@@ -358,6 +371,9 @@ mod tests {
         assert_eq!(providers[0].advanced_options().count(), 1);
         assert!(providers[0].options[1].is_password);
         assert_eq!(providers[0].options[2].examples[0].0, "drive");
+        let fields = sensitive_field_labels(&providers, "drive");
+        assert_eq!(fields, vec![("token".into(), "token".into())]);
+        assert!(sensitive_field_labels(&providers, "sftp").is_empty());
     }
 
     #[test]

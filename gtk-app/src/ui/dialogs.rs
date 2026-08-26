@@ -12906,6 +12906,163 @@ fn restore_or_pick_config(parent: &impl IsA<gtk::Widget>, ctx: AppCtx) {
     );
 }
 
+/// Angular `app-obscure-tool`: obscure a secret, copy the result, apply to a field.
+#[derive(Clone)]
+pub(crate) struct ObscureTool {
+    pub input: adw::PasswordEntryRow,
+    pub result: adw::EntryRow,
+    pub target: adw::ComboRow,
+    pub actions: adw::ActionRow,
+    fields: Rc<RefCell<Vec<(String, String)>>>,
+}
+
+impl ObscureTool {
+    pub fn add_to_box(&self, host: &gtk::Box) {
+        host.append(&self.input);
+        host.append(&self.result);
+        host.append(&self.target);
+        host.append(&self.actions);
+    }
+
+    pub fn add_to_group(&self, group: &adw::PreferencesGroup) {
+        group.add(&self.input);
+        group.add(&self.result);
+        group.add(&self.target);
+        group.add(&self.actions);
+    }
+
+    pub fn refresh_targets(&self) {
+        let fields = self.fields.borrow();
+        let labels: Vec<String> = fields
+            .iter()
+            .map(|(key, label)| {
+                if label.is_empty() || label == key {
+                    key.clone()
+                } else {
+                    format!("{label} ({key})")
+                }
+            })
+            .collect();
+        let refs: Vec<&str> = labels.iter().map(|s| s.as_str()).collect();
+        self.target.set_model(Some(&gtk::StringList::new(&refs)));
+        self.target.set_visible(!fields.is_empty());
+        self.target.set_sensitive(!fields.is_empty());
+    }
+}
+
+pub(crate) fn obscure_tool(
+    ctx: &AppCtx,
+    fields: Rc<RefCell<Vec<(String, String)>>>,
+    on_apply: Rc<dyn Fn(&str, &str)>,
+) -> ObscureTool {
+    let input = adw::PasswordEntryRow::new();
+    input.set_title(&ctx.t_or("wizards.obscure.clearPlaceholder", "Obscure a secret"));
+    let result = adw::EntryRow::new();
+    result.set_title(&ctx.t_or("wizards.obscure.resultTitle", "Obscured value"));
+    result.set_editable(false);
+    result.set_visible(false);
+    let copy = gtk::Button::from_icon_name("edit-copy-symbolic");
+    copy.set_valign(gtk::Align::Center);
+    copy.set_tooltip_text(Some(&ctx.t_or("modals.oauth.copyLink", "Copy")));
+    {
+        let result = result.clone();
+        copy.connect_clicked(move |_| {
+            if let Some(display) = gtk::gdk::Display::default() {
+                display.clipboard().set_text(&result.text());
+            }
+        });
+    }
+    result.add_suffix(&copy);
+    let target = adw::ComboRow::new();
+    target.set_title(&ctx.t_or(
+        "wizards.obscure.applyToField",
+        "Apply obscured value to field",
+    ));
+    target.set_visible(false);
+    let actions = adw::ActionRow::new();
+    actions.set_title(&ctx.t_or("wizards.obscure.title", "Obscure"));
+    let clear = gtk::Button::with_label(&ctx.t_or("common.clear", "Clear"));
+    clear.set_valign(gtk::Align::Center);
+    let obscure_btn = gtk::Button::with_label(&ctx.t_or("wizards.obscure.action", "Obscure"));
+    obscure_btn.set_valign(gtk::Align::Center);
+    obscure_btn.add_css_class("suggested-action");
+    let apply = gtk::Button::with_label(&ctx.t_or("wizards.obscure.apply", "Apply"));
+    apply.set_valign(gtk::Align::Center);
+    apply.set_sensitive(false);
+    {
+        let input = input.clone();
+        let result = result.clone();
+        let apply = apply.clone();
+        clear.connect_clicked(move |_| {
+            input.set_text("");
+            result.set_text("");
+            result.set_visible(false);
+            apply.set_sensitive(false);
+        });
+    }
+    {
+        let ctx = ctx.clone();
+        let input = input.clone();
+        let result = result.clone();
+        let apply = apply.clone();
+        obscure_btn.connect_clicked(move |_| {
+            let raw = input.text().trim().to_string();
+            if raw.is_empty() {
+                result.set_text("");
+                result.set_visible(false);
+                apply.set_sensitive(false);
+                return;
+            }
+            let Some(client) = ctx.client() else {
+                return;
+            };
+            match client.obscure(&raw) {
+                Ok(out) => {
+                    result.set_text(&out);
+                    result.set_visible(true);
+                    apply.set_sensitive(true);
+                    if let Some(display) = gtk::gdk::Display::default() {
+                        display.clipboard().set_text(&out);
+                    }
+                }
+                Err(e) => {
+                    result.set_text(&e.to_string());
+                    result.set_visible(true);
+                    apply.set_sensitive(false);
+                }
+            }
+        });
+    }
+    {
+        let result = result.clone();
+        let target = target.clone();
+        let fields = fields.clone();
+        apply.connect_clicked(move |_| {
+            let value = result.text().to_string();
+            if value.is_empty() {
+                return;
+            }
+            let idx = target.selected() as usize;
+            let Some(key) = fields.borrow().get(idx).map(|(key, _)| key.clone()) else {
+                return;
+            };
+            on_apply(&key, &value);
+        });
+    }
+    actions.add_suffix(&clear);
+    actions.add_suffix(&obscure_btn);
+    actions.add_suffix(&apply);
+    let tool = ObscureTool {
+        input,
+        result,
+        target,
+        actions,
+        fields,
+    };
+    tool.refresh_targets();
+    tool
+}
+
 pub fn multi_rename(
     parent: &impl IsA<gtk::Widget>,
     ctx: AppCtx,
@@ -12966,6 +13123,9 @@ pub fn multi_rename(
         let names = names.clone();
         let preview = preview.clone();
         let plan_slots = plan_slots.clone();
+        let start = start.clone();
+        let step = step.clone();
+        let pad = pad.clone();
         move || {
             while let Some(child) = preview.first_child() {
                 preview.remove(&child);
@@ -12985,6 +13145,10 @@ pub fn multi_rename(
                 counter_padding: slots.5.text().parse().unwrap_or(2),
                 case_sensitive: slots.7.is_active(),
             };
+            let show_counters = crate::rename::counter_controls_visible(&plan.mode, &plan.template);
+            start.set_visible(show_counters);
+            step.set_visible(show_counters);
+            pad.set_visible(show_counters);
             let date = chrono::Local::now().format("%Y-%m-%d").to_string();
             for row in rename_preview(&names, &plan, &date) {
                 let item = adw::ActionRow::new();

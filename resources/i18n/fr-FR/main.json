@@ -861,7 +861,8 @@
       "memoryUnavailable": "Statistiques mémoire indisponibles",
       "remoteVisible": "Visible dans la barre latérale et l’aperçu"
     },
-    "detach": "Detach the current workspace into a new window"
+    "detach": "Detach the current workspace into a new window",
+    "closeOverlay": "Close overlay and return to the base view"
   },
   "onboarding": {
     "loadingTitle": "Initialisation rclone Manager",

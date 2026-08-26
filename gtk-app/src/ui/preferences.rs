@@ -81,7 +81,19 @@ impl PrefsSession {
     fn refresh_banner(&self) {
         let count = self.pending.borrow().len();
         self.banner.set_visible(count > 0);
-        self.banner_row.set_subtitle(&if count == 1 {
+        let mut names: Vec<String> = self
+            .pending
+            .borrow()
+            .keys()
+            .map(|path| {
+                crate::settings::pending_restart_title_key(path)
+                    .map(|(key, fallback)| self.ctx.t_or(key, fallback))
+                    .unwrap_or_else(|| path.clone())
+            })
+            .collect();
+        names.sort();
+        let list = names.join(" · ");
+        let summary = if count == 1 {
             self.ctx.t_or(
                 "modals.preferences.onePendingChange",
                 "1 setting waiting for Save & Restart",
@@ -91,7 +103,17 @@ impl PrefsSession {
                 "modals.preferences.pendingChangesTooltip",
                 &[("count", &count.to_string())],
             )
+        };
+        self.banner_row.set_subtitle(&if list.is_empty() {
+            summary
+        } else {
+            format!("{summary} — {list}")
         });
+        if list.is_empty() {
+            self.banner.set_description(None);
+        } else {
+            self.banner.set_description(Some(&list));
+        }
     }
 
     fn save_and_restart(&self) {
@@ -1504,9 +1526,21 @@ fn add_developer_page(
             .ctx
             .t_or("developerTools.maintenance", "Maintenance"),
     );
+    let inspector = gtk::Button::with_label(
+        &session
+            .ctx
+            .t_or("developerTools.openDevTools", "Open Developer Tools"),
+    );
+    inspector.set_tooltip_text(Some(
+        &session
+            .ctx
+            .t_or("developerTools.openDevTools", "Open the GTK Inspector"),
+    ));
+    inspector.connect_clicked(|_| gtk::Window::set_interactive_debugging(true));
     maint.add_suffix(&gc);
     maint.add_suffix(&fscache);
     maint.add_suffix(&ping);
+    maint.add_suffix(&inspector);
     d1.add(&maint);
     page.add(&d1);
 }

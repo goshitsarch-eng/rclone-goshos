@@ -308,6 +308,23 @@ fn present_main_with(app: &adw::Application, ctx: AppCtx, hidden: bool) {
     detach_btn.set_action_name(Some("win.detach-workspace"));
     header.pack_end(&detach_btn);
 
+    let close_overlay = gtk::Button::from_icon_name("window-close-symbolic");
+    close_overlay.add_css_class("flat");
+    close_overlay.set_tooltip_text(Some(&ctx.t_or(
+        "titlebar.closeOverlay",
+        "Close overlay and return to the base view",
+    )));
+    close_overlay.set_visible(false);
+    close_overlay.set_action_name(Some("win.close-overlay"));
+    header.pack_end(&close_overlay);
+    {
+        let close_overlay = close_overlay.clone();
+        let ctx_btn = ctx.clone();
+        *ctx.on_overlays_changed.borrow_mut() = Some(Rc::new(move || {
+            close_overlay.set_visible(ctx_btn.overlay_count() > 0);
+        }));
+    }
+
     let notice_btn = gtk::Button::from_icon_name("dialog-warning-symbolic");
     notice_btn.add_css_class("flat");
     notice_btn.set_visible(false);
@@ -751,6 +768,10 @@ fn app_menu(ctx: &AppCtx) -> gio::Menu {
         Some("win.debug-info"),
     );
     tools.append(
+        Some(&ctx.t_or("developerTools.openDevTools", "Open Developer Tools")),
+        Some("win.inspector"),
+    );
+    tools.append(
         Some(&ctx.t_or("developerTools.relaunch", "Relaunch")),
         Some("win.relaunch"),
     );
@@ -778,6 +799,13 @@ fn app_menu(ctx: &AppCtx) -> gio::Menu {
     views.append(
         Some(&ctx.t_or("titlebar.detach", "Detach workspace")),
         Some("win.detach-workspace"),
+    );
+    views.append(
+        Some(&ctx.t_or(
+            "titlebar.closeOverlay",
+            "Close overlay and return to the base view",
+        )),
+        Some("win.close-overlay"),
     );
     menu.append_section(None, &views);
 
@@ -1277,6 +1305,14 @@ fn install_actions(
             }),
         );
     }
+    add_action(
+        "inspector",
+        Box::new(|| gtk::Window::set_interactive_debugging(true)),
+    );
+    {
+        let ctx = ctx.clone();
+        add_action("close-overlay", Box::new(move || ctx.close_overlays()));
+    }
     {
         let app = app.clone();
         let toast = toast.clone();
@@ -1416,6 +1452,7 @@ pub fn present_files_at(parent: &impl IsA<gtk::Widget>, ctx: &AppCtx, remote: &s
     detached.set_default_height(640);
     detached.set_content(Some(&toast));
     detached.present();
+    ctx.register_overlay(&detached);
 }
 
 fn files_target(remote: &str, path: &str) -> String {
@@ -1509,6 +1546,7 @@ fn open_workspace_window(app: &adw::Application, ctx: &AppCtx, view: MainView) {
     window.set_default_height(760);
     window.set_content(Some(&toolbar));
     window.present();
+    ctx.register_overlay(&window);
 }
 
 fn apply_nav(

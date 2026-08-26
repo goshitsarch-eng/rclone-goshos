@@ -84,25 +84,30 @@ pub fn present_with(
     ));
     side_col.append(&search);
     side_col.append(&side_scroll);
-    let obscure_in = adw::EntryRow::new();
-    obscure_in.set_title(&ctx.t_or("wizards.obscure.clearPlaceholder", "Obscure a secret"));
-    let obscure_btn = gtk::Button::with_label(&ctx.t_or("wizards.obscure.action", "Obscure"));
+    let obscure_fields = Rc::new(RefCell::new(sensitive_fields_for(&ctx, &remote)));
     {
         let ctx = ctx.clone();
-        let obscure_in = obscure_in.clone();
-        obscure_btn.connect_clicked(move |_| {
-            if let Some(client) = ctx.client() {
-                if let Ok(out) = client.obscure(&obscure_in.text()) {
-                    obscure_in.set_text(&out);
-                    if let Some(display) = gtk::gdk::Display::default() {
-                        display.clipboard().set_text(&out);
+        let remote = remote.clone();
+        let fields = obscure_fields.clone();
+        let apply_ctx = ctx.clone();
+        dialogs::obscure_tool(
+            &ctx,
+            fields,
+            Rc::new(move |key, value| {
+                if let Some(client) = apply_ctx.client() {
+                    let mut params = serde_json::Map::new();
+                    params.insert(key.to_string(), json!(value));
+                    if client
+                        .update_remote(&remote, Value::Object(params), None)
+                        .is_ok()
+                    {
+                        apply_ctx.refresh_runtime();
                     }
                 }
-            }
-        });
+            }),
+        )
+        .add_to_box(&side_col);
     }
-    side_col.append(&obscure_in);
-    side_col.append(&obscure_btn);
     split.set_sidebar(Some(&side_col));
 
     let content = gtk::Box::new(gtk::Orientation::Vertical, 8);
@@ -2188,6 +2193,25 @@ fn show_reauth_error(parent: &impl IsA<gtk::Widget>, ctx: &AppCtx, detail: &str)
     );
     err.add_response("ok", &ctx.t_or("common.ok", "OK"));
     err.present(Some(parent));
+}
+
+fn sensitive_fields_for(ctx: &AppCtx, remote: &str) -> Vec<(String, String)> {
+    let Some(client) = ctx.client() else {
+        return Vec::new();
+    };
+    let dump = client.dump_config().unwrap_or(json!({}));
+    let Some(params) = crate::providers::dump_remote_params(&dump, remote) else {
+        return Vec::new();
+    };
+    let Some(type_name) = crate::providers::dump_provider_type(&params) else {
+        return Vec::new();
+    };
+    let providers = client
+        .providers()
+        .ok()
+        .map(|value| crate::providers::parse_providers(&value))
+        .unwrap_or_default();
+    crate::providers::sensitive_field_labels(&providers, &type_name)
 }
 
 fn update_cron_hint(ctx: &AppCtx, row: &adw::EntryRow, hint: &gtk::Label) {

@@ -652,7 +652,15 @@ impl Dashboard {
             layout_bar.append(&variant_btn);
         }
         self.host().append(&layout_bar);
-        self.host().append(&self.origin_filter_bar());
+        let dash = self.clone();
+        self.host().append(&Self::origin_filter_bar(
+            &self.ctx,
+            &self.origin_filter(),
+            move |id| {
+                *dash.origin_filter.borrow_mut() = id;
+                dash.refresh();
+            },
+        ));
         let layout = crate::layout::PanelLayout::from_value(
             &self.ctx.settings.borrow().runtime.dashboard_layout,
         );
@@ -672,12 +680,16 @@ impl Dashboard {
         }
     }
 
-    fn origin_filter_bar(&self) -> gtk::Box {
+    pub(crate) fn origin_filter_bar(
+        ctx: &AppCtx,
+        current: &str,
+        on_change: impl Fn(String) + 'static,
+    ) -> gtk::Box {
         let bar = gtk::Box::new(gtk::Orientation::Horizontal, 6);
         bar.add_css_class("linked");
         bar.set_halign(gtk::Align::Start);
         bar.set_margin_bottom(4);
-        let current = self.origin_filter.borrow().clone();
+        let on_change = Rc::new(on_change);
         for (id, key, fallback) in [
             ("all", "common.all", "All"),
             ("dashboard", "navigation.dashboard", "Dashboard"),
@@ -689,15 +701,12 @@ impl Dashboard {
                 "Automations",
             ),
         ] {
-            let btn = gtk::ToggleButton::with_label(&self.ctx.t_or(key, fallback));
+            let btn = gtk::ToggleButton::with_label(&ctx.t_or(key, fallback));
             btn.set_active(current == id);
             {
-                let dash = self.clone();
+                let on_change = on_change.clone();
                 let id = id.to_string();
-                btn.connect_clicked(move |_| {
-                    *dash.origin_filter.borrow_mut() = id.clone();
-                    dash.refresh();
-                });
+                btn.connect_clicked(move |_| on_change(id.clone()));
             }
             bar.append(&btn);
         }

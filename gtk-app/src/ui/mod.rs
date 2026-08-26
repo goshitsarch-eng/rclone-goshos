@@ -17,6 +17,8 @@ use crate::platform::PowerInhibitor;
 use crate::rclone::RcloneEngine;
 use crate::settings::AppSettings;
 use crate::store::{AppStore, RuntimeSnapshot};
+use gtk::glib;
+use gtk::prelude::*;
 use std::cell::{Cell, RefCell};
 use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
@@ -60,6 +62,8 @@ pub struct AppCtx {
     pub check_status_overrides: Rc<RefCell<HashMap<String, String>>>,
     pub hidden_check_ids: Rc<RefCell<HashSet<String>>>,
     dump_cache: Rc<RefCell<Option<(std::time::Instant, serde_json::Value)>>>,
+    pub overlay_windows: Rc<RefCell<Vec<gtk::Window>>>,
+    pub on_overlays_changed: Rc<RefCell<Option<Rc<dyn Fn()>>>>,
 }
 
 impl AppCtx {
@@ -111,6 +115,8 @@ impl AppCtx {
             check_status_overrides: Rc::new(RefCell::new(HashMap::new())),
             hidden_check_ids: Rc::new(RefCell::new(HashSet::new())),
             dump_cache: Rc::new(RefCell::new(None)),
+            overlay_windows: Rc::new(RefCell::new(Vec::new())),
+            on_overlays_changed: Rc::new(RefCell::new(None)),
         };
         ctx.apply_remote_layout();
         {
@@ -128,6 +134,47 @@ impl AppCtx {
                 .into_owned()]);
         crate::platform::start_metered_watch();
         ctx
+    }
+
+    pub fn register_overlay(&self, window: &impl IsA<gtk::Window>) {
+        let win = window.upcast_ref::<gtk::Window>().clone();
+        {
+            let ctx = self.clone();
+            win.connect_close_request(move |_| {
+                glib::timeout_add_local_once(std::time::Duration::from_millis(0), {
+                    let ctx = ctx.clone();
+                    move || ctx.sync_overlays()
+                });
+                glib::Propagation::Proceed
+            });
+        }
+        self.overlay_windows.borrow_mut().push(win);
+        self.sync_overlays();
+    }
+
+    pub fn close_overlays(&self) {
+        let windows: Vec<gtk::Window> = self.overlay_windows.borrow_mut().drain(..).collect();
+        for window in windows {
+            window.close();
+        }
+        self.sync_overlays();
+    }
+
+    pub fn overlay_count(&self) -> usize {
+        self.overlay_windows
+            .borrow()
+            .iter()
+            .filter(|window| window.is_visible())
+            .count()
+    }
+
+    pub fn sync_overlays(&self) {
+        self.overlay_windows
+            .borrow_mut()
+            .retain(|window| window.is_visible());
+        if let Some(cb) = self.on_overlays_changed.borrow().clone() {
+            cb();
+        }
     }
 
     fn cached_dump(&self, client: &crate::rclone::RcClient) -> serde_json::Value {

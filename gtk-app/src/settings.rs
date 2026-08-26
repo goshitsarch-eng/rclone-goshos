@@ -466,6 +466,21 @@ pub fn requires_engine_restart(path: &str) -> bool {
     ENGINE_RESTART_PATHS.contains(&path)
 }
 
+/// Title key + English fallback for a queued engine-restart setting.
+pub fn pending_restart_title_key(path: &str) -> Option<(&'static str, &'static str)> {
+    match path {
+        "core.rclone_binary" => Some(("settings.core.rclone_binary.label", "Rclone binary")),
+        "core.rclone_additional_flags" => Some((
+            "settings.core.rclone_flags.label",
+            "Additional rclone flags",
+        )),
+        "core.rclone_env_vars" => {
+            Some(("settings.core.rclone_env_vars.label", "Rclone environment"))
+        }
+        _ => None,
+    }
+}
+
 pub fn default_for_path(path: &str) -> Option<serde_json::Value> {
     AppSettings::default().get_by_path(path)
 }
@@ -673,6 +688,15 @@ mod tests {
             vec!["--transfers", "8"]
         );
         assert_eq!(settings.core.rclone_env_vars, vec!["RCLONE_VERBOSE=1"]);
+        assert_eq!(
+            pending_restart_title_key("core.rclone_binary").map(|(_, fb)| fb),
+            Some("Rclone binary")
+        );
+        assert_eq!(
+            pending_restart_title_key("core.rclone_env_vars").map(|(key, _)| key),
+            Some("settings.core.rclone_env_vars.label")
+        );
+        assert!(pending_restart_title_key("general.language").is_none());
     }
 
     #[test]

@@ -656,3 +656,11 @@ This client is the GTK 4 + libadwaita desktop UI. It talks to a local `rclone rc
 - `--backends`, `--rclone-flags`, `--templates`, `--export`, `--repair` and `#/backends|flags|templates|export|repair` open those dialogs
 - Live GUI: `win.backends` via gdbus shows Local `127.0.0.1` + office extra backend and Config Password
 - App update install launches `msiexec` / `open` for Windows MSI/EXE and macOS DMG/PKG instead of replacing the binary
+- Flow overview Jobs/Serves/Automations honor the same origin filter chips as the dashboard
+- Flow remote detail Transfer Activity has search plus Active/Recent tabs
+- Remote-config and Detailed Remote obscure tools apply the result to a provider password field
+- Preferences search indexes restrict, sleep, theme, files, env, mount, and destroy-on-close rows
+- Multi-rename hides counter start/step/padding until the template includes `[Counter]`
+- Preferences pending-restart banner lists the queued setting names
+- Developer menu and Preferences open the GTK Inspector (`developerTools.openDevTools`)
+- Titlebar / menu Close overlay dismisses detached workspace windows and returns to the base view

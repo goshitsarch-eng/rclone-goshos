@@ -1,3 +1,4 @@
+use super::dialogs;
 use super::AppCtx;
 use crate::flags::parse_flag_value;
 use crate::interactive::{
@@ -211,6 +212,13 @@ fn present_ex(
         flow: InteractiveFlowState::default(),
         parameters: json!({}),
     }));
+    let obscure_fields = Rc::new(RefCell::new(
+        providers
+            .first()
+            .map(|provider| crate::providers::sensitive_field_labels(&providers, &provider.name))
+            .unwrap_or_default(),
+    ));
+    let obscure_refresh: Rc<RefCell<Option<Rc<dyn Fn()>>>> = Rc::new(RefCell::new(None));
     let rebuilding = Rc::new(Cell::new(false));
     let command_options = Rc::new(RefCell::new(
         crate::command_options::initial_command_options(),
@@ -279,8 +287,16 @@ fn present_ex(
         let rebuilding = rebuilding.clone();
         let json_mode = json_mode.clone();
         let json_view = json_view.clone();
+        let obscure_fields = obscure_fields.clone();
+        let obscure_refresh = obscure_refresh.clone();
         type_row.connect_selected_notify(move |row| {
             let provider = providers.get(row.selected() as usize);
+            *obscure_fields.borrow_mut() = provider
+                .map(|p| crate::providers::sensitive_field_labels(&providers, &p.name))
+                .unwrap_or_default();
+            if let Some(refresh) = obscure_refresh.borrow().clone() {
+                refresh();
+            }
             rebuild_fields(
                 &parent,
                 &ctx,
@@ -424,19 +440,22 @@ fn present_ex(
         });
     }
     cli.add_suffix(&cli_preview);
-    let obscure_in = adw::EntryRow::new();
-    obscure_in.set_title(&ctx.t_or("wizards.obscure.clearPlaceholder", "Obscure a secret"));
-    let obscure_btn = gtk::Button::with_label(&ctx.t_or("wizards.obscure.action", "Obscure"));
-    {
-        let ctx = ctx.clone();
-        let obscure_in = obscure_in.clone();
-        obscure_btn.connect_clicked(move |_| {
-            if let Some(client) = ctx.client() {
-                if let Ok(out) = client.obscure(&obscure_in.text()) {
-                    obscure_in.set_text(&out);
+    let obscure = {
+        let state = state.clone();
+        dialogs::obscure_tool(
+            &ctx,
+            obscure_fields.clone(),
+            Rc::new(move |key, value| {
+                if let Some(widget) = state.borrow().fields.get(key) {
+                    widget.set_display_text(value);
                 }
-            }
-        });
+                state.borrow_mut().parameters[key] = json!(value);
+            }),
+        )
+    };
+    {
+        let obscure = obscure.clone();
+        *obscure_refresh.borrow_mut() = Some(Rc::new(move || obscure.refresh_targets()));
     }
     let op_flags: Rc<RefCell<Vec<(OperationType, adw::SwitchRow, adw::EntryRow, adw::EntryRow)>>> =
         Rc::new(RefCell::new(Vec::new()));
@@ -989,7 +1008,7 @@ fn present_ex(
     pgroup.add(&tray);
     pgroup.add(&autostart);
     pgroup.add(&cli);
-    pgroup.add(&obscure_in);
+    obscure.add_to_group(&pgroup);
     profiles.add(&pgroup);
     if !oauth_only {
         profiles.add(&ops_group);
