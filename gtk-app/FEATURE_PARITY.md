@@ -819,3 +819,4 @@ This client is the GTK 4 + libadwaita desktop UI. It talks to a local `rclone rc
 - Delete stays blocked for any in-use job/mount/serve profile, with the same in-use tooltip as Angular
 - Dashboard and Flow transfer/check tables page like Angular (`displayLimit` 50 + Show N more) instead of silently dropping rows at 12/40; Job Information lists every check result
 - Live GUI: testdrive Copy `gui-copy-test` Transfer Activity lists `batch/file-01.txt` through `batch/file-15.txt` (beyond the old 12-row cap)
+- Live GUI: testdrive Mount profile `default` rename stays enabled while `/tmp/rclone-testdrive-mnt` is mounted (Angular allows mount rename; job-profile rename is what gets blocked)
