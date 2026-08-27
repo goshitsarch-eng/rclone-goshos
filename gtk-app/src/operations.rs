@@ -141,6 +141,24 @@ impl OperationType {
         }
     }
 
+    /// Dashboard operation description (`dashboard.appDetail.*Desc`).
+    /// Copy URL uses camelCase `copyUrlDesc` to match Angular i18n.
+    pub fn app_detail_desc_key(self) -> &'static str {
+        match self {
+            Self::Mount => "dashboard.appDetail.mountBehave",
+            Self::Serve => "dashboard.appDetail.serveBehave",
+            Self::Sync => "dashboard.appDetail.syncDesc",
+            Self::Copy => "dashboard.appDetail.copyDesc",
+            Self::Move => "dashboard.appDetail.moveDesc",
+            Self::Bisync => "dashboard.appDetail.bisyncDesc",
+            Self::Check => "dashboard.appDetail.checkDesc",
+            Self::Delete => "dashboard.appDetail.deleteDesc",
+            Self::Copyurl => "dashboard.appDetail.copyUrlDesc",
+            Self::Archivecreate => "dashboard.appDetail.archivecreateDesc",
+            Self::Cryptcheck => "dashboard.appDetail.cryptcheckDesc",
+        }
+    }
+
     /// Compact remote-card action i18n key (`overviews.remoteCard.actions.*`).
     pub fn remote_card_action_key(self, active: bool) -> String {
         match self {
@@ -635,6 +653,33 @@ impl FileTypeCategory {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn app_detail_desc_keys_match_angular() {
+        assert_eq!(
+            OperationType::Copy.app_detail_desc_key(),
+            "dashboard.appDetail.copyDesc"
+        );
+        assert_eq!(
+            OperationType::Copyurl.app_detail_desc_key(),
+            "dashboard.appDetail.copyUrlDesc"
+        );
+        assert_eq!(
+            OperationType::Mount.app_detail_desc_key(),
+            "dashboard.appDetail.mountBehave"
+        );
+        assert_eq!(
+            OperationType::Serve.app_detail_desc_key(),
+            "dashboard.appDetail.serveBehave"
+        );
+        for op in OperationType::ALL {
+            assert!(
+                op.app_detail_desc_key().starts_with("dashboard.appDetail."),
+                "{}",
+                op.as_str()
+            );
+        }
+    }
 
     #[test]
     fn remote_card_action_keys_match_angular() {

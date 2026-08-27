@@ -9653,7 +9653,17 @@ pub fn job_detail(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, job_id: u64) {
             };
             crate::jobs::decorate_job_transfers(&mut job, &registry, &siblings);
             crate::jobs::finalize_history_job(&mut job);
-            populate_opens(&job.src, &job.dst);
+            let dest = {
+                let alias = ctx.remote_cfg_alias(&job.remote);
+                let live_mount = crate::jobs::resolve_unmount_point(
+                    &ctx.snapshot.borrow().mounts,
+                    &job.remote,
+                    &alias,
+                    &crate::jobs::split_job_paths(&job.dst),
+                );
+                crate::jobs::job_detail_dest_path(&job.operation, &job.dst, live_mount.as_deref())
+            };
+            populate_opens(&job.src, &dest);
             paths.append(&job_path_row(
                 &ctx,
                 &dialog,
@@ -9670,7 +9680,7 @@ pub fn job_detail(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, job_id: u64) {
                     crate::jobs::job_detail_path_title_key(&job.operation, true),
                     "Destination",
                 ),
-                &job.dst,
+                &dest,
             ));
             let status_label = ctx.t_or(crate::jobs::job_status_key(&job.status), &job.status);
             let duration_label = if job.duration > 0.0 {

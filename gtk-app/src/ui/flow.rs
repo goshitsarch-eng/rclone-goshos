@@ -1576,7 +1576,24 @@ impl FlowView {
             &qr.remote_name,
             &default_addr,
         );
-        let paths = crate::jobs::operation_control_paths(qr.operation_type, cfg_src, cfg_dst, live);
+        let alias = self.ctx.remote_cfg_alias(&qr.remote_name);
+        let fallbacks: Vec<String> = cfg_dst
+            .iter()
+            .cloned()
+            .chain(live.map(|j| j.dst.clone()))
+            .collect();
+        let live_mount = if qr.operation_type == crate::operations::OperationType::Mount {
+            crate::jobs::resolve_unmount_point(&snap.mounts, &qr.remote_name, &alias, &fallbacks)
+        } else {
+            None
+        };
+        let paths = crate::jobs::operation_control_paths(
+            qr.operation_type,
+            cfg_src,
+            cfg_dst,
+            live,
+            live_mount.as_deref(),
+        );
         let active = live.is_some();
         let busy = self
             .ctx

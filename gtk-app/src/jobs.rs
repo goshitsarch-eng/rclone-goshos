@@ -2838,11 +2838,40 @@ pub fn operation_control_configured_paths(
     }
 }
 
+/// Prefer a live FUSE mount point over configured/stale dest for mount ops.
+pub fn overlay_live_mount_dest(
+    op: OperationType,
+    dest: Option<String>,
+    live_mount_point: Option<&str>,
+) -> Option<String> {
+    if op == OperationType::Mount {
+        if let Some(point) = live_mount_point.map(str::trim).filter(|s| !s.is_empty()) {
+            return Some(point.to_string());
+        }
+    }
+    dest
+}
+
+/// Job Detail dest: mount jobs show the live mount point when rclone reports one.
+pub fn job_detail_dest_path(operation: &str, dest: &str, live_mount_point: Option<&str>) -> String {
+    overlay_live_mount_dest(
+        if job_operation_matches(operation, OperationType::Mount) {
+            OperationType::Mount
+        } else {
+            OperationType::Copy
+        },
+        Some(dest.to_string()),
+        live_mount_point,
+    )
+    .unwrap_or_else(|| dest.to_string())
+}
+
 pub fn operation_control_paths(
     op: OperationType,
     configured_src: Option<String>,
     configured_dst: Option<String>,
     live: Option<&JobInfo>,
+    live_mount_point: Option<&str>,
 ) -> OperationControlPaths {
     let nonempty = |value: Option<String>| value.filter(|s| !s.is_empty());
     let source = live
@@ -2856,7 +2885,7 @@ pub fn operation_control_paths(
     };
     OperationControlPaths {
         source,
-        destination,
+        destination: overlay_live_mount_dest(op, destination, live_mount_point),
         hide_destination: op == OperationType::Delete,
         dest_browseable: op != OperationType::Serve,
     }
@@ -5662,6 +5691,7 @@ mod tests {
             Some("testdrive:Photos".into()),
             Some("testdrive:verify-qr".into()),
             None,
+            None,
         );
         assert_eq!(configured.source.as_deref(), Some("testdrive:Photos"));
         assert_eq!(
@@ -5677,6 +5707,7 @@ mod tests {
             Some("testdrive:Photos".into()),
             Some("testdrive:verify-qr".into()),
             Some(&live),
+            None,
         );
         assert_eq!(from_job.source.as_deref(), Some("testdrive:live-src"));
         assert_eq!(from_job.destination.as_deref(), Some("testdrive:live-dst"));
@@ -5685,6 +5716,7 @@ mod tests {
             OperationType::Delete,
             Some("testdrive:Trash".into()),
             Some("unused".into()),
+            None,
             None,
         );
         assert!(delete.hide_destination);
@@ -5730,8 +5762,13 @@ mod tests {
             "Default",
         );
         assert_eq!(empty_serve.1.as_deref(), Some("HTTP at Default"));
-        let serve_paths =
-            operation_control_paths(OperationType::Serve, empty_serve.0, empty_serve.1, None);
+        let serve_paths = operation_control_paths(
+            OperationType::Serve,
+            empty_serve.0,
+            empty_serve.1,
+            None,
+            None,
+        );
         assert!(!serve_paths.dest_browseable);
         assert_eq!(serve_paths.destination.as_deref(), Some("HTTP at Default"));
 
@@ -5743,5 +5780,33 @@ mod tests {
         );
         assert_eq!(saf.1.as_deref(), Some("saf://phone"));
         assert!(is_saf_mount(&json!({ "mountPoint": "saf://phone" })));
+
+        let mounted = operation_control_paths(
+            OperationType::Mount,
+            Some("testdrive:".into()),
+            Some("/mnt/unused".into()),
+            None,
+            Some("/tmp/rclone-testdrive-mnt"),
+        );
+        assert_eq!(
+            mounted.destination.as_deref(),
+            Some("/tmp/rclone-testdrive-mnt")
+        );
+        assert_eq!(
+            job_detail_dest_path("mount", "/mnt/unused", Some("/tmp/rclone-testdrive-mnt")),
+            "/tmp/rclone-testdrive-mnt"
+        );
+        assert_eq!(
+            job_detail_dest_path("mount/mount", "/mnt/unused", Some("/tmp/live")),
+            "/tmp/live"
+        );
+        assert_eq!(
+            job_detail_dest_path("copy", "testdrive:out", Some("/tmp/live")),
+            "testdrive:out"
+        );
+        assert_eq!(
+            job_detail_dest_path("mount", "/mnt/unused", None),
+            "/mnt/unused"
+        );
     }
 }

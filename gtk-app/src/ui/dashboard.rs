@@ -2539,9 +2539,8 @@ impl Dashboard {
                 &[("op", op.api_label())],
             )
         };
-        let desc_key = format!("dashboard.appDetail.{}Desc", op.as_str());
         let desc = self.ctx.t_or(
-            &desc_key,
+            op.app_detail_desc_key(),
             "Adjust how this operation behaves. Multi-profile supported.",
         );
         if !desc.is_empty() {
@@ -2914,14 +2913,15 @@ impl Dashboard {
             );
             btn.set_active(op == selected);
             let running = remote_sync_op_running(name, op, &snap.jobs);
+            let desc = self.ctx.t_or(op.app_detail_desc_key(), op.api_label());
             btn.set_tooltip_text(Some(&if running {
                 format!(
                     "{} · {}",
-                    self.ctx.t_or(op.action_label_key(), op.api_label()),
+                    desc,
                     self.ctx.t_or("automation.status.running", "Running")
                 )
             } else {
-                self.ctx.t_or(op.action_label_key(), op.api_label())
+                desc
             }));
             let dash = self.clone();
             let remote = name.to_string();
@@ -2986,6 +2986,9 @@ impl Dashboard {
                     item_row.append(&dot);
                 }
                 item.set_child(Some(&item_row));
+                item.set_tooltip_text(Some(
+                    &self.ctx.t_or(op.app_detail_desc_key(), op.api_label()),
+                ));
                 let dash = self.clone();
                 let remote = name.to_string();
                 let popover = popover.clone();
@@ -3334,7 +3337,19 @@ impl Dashboard {
                     &default_addr,
                 )
             });
-        let paths = crate::jobs::operation_control_paths(op, cfg_src, cfg_dst, live);
+        let alias = self.ctx.remote_cfg_alias(name);
+        let fallbacks: Vec<String> = cfg_dst
+            .iter()
+            .cloned()
+            .chain(live.map(|j| j.dst.clone()))
+            .collect();
+        let live_mount = if op == OperationType::Mount {
+            crate::jobs::resolve_unmount_point(&snap.mounts, name, &alias, &fallbacks)
+        } else {
+            None
+        };
+        let paths =
+            crate::jobs::operation_control_paths(op, cfg_src, cfg_dst, live, live_mount.as_deref());
         let busy = crate::jobs::action_in_progress(
             name,
             op,
