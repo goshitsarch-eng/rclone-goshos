@@ -594,12 +594,32 @@ pub fn prompt(
     initial: &str,
     on_ok: impl Fn(String) + 'static,
 ) {
+    prompt_ex(parent, ctx, title, label, initial, None, None, on_ok);
+}
+
+pub fn prompt_ex(
+    parent: &impl IsA<gtk::Widget>,
+    ctx: &AppCtx,
+    title: &str,
+    label: &str,
+    initial: &str,
+    confirm_label: Option<&str>,
+    placeholder: Option<&str>,
+    on_ok: impl Fn(String) + 'static,
+) {
     let dialog = adw::AlertDialog::new(Some(title), Some(label));
     let entry = gtk::Entry::new();
     entry.set_text(initial);
+    if let Some(placeholder) = placeholder.filter(|s| !s.is_empty()) {
+        entry.set_placeholder_text(Some(placeholder));
+    }
     dialog.set_extra_child(Some(&entry));
     dialog.add_response("cancel", &ctx.t("common.cancel"));
-    dialog.add_response("ok", &ctx.t_or("common.ok", "OK"));
+    let confirm = confirm_label
+        .filter(|s| !s.is_empty())
+        .map(|s| s.to_string())
+        .unwrap_or_else(|| ctx.t_or("common.ok", "OK"));
+    dialog.add_response("ok", &confirm);
     dialog.set_response_appearance("ok", adw::ResponseAppearance::Suggested);
     dialog.set_default_response(Some("ok"));
     dialog.set_close_response("cancel");
@@ -9637,13 +9657,19 @@ pub fn job_detail(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, job_id: u64) {
             paths.append(&job_path_row(
                 &ctx,
                 &dialog,
-                &ctx.t_or("fileBrowser.operations.details.source", "Source"),
+                &ctx.t_or(
+                    crate::jobs::job_detail_path_title_key(&job.operation, false),
+                    "Source",
+                ),
                 &job.src,
             ));
             paths.append(&job_path_row(
                 &ctx,
                 &dialog,
-                &ctx.t_or("fileBrowser.operations.details.destination", "Destination"),
+                &ctx.t_or(
+                    crate::jobs::job_detail_path_title_key(&job.operation, true),
+                    "Destination",
+                ),
                 &job.dst,
             ));
             let status_label = ctx.t_or(crate::jobs::job_status_key(&job.status), &job.status);
@@ -9746,7 +9772,10 @@ pub fn job_detail(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, job_id: u64) {
                 meta.append(&row);
             }
             for (title, value) in [
-                (ctx.t_or("sidebar.remotes", "Remote"), job.remote.clone()),
+                (
+                    ctx.t_or(crate::jobs::job_detail_remote_title_key(), "Remote Source"),
+                    job.remote.clone(),
+                ),
                 (
                     ctx.t_or("modals.jobDetail.fields.started", "Started"),
                     if crate::jobs::has_known_start_time(&job) {
@@ -10742,6 +10771,10 @@ fn pdf_panel(path: Option<std::path::PathBuf>, name: &str, ctx: &AppCtx) -> gtk:
         }
         let open =
             gtk::Button::with_label(&ctx.t_or("fileBrowser.fileViewer.openNative", "Open native"));
+        open.set_tooltip_text(Some(&ctx.t_or(
+            "fileBrowser.fileViewer.openNativeTooltip",
+            "Open in default external application",
+        )));
         open.add_css_class("suggested-action");
         let p = path.clone();
         open.connect_clicked(move |_| {
@@ -11259,9 +11292,10 @@ fn append_markdown_targets(
         } else {
             let open = gtk::Button::from_icon_name("document-open-symbolic");
             open.set_valign(gtk::Align::Center);
-            open.set_tooltip_text(Some(
-                &ctx.t_or("fileBrowser.fileViewer.openNative", "Open in External App"),
-            ));
+            open.set_tooltip_text(Some(&ctx.t_or(
+                "fileBrowser.fileViewer.openNativeTooltip",
+                "Open in default external application",
+            )));
             let ctx = ctx.clone();
             let parent = dialog_parent.clone();
             let open_remote = if crate::markdown::is_passthrough_ref(&resolved)
@@ -11423,6 +11457,16 @@ fn attach_local_media_preview(
             label.set_xalign(0.0);
             parent.append(&label);
             attach_audio_cover(parent, Some(local), None);
+        }
+        if matches!(category, crate::operations::FileTypeCategory::Video) {
+            let label = gtk::Label::new(Some(&ctx.tf_or(
+                "fileBrowser.fileViewer.videoLabel",
+                "Video: {{name}}",
+                &[("name", name)],
+            )));
+            label.add_css_class("dim-label");
+            label.set_xalign(0.0);
+            parent.append(&label);
         }
     }
     if matches!(category, crate::operations::FileTypeCategory::Pdf) {
@@ -11606,9 +11650,20 @@ pub fn file_viewer(
             );
         });
     }
+    let close = gtk::Button::from_icon_name("window-close-symbolic");
+    close.set_tooltip_text(Some(
+        &ctx.t_or("fileBrowser.fileViewer.closeViewer", "Close viewer"),
+    ));
+    {
+        let dialog = dialog.clone();
+        close.connect_clicked(move |_| {
+            dialog.close();
+        });
+    }
     nav.append(&prev);
     nav.append(&pos);
     nav.append(&next);
+    nav.append(&close);
     {
         let keys = gtk::EventControllerKey::new();
         let prev = prev.clone();
@@ -11647,6 +11702,10 @@ pub fn file_viewer(
     let open = gtk::Button::with_label(
         &ctx.t_or("fileBrowser.fileViewer.openNative", "Open in External App"),
     );
+    open.set_tooltip_text(Some(&ctx.t_or(
+        "fileBrowser.fileViewer.openNativeTooltip",
+        "Open in default external application",
+    )));
     {
         let parent = parent.clone();
         let ctx = ctx.clone();

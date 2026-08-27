@@ -2292,6 +2292,22 @@ pub fn action_in_progress(
     })
 }
 
+/// Job Detail path-row title: mount dest uses Mount Point, others Source/Destination.
+pub fn job_detail_path_title_key(operation: &str, dest: bool) -> &'static str {
+    if dest && job_operation_matches(operation, OperationType::Mount) {
+        "modals.jobDetail.fields.mountPoint"
+    } else if dest {
+        "fileBrowser.operations.details.destination"
+    } else {
+        "fileBrowser.operations.details.source"
+    }
+}
+
+/// Job Detail remote field (Angular `fields.remoteSource`).
+pub fn job_detail_remote_title_key() -> &'static str {
+    "modals.jobDetail.fields.remoteSource"
+}
+
 pub fn job_operation_matches(job_op: &str, op: OperationType) -> bool {
     let key = op.as_str();
     let lower = job_op.to_ascii_lowercase();
@@ -4310,6 +4326,26 @@ mod tests {
         assert!(job_operation_matches("sync/copy", OperationType::Sync));
         assert!(job_operation_matches("rc/copy", OperationType::Copy));
         assert!(!job_operation_matches("job/1", OperationType::Sync));
+        assert_eq!(
+            job_detail_path_title_key("copy", false),
+            "fileBrowser.operations.details.source"
+        );
+        assert_eq!(
+            job_detail_path_title_key("copy", true),
+            "fileBrowser.operations.details.destination"
+        );
+        assert_eq!(
+            job_detail_path_title_key("mount", true),
+            "modals.jobDetail.fields.mountPoint"
+        );
+        assert_eq!(
+            job_detail_path_title_key("mount/mount", true),
+            "modals.jobDetail.fields.mountPoint"
+        );
+        assert_eq!(
+            job_detail_remote_title_key(),
+            "modals.jobDetail.fields.remoteSource"
+        );
         assert_eq!(
             action_busy_key("drive", "sync", "nightly"),
             "drive|sync|nightly"

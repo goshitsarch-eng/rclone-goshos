@@ -1138,14 +1138,7 @@ impl Dashboard {
                             }
                         }
                     }
-                    let label = self
-                        .ctx
-                        .t_or(&format!("actions.{}", op.as_str()), op.api_label());
-                    let verb = if active {
-                        self.ctx.t_or("actions.stop", "Stop")
-                    } else {
-                        self.ctx.t_or("actions.start", "Start")
-                    };
+                    let action = remote_card_action_label(&self.ctx, op, active);
                     if names.is_empty() && !crate::jobs::allows_unconfigured_start(op) {
                         let btn = gtk::Button::from_icon_name(op.icon_name());
                         btn.set_valign(gtk::Align::Center);
@@ -1159,7 +1152,7 @@ impl Dashboard {
                         let btn = gtk::MenuButton::new();
                         btn.set_icon_name(op.icon_name());
                         btn.set_valign(gtk::Align::Center);
-                        btn.set_tooltip_text(Some(&format!("{verb} {label} · {}", names.len())));
+                        btn.set_tooltip_text(Some(&format!("{action} · {}", names.len())));
                         if active {
                             btn.add_css_class("destructive-action");
                         }
@@ -1238,7 +1231,7 @@ impl Dashboard {
                     } else {
                         let btn = gtk::Button::from_icon_name(op.icon_name());
                         btn.set_valign(gtk::Align::Center);
-                        btn.set_tooltip_text(Some(&format!("{verb} {label}")));
+                        btn.set_tooltip_text(Some(&action));
                         if active {
                             btn.add_css_class("destructive-action");
                         }
@@ -3085,8 +3078,6 @@ impl Dashboard {
         } else {
             primary
         };
-        let start = self.ctx.t_or("actions.start", "Start");
-        let stop = self.ctx.t_or("actions.stop", "Stop");
         for op in kinds {
             let active = match op {
                 OperationType::Mount => mounted,
@@ -3097,11 +3088,9 @@ impl Dashboard {
                         && crate::jobs::job_is_running(job)
                 }),
             };
-            let label = self
-                .ctx
-                .t_or(&format!("actions.{}", op.as_str()), op.api_label());
-            let verb = if active { &stop } else { &start };
-            let btn = gtk::Button::with_label(&format!("{verb} {label}"));
+            let action = remote_card_action_label(&self.ctx, op, active);
+            let btn = gtk::Button::with_label(&action);
+            btn.set_tooltip_text(Some(&action));
             if active {
                 btn.add_css_class("destructive-action");
             }
@@ -4268,6 +4257,15 @@ fn append_open_folder_suffix(row: &adw::ActionRow, ctx: &AppCtx, remote: &str, p
 
 fn open_overview_path(ctx: &AppCtx, current_remote: &str, raw: &str) {
     ctx.open_typed_path(current_remote, raw);
+}
+
+fn remote_card_action_label(ctx: &AppCtx, op: OperationType, active: bool) -> String {
+    let fallback = format!(
+        "{} {}",
+        if active { "Stop" } else { "Start" },
+        op.api_label()
+    );
+    ctx.t_or(&op.remote_card_action_key(active), &fallback)
 }
 
 fn mark_action_busy(btn: &gtk::Button, busy: bool, ctx: &AppCtx) {

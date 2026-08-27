@@ -4289,7 +4289,7 @@ impl NautilusView {
             return;
         };
         let view = self.clone();
-        dialogs::prompt(
+        dialogs::prompt_ex(
             &win,
             &self.ctx,
             &self
@@ -4299,6 +4299,12 @@ impl NautilusView {
                 .ctx
                 .t_or("nautilus.modals.newFolder.label", "Folder name"),
             "",
+            None,
+            Some(
+                &self
+                    .ctx
+                    .t_or("nautilus.modals.newFolder.placeholder", "Enter folder name"),
+            ),
             move |name| {
                 if name.is_empty() {
                     return;
@@ -4378,7 +4384,7 @@ impl NautilusView {
     fn mkdir_prompt(&self) {
         if let Some(win) = self.root.root().and_downcast::<gtk::Window>() {
             let view = self.clone();
-            dialogs::prompt(
+            dialogs::prompt_ex(
                 &win,
                 &self.ctx,
                 &self
@@ -4388,6 +4394,12 @@ impl NautilusView {
                     .ctx
                     .t_or("nautilus.modals.newFolder.label", "Folder name"),
                 "",
+                None,
+                Some(
+                    &self
+                        .ctx
+                        .t_or("nautilus.modals.newFolder.placeholder", "Enter folder name"),
+                ),
                 move |name| {
                     if name.is_empty() {
                         return;
@@ -5409,12 +5421,18 @@ impl NautilusView {
         }
         let old = names[0].clone();
         let view = self.clone();
-        dialogs::prompt(
+        dialogs::prompt_ex(
             &win,
             &self.ctx,
             &self.ctx.t_or("nautilus.modals.rename.title", "Rename"),
             &self.ctx.t_or("nautilus.modals.rename.label", "New name"),
             &old.clone(),
+            Some(&self.ctx.t_or("nautilus.modals.rename.confirm", "Rename")),
+            Some(
+                &self
+                    .ctx
+                    .t_or("nautilus.modals.rename.placeholder", "Enter new name"),
+            ),
             move |new_name| {
                 if new_name.is_empty() || new_name == old {
                     return;

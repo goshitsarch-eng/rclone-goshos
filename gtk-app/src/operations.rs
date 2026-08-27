@@ -141,6 +141,25 @@ impl OperationType {
         }
     }
 
+    /// Compact remote-card action i18n key (`overviews.remoteCard.actions.*`).
+    pub fn remote_card_action_key(self, active: bool) -> String {
+        match self {
+            Self::Mount => {
+                if active {
+                    "overviews.remoteCard.actions.unmount".into()
+                } else {
+                    "overviews.remoteCard.actions.mount".into()
+                }
+            }
+            other => {
+                let verb = if active { "stop" } else { "start" };
+                let name = other.as_str();
+                let capitalized = format!("{}{}", name[..1].to_ascii_uppercase(), &name[1..]);
+                format!("overviews.remoteCard.actions.{verb}{capitalized}")
+            }
+        }
+    }
+
     pub fn is_sync_type(self) -> bool {
         !matches!(self, Self::Mount | Self::Serve)
     }
@@ -616,6 +635,48 @@ impl FileTypeCategory {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn remote_card_action_keys_match_angular() {
+        assert_eq!(
+            OperationType::Mount.remote_card_action_key(false),
+            "overviews.remoteCard.actions.mount"
+        );
+        assert_eq!(
+            OperationType::Mount.remote_card_action_key(true),
+            "overviews.remoteCard.actions.unmount"
+        );
+        assert_eq!(
+            OperationType::Copy.remote_card_action_key(false),
+            "overviews.remoteCard.actions.startCopy"
+        );
+        assert_eq!(
+            OperationType::Copy.remote_card_action_key(true),
+            "overviews.remoteCard.actions.stopCopy"
+        );
+        assert_eq!(
+            OperationType::Copyurl.remote_card_action_key(false),
+            "overviews.remoteCard.actions.startCopyurl"
+        );
+        assert_eq!(
+            OperationType::Archivecreate.remote_card_action_key(true),
+            "overviews.remoteCard.actions.stopArchivecreate"
+        );
+        assert_eq!(
+            OperationType::Cryptcheck.remote_card_action_key(false),
+            "overviews.remoteCard.actions.startCryptcheck"
+        );
+        for op in OperationType::ALL {
+            if op == OperationType::Mount {
+                continue;
+            }
+            let start = op.remote_card_action_key(false);
+            let stop = op.remote_card_action_key(true);
+            assert!(start.starts_with("overviews.remoteCard.actions.start"));
+            assert!(stop.starts_with("overviews.remoteCard.actions.stop"));
+            assert_ne!(start, stop);
+        }
+    }
 
     #[test]
     fn parses_all_operation_keys() {
