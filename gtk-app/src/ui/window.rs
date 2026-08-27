@@ -2702,7 +2702,9 @@ fn apply_startup_css() {
            outline: 2px dashed alpha(@window_fg_color, 0.45);\n\
            outline-offset: -2px;\n\
            border-radius: 8px;\n\
-         }",
+         }\n\
+         .nautilus-toolbar-scroll { min-width: 0; }\n\
+         .nautilus-toolbar { min-width: 0; }",
     );
     if let Some(display) = gtk::gdk::Display::default() {
         gtk::style_context_add_provider_for_display(

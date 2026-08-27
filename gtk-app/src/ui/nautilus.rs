@@ -199,6 +199,7 @@ impl NautilusView {
     pub fn new(ctx: AppCtx, toast: adw::ToastOverlay) -> Self {
         let root = gtk::Box::new(gtk::Orientation::Vertical, 0);
         let toolbar = gtk::Box::new(gtk::Orientation::Horizontal, 6);
+        toolbar.add_css_class("nautilus-toolbar");
         toolbar.set_margin_top(6);
         toolbar.set_margin_bottom(6);
         toolbar.set_margin_start(8);
@@ -268,6 +269,8 @@ impl NautilusView {
         ));
         let path_stack = gtk::Stack::new();
         path_stack.set_hexpand(true);
+        path_stack.set_hexpand_set(true);
+        path_stack.set_width_request(80);
         path_stack.add_named(&crumbs_overlay, Some("crumbs"));
         path_stack.add_named(&path_entry, Some("entry"));
         path_stack.add_named(&search_entry, Some("search"));
@@ -327,10 +330,7 @@ impl NautilusView {
             &ctx.t_or("nautilus.contextMenu.pathOptions", "Path options"),
         ));
         toolbar.append(&reload);
-        let send_to_btn = gtk::Button::with_label(&ctx.t_or(
-            "nautilus.contextMenu.addToSendTo",
-            "Add to File Manager Menu",
-        ));
+        let send_to_btn = gtk::Button::from_icon_name("list-add-symbolic");
         send_to_btn.set_tooltip_text(Some(&ctx.t_or(
             "nautilus.contextMenu.addToSendTo",
             "Add to File Manager Menu",
@@ -516,7 +516,17 @@ impl NautilusView {
         bottom_bar.append(&bottom_confirm);
         bottom_bar.append(&bottom_layout);
 
-        root.append(&toolbar);
+        let toolbar_scroll = gtk::ScrolledWindow::builder()
+            .hscrollbar_policy(gtk::PolicyType::Automatic)
+            .vscrollbar_policy(gtk::PolicyType::Never)
+            .overlay_scrolling(true)
+            .propagate_natural_height(true)
+            .propagate_natural_width(false)
+            .hexpand(true)
+            .build();
+        toolbar_scroll.add_css_class("nautilus-toolbar-scroll");
+        toolbar_scroll.set_child(Some(&toolbar));
+        root.append(&toolbar_scroll);
         root.append(&filter_bar);
         root.append(&picker_bar);
         root.append(&share_bar);
@@ -4096,11 +4106,15 @@ impl NautilusView {
         let narrow = self.is_narrow.get();
         self.bottom_bar.set_visible(narrow);
         self.bottom_confirm.set_visible(picker && narrow);
+        self.layout_btn.set_visible(!narrow);
+        self.icon_btn.set_visible(!narrow);
+        self.actions_btn.set_visible(!narrow);
         if picker {
             self.picker_bar.set_visible(!narrow);
         } else {
             self.picker_bar.set_visible(false);
         }
+        self.sync_send_to_button();
     }
 
     fn toggle_split(&self) {
@@ -4688,7 +4702,7 @@ impl NautilusView {
 
     fn sync_send_to_button(&self) {
         let current = self.current.borrow().clone();
-        let show = current.remote != "local" && !current.starred;
+        let show = !self.is_narrow.get() && current.remote != "local" && !current.starred;
         self.send_to_btn.set_visible(show);
         if !show {
             return;
@@ -4706,7 +4720,11 @@ impl NautilusView {
                 "Add to File Manager Menu",
             )
         };
-        self.send_to_btn.set_label(&label);
+        self.send_to_btn.set_icon_name(if registered {
+            "list-remove-symbolic"
+        } else {
+            "list-add-symbolic"
+        });
         self.send_to_btn.set_tooltip_text(Some(&label));
     }
 
