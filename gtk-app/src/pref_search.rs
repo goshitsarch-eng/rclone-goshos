@@ -203,6 +203,46 @@ pub const ITEMS: &[PrefSearchItem] = &[
         extra: &["tray", "limit"],
     },
     PrefSearchItem {
+        page: "core",
+        title_key: "settings.core.default_bisync_directory.label",
+        title_fallback: "Default bisync directory",
+        help_key: "settings.core.default_bisync_directory.description",
+        help_fallback: "Folder used when bisyncing remotes.",
+        extra: &["bisync", "folder"],
+    },
+    PrefSearchItem {
+        page: "general",
+        title_key: "settings.runtime.rclone_update_channel.label",
+        title_fallback: "rclone update channel",
+        help_key: "settings.runtime.rclone_update_channel.description",
+        help_fallback: "Stable or beta rclone updates.",
+        extra: &["rclone", "update", "channel"],
+    },
+    PrefSearchItem {
+        page: "general",
+        title_key: "settings.runtime.app_auto_check_updates.label",
+        title_fallback: "Check for app updates",
+        help_key: "settings.runtime.app_auto_check_updates.description",
+        help_fallback: "Automatically check for application updates.",
+        extra: &["update", "auto"],
+    },
+    PrefSearchItem {
+        page: "general",
+        title_key: "settings.runtime.rclone_auto_check_updates.label",
+        title_fallback: "Check for rclone updates",
+        help_key: "settings.runtime.rclone_auto_check_updates.description",
+        help_fallback: "Automatically check for rclone updates.",
+        extra: &["rclone", "update"],
+    },
+    PrefSearchItem {
+        page: "general",
+        title_key: "settings.runtime.show_json_mode.label",
+        title_fallback: "JSON mode for flag editors",
+        help_key: "settings.runtime.show_json_mode.description",
+        help_fallback: "Show a JSON editor for rclone flags.",
+        extra: &["json", "flags"],
+    },
+    PrefSearchItem {
         page: "developer",
         title_key: "settings.developer.log_level.label",
         title_fallback: "Log level",
@@ -300,6 +340,12 @@ mod tests {
         assert!(matching_items("environment", &i18n)
             .iter()
             .any(|item| item.title_key.contains("rclone_env_vars")));
+        assert!(matching_items("bisync", &i18n)
+            .iter()
+            .any(|item| item.title_key.contains("default_bisync_directory")));
+        assert!(matching_items("json", &i18n)
+            .iter()
+            .any(|item| item.title_key.contains("show_json_mode")));
         assert!(matching_items("   ", &i18n).is_empty());
         assert!(matching_items("no-such-setting-xyz", &i18n).is_empty());
         assert_eq!(

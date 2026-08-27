@@ -303,23 +303,12 @@ fn preset_bar(
     remote: String,
     rebuild: Rc<dyn Fn()>,
 ) -> gtk::Box {
-    let box_ = gtk::Box::new(gtk::Orientation::Vertical, 6);
-    box_.set_margin_start(8);
-    box_.set_margin_end(8);
-    box_.set_margin_bottom(10);
-    let title = gtk::Label::new(Some(
-        &ctx.t_or("templates.presetTitle", "Presets & Templates"),
-    ));
-    title.add_css_class("heading");
-    title.set_xalign(0.0);
-    let defaults =
-        gtk::Button::with_label(&ctx.t_or("templates.applyPresets", "Apply Default Presets"));
-    {
+    let apply_defaults = {
         let ctx = ctx.clone();
         let remote = remote.clone();
         let rebuild = rebuild.clone();
         let parent = parent.clone();
-        defaults.connect_clicked(move |_| {
+        Rc::new(move || {
             let r#type = remote_type_of(&ctx, &remote);
             let presets = crate::presets::resolve_presets(&r#type, None, std::env::consts::OS);
             if let Some(meta) = ctx.store.borrow_mut().remotes.get_mut(&remote) {
@@ -339,37 +328,14 @@ fn preset_bar(
             );
             toast.add_response("ok", &ctx.t_or("common.ok", "OK"));
             toast.present(Some(&parent));
-        });
-    }
-    let pick = adw::ComboRow::new();
-    pick.set_title(&ctx.t_or("templates.userTemplates", "Saved User Templates"));
-    let apply = gtk::Button::with_label(&ctx.t_or("common.apply", "Apply"));
-    apply.add_css_class("suggested-action");
-    let refresh_combo = {
-        let ctx = ctx.clone();
-        let pick = pick.clone();
-        let apply = apply.clone();
-        Rc::new(move || {
-            let names =
-                crate::user_templates::template_display_names(&ctx.store.borrow().templates);
-            dialogs::fill_template_combo(&pick, &apply, &names);
         }) as Rc<dyn Fn()>
     };
-    refresh_combo();
-    {
+    let apply_template = {
         let ctx = ctx.clone();
         let remote = remote.clone();
         let rebuild = rebuild.clone();
         let parent = parent.clone();
-        let pick = pick.clone();
-        apply.connect_clicked(move |_| {
-            let templates = ctx.store.borrow().templates.clone();
-            let Some(name) = dialogs::combo_selected_label(&pick) else {
-                return;
-            };
-            let Some(template) = crate::user_templates::template_by_name(&templates, &name) else {
-                return;
-            };
+        Rc::new(move |template: &crate::store::UserTemplate| {
             if let Some(meta) = ctx.store.borrow_mut().remotes.get_mut(&remote) {
                 crate::user_templates::apply_to_meta(
                     meta,
@@ -384,43 +350,26 @@ fn preset_bar(
             let toast = adw::AlertDialog::new(Some(&msg), None::<&str>);
             toast.add_response("ok", &ctx.t_or("common.ok", "OK"));
             toast.present(Some(&parent));
-        });
-    }
-    let save = gtk::Button::with_label(&ctx.t_or(
-        "templates.saveAsTemplate",
-        "Save Current Settings as Template...",
-    ));
-    {
+        }) as Rc<dyn Fn(&crate::store::UserTemplate)>
+    };
+    let on_save = {
         let ctx = ctx.clone();
         let remote = remote.clone();
         let parent = parent.clone();
-        let refresh_combo = refresh_combo.clone();
-        save.connect_clicked(move |_| {
-            dialogs::templates_capture_for_remote_ex(
-                &parent,
-                ctx.clone(),
-                &remote,
-                Some(refresh_combo.clone()),
-            );
-        });
-    }
-    let manage =
-        gtk::Button::with_label(&ctx.t_or("templates.manageTemplates", "Manage Templates..."));
-    {
-        let ctx = ctx.clone();
-        let parent = parent.clone();
-        let refresh_combo = refresh_combo.clone();
-        manage.connect_clicked(move |_| {
-            dialogs::templates_with_on_change(&parent, ctx.clone(), refresh_combo.clone());
-        });
-    }
-    box_.append(&title);
-    box_.append(&defaults);
-    box_.append(&pick);
-    box_.append(&apply);
-    box_.append(&save);
-    box_.append(&manage);
-    box_
+        Rc::new(move |refresh: Rc<dyn Fn()>| {
+            dialogs::templates_capture_for_remote_ex(&parent, ctx.clone(), &remote, Some(refresh));
+        }) as Rc<dyn Fn(Rc<dyn Fn()>)>
+    };
+    let bar = dialogs::template_picker_bar(
+        parent,
+        ctx,
+        true,
+        apply_defaults,
+        apply_template,
+        Some(on_save),
+    );
+    bar.set_margin_bottom(10);
+    bar
 }
 
 fn step_icon(step: EditorStep) -> &'static str {

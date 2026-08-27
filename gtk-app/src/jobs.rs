@@ -1434,6 +1434,59 @@ pub fn job_transfer_previews(job: &JobInfo, limit: usize) -> Vec<(String, String
         .collect()
 }
 
+/// Name + size/error for Files ops completed-file list (Angular `stats.completed`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct JobCompletedPreview {
+    pub name: String,
+    pub detail: String,
+    pub failed: bool,
+}
+
+pub fn is_delete_like_operation(operation: &str) -> bool {
+    matches!(
+        operation.to_ascii_lowercase().as_str(),
+        "delete" | "cleanup" | "rmdirs"
+    )
+}
+
+pub fn job_transferred_label_key(operation: &str) -> &'static str {
+    match operation.to_ascii_lowercase().as_str() {
+        "delete" | "cleanup" | "rmdirs" => "fileBrowser.operations.details.deletedFiles",
+        "move" | "rename" => "fileBrowser.operations.details.movedFiles",
+        "copy" | "copyurl" => "fileBrowser.operations.details.copiedFiles",
+        "sync" | "bisync" => "fileBrowser.operations.details.syncedFiles",
+        "upload" => "fileBrowser.operations.details.uploadedFiles",
+        _ => "fileBrowser.operations.details.processedFiles",
+    }
+}
+
+pub fn job_completed_previews(job: &JobInfo, limit: usize) -> Vec<JobCompletedPreview> {
+    let Some(items) = job.completed.as_array() else {
+        return Vec::new();
+    };
+    items
+        .iter()
+        .map(crate::transfers::parse_completed_transfer_row)
+        .take(limit)
+        .map(|row| {
+            let failed = !row.error.is_empty();
+            let size = if row.size > 0 { row.size } else { row.bytes };
+            let detail = if failed {
+                row.error
+            } else if size > 0 {
+                format_bytes(size)
+            } else {
+                String::new()
+            };
+            JobCompletedPreview {
+                name: row.name,
+                detail,
+                failed,
+            }
+        })
+        .collect()
+}
+
 pub fn job_status_key(status: &str) -> &'static str {
     match status {
         "running" => "detailShared.jobs.status.running",
@@ -5052,6 +5105,28 @@ mod tests {
             job_failed_transfers(&preview, 8),
             vec![("bad.txt".into(), "permission denied".into())]
         );
+        preview.completed = json!([
+            { "name": "ok.txt", "size": 2048 },
+            { "name": "bad.txt", "error": "permission denied" }
+        ]);
+        let completed = job_completed_previews(&preview, 8);
+        assert_eq!(completed.len(), 2);
+        assert_eq!(completed[0].name, "ok.txt");
+        assert!(!completed[0].failed);
+        assert!(completed[0].detail.contains("KiB") || completed[0].detail.contains("2"));
+        assert_eq!(completed[1].name, "bad.txt");
+        assert!(completed[1].failed);
+        assert_eq!(completed[1].detail, "permission denied");
+        assert_eq!(
+            job_transferred_label_key("copy"),
+            "fileBrowser.operations.details.copiedFiles"
+        );
+        assert_eq!(
+            job_transferred_label_key("DELETE"),
+            "fileBrowser.operations.details.deletedFiles"
+        );
+        assert!(is_delete_like_operation("cleanup"));
+        assert!(!is_delete_like_operation("copy"));
         assert!((restored.progress - 1.0).abs() < f64::EPSILON);
         assert!(!has_known_start_time(&restored));
         let combined = history_with_meta(&history, &meta);

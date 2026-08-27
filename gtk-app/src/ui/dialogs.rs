@@ -11561,23 +11561,138 @@ pub(crate) fn combo_selected_label(row: &adw::ComboRow) -> Option<String> {
     }
 }
 
-pub(crate) fn fill_template_combo(pick: &adw::ComboRow, apply: &gtk::Button, names: &[String]) {
-    let previous = combo_selected_label(pick);
-    if names.is_empty() {
-        pick.set_model(Some(&gtk::StringList::new(&["—"])));
-        pick.set_sensitive(false);
-        apply.set_sensitive(false);
-        return;
-    }
-    let labels: Vec<&str> = names.iter().map(|s| s.as_str()).collect();
-    pick.set_model(Some(&gtk::StringList::new(&labels)));
-    pick.set_sensitive(true);
-    apply.set_sensitive(true);
-    if let Some(prev) = previous {
-        if let Some(idx) = names.iter().position(|name| name == &prev) {
-            pick.set_selected(idx as u32);
-        }
-    }
+/// Angular `preset-template-bar`: one MenuButton, apply-by-name on click.
+pub(crate) fn template_picker_bar(
+    parent: &impl IsA<gtk::Widget>,
+    ctx: AppCtx,
+    include_save: bool,
+    apply_defaults: Rc<dyn Fn()>,
+    apply_template: Rc<dyn Fn(&UserTemplate)>,
+    on_save: Option<Rc<dyn Fn(Rc<dyn Fn()>)>>,
+) -> gtk::Box {
+    let box_ = gtk::Box::new(gtk::Orientation::Vertical, 6);
+    box_.set_margin_start(8);
+    box_.set_margin_end(8);
+    let title = gtk::Label::new(Some(
+        &ctx.t_or("templates.presetTitle", "Presets & Templates"),
+    ));
+    title.add_css_class("heading");
+    title.set_xalign(0.0);
+    let button = gtk::MenuButton::new();
+    button.set_label(&ctx.t_or("templates.presetTitle", "Presets & Templates"));
+    button.set_always_show_arrow(true);
+    button.set_halign(gtk::Align::Start);
+    let popover = gtk::Popover::new();
+    let list = gtk::Box::new(gtk::Orientation::Vertical, 2);
+    list.set_margin_top(6);
+    list.set_margin_bottom(6);
+    list.set_margin_start(6);
+    list.set_margin_end(6);
+    popover.set_child(Some(&list));
+    button.set_popover(Some(&popover));
+    let refresh_slot: Rc<RefCell<Rc<dyn Fn()>>> = Rc::new(RefCell::new(Rc::new(|| {})));
+    let refresh = {
+        let refresh_slot = refresh_slot.clone();
+        Rc::new(move || refresh_slot.borrow()()) as Rc<dyn Fn()>
+    };
+    *refresh_slot.borrow_mut() = {
+        let ctx = ctx.clone();
+        let parent = parent.clone();
+        let list = list.clone();
+        let popover = popover.clone();
+        let apply_defaults = apply_defaults.clone();
+        let apply_template = apply_template.clone();
+        let on_save = on_save.clone();
+        let refresh = refresh.clone();
+        Rc::new(move || {
+            while let Some(child) = list.first_child() {
+                list.remove(&child);
+            }
+            let defaults = gtk::Button::with_label(
+                &ctx.t_or("templates.applyPresets", "Apply Default Presets"),
+            );
+            defaults.add_css_class("flat");
+            defaults.set_halign(gtk::Align::Fill);
+            {
+                let apply_defaults = apply_defaults.clone();
+                let popover = popover.clone();
+                defaults.connect_clicked(move |_| {
+                    popover.popdown();
+                    apply_defaults();
+                });
+            }
+            list.append(&defaults);
+            let templates = ctx.store.borrow().templates.clone();
+            if !templates.is_empty() {
+                list.append(&gtk::Separator::new(gtk::Orientation::Horizontal));
+                let heading = gtk::Label::new(Some(
+                    &ctx.t_or("templates.userTemplates", "Saved User Templates"),
+                ));
+                heading.add_css_class("dim-label");
+                heading.set_xalign(0.0);
+                heading.set_margin_start(8);
+                heading.set_margin_top(4);
+                heading.set_margin_bottom(2);
+                list.append(&heading);
+                for template in templates {
+                    let item = gtk::Button::with_label(&template.name);
+                    item.add_css_class("flat");
+                    item.set_halign(gtk::Align::Fill);
+                    item.set_tooltip_text(Some(&template.name));
+                    {
+                        let apply_template = apply_template.clone();
+                        let popover = popover.clone();
+                        item.connect_clicked(move |_| {
+                            popover.popdown();
+                            apply_template(&template);
+                        });
+                    }
+                    list.append(&item);
+                }
+            }
+            list.append(&gtk::Separator::new(gtk::Orientation::Horizontal));
+            if include_save {
+                if let Some(on_save) = on_save.clone() {
+                    let save = gtk::Button::with_label(&ctx.t_or(
+                        "templates.saveAsTemplate",
+                        "Save Current Settings as Template...",
+                    ));
+                    save.add_css_class("flat");
+                    save.set_halign(gtk::Align::Fill);
+                    {
+                        let on_save = on_save.clone();
+                        let popover = popover.clone();
+                        let refresh = refresh.clone();
+                        save.connect_clicked(move |_| {
+                            popover.popdown();
+                            on_save(refresh.clone());
+                        });
+                    }
+                    list.append(&save);
+                }
+            }
+            let manage = gtk::Button::with_label(
+                &ctx.t_or("templates.manageTemplates", "Manage Templates..."),
+            );
+            manage.add_css_class("flat");
+            manage.set_halign(gtk::Align::Fill);
+            {
+                let ctx = ctx.clone();
+                let parent = parent.clone();
+                let popover = popover.clone();
+                let refresh = refresh.clone();
+                manage.connect_clicked(move |_| {
+                    popover.popdown();
+                    templates_with_on_change(&parent, ctx.clone(), refresh.clone());
+                });
+            }
+            list.append(&manage);
+        }) as Rc<dyn Fn()>
+    };
+    refresh();
+    box_.append(&title);
+    box_.append(&button);
+    box_
 }
 
 fn fill_manage_template_list(
@@ -14405,14 +14520,6 @@ fn quick_run_preset_bar(
     runtime_json_toggle: adw::SwitchRow,
     runtime_current: Rc<RefCell<serde_json::Value>>,
 ) -> gtk::Box {
-    let box_ = gtk::Box::new(gtk::Orientation::Vertical, 6);
-    box_.set_margin_start(8);
-    box_.set_margin_end(8);
-    let title = gtk::Label::new(Some(
-        &ctx.t_or("templates.presetTitle", "Presets & Templates"),
-    ));
-    title.add_css_class("heading");
-    title.set_xalign(0.0);
     let current_op = {
         let op_row = op_row.clone();
         Rc::new(move || {
@@ -14451,15 +14558,13 @@ fn quick_run_preset_bar(
             );
         }) as Rc<dyn Fn(crate::user_templates::QuickRunFormPatch)>
     };
-    let defaults =
-        gtk::Button::with_label(&ctx.t_or("templates.applyPresets", "Apply Default Presets"));
-    {
+    let apply_defaults = {
         let ctx = ctx.clone();
         let remote = remote.clone();
         let parent = parent.clone();
         let apply_patch = apply_patch.clone();
         let current_op = current_op.clone();
-        defaults.connect_clicked(move |_| {
+        Rc::new(move || {
             let name = remote.text().to_string();
             if name.trim().is_empty() {
                 let warn = adw::AlertDialog::new(
@@ -14488,37 +14593,14 @@ fn quick_run_preset_bar(
             );
             toast.add_response("ok", &ctx.t_or("common.ok", "OK"));
             toast.present(Some(&parent));
-        });
-    }
-    let pick = adw::ComboRow::new();
-    pick.set_title(&ctx.t_or("templates.userTemplates", "Saved User Templates"));
-    let apply = gtk::Button::with_label(&ctx.t_or("common.apply", "Apply"));
-    apply.add_css_class("suggested-action");
-    let refresh_combo = {
-        let ctx = ctx.clone();
-        let pick = pick.clone();
-        let apply = apply.clone();
-        Rc::new(move || {
-            let names =
-                crate::user_templates::template_display_names(&ctx.store.borrow().templates);
-            fill_template_combo(&pick, &apply, &names);
         }) as Rc<dyn Fn()>
     };
-    refresh_combo();
-    {
+    let apply_template = {
         let ctx = ctx.clone();
         let parent = parent.clone();
-        let pick = pick.clone();
         let apply_patch = apply_patch.clone();
         let current_op = current_op.clone();
-        apply.connect_clicked(move |_| {
-            let templates = ctx.store.borrow().templates.clone();
-            let Some(name) = combo_selected_label(&pick) else {
-                return;
-            };
-            let Some(template) = crate::user_templates::template_by_name(&templates, &name) else {
-                return;
-            };
+        Rc::new(move |template: &UserTemplate| {
             apply_patch(crate::user_templates::template_form_patch(
                 &template.values,
                 current_op(),
@@ -14527,24 +14609,9 @@ fn quick_run_preset_bar(
             let toast = adw::AlertDialog::new(Some(&msg), None::<&str>);
             toast.add_response("ok", &ctx.t_or("common.ok", "OK"));
             toast.present(Some(&parent));
-        });
-    }
-    let manage =
-        gtk::Button::with_label(&ctx.t_or("templates.manageTemplates", "Manage Templates..."));
-    {
-        let ctx = ctx.clone();
-        let parent = parent.clone();
-        let refresh_combo = refresh_combo.clone();
-        manage.connect_clicked(move |_| {
-            templates_with_on_change(&parent, ctx.clone(), refresh_combo.clone());
-        });
-    }
-    box_.append(&title);
-    box_.append(&defaults);
-    box_.append(&pick);
-    box_.append(&apply);
-    box_.append(&manage);
-    box_
+        }) as Rc<dyn Fn(&UserTemplate)>
+    };
+    template_picker_bar(parent, ctx, false, apply_defaults, apply_template, None)
 }
 
 pub(crate) fn path_status_label(

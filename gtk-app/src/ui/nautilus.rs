@@ -5327,11 +5327,31 @@ impl NautilusView {
         ));
         if live && (job.status == "running" || job.status == "preparing") {
             let bar = gtk::ProgressBar::new();
-            bar.set_fraction(job.progress.clamp(0.0, 1.0));
-            bar.set_show_text(true);
-            bar.set_text(Some(&format!("{percent}%")));
             bar.set_valign(gtk::Align::Center);
             bar.set_width_request(96);
+            bar.set_show_text(true);
+            if crate::jobs::is_delete_like_operation(&job.operation) {
+                bar.set_pulse_step(0.15);
+                bar.pulse();
+                bar.set_text(Some(
+                    &self.ctx.t_or("fileBrowser.operations.progress", "Progress"),
+                ));
+                let weak = bar.downgrade();
+                glib::timeout_add_local(std::time::Duration::from_millis(100), move || match weak
+                    .upgrade()
+                {
+                    Some(bar) => {
+                        if bar.is_mapped() {
+                            bar.pulse();
+                        }
+                        glib::ControlFlow::Continue
+                    }
+                    None => glib::ControlFlow::Break,
+                });
+            } else {
+                bar.set_fraction(job.progress.clamp(0.0, 1.0));
+                bar.set_text(Some(&format!("{percent}%")));
+            }
             row.add_suffix(&bar);
         }
         let (speed, eta) = crate::jobs::job_speed_eta(job);
@@ -5399,29 +5419,52 @@ impl NautilusView {
                 row.add_row(&err_row);
             }
         }
-        for (name, error) in crate::jobs::job_failed_transfers(job, 8) {
-            let failed = adw::ActionRow::new();
-            failed.set_title(&name);
-            failed.set_subtitle(&error);
-            failed.set_tooltip_text(Some(&error));
-            failed.add_css_class("error");
-            row.add_row(&failed);
-        }
         let previews = crate::jobs::job_transfer_previews(job, 6);
-        if previews.is_empty() {
+        if !previews.is_empty() {
+            let header = adw::ActionRow::new();
+            header.set_title(&self.ctx.t_or(
+                if previews.len() == 1 {
+                    "fileBrowser.operations.currentFile"
+                } else {
+                    "fileBrowser.operations.currentFiles"
+                },
+                "Current files",
+            ));
+            row.add_row(&header);
+            for (name, detail) in &previews {
+                let child = adw::ActionRow::new();
+                child.set_title(&name);
+                child.set_subtitle(&detail);
+                row.add_row(&child);
+            }
+        }
+        let completed = crate::jobs::job_completed_previews(job, 12);
+        if !completed.is_empty() {
+            let header = adw::ActionRow::new();
+            header.set_title(&self.ctx.t_or(
+                crate::jobs::job_transferred_label_key(&job.operation),
+                "Processed files",
+            ));
+            row.add_row(&header);
+            for item in completed {
+                let child = adw::ActionRow::new();
+                child.set_title(&item.name);
+                if !item.detail.is_empty() {
+                    child.set_subtitle(&item.detail);
+                    child.set_tooltip_text(Some(&item.detail));
+                }
+                if item.failed {
+                    child.add_css_class("error");
+                }
+                row.add_row(&child);
+            }
+        } else if previews.is_empty() && live {
             let empty = adw::ActionRow::new();
             empty.set_title(&self.ctx.t_or(
                 "shared.transferActivity.empty.noActive",
                 "No active transfers",
             ));
             row.add_row(&empty);
-        } else {
-            for (name, detail) in previews {
-                let child = adw::ActionRow::new();
-                child.set_title(&name);
-                child.set_subtitle(&detail);
-                row.add_row(&child);
-            }
         }
         let details = adw::ActionRow::new();
         details.set_title(

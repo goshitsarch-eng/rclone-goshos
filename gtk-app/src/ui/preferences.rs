@@ -9,7 +9,7 @@ use crate::settings::{
     apply_path_values, default_for_path, display_setting, requires_engine_restart, values_equal,
 };
 use adw::prelude::*;
-use gtk::prelude::IsA;
+use gtk::prelude::{Cast, IsA};
 use serde_json::{json, Value};
 use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
@@ -19,7 +19,7 @@ use std::rc::Rc;
 struct PrefsSession {
     ctx: AppCtx,
     pending: Rc<RefCell<HashMap<String, Value>>>,
-    restorers: Rc<RefCell<HashMap<String, Rc<dyn Fn()>>>>,
+    restorers: Rc<RefCell<Vec<(String, Rc<dyn Fn()>)>>>,
     suppress: Rc<Cell<bool>>,
     banner: adw::PreferencesGroup,
     banner_row: adw::ActionRow,
@@ -45,7 +45,7 @@ impl PrefsSession {
         Self {
             ctx,
             pending: Rc::new(RefCell::new(HashMap::new())),
-            restorers: Rc::new(RefCell::new(HashMap::new())),
+            restorers: Rc::new(RefCell::new(Vec::new())),
             suppress: Rc::new(Cell::new(false)),
             banner,
             banner_row,
@@ -139,7 +139,7 @@ impl PrefsSession {
 
     fn discard(&self) {
         self.suppress.set(true);
-        for restorer in self.restorers.borrow().values() {
+        for (_, restorer) in self.restorers.borrow().iter() {
             restorer();
         }
         self.pending.borrow_mut().clear();
@@ -180,7 +180,7 @@ impl PrefsSession {
     fn remember_restorer(&self, path: &str, restorer: impl Fn() + 'static) {
         self.restorers
             .borrow_mut()
-            .insert(path.to_string(), Rc::new(restorer));
+            .push((path.to_string(), Rc::new(restorer)));
     }
 }
 
@@ -592,14 +592,19 @@ pub fn present_page(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, page: Option<&s
     dialog.add(&core);
     dialog.add(&security);
     dialog.add(&dev);
-    dialog.add(&search_page(&ctx, &dialog));
+    dialog.add(&search_page(&session, &dialog, parent));
     if let Some(name) = page.filter(|name| !name.is_empty()) {
         dialog.set_visible_page_name(name);
     }
     dialog.present(Some(parent));
 }
 
-fn search_page(ctx: &AppCtx, dialog: &adw::PreferencesDialog) -> adw::PreferencesPage {
+fn search_page(
+    session: &PrefsSession,
+    dialog: &adw::PreferencesDialog,
+    parent: &impl IsA<gtk::Widget>,
+) -> adw::PreferencesPage {
+    let ctx = &session.ctx;
     let page = adw::PreferencesPage::new();
     page.set_name(Some("search"));
     page.set_title(&ctx.t_or("modals.preferences.searchResults", "Search Results"));
@@ -637,17 +642,20 @@ fn search_page(ctx: &AppCtx, dialog: &adw::PreferencesDialog) -> adw::Preference
     ));
     empty.set_visible(false);
     results.add(&empty);
-    let result_rows: Rc<RefCell<Vec<adw::ActionRow>>> = Rc::new(RefCell::new(Vec::new()));
+    let result_rows: Rc<RefCell<Vec<gtk::Widget>>> = Rc::new(RefCell::new(Vec::new()));
     let refresh = {
-        let ctx = ctx.clone();
+        let session = session.clone();
         let dialog = dialog.clone();
+        let parent = parent.clone();
         let results = results.clone();
         let empty = empty.clone();
         let chips_row = chips_row.clone();
         let result_rows = result_rows.clone();
         Rc::new(move |text: String| {
             for row in result_rows.borrow().iter() {
-                results.remove(row);
+                if row.parent().as_ref() == Some(results.upcast_ref()) {
+                    results.remove(row);
+                }
             }
             result_rows.borrow_mut().clear();
             let query = text.trim().to_string();
@@ -656,25 +664,12 @@ fn search_page(ctx: &AppCtx, dialog: &adw::PreferencesDialog) -> adw::Preference
                 chips_row.set_visible(true);
                 return;
             }
-            let hits = crate::pref_search::matching_items(&query, &ctx.i18n.borrow());
+            let hits = crate::pref_search::matching_items(&query, &session.ctx.i18n.borrow());
             chips_row.set_visible(hits.is_empty());
             empty.set_visible(hits.is_empty());
             empty.set_subtitle(&format!("\"{query}\""));
             for item in hits {
-                let row = adw::ActionRow::new();
-                row.set_title(&ctx.t_or(item.title_key, item.title_fallback));
-                row.set_subtitle(&format!(
-                    "{} · {}",
-                    ctx.t_or(&format!("modals.preferences.tabs.{}", item.page), item.page),
-                    ctx.t_or(item.help_key, item.help_fallback)
-                ));
-                row.set_activatable(true);
-                let dialog = dialog.clone();
-                let page = item.page.to_string();
-                row.connect_activated(move |_| {
-                    dialog.set_visible_page_name(&page);
-                });
-                results.add(&row);
+                let row = add_search_hit(&session, &results, item, &dialog, &parent);
                 result_rows.borrow_mut().push(row);
             }
         })
@@ -689,6 +684,326 @@ fn search_page(ctx: &AppCtx, dialog: &adw::PreferencesDialog) -> adw::Preference
     page.add(&chips_group);
     page.add(&results);
     page
+}
+
+fn add_search_hit(
+    session: &PrefsSession,
+    group: &adw::PreferencesGroup,
+    item: &crate::pref_search::PrefSearchItem,
+    dialog: &adw::PreferencesDialog,
+    _parent: &impl IsA<gtk::Widget>,
+) -> gtk::Widget {
+    match item.title_key {
+        "settings.general.language.label" => add_language_row(session, group),
+        "settings.general.default_view.label" => add_combo(
+            session,
+            group,
+            item.title_key,
+            item.title_fallback,
+            "general.default_view",
+            &["main_menu", "nautilus", "flow"],
+            None,
+            |_| {},
+        ),
+        "settings.general.tray_enabled.label" => add_switch(
+            session,
+            group,
+            item.title_key,
+            item.title_fallback,
+            "general.tray_enabled",
+            |_, _| {},
+        ),
+        "settings.general.start_on_startup.label" => add_switch(
+            session,
+            group,
+            item.title_key,
+            item.title_fallback,
+            "general.start_on_startup",
+            |_, value| {
+                if let Some(on) = value.as_bool() {
+                    let _ = crate::platform::set_autostart(on);
+                }
+            },
+        ),
+        "settings.general.notifications.label" => add_switch(
+            session,
+            group,
+            item.title_key,
+            item.title_fallback,
+            "general.notifications",
+            |ctx, value| {
+                if let Some(on) = value.as_bool() {
+                    ctx.store.borrow_mut().notifications_enabled = on;
+                }
+            },
+        ),
+        "settings.general.restrict.label" => add_switch(
+            session,
+            group,
+            item.title_key,
+            item.title_fallback,
+            "general.restrict",
+            |_, _| {},
+        ),
+        "settings.general.prevent_sleep.label" => add_switch(
+            session,
+            group,
+            item.title_key,
+            item.title_fallback,
+            "general.prevent_sleep",
+            |_, _| {},
+        ),
+        "settings.general.standalone_dialogs.label" => add_switch(
+            session,
+            group,
+            item.title_key,
+            item.title_fallback,
+            "general.standalone_dialogs",
+            |_, _| {},
+        ),
+        "titlebar.menu.theme" => add_combo(
+            session,
+            group,
+            item.title_key,
+            item.title_fallback,
+            "runtime.theme",
+            &["system", "light", "dark"],
+            None,
+            |ctx| ctx.apply_theme(),
+        ),
+        "settings.general.tray_icon_theme.label" => add_combo(
+            session,
+            group,
+            item.title_key,
+            item.title_fallback,
+            "general.tray_icon_theme",
+            &[
+                "system",
+                "color",
+                "monochrome_light",
+                "monochrome_dark",
+                "symbolic",
+            ],
+            None,
+            |_| {},
+        ),
+        "nautilus.sort.label" => add_combo(
+            session,
+            group,
+            item.title_key,
+            item.title_fallback,
+            "nautilus.sort_by",
+            &["name", "size", "modified"],
+            Some(("nautilus.sort.defaultHint", "Default Nautilus listing sort")),
+            |_| {},
+        ),
+        "nautilus.view.showHidden" => add_switch(
+            session,
+            group,
+            item.title_key,
+            item.title_fallback,
+            "nautilus.show_hidden",
+            |_, _| {},
+        ),
+        "settings.runtime.app_update_channel.label" => add_combo(
+            session,
+            group,
+            item.title_key,
+            item.title_fallback,
+            "runtime.app_update_channel",
+            &["stable", "beta"],
+            None,
+            |_| {},
+        ),
+        "settings.runtime.rclone_update_channel.label" => add_combo(
+            session,
+            group,
+            item.title_key,
+            item.title_fallback,
+            "runtime.rclone_update_channel",
+            &["stable", "beta"],
+            None,
+            |_| {},
+        ),
+        "settings.runtime.app_auto_check_updates.label" => add_switch(
+            session,
+            group,
+            item.title_key,
+            item.title_fallback,
+            "runtime.app_auto_check_updates",
+            |_, _| {},
+        ),
+        "settings.runtime.rclone_auto_check_updates.label" => add_switch(
+            session,
+            group,
+            item.title_key,
+            item.title_fallback,
+            "runtime.rclone_auto_check_updates",
+            |_, _| {},
+        ),
+        "settings.runtime.show_json_mode.label" => add_switch(
+            session,
+            group,
+            item.title_key,
+            item.title_fallback,
+            "runtime.show_json_mode",
+            |_, _| {},
+        ),
+        "settings.core.rclone_binary.label" => add_entry(
+            session,
+            group,
+            item.title_key,
+            item.title_fallback,
+            "core.rclone_binary",
+            " ",
+            |text| json!(text),
+            |_| {},
+            None,
+        ),
+        "settings.core.bandwidth_limit.label" => add_entry(
+            session,
+            group,
+            item.title_key,
+            item.title_fallback,
+            "core.bandwidth_limit",
+            " ",
+            |text| json!(text),
+            |ctx| ctx.apply_effective_bandwidth(),
+            Some(validate_bandwidth_row),
+        ),
+        "settings.core.metered_bandwidth_limit.label" => add_entry(
+            session,
+            group,
+            item.title_key,
+            item.title_fallback,
+            "core.metered_bandwidth_limit",
+            " ",
+            |text| json!(text),
+            |ctx| ctx.apply_effective_bandwidth(),
+            Some(validate_bandwidth_row),
+        ),
+        "settings.core.connection_check_urls.label" => add_entry(
+            session,
+            group,
+            item.title_key,
+            item.title_fallback,
+            "core.connection_check_urls",
+            ", ",
+            |text| {
+                json!(text
+                    .split(',')
+                    .map(str::trim)
+                    .filter(|s| !s.is_empty())
+                    .map(|s| s.to_string())
+                    .collect::<Vec<_>>())
+            },
+            |_| {},
+            None,
+        ),
+        "settings.core.rclone_flags.label" => add_entry(
+            session,
+            group,
+            item.title_key,
+            item.title_fallback,
+            "core.rclone_additional_flags",
+            " ",
+            |text| {
+                json!(text
+                    .split_whitespace()
+                    .map(|s| s.to_string())
+                    .collect::<Vec<_>>())
+            },
+            |_| {},
+            None,
+        ),
+        "settings.core.rclone_env_vars.label" => add_entry(
+            session,
+            group,
+            item.title_key,
+            item.title_fallback,
+            "core.rclone_env_vars",
+            ";",
+            |text| {
+                json!(text
+                    .split(';')
+                    .map(str::trim)
+                    .filter(|s| !s.is_empty())
+                    .map(|s| s.to_string())
+                    .collect::<Vec<_>>())
+            },
+            |_| {},
+            None,
+        ),
+        "settings.core.default_mount_directory.label" => add_entry(
+            session,
+            group,
+            item.title_key,
+            item.title_fallback,
+            "core.default_mount_directory",
+            " ",
+            |text| json!(text),
+            |_| {},
+            None,
+        ),
+        "settings.core.default_bisync_directory.label" => add_entry(
+            session,
+            group,
+            item.title_key,
+            item.title_fallback,
+            "core.default_bisync_directory",
+            " ",
+            |text| json!(text),
+            |_| {},
+            None,
+        ),
+        "settings.core.max_tray_items.label" => add_spin(
+            session,
+            group,
+            item.title_key,
+            item.title_fallback,
+            "core.max_tray_items",
+            1.0,
+            40.0,
+            1.0,
+        ),
+        "settings.developer.log_level.label" => add_combo(
+            session,
+            group,
+            item.title_key,
+            item.title_fallback,
+            "developer.log_level",
+            &["error", "warn", "info", "debug", "trace"],
+            None,
+            |_| {},
+        ),
+        "settings.developer.destroy_window_on_close.label" => add_switch(
+            session,
+            group,
+            item.title_key,
+            item.title_fallback,
+            "developer.destroy_window_on_close",
+            |_, _| {},
+        ),
+        _ => {
+            let row = adw::ActionRow::new();
+            row.set_title(&session.ctx.t_or(item.title_key, item.title_fallback));
+            row.set_subtitle(&format!(
+                "{} · {}",
+                session
+                    .ctx
+                    .t_or(&format!("modals.preferences.tabs.{}", item.page), item.page),
+                session.ctx.t_or(item.help_key, item.help_fallback)
+            ));
+            row.set_activatable(true);
+            let dialog = dialog.clone();
+            let page = item.page.to_string();
+            row.connect_activated(move |_| {
+                dialog.set_visible_page_name(&page);
+            });
+            group.add(&row);
+            row.upcast()
+        }
+    }
 }
 
 fn apply_help_subtitle(
@@ -720,7 +1035,7 @@ fn help_text(session: &PrefsSession, label_key: &str) -> Option<String> {
         .then(|| session.ctx.t(&key))
 }
 
-fn add_language_row(session: &PrefsSession, group: &adw::PreferencesGroup) {
+fn add_language_row(session: &PrefsSession, group: &adw::PreferencesGroup) -> gtk::Widget {
     let langs = crate::i18n::SUPPORTED_LANGUAGES;
     let lang_labels = [
         "English (US)",
@@ -791,6 +1106,7 @@ fn add_language_row(session: &PrefsSession, group: &adw::PreferencesGroup) {
         });
     }
     group.add(&row);
+    row.upcast()
 }
 
 fn add_switch(
@@ -800,7 +1116,7 @@ fn add_switch(
     fallback: &str,
     path: &'static str,
     extra: impl Fn(&AppCtx, &Value) + 'static,
-) {
+) -> gtk::Widget {
     let active = session
         .ctx
         .settings
@@ -850,6 +1166,7 @@ fn add_switch(
         });
     }
     group.add(&row);
+    row.upcast()
 }
 
 fn add_combo(
@@ -861,7 +1178,7 @@ fn add_combo(
     options: &'static [&'static str],
     subtitle: Option<(&str, &str)>,
     extra: impl Fn(&AppCtx) + 'static,
-) {
+) -> gtk::Widget {
     let current = session
         .ctx
         .settings
@@ -928,6 +1245,7 @@ fn add_combo(
         });
     }
     group.add(&row);
+    row.upcast()
 }
 
 fn add_int_combo(
@@ -937,7 +1255,7 @@ fn add_int_combo(
     fallback: &str,
     path: &'static str,
     options: &'static [i64],
-) {
+) -> gtk::Widget {
     let labels: Vec<String> = options.iter().map(|n| n.to_string()).collect();
     let refs: Vec<&str> = labels.iter().map(|s| s.as_str()).collect();
     let current = session
@@ -988,6 +1306,7 @@ fn add_int_combo(
         });
     }
     group.add(&row);
+    row.upcast()
 }
 
 fn add_entry(
@@ -1000,7 +1319,7 @@ fn add_entry(
     encode: impl Fn(&str) -> Value + 'static,
     extra: impl Fn(&AppCtx) + 'static,
     validate: Option<fn(&adw::EntryRow) -> bool>,
-) {
+) -> gtk::Widget {
     let current = session
         .ctx
         .settings
@@ -1054,6 +1373,7 @@ fn add_entry(
         });
     }
     group.add(&row);
+    row.upcast()
 }
 
 fn add_spin(
@@ -1065,7 +1385,7 @@ fn add_spin(
     min: f64,
     max: f64,
     step: f64,
-) {
+) -> gtk::Widget {
     let current = session
         .ctx
         .settings
@@ -1106,6 +1426,7 @@ fn add_spin(
         });
     }
     group.add(&row);
+    row.upcast()
 }
 
 fn validate_bandwidth_row(row: &adw::EntryRow) -> bool {
