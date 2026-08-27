@@ -1123,3 +1123,8 @@ This client is the GTK 4 + libadwaita desktop UI. It talks to a local `rclone rc
 - Live GUI: `--browse testdrive:Photos` Delete on README.md shows **Delete Items** / Are you sure you want to delete "README.md"? Cancel leaves the file
 - Live GUI: Remove empty folders shows **Remove Empty Folders** / Are you sure you want to remove all empty folders in "…" with Cancel
 - Empty Trash confirm is the same helper; testdrive (alias) hides the menu when fsinfo lacks CleanUp
+
+- Alert History Clear asks for confirmation (`alerts.clearHistoryConfirm`) and disables when empty
+- Remote About shows Type / Root Path / Object Count, Reload Usage, and Features empty-state
+- Files operations panel uses Cancel / Cancelled / Files / Speed / ETA i18n keys
+- Password prompt uses `shared.passwordManager.*`; multi-rename uses title, original/newName, and duplicateOrInvalid

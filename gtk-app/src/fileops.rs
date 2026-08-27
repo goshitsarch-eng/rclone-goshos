@@ -610,6 +610,42 @@ pub fn ops_job_title(operation: &str, status_label: &str) -> String {
     format!("{operation} · {status_label}")
 }
 
+/// Files ops panel uses Cancelled for stopped jobs (Angular `fileBrowser.operations.cancelled`).
+pub fn ops_job_status_key(status: &str) -> &'static str {
+    if status.eq_ignore_ascii_case("stopped") {
+        "fileBrowser.operations.cancelled"
+    } else {
+        crate::jobs::job_status_key(status)
+    }
+}
+
+/// Angular Remote About type row: titlecase provider, or None → "Unknown".
+pub fn remote_about_type_display(remote_type: &str) -> Option<String> {
+    let trimmed = remote_type.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    let mut chars = trimmed.chars();
+    Some(match chars.next() {
+        Some(first) => first.to_uppercase().collect::<String>() + chars.as_str(),
+        None => String::new(),
+    })
+}
+
+/// Remote About object-count subtitle: `12 · 1.5 KiB`.
+pub fn remote_about_object_subtitle(count: i64, bytes: i64) -> String {
+    format!("{count} · {}", crate::rclone::format_bytes(bytes))
+}
+
+/// Multi-rename preview subtitle; failed rows append the i18n error label.
+pub fn multi_rename_preview_subtitle(new_name: &str, has_error: bool, error_label: &str) -> String {
+    if has_error {
+        format!("{new_name} — {error_label}")
+    } else {
+        new_name.to_string()
+    }
+}
+
 /// Compact Angular ops row subtitle: `#42 · 80% · remote:path · 1.2 MB / 2.0 MB`.
 pub fn ops_job_subtitle(id: u64, percent: i32, src: &str, done: &str, total: &str) -> String {
     format!("#{id} · {percent}% · {src} · {done} / {total}")
@@ -2148,6 +2184,31 @@ mod tests {
         assert_eq!(ops_panel_title("Operations", 0), "Operations");
         assert_eq!(ops_panel_title("Operations", 2), "Operations (2)");
         assert_eq!(ops_job_title("copy", "Completed"), "copy · Completed");
+        assert_eq!(
+            ops_job_status_key("stopped"),
+            "fileBrowser.operations.cancelled"
+        );
+        assert_eq!(
+            ops_job_status_key("Stopped"),
+            "fileBrowser.operations.cancelled"
+        );
+        assert_eq!(
+            ops_job_status_key("completed"),
+            "detailShared.jobs.status.completed"
+        );
+        assert_eq!(remote_about_type_display("alias").as_deref(), Some("Alias"));
+        assert_eq!(remote_about_type_display("  s3  ").as_deref(), Some("S3"));
+        assert_eq!(remote_about_type_display(""), None);
+        assert_eq!(remote_about_type_display("   "), None);
+        assert_eq!(remote_about_object_subtitle(12, 1536), "12 · 1.5 KiB");
+        assert_eq!(
+            multi_rename_preview_subtitle("a.txt", false, "Duplicate or invalid name"),
+            "a.txt"
+        );
+        assert_eq!(
+            multi_rename_preview_subtitle("a.txt", true, "Duplicate or invalid name"),
+            "a.txt — Duplicate or invalid name"
+        );
         assert_eq!(
             ops_job_subtitle(42, 80, "testdrive:Photos", "8 B", "10 B"),
             "#42 · 80% · testdrive:Photos · 8 B / 10 B"

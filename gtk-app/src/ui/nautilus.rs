@@ -6929,7 +6929,7 @@ impl NautilusView {
             &job.operation,
             &self
                 .ctx
-                .t_or(crate::jobs::job_status_key(&job.status), &job.status),
+                .t_or(crate::fileops::ops_job_status_key(&job.status), &job.status),
         ));
         let src = if job.src.is_empty() {
             job.remote.clone()
@@ -6977,7 +6977,9 @@ impl NautilusView {
         if live && matches!(job.status.as_str(), "running" | "preparing" | "starting") {
             let stop = gtk::Button::from_icon_name("media-playback-stop-symbolic");
             stop.set_valign(gtk::Align::Center);
-            stop.set_tooltip_text(Some(&self.ctx.t_or("flow.quickRun.actions.stop", "Stop")));
+            stop.set_tooltip_text(Some(
+                &self.ctx.t_or("fileBrowser.operations.cancelJob", "Cancel"),
+            ));
             let ctx = self.ctx.clone();
             let id = job.id;
             let view = self.clone();
@@ -7025,13 +7027,20 @@ impl NautilusView {
         let list = gtk::ListBox::new();
         list.add_css_class("boxed-list");
         let (speed, eta) = crate::jobs::job_speed_eta(job);
+        let transfers = crate::jobs::stats_i64(&job.stats, &["transfers"]);
+        let total_transfers = crate::jobs::stats_i64(&job.stats, &["totalTransfers"]);
+        let files_row = adw::ActionRow::new();
+        files_row.set_title(&self.ctx.t_or("fileBrowser.operations.files", "Files"));
+        files_row.set_subtitle(&format!("{transfers} / {total_transfers}"));
+        list.append(&files_row);
         let speed_row = adw::ActionRow::new();
-        speed_row.set_title(&self.ctx.t_or("modals.jobDetail.fields.speed", "Speed"));
-        speed_row.set_subtitle(&format!(
-            "{speed} · {} {eta}",
-            self.ctx.t_or("modals.jobDetail.fields.eta", "ETA")
-        ));
+        speed_row.set_title(&self.ctx.t_or("fileBrowser.operations.speed", "Speed"));
+        speed_row.set_subtitle(&speed);
         list.append(&speed_row);
+        let eta_row = adw::ActionRow::new();
+        eta_row.set_title(&self.ctx.t_or("fileBrowser.operations.eta", "ETA"));
+        eta_row.set_subtitle(&eta);
+        list.append(&eta_row);
         if !job.src.is_empty() {
             let source = adw::ActionRow::new();
             source.set_title(

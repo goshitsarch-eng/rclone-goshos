@@ -4866,6 +4866,9 @@ pub fn alerts(parent: &impl IsA<gtk::Widget>, ctx: AppCtx) {
     let origin_dd = gtk::DropDown::from_strings(&origin_refs);
     let chips = gtk::Box::new(gtk::Orientation::Horizontal, 6);
     chips.set_visible(false);
+    let ack = gtk::Button::with_label(&ctx.t_or("alerts.acknowledgeAll", "Acknowledge all"));
+    let clear = gtk::Button::with_label(&ctx.t_or("alerts.clearHistory", "Clear history"));
+    clear.add_css_class("destructive-action");
     let fill_cell: Rc<RefCell<Rc<dyn Fn()>>> = Rc::new(RefCell::new(Rc::new(|| {})));
     let fill: Rc<dyn Fn()> = {
         let history = history.clone();
@@ -4883,6 +4886,8 @@ pub fn alerts(parent: &impl IsA<gtk::Widget>, ctx: AppCtx) {
         let backend_labels = backend_labels.clone();
         let rule_labels = rule_labels.clone();
         let origin_labels = origin_labels.clone();
+        let ack_btn = ack.clone();
+        let clear_btn = clear.clone();
         let ctx = ctx.clone();
         let fill_cell = fill_cell.clone();
         let chips = chips.clone();
@@ -5109,6 +5114,9 @@ pub fn alerts(parent: &impl IsA<gtk::Widget>, ctx: AppCtx) {
                 row.set_title(&ctx.t_or("alerts.noHistory", "No alert history"));
                 history.append(&row);
             }
+            let has_history = !ctx.store.borrow().alert_history.is_empty();
+            ack_btn.set_sensitive(has_history);
+            clear_btn.set_sensitive(has_history);
         })
     };
     *fill_cell.borrow_mut() = fill.clone();
@@ -5149,7 +5157,6 @@ pub fn alerts(parent: &impl IsA<gtk::Widget>, ctx: AppCtx) {
         let fill = fill.clone();
         origin_dd.connect_selected_notify(move |_| fill());
     }
-    let ack = gtk::Button::with_label(&ctx.t_or("alerts.acknowledgeAll", "Acknowledge all"));
     {
         let ctx = ctx.clone();
         let fill = fill.clone();
@@ -5159,15 +5166,33 @@ pub fn alerts(parent: &impl IsA<gtk::Widget>, ctx: AppCtx) {
             fill();
         });
     }
-    let clear = gtk::Button::with_label(&ctx.t_or("alerts.clearHistory", "Clear history"));
-    clear.add_css_class("destructive-action");
     {
         let ctx = ctx.clone();
         let fill = fill.clone();
+        let parent = parent.clone();
         clear.connect_clicked(move |_| {
-            ctx.store.borrow_mut().clear_alert_history();
-            ctx.persist();
-            fill();
+            let title = ctx.t_or("alerts.clearHistory", "Clear history");
+            let message = ctx.t_or(
+                "alerts.clearHistoryConfirm",
+                "Are you sure you want to clear all alert history? This action cannot be undone.",
+            );
+            let confirm_label = ctx.t("common.delete");
+            let ctx_ok = ctx.clone();
+            let fill = fill.clone();
+            confirm(
+                &parent,
+                &ctx,
+                &title,
+                &message,
+                "clear",
+                &confirm_label,
+                true,
+                move || {
+                    ctx_ok.store.borrow_mut().clear_alert_history();
+                    ctx_ok.persist();
+                    fill();
+                },
+            );
         });
     }
     let filters = gtk::Box::new(gtk::Orientation::Vertical, 8);
@@ -12110,6 +12135,24 @@ fn metadata_item_row(ctx: &AppCtx, key: &str, meta: &serde_json::Value) -> adw::
     row
 }
 
+fn add_about_row(group: &adw::PreferencesGroup, title: &str, subtitle: &str) -> adw::ActionRow {
+    let row = adw::ActionRow::new();
+    row.set_title(title);
+    if !subtitle.is_empty() {
+        row.set_subtitle(subtitle);
+    }
+    group.add(&row);
+    row
+}
+
+fn remove_pref_rows(group: &adw::PreferencesGroup, rows: &mut Vec<adw::ActionRow>) {
+    for row in rows.drain(..) {
+        if row.parent().is_some_and(|parent| parent == *group) {
+            group.remove(&row);
+        }
+    }
+}
+
 pub fn remote_about(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, remote: &str) {
     if try_spawn_standalone(
         &ctx,
@@ -12127,7 +12170,15 @@ pub fn remote_about(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, remote: &str) {
     dialog.set_content_height(640);
     let page = adw::PreferencesPage::new();
     let usage = adw::PreferencesGroup::new();
-    usage.set_title(&ctx.t_or("fileBrowser.remoteAbout.tabs.overview", "Usage"));
+    usage.set_title(&ctx.t_or("fileBrowser.remoteAbout.tabs.overview", "Overview"));
+    let reload = gtk::Button::from_icon_name("view-refresh-symbolic");
+    reload.add_css_class("flat");
+    reload.set_valign(gtk::Align::Center);
+    reload.set_tooltip_text(Some(
+        &ctx.t_or("fileBrowser.remoteAbout.reloadUsage", "Reload Usage"),
+    ));
+    usage.set_header_suffix(Some(&reload));
+    let info_group = adw::PreferencesGroup::new();
     let features = adw::PreferencesGroup::new();
     features.set_title(&ctx.t_or("fileBrowser.remoteAbout.tabs.features", "Features"));
     let hashes = adw::PreferencesGroup::new();
@@ -12139,102 +12190,141 @@ pub fn remote_about(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, remote: &str) {
         "gtk/remote-about/{remote}-{}",
         chrono::Utc::now().timestamp_millis()
     );
-    if let Some(client) = ctx.client() {
-        match client.about(&fs) {
-            Ok(about) => {
-                for (key, label, fallback) in [
-                    ("used", "fileBrowser.remoteAbout.usedSpace", "Used Space"),
-                    ("free", "fileBrowser.remoteAbout.freeSpace", "Free Space"),
-                    ("total", "fileBrowser.remoteAbout.totalSpace", "Total Space"),
-                    ("trashed", "fileBrowser.remoteAbout.trashed", "Trashed"),
-                ] {
-                    if let Some(value) = about.get(key).and_then(|x| x.as_i64()) {
-                        let row = adw::ActionRow::new();
-                        row.set_title(&ctx.t_or(label, fallback));
-                        row.set_subtitle(&crate::rclone::format_bytes(value));
-                        usage.add(&row);
-                    }
-                }
-                for (key, value) in about.as_object().cloned().unwrap_or_default() {
-                    if matches!(key.as_str(), "used" | "free" | "total" | "trashed") {
-                        continue;
-                    }
-                    let row = adw::ActionRow::new();
-                    row.set_title(&key);
-                    row.set_subtitle(&value.to_string());
-                    usage.add(&row);
-                }
-            }
-            Err(e) => {
-                let row = adw::ActionRow::new();
-                row.set_title(&ctx.t_or(
-                    "fileBrowser.remoteAbout.usageUnavailable",
-                    "Unable to query disk usage",
+    let usage_rows: Rc<RefCell<Vec<adw::ActionRow>>> = Rc::new(RefCell::new(Vec::new()));
+    let fill_usage = {
+        let ctx = ctx.clone();
+        let usage = usage.clone();
+        let usage_rows = usage_rows.clone();
+        let fs = fs.clone();
+        Rc::new(move || {
+            let mut rows = usage_rows.borrow_mut();
+            remove_pref_rows(&usage, &mut rows);
+            let Some(client) = ctx.client() else {
+                rows.push(add_about_row(
+                    &usage,
+                    &ctx.t_or(
+                        "fileBrowser.remoteAbout.error",
+                        "Failed to load remote information.",
+                    ),
+                    "",
                 ));
-                row.set_subtitle(&e.to_string());
-                usage.add(&row);
+                return;
+            };
+            match client.about(&fs) {
+                Ok(about) => {
+                    for (key, label, fallback) in [
+                        ("total", "fileBrowser.remoteAbout.totalSpace", "Total Space"),
+                        ("used", "fileBrowser.remoteAbout.usedSpace", "Used Space"),
+                        ("free", "fileBrowser.remoteAbout.freeSpace", "Free Space"),
+                        ("trashed", "fileBrowser.remoteAbout.trashed", "Trashed"),
+                    ] {
+                        if let Some(value) = about.get(key).and_then(|x| x.as_i64()) {
+                            rows.push(add_about_row(
+                                &usage,
+                                &ctx.t_or(label, fallback),
+                                &crate::rclone::format_bytes(value),
+                            ));
+                        }
+                    }
+                    for (key, value) in about.as_object().cloned().unwrap_or_default() {
+                        if matches!(key.as_str(), "used" | "free" | "total" | "trashed") {
+                            continue;
+                        }
+                        rows.push(add_about_row(&usage, &key, &value.to_string()));
+                    }
+                }
+                Err(e) => {
+                    rows.push(add_about_row(
+                        &usage,
+                        &ctx.t_or(
+                            "fileBrowser.remoteAbout.usageUnavailable",
+                            "Unable to query disk usage",
+                        ),
+                        &e.to_string(),
+                    ));
+                }
             }
-        }
-        match client.size(&fs, "") {
-            Ok(size) => {
-                let row = adw::ActionRow::new();
-                row.set_title(&ctx.t_or("fileBrowser.remoteAbout.objects", "Objects"));
-                let count = size.get("count").and_then(|x| x.as_i64()).unwrap_or(0);
-                let bytes = size.get("bytes").and_then(|x| x.as_i64()).unwrap_or(0);
-                row.set_subtitle(&format!("{count} · {}", crate::rclone::format_bytes(bytes)));
-                usage.add(&row);
+            match client.size(&fs, "") {
+                Ok(size) => {
+                    let count = size.get("count").and_then(|x| x.as_i64()).unwrap_or(0);
+                    let bytes = size.get("bytes").and_then(|x| x.as_i64()).unwrap_or(0);
+                    rows.push(add_about_row(
+                        &usage,
+                        &ctx.t_or("fileBrowser.remoteAbout.objectCount", "Object Count"),
+                        &crate::fileops::remote_about_object_subtitle(count, bytes),
+                    ));
+                }
+                Err(e) => {
+                    rows.push(add_about_row(
+                        &usage,
+                        &ctx.t_or("fileBrowser.remoteAbout.objectCount", "Object Count"),
+                        &e.to_string(),
+                    ));
+                }
             }
-            Err(e) => {
-                let row = adw::ActionRow::new();
-                row.set_title(&ctx.t_or("fileBrowser.properties.size", "Size"));
-                row.set_subtitle(&e.to_string());
-                usage.add(&row);
-            }
-        }
+        }) as Rc<dyn Fn()>
+    };
+    fill_usage();
+    {
+        let fill_usage = fill_usage.clone();
+        reload.connect_clicked(move |_| fill_usage());
+    }
+    let remote_type = remote_type_of(ctx.clone(), remote);
+    let type_label = crate::fileops::remote_about_type_display(&remote_type)
+        .unwrap_or_else(|| ctx.t_or("fileBrowser.remoteAbout.unknown", "Unknown"));
+    let _type_row = add_about_row(
+        &info_group,
+        &ctx.t_or("fileBrowser.remoteAbout.type", "Type"),
+        &type_label,
+    );
+    if let Some(client) = ctx.client() {
         let info = ctx.fs_info(remote).or_else(|| client.fs_info(&fs).ok());
         if let Some(info) = info {
-            let name = adw::ActionRow::new();
-            name.set_title(&ctx.t("common.name"));
-            name.set_subtitle(&info.name);
-            usage.add(&name);
-            let root = adw::ActionRow::new();
-            root.set_title(&ctx.t_or("fileBrowser.remoteAbout.root", "Root"));
             let root_text = if info.root.is_empty() {
                 "/".to_string()
             } else {
                 info.root.clone()
             };
-            root.set_subtitle(&root_text);
-            usage.add(&root);
-            let precision = adw::ActionRow::new();
-            precision.set_title(&ctx.t_or(
-                "fileBrowser.remoteAbout.timePrecision",
-                "Timestamp precision",
-            ));
-            let precision_text = nanoseconds_to_duration(info.precision);
-            precision.set_subtitle(&precision_text);
-            usage.add(&precision);
+            let _root_row = add_about_row(
+                &info_group,
+                &ctx.t_or("fileBrowser.remoteAbout.rootPath", "Root Path"),
+                &root_text,
+            );
+            let _precision_row = add_about_row(
+                &info_group,
+                &ctx.t_or("fileBrowser.remoteAbout.timePrecision", "Time Precision"),
+                &nanoseconds_to_duration(info.precision),
+            );
             if info.hashes.is_empty() {
-                let row = adw::ActionRow::new();
-                row.set_title(&ctx.t_or("fileBrowser.remoteAbout.noneSupported", "None"));
-                hashes.add(&row);
+                let _none = add_about_row(
+                    &hashes,
+                    &ctx.t_or("fileBrowser.remoteAbout.noneSupported", "None supported"),
+                    "",
+                );
             } else {
                 for hash in &info.hashes {
-                    let row = adw::ActionRow::new();
-                    row.set_title(&hash.to_ascii_uppercase());
-                    hashes.add(&row);
+                    let _hash = add_about_row(&hashes, &hash.to_ascii_uppercase(), "");
                 }
             }
+            let mut feature_count = 0;
             for (key, value) in &info.features {
                 if key == "IsLocal" {
                     continue;
                 }
-                let row = adw::ActionRow::new();
-                row.set_title(key);
                 let yes = ctx.t_or("fileBrowser.remoteAbout.yes", "Yes");
                 let no = ctx.t_or("fileBrowser.remoteAbout.no", "No");
-                row.set_subtitle(if *value { &yes } else { &no });
-                features.add(&row);
+                let _feat = add_about_row(&features, key, if *value { &yes } else { &no });
+                feature_count += 1;
+            }
+            if feature_count == 0 {
+                let _empty = add_about_row(
+                    &features,
+                    &ctx.t_or(
+                        "fileBrowser.remoteAbout.noFeatureInfo",
+                        "No feature information available.",
+                    ),
+                    "",
+                );
             }
             let (system_items, standard_items) = group_metadata_info(&info.metadata);
             let metadata_system = adw::PreferencesGroup::new();
@@ -12252,14 +12342,17 @@ pub fn remote_about(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, remote: &str) {
                 metadata_standard.add(&metadata_item_row(&ctx, key, meta));
             }
             if system_items.is_empty() && standard_items.is_empty() {
-                let row = adw::ActionRow::new();
-                row.set_title(&ctx.t_or(
-                    "fileBrowser.remoteAbout.noMetadata",
-                    "No metadata specifications available.",
-                ));
-                metadata.add(&row);
+                let _empty_meta = add_about_row(
+                    &metadata,
+                    &ctx.t_or(
+                        "fileBrowser.remoteAbout.noMetadata",
+                        "No metadata specifications available.",
+                    ),
+                    "",
+                );
             }
             page.add(&usage);
+            page.add(&info_group);
             page.add(&hashes);
             page.add(&features);
             if !system_items.is_empty() {
@@ -12273,12 +12366,14 @@ pub fn remote_about(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, remote: &str) {
             }
         } else {
             page.add(&usage);
+            page.add(&info_group);
             page.add(&hashes);
             page.add(&features);
             page.add(&metadata);
         }
     } else {
         page.add(&usage);
+        page.add(&info_group);
         page.add(&hashes);
         page.add(&features);
         page.add(&metadata);
@@ -17882,10 +17977,7 @@ fn selected_or_all(rows: &[(String, adw::SwitchRow)]) -> Vec<String> {
 
 pub fn password_prompt(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, toast: adw::ToastOverlay) {
     let dialog = adw::AlertDialog::new(
-        Some(&ctx.t_or(
-            "modals.backend.security.configPassword",
-            "rclone.conf password",
-        )),
+        Some(&ctx.t_or("shared.passwordManager.label", "Configuration Password")),
         Some(&ctx.t_or(
             "repair.passwordPrompt",
             "Enter the rclone.conf password to unlock the engine.",
@@ -17894,14 +17986,23 @@ pub fn password_prompt(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, toast: adw::
     let box_ = gtk::Box::new(gtk::Orientation::Vertical, 8);
     let entry = gtk::PasswordEntry::new();
     entry.set_show_peek_icon(true);
-    let remember_label = ctx.t_or(
-        "modals.backend.security.systemKeychain",
-        "Remember in the system keyring",
-    );
+    entry.set_tooltip_text(Some(&ctx.t_or(
+        "shared.passwordManager.placeholder",
+        "Enter your rclone config password",
+    )));
+    let remember_label = ctx.t_or("shared.passwordManager.remember", "Remember password");
     let remember = gtk::CheckButton::with_label(&remember_label);
     remember.set_active(true);
+    let keychain_hint = gtk::Label::new(Some(&ctx.t_or(
+        "shared.passwordManager.keychain",
+        "Stored in system keychain",
+    )));
+    keychain_hint.add_css_class("dim-label");
+    keychain_hint.set_halign(gtk::Align::Start);
+    keychain_hint.set_wrap(true);
     box_.append(&entry);
     box_.append(&remember);
+    box_.append(&keychain_hint);
     dialog.set_extra_child(Some(&box_));
     dialog.add_response("cancel", &ctx.t("common.cancel"));
     let unlock = ctx.t_or("repair.unlock", "Unlock");
@@ -17919,7 +18020,7 @@ pub fn password_prompt(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, toast: adw::
             let password = entry.text().to_string();
             if password.is_empty() {
                 toast.add_toast(adw::Toast::new(
-                    &ctx.t_or("repair.passwordEmpty", "Password is empty"),
+                    &ctx.t_or("shared.passwordManager.required", "Password required"),
                 ));
                 return;
             }
@@ -18529,7 +18630,12 @@ pub fn multi_rename(
     on_done: Rc<dyn Fn()>,
 ) {
     let dialog = adw::Dialog::new();
-    dialog.set_title(&ctx.t_or("nautilus.contextMenu.renameMultiple", "Rename items"));
+    let count = names.len().to_string();
+    dialog.set_title(&ctx.tf_or(
+        "nautilus.modals.multiRename.title",
+        "Rename items",
+        &[("count", &count)],
+    ));
     dialog.set_content_width(560);
     dialog.set_content_height(620);
     let mode = adw::ComboRow::new();
@@ -18583,10 +18689,16 @@ pub fn multi_rename(
         let start = start.clone();
         let step = step.clone();
         let pad = pad.clone();
+        let ctx = ctx.clone();
         move || {
             while let Some(child) = preview.first_child() {
                 preview.remove(&child);
             }
+            let header = adw::ActionRow::new();
+            header.set_title(&ctx.t_or("nautilus.modals.multiRename.original", "Original name"));
+            header.set_subtitle(&ctx.t_or("nautilus.modals.multiRename.newName", "New name"));
+            header.set_sensitive(false);
+            preview.append(&header);
             let slots = plan_slots.borrow();
             let plan = RenamePlan {
                 mode: if slots.6.selected() == 0 {
@@ -18607,14 +18719,21 @@ pub fn multi_rename(
             step.set_visible(show_counters);
             pad.set_visible(show_counters);
             let date = chrono::Local::now().format("%Y-%m-%d").to_string();
+            let error_label = ctx.t_or(
+                "nautilus.modals.multiRename.duplicateOrInvalid",
+                "Duplicate or invalid name",
+            );
             for row in rename_preview(&names, &plan, &date) {
                 let item = adw::ActionRow::new();
                 item.set_title(&row.original);
-                item.set_subtitle(&if row.has_error {
-                    format!("{} (invalid)", row.new_name)
-                } else {
-                    row.new_name
-                });
+                item.set_subtitle(&crate::fileops::multi_rename_preview_subtitle(
+                    &row.new_name,
+                    row.has_error,
+                    &error_label,
+                ));
+                if row.has_error {
+                    item.add_css_class("error");
+                }
                 preview.append(&item);
             }
         }
@@ -18654,6 +18773,9 @@ pub fn multi_rename(
     ] {
         let chip = gtk::Button::with_label(&label);
         chip.add_css_class("pill");
+        chip.set_tooltip_text(Some(
+            &ctx.t_or("nautilus.modals.multiRename.addPlaceholder", "Add"),
+        ));
         let template = template.clone();
         let refresh_preview = refresh_preview.clone();
         chip.connect_clicked(move |_| {
