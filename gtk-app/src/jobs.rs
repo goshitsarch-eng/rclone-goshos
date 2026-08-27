@@ -1778,7 +1778,17 @@ pub fn find_stored_job(
     meta: &HashMap<u64, JobMeta>,
     id: u64,
 ) -> Option<JobInfo> {
-    find_job_by_id(live, history, id).or_else(|| meta.get(&id).map(|item| job_from_meta(id, item)))
+    let live_job = live.iter().find(|job| job.id == id).cloned();
+    let history_job = history
+        .iter()
+        .find(|job| job.id == id)
+        .cloned()
+        .or_else(|| meta.get(&id).map(|item| job_from_meta(id, item)));
+    match (live_job, history_job) {
+        (Some(live_job), Some(history_job)) => Some(merge_rc_with_stored(live_job, history_job)),
+        (Some(live_job), None) => Some(live_job),
+        (None, history_job) => history_job,
+    }
 }
 
 pub fn history_with_meta(history: &[JobInfo], meta: &HashMap<u64, JobMeta>) -> Vec<JobInfo> {
@@ -5803,6 +5813,17 @@ mod tests {
         let live = resolve_detail_job(Some(running), Some(older)).unwrap();
         assert_eq!(live.completed.as_array().unwrap().len(), 1);
         assert_eq!(live.completed[0]["name"], "ok.txt");
+        let mut snap = sample_job(42424, "testdrive:Photos", "testdrive:verify-ops");
+        snap.status = "failed".into();
+        snap.completed = json!([{ "name": "testdrive:Photos", "srcFs": "testdrive:Photos" }]);
+        let mut history = snap.clone();
+        history.completed = json!([
+            { "name": "ok.txt", "bytes": 3, "size": 3, "percentage": 100 },
+            { "name": "bad.txt", "error": "permission denied", "size": 8 }
+        ]);
+        let stored = find_stored_job(&[snap], &[history], &Default::default(), 42424).unwrap();
+        assert_eq!(stored.completed.as_array().unwrap().len(), 2);
+        assert_eq!(stored.completed[0]["name"], "ok.txt");
     }
 
     #[test]
