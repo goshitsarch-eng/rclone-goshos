@@ -2378,14 +2378,7 @@ fn apply_nav(
             if let Some(id) = id.as_deref() {
                 flow.select_quick_run(Some(id));
             }
-            let existing = id.and_then(|id| {
-                ctx.store
-                    .borrow()
-                    .quick_runs
-                    .iter()
-                    .find(|item| item.id == id)
-                    .cloned()
-            });
+            let existing = id.and_then(|id| ctx.store.borrow().quick_run_by_id_or_name(&id));
             dialogs::quick_run_editor(window, ctx.clone(), existing, Rc::new(|| ()));
         }
     }

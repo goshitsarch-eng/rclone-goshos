@@ -1322,6 +1322,13 @@ impl AppStore {
         self.job_history.retain(|job| job.id != id);
     }
 
+    pub fn quick_run_by_id_or_name(&self, id_or_name: &str) -> Option<QuickRun> {
+        self.quick_runs
+            .iter()
+            .find(|item| item.id == id_or_name || item.name == id_or_name)
+            .cloned()
+    }
+
     pub fn remote_names(&self) -> Vec<String> {
         let mut names: Vec<String> = self.remotes.keys().cloned().collect();
         names.extend(self.remote_order.iter().cloned());
@@ -2214,6 +2221,24 @@ mod tests {
         let (src, dst) = quick_run_paths(&rclone, OperationType::Sync);
         assert_eq!(src.as_deref(), Some("drive:src"));
         assert_eq!(dst.as_deref(), Some("/tmp/out"));
+    }
+
+    #[test]
+    fn finds_quick_run_by_id_or_name() {
+        let mut store = AppStore::default();
+        let mut run = QuickRun::new(
+            "gui-qr-copy".into(),
+            OperationType::Copy,
+            "testdrive".into(),
+        );
+        run.id = "050de334-2571-4ead-ac77-1fb23e16b0c6".into();
+        store.quick_runs.push(run);
+        assert!(store.quick_run_by_id_or_name("gui-qr-copy").is_some());
+        assert!(store
+            .quick_run_by_id_or_name("050de334-2571-4ead-ac77-1fb23e16b0c6")
+            .is_some());
+        assert!(store.quick_run_by_id_or_name("missing").is_none());
+        assert!(store.quick_run_by_id_or_name("").is_none());
     }
 
     #[test]
