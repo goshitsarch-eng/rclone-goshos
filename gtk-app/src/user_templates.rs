@@ -1,8 +1,127 @@
 //! User preset templates — Angular `UserPresetTemplate` / `TEMPLATE_CATEGORIES`.
 
 use crate::operations::OperationType;
+use crate::presets::PresetValues;
 use crate::store::{ProfileConfig, RemoteMeta, UserTemplate};
 use serde_json::{json, Map, Value};
+
+/// Path keys Angular skips when patching Quick Run flag groups.
+pub const QUICK_RUN_PATH_KEYS: &[&str] = &[
+    "srcFs",
+    "dstFs",
+    "path1",
+    "path2",
+    "fs",
+    "mountPoint",
+    "source",
+    "dest",
+];
+
+/// Form-level patch produced by Apply Default Presets / Apply Template on a Quick Run.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct QuickRunFormPatch {
+    pub vfs: Map<String, Value>,
+    pub filter: Map<String, Value>,
+    pub backend: Map<String, Value>,
+    pub mount: Map<String, Value>,
+    pub operation: Map<String, Value>,
+    pub runtime: Map<String, Value>,
+    pub source: Option<String>,
+    pub dest: Option<String>,
+}
+
+pub fn is_path_key(key: &str) -> bool {
+    QUICK_RUN_PATH_KEYS.iter().any(|wanted| *wanted == key)
+}
+
+pub fn normalize_flag_key(key: &str) -> String {
+    key.chars()
+        .filter(|c| c.is_ascii_alphanumeric())
+        .map(|c| c.to_ascii_lowercase())
+        .collect()
+}
+
+pub fn flag_keys_match(field: &str, preset: &str) -> bool {
+    if field == preset {
+        return true;
+    }
+    let field = normalize_flag_key(field);
+    let preset = normalize_flag_key(preset);
+    if field.is_empty() || preset.is_empty() {
+        return false;
+    }
+    field == preset || field.ends_with(&preset) || preset.ends_with(&field)
+}
+
+pub fn category_object<'a>(values: &'a Value, category: &str) -> Option<&'a Map<String, Value>> {
+    values.get(category).and_then(Value::as_object)
+}
+
+pub fn first_string(map: &Map<String, Value>, keys: &[&str]) -> Option<String> {
+    keys.iter().find_map(|key| {
+        map.get(*key)
+            .and_then(Value::as_str)
+            .filter(|text| !text.is_empty())
+            .map(ToOwned::to_owned)
+    })
+}
+
+pub fn without_path_keys(map: &Map<String, Value>) -> Map<String, Value> {
+    map.iter()
+        .filter(|(key, _)| !is_path_key(key))
+        .map(|(key, value)| (key.clone(), value.clone()))
+        .collect()
+}
+
+pub fn lookup_flag_value<'a>(values: &'a Map<String, Value>, field: &str) -> Option<&'a Value> {
+    values.get(field).or_else(|| {
+        values
+            .iter()
+            .find(|(key, _)| flag_keys_match(field, key))
+            .map(|(_, value)| value)
+    })
+}
+
+/// Angular `applyDefaultPresets()` — vfs / backend / mount (when Mount) / runtimeRemote.
+pub fn default_presets_patch(presets: &PresetValues, op: OperationType) -> QuickRunFormPatch {
+    QuickRunFormPatch {
+        vfs: presets.vfs.clone(),
+        backend: presets.backend.clone(),
+        mount: if op == OperationType::Mount {
+            presets.mount.clone()
+        } else {
+            Map::new()
+        },
+        runtime: presets.remote.clone(),
+        ..QuickRunFormPatch::default()
+    }
+}
+
+/// Angular `onApplyTemplate()` — categorized maps plus src/dst from the current operation.
+pub fn template_form_patch(values: &Value, op: OperationType) -> QuickRunFormPatch {
+    let op_map = category_object(values, op.as_str())
+        .cloned()
+        .unwrap_or_default();
+    QuickRunFormPatch {
+        vfs: category_object(values, "vfs").cloned().unwrap_or_default(),
+        filter: category_object(values, "filter")
+            .cloned()
+            .unwrap_or_default(),
+        backend: category_object(values, "backend")
+            .cloned()
+            .unwrap_or_default(),
+        mount: category_object(values, "mount")
+            .cloned()
+            .unwrap_or_default(),
+        source: first_string(&op_map, &["srcFs", "path1", "fs", "source"]),
+        dest: first_string(&op_map, &["mountPoint", "dstFs", "path2", "dest"]),
+        operation: without_path_keys(&op_map),
+        runtime: category_object(values, "remote")
+            .or_else(|| category_object(values, "runtimeRemote"))
+            .cloned()
+            .unwrap_or_default(),
+    }
+}
 
 /// Flag-type keys plus `remote`, matching Angular `TEMPLATE_CATEGORIES`.
 pub const TEMPLATE_CATEGORIES: &[&str] = &[
@@ -595,5 +714,60 @@ mod tests {
         );
         assert_eq!(templates.len(), 2);
         assert_eq!(templates[1].name, "Second");
+    }
+
+    #[test]
+    fn flag_keys_match_ignores_case_and_underscores() {
+        assert!(flag_keys_match("vfs_cache_mode", "VfsCacheMode"));
+        assert!(flag_keys_match("VFS.CacheMode", "vfs_cache_mode"));
+        assert!(flag_keys_match("chunk_size", "chunk_size"));
+        assert!(!flag_keys_match("transfers", "checkers"));
+        assert!(!flag_keys_match("", "vfs"));
+        assert_eq!(
+            normalize_flag_key("HTTP-Options.Listen_Addr"),
+            "httpoptionslistenaddr"
+        );
+    }
+
+    #[test]
+    fn default_presets_patch_includes_mount_only_for_mount() {
+        let presets = crate::presets::resolve_presets("alias", None, "linux");
+        let copy = default_presets_patch(&presets, OperationType::Copy);
+        assert!(!copy.vfs.is_empty());
+        assert!(!copy.backend.is_empty());
+        assert!(copy.mount.is_empty());
+        assert!(copy.runtime.is_empty());
+        let mount = default_presets_patch(&presets, OperationType::Mount);
+        assert!(!mount.mount.is_empty());
+        assert_eq!(mount.mount["attr_timeout"], "10s");
+    }
+
+    #[test]
+    fn template_form_patch_extracts_paths_and_strips_them_from_flags() {
+        let values = json!({
+            "vfs": { "vfs_cache_mode": "full" },
+            "filter": { "max_age": "7d" },
+            "backend": { "transfers": 8 },
+            "copy": {
+                "srcFs": "testdrive:Photos",
+                "dstFs": "testdrive2:backup",
+                "createEmptySrcDirs": true
+            },
+            "remote": { "chunk_size": "32M" }
+        });
+        let patch = template_form_patch(&values, OperationType::Copy);
+        assert_eq!(patch.source.as_deref(), Some("testdrive:Photos"));
+        assert_eq!(patch.dest.as_deref(), Some("testdrive2:backup"));
+        assert_eq!(patch.operation["createEmptySrcDirs"], true);
+        assert!(patch.operation.get("srcFs").is_none());
+        assert!(patch.operation.get("dstFs").is_none());
+        assert_eq!(patch.vfs["vfs_cache_mode"], "full");
+        assert_eq!(patch.filter["max_age"], "7d");
+        assert_eq!(patch.backend["transfers"], 8);
+        assert_eq!(patch.runtime["chunk_size"], "32M");
+        assert!(lookup_flag_value(&patch.vfs, "VfsCacheMode").is_some());
+        let empty = template_form_patch(&json!({}), OperationType::Sync);
+        assert!(empty.source.is_none());
+        assert!(empty.operation.is_empty());
     }
 }

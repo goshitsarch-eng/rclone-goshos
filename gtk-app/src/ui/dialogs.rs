@@ -6132,8 +6132,8 @@ pub fn quick_run_editor(
     } else {
         ctx.t_or("flow.quickRun.editor.createTitle", "Create Quick Run")
     });
-    dialog.set_content_width(520);
-    dialog.set_content_height(640);
+    dialog.set_content_width(640);
+    dialog.set_content_height(720);
     let group = adw::PreferencesGroup::new();
     let name = adw::EntryRow::new();
     name.set_title(&ctx.t_or("flow.quickRun.editor.name", "Name"));
@@ -6225,10 +6225,11 @@ pub fn quick_run_editor(
     ));
     let tray = adw::SwitchRow::new();
     tray.set_title(&ctx.t_or("flow.quickRun.editor.showOnTray", "Show on tray"));
-    let runtime_json = adw::EntryRow::new();
-    runtime_json.set_title(&ctx.t_or(
-        "flow.quickRun.editor.runtimeRemoteJson",
-        "Runtime remote JSON",
+    let runtime_current = Rc::new(RefCell::new(
+        existing
+            .as_ref()
+            .and_then(|qr| qr.config.rclone.get("runtimeRemote").cloned())
+            .unwrap_or_else(|| serde_json::json!({})),
     ));
     if let Some(qr) = &existing {
         name.set_text(&qr.name);
@@ -6294,9 +6295,6 @@ pub fn quick_run_editor(
         }
         watch_changed.set_active(qr.config.app.watch_changed_only);
         tray.set_active(qr.show_on_tray);
-        if let Some(value) = qr.config.rclone.get("runtimeRemote") {
-            runtime_json.set_text(&value.to_string());
-        }
         if let Some(idx) = OperationType::ALL
             .iter()
             .position(|o| *o == qr.operation_type)
@@ -6826,9 +6824,113 @@ pub fn quick_run_editor(
     filter_flags.set_title(&ctx.t_or("flow.quickRun.editor.tabFilter", "Filter"));
     let backend_flags = adw::PreferencesGroup::new();
     backend_flags.set_title(&ctx.t_or("flow.quickRun.editor.tabBackend", "Backend"));
+    let runtime_flag_rows: Rc<RefCell<Vec<super::flag_widget::FlagRow>>> =
+        Rc::new(RefCell::new(Vec::new()));
+    let runtime_page = adw::PreferencesPage::new();
     let runtime_flags = adw::PreferencesGroup::new();
     runtime_flags.set_title(&ctx.t_or("flow.quickRun.editor.tabRuntimeRemote", "Runtime Remote"));
-    runtime_flags.add(&runtime_json);
+    runtime_flags.set_description(Some(&ctx.t_or(
+        "wizards.remoteConfig.runtimeRemoteWarning.description",
+        "These settings dynamically override connection properties at runtime. They are not stored in rclone.conf.",
+    )));
+    let runtime_json_toggle = adw::SwitchRow::new();
+    runtime_json_toggle.set_title(&ctx.t_or("remoteConfig.jsonMode", "JSON mode"));
+    runtime_json_toggle.set_active(ctx.settings.borrow().runtime.show_json_mode);
+    runtime_flags.add(&runtime_json_toggle);
+    let runtime_empty = adw::ActionRow::new();
+    runtime_empty.set_title(&ctx.t_or(
+        "wizards.presets.noRemoteSelected",
+        "Please select a remote first",
+    ));
+    runtime_flags.add(&runtime_empty);
+    let runtime_editor = super::json_editor::JsonEditor::new(&ctx);
+    runtime_editor.set_restrict(ctx.settings.borrow().general.restrict);
+    runtime_editor
+        .root
+        .set_visible(runtime_json_toggle.is_active());
+    let runtime_json_holder = adw::PreferencesGroup::new();
+    runtime_json_holder.set_title(&ctx.t_or("remoteConfig.jsonPayload", "JSON"));
+    runtime_json_holder.add(&{
+        let row = adw::ActionRow::new();
+        row.set_title(&ctx.t_or("remoteConfig.jsonMode", "JSON"));
+        row.set_activatable(false);
+        row.set_child(Some(&runtime_editor.root));
+        row
+    });
+    runtime_json_holder.set_visible(runtime_json_toggle.is_active());
+    runtime_page.add(&runtime_flags);
+    runtime_page.add(&runtime_json_holder);
+    let fill_runtime_rows = {
+        let ctx = ctx.clone();
+        let runtime_flags = runtime_flags.clone();
+        let runtime_flag_rows = runtime_flag_rows.clone();
+        let runtime_current = runtime_current.clone();
+        let runtime_editor = runtime_editor.clone();
+        let runtime_empty = runtime_empty.clone();
+        let runtime_json_toggle = runtime_json_toggle.clone();
+        let remote = remote.clone();
+        Rc::new(move || {
+            let name = remote.text().to_string();
+            let current = runtime_current.borrow().clone();
+            populate_qr_runtime_rows(&ctx, &runtime_flags, &runtime_flag_rows, &name, &current);
+            let remote_type = remote_type_of(ctx.clone(), &name);
+            let flags = super::remote_config::runtime_flags_for_type(&ctx, &remote_type);
+            runtime_editor.set_fields(
+                flags
+                    .iter()
+                    .filter(|flag| flag.field_name != "type" && flag.name != "type")
+                    .map(crate::json_editor::JsonFieldDef::from_flag)
+                    .collect(),
+            );
+            runtime_editor.set_value(&current);
+            let json_on = runtime_json_toggle.is_active();
+            for (_, row, _) in runtime_flag_rows.borrow().iter() {
+                row.set_visible(!json_on);
+            }
+            let empty = name.trim().is_empty() || runtime_flag_rows.borrow().is_empty();
+            runtime_empty.set_visible(empty && !json_on);
+        }) as Rc<dyn Fn()>
+    };
+    fill_runtime_rows();
+    {
+        let runtime_json_holder = runtime_json_holder.clone();
+        let runtime_editor = runtime_editor.clone();
+        let runtime_empty = runtime_empty.clone();
+        let runtime_flag_rows = runtime_flag_rows.clone();
+        runtime_json_toggle.connect_active_notify(move |row| {
+            let on = row.is_active();
+            runtime_json_holder.set_visible(on);
+            runtime_editor.root.set_visible(on);
+            for (_, widget, _) in runtime_flag_rows.borrow().iter() {
+                widget.set_visible(!on);
+            }
+            runtime_empty.set_visible(!on && runtime_flag_rows.borrow().is_empty());
+            if on {
+                runtime_editor.set_value(&serde_json::Value::Object(collect_flag_object(
+                    &runtime_flag_rows.borrow(),
+                )));
+            }
+        });
+    }
+    {
+        let fill_runtime_rows = fill_runtime_rows.clone();
+        let runtime_current = runtime_current.clone();
+        let runtime_flag_rows = runtime_flag_rows.clone();
+        let runtime_editor = runtime_editor.clone();
+        let runtime_json_toggle = runtime_json_toggle.clone();
+        remote.connect_changed(move |_| {
+            let next = if runtime_json_toggle.is_active() {
+                runtime_editor
+                    .parsed()
+                    .map(serde_json::Value::Object)
+                    .unwrap_or_else(|_| runtime_current.borrow().clone())
+            } else {
+                serde_json::Value::Object(collect_flag_object(&runtime_flag_rows.borrow()))
+            };
+            *runtime_current.borrow_mut() = next;
+            fill_runtime_rows();
+        });
+    }
     let flag_stack = adw::ViewStack::new();
     flag_stack.set_vhomogeneous(false);
     flag_stack.add_titled(
@@ -6852,7 +6954,7 @@ pub fn quick_run_editor(
         &ctx.t_or("flow.quickRun.editor.tabBackend", "Backend"),
     );
     flag_stack.add_titled(
-        &runtime_flags,
+        &runtime_page,
         Some("runtime"),
         &ctx.t_or("flow.quickRun.editor.tabRuntimeRemote", "Runtime Remote"),
     );
@@ -6977,7 +7079,9 @@ pub fn quick_run_editor(
         let vfs_flag_rows = vfs_flag_rows.clone();
         let filter_flag_rows = filter_flag_rows.clone();
         let backend_flag_rows = backend_flag_rows.clone();
-        let runtime_json = runtime_json.clone();
+        let runtime_flag_rows = runtime_flag_rows.clone();
+        let runtime_editor = runtime_editor.clone();
+        let runtime_json_toggle = runtime_json_toggle.clone();
         let flag_rows = flag_rows.clone();
         let serve_flag_rows = serve_flag_rows.clone();
         let serve = serve.clone();
@@ -6992,6 +7096,10 @@ pub fn quick_run_editor(
         let extra_sources = extra_sources.clone();
         let extra_filenames = extra_filenames.clone();
         let url_filename = url_filename.clone();
+        let remote = remote.clone();
+        let op_row = op_row.clone();
+        let src = src.clone();
+        let dst = dst.clone();
         save.connect_clicked(move |_| {
             let expr = cron.text().to_string();
             if !expr.is_empty() {
@@ -7160,11 +7268,41 @@ pub fn quick_run_editor(
                     )),
                 );
             }
-            let inline = runtime_json.text().to_string();
-            if !inline.trim().is_empty() {
-                if let Ok(value) = serde_json::from_str::<serde_json::Value>(inline.trim()) {
-                    flags.insert("runtimeRemote".into(), value);
+            let runtime_value = if runtime_json_toggle.is_active() {
+                match runtime_editor.parsed() {
+                    Ok(map) => serde_json::Value::Object(map),
+                    Err(msg) => {
+                        let err =
+                            adw::AlertDialog::new(
+                                Some(&ctx.t_or(
+                                    "flow.quickRun.editor.tabRuntimeRemote",
+                                    "Runtime Remote",
+                                )),
+                                Some(&msg),
+                            );
+                        err.add_response("ok", &ctx.t_or("common.ok", "OK"));
+                        err.present(Some(&dialog));
+                        return;
+                    }
                 }
+            } else {
+                if let Some((_, field, msg)) =
+                    first_invalid_flag(runtime_flag_rows.borrow().iter().map(
+                        |(field, row, type_name)| (field.clone(), row.clone(), type_name.clone()),
+                    ))
+                {
+                    let err = adw::AlertDialog::new(
+                        Some(&ctx.t_or("flow.quickRun.editor.tabRuntimeRemote", "Runtime Remote")),
+                        Some(&format!("{field}: {msg}")),
+                    );
+                    err.add_response("ok", &ctx.t_or("common.ok", "OK"));
+                    err.present(Some(&dialog));
+                    return;
+                }
+                serde_json::Value::Object(collect_flag_object(&runtime_flag_rows.borrow()))
+            };
+            if runtime_value.as_object().is_some_and(|map| !map.is_empty()) {
+                flags.insert("runtimeRemote".into(), runtime_value);
             }
             for (field, row, type_name) in flag_rows.borrow().iter() {
                 let text = row.text().to_string();
@@ -7230,6 +7368,22 @@ pub fn quick_run_editor(
     let box_ = gtk::Box::new(gtk::Orientation::Vertical, 12);
     box_.set_margin_top(12);
     box_.set_margin_bottom(12);
+    box_.append(&quick_run_preset_bar(
+        &dialog,
+        ctx.clone(),
+        remote.clone(),
+        op_row.clone(),
+        src.clone(),
+        dst.clone(),
+        flag_rows.clone(),
+        vfs_flag_rows.clone(),
+        filter_flag_rows.clone(),
+        backend_flag_rows.clone(),
+        runtime_flag_rows.clone(),
+        runtime_editor.clone(),
+        runtime_json_toggle.clone(),
+        runtime_current.clone(),
+    ));
     box_.append(&group);
     box_.append(&guidance);
     box_.append(&cron_hint);
@@ -13838,6 +13992,272 @@ fn apply_quick_run_path_titles(
         ),
     });
     dst.set_visible(op != OperationType::Delete);
+}
+
+fn populate_qr_runtime_rows(
+    ctx: &AppCtx,
+    group: &adw::PreferencesGroup,
+    rows: &Rc<RefCell<Vec<super::flag_widget::FlagRow>>>,
+    remote: &str,
+    current: &serde_json::Value,
+) {
+    clear_flag_rows(group, rows);
+    let remote_type = remote_type_of(ctx.clone(), remote);
+    for flag in super::remote_config::runtime_flags_for_type(ctx, &remote_type) {
+        if flag.field_name == "type" || flag.name == "type" {
+            continue;
+        }
+        let row = super::flag_widget::FlagWidget::from_flag(ctx, &flag, current);
+        row.add_to(group);
+        rows.borrow_mut()
+            .push((flag.field_name, row, flag.type_name));
+    }
+}
+
+fn collect_flag_object(
+    rows: &[super::flag_widget::FlagRow],
+) -> serde_json::Map<String, serde_json::Value> {
+    let mut map = serde_json::Map::new();
+    for (field, row, type_name) in rows {
+        if field == "type" {
+            continue;
+        }
+        let text = row.text();
+        if text.is_empty() {
+            continue;
+        }
+        map.insert(
+            field.clone(),
+            crate::flags::parse_flag_value(type_name, &text),
+        );
+    }
+    map
+}
+
+fn apply_values_to_flag_rows(
+    rows: &[super::flag_widget::FlagRow],
+    values: &serde_json::Map<String, serde_json::Value>,
+) {
+    if values.is_empty() {
+        return;
+    }
+    for (field, row, type_name) in rows {
+        if let Some(value) = crate::user_templates::lookup_flag_value(values, field) {
+            let text = crate::value_mapper::machine_to_human(value, type_name, "");
+            if !text.is_empty() && text != "null" {
+                row.set_text(&text);
+            }
+        }
+    }
+}
+
+fn apply_quick_run_form_patch(
+    patch: &crate::user_templates::QuickRunFormPatch,
+    op: OperationType,
+    src: &adw::EntryRow,
+    dst: &adw::EntryRow,
+    flag_rows: &[super::flag_widget::FlagRow],
+    vfs_rows: &[super::flag_widget::FlagRow],
+    filter_rows: &[super::flag_widget::FlagRow],
+    backend_rows: &[super::flag_widget::FlagRow],
+    runtime_rows: &[super::flag_widget::FlagRow],
+    runtime_editor: &super::json_editor::JsonEditor,
+    json_mode: bool,
+    runtime_current: &Rc<RefCell<serde_json::Value>>,
+) {
+    apply_values_to_flag_rows(vfs_rows, &patch.vfs);
+    apply_values_to_flag_rows(filter_rows, &patch.filter);
+    apply_values_to_flag_rows(backend_rows, &patch.backend);
+    apply_values_to_flag_rows(flag_rows, &patch.operation);
+    if op == OperationType::Mount {
+        apply_values_to_flag_rows(flag_rows, &patch.mount);
+    }
+    if let Some(source) = &patch.source {
+        src.set_text(source);
+    }
+    if let Some(dest) = &patch.dest {
+        dst.set_text(dest);
+    }
+    if json_mode {
+        let mut map = runtime_editor.parsed().unwrap_or_else(|_| {
+            runtime_current
+                .borrow()
+                .as_object()
+                .cloned()
+                .unwrap_or_default()
+        });
+        for (key, value) in &patch.runtime {
+            map.insert(key.clone(), value.clone());
+        }
+        let value = serde_json::Value::Object(map);
+        runtime_editor.set_value(&value);
+        *runtime_current.borrow_mut() = value;
+    } else {
+        apply_values_to_flag_rows(runtime_rows, &patch.runtime);
+        *runtime_current.borrow_mut() =
+            serde_json::Value::Object(collect_flag_object(runtime_rows));
+    }
+}
+
+fn quick_run_preset_bar(
+    parent: &impl IsA<gtk::Widget>,
+    ctx: AppCtx,
+    remote: adw::EntryRow,
+    op_row: adw::ComboRow,
+    src: adw::EntryRow,
+    dst: adw::EntryRow,
+    flag_rows: Rc<RefCell<Vec<super::flag_widget::FlagRow>>>,
+    vfs_flag_rows: Rc<RefCell<Vec<super::flag_widget::FlagRow>>>,
+    filter_flag_rows: Rc<RefCell<Vec<super::flag_widget::FlagRow>>>,
+    backend_flag_rows: Rc<RefCell<Vec<super::flag_widget::FlagRow>>>,
+    runtime_flag_rows: Rc<RefCell<Vec<super::flag_widget::FlagRow>>>,
+    runtime_editor: super::json_editor::JsonEditor,
+    runtime_json_toggle: adw::SwitchRow,
+    runtime_current: Rc<RefCell<serde_json::Value>>,
+) -> gtk::Box {
+    let box_ = gtk::Box::new(gtk::Orientation::Vertical, 6);
+    box_.set_margin_start(8);
+    box_.set_margin_end(8);
+    let title = gtk::Label::new(Some(
+        &ctx.t_or("templates.presetTitle", "Presets & Templates"),
+    ));
+    title.add_css_class("heading");
+    title.set_xalign(0.0);
+    let current_op = {
+        let op_row = op_row.clone();
+        Rc::new(move || {
+            OperationType::ALL
+                .get(op_row.selected() as usize)
+                .copied()
+                .unwrap_or(OperationType::Sync)
+        })
+    };
+    let apply_patch = {
+        let src = src.clone();
+        let dst = dst.clone();
+        let flag_rows = flag_rows.clone();
+        let vfs_flag_rows = vfs_flag_rows.clone();
+        let filter_flag_rows = filter_flag_rows.clone();
+        let backend_flag_rows = backend_flag_rows.clone();
+        let runtime_flag_rows = runtime_flag_rows.clone();
+        let runtime_editor = runtime_editor.clone();
+        let runtime_json_toggle = runtime_json_toggle.clone();
+        let runtime_current = runtime_current.clone();
+        let current_op = current_op.clone();
+        Rc::new(move |patch: crate::user_templates::QuickRunFormPatch| {
+            apply_quick_run_form_patch(
+                &patch,
+                current_op(),
+                &src,
+                &dst,
+                &flag_rows.borrow(),
+                &vfs_flag_rows.borrow(),
+                &filter_flag_rows.borrow(),
+                &backend_flag_rows.borrow(),
+                &runtime_flag_rows.borrow(),
+                &runtime_editor,
+                runtime_json_toggle.is_active(),
+                &runtime_current,
+            );
+        }) as Rc<dyn Fn(crate::user_templates::QuickRunFormPatch)>
+    };
+    let defaults =
+        gtk::Button::with_label(&ctx.t_or("templates.applyPresets", "Apply Default Presets"));
+    {
+        let ctx = ctx.clone();
+        let remote = remote.clone();
+        let parent = parent.clone();
+        let apply_patch = apply_patch.clone();
+        let current_op = current_op.clone();
+        defaults.connect_clicked(move |_| {
+            let name = remote.text().to_string();
+            if name.trim().is_empty() {
+                let warn = adw::AlertDialog::new(
+                    Some(&ctx.t_or(
+                        "wizards.presets.noRemoteSelected",
+                        "Please select a remote first",
+                    )),
+                    None::<&str>,
+                );
+                warn.add_response("ok", &ctx.t_or("common.ok", "OK"));
+                warn.present(Some(&parent));
+                return;
+            }
+            let remote_type = remote_type_of(ctx.clone(), &name);
+            let presets = crate::presets::resolve_presets(&remote_type, None, std::env::consts::OS);
+            apply_patch(crate::user_templates::default_presets_patch(
+                &presets,
+                current_op(),
+            ));
+            let toast = adw::AlertDialog::new(
+                Some(&ctx.t_or(
+                    "wizards.presets.applied",
+                    "Default presets applied successfully",
+                )),
+                Some(&ctx.t_or(
+                    "templates.applySuccess",
+                    "Default provider / OS presets were merged into this Quick Run.",
+                )),
+            );
+            toast.add_response("ok", &ctx.t_or("common.ok", "OK"));
+            toast.present(Some(&parent));
+        });
+    }
+    let names: Vec<String> = ctx
+        .store
+        .borrow()
+        .templates
+        .iter()
+        .map(|template| template.name.clone())
+        .collect();
+    let pick = adw::ComboRow::new();
+    pick.set_title(&ctx.t_or("templates.userTemplates", "Saved User Templates"));
+    let labels: Vec<&str> = names.iter().map(|s| s.as_str()).collect();
+    if labels.is_empty() {
+        pick.set_model(Some(&gtk::StringList::new(&["—"])));
+        pick.set_sensitive(false);
+    } else {
+        pick.set_model(Some(&gtk::StringList::new(&labels)));
+    }
+    let apply = gtk::Button::with_label(&ctx.t_or("common.apply", "Apply"));
+    apply.add_css_class("suggested-action");
+    apply.set_sensitive(!names.is_empty());
+    {
+        let ctx = ctx.clone();
+        let parent = parent.clone();
+        let pick = pick.clone();
+        let apply_patch = apply_patch.clone();
+        let current_op = current_op.clone();
+        apply.connect_clicked(move |_| {
+            let templates = ctx.store.borrow().templates.clone();
+            let Some(template) = templates.get(pick.selected() as usize) else {
+                return;
+            };
+            apply_patch(crate::user_templates::template_form_patch(
+                &template.values,
+                current_op(),
+            ));
+            let msg = ctx.tf("templates.applySuccess", &[("name", &template.name)]);
+            let toast = adw::AlertDialog::new(Some(&msg), None::<&str>);
+            toast.add_response("ok", &ctx.t_or("common.ok", "OK"));
+            toast.present(Some(&parent));
+        });
+    }
+    let manage =
+        gtk::Button::with_label(&ctx.t_or("templates.manageTemplates", "Manage Templates..."));
+    {
+        let ctx = ctx.clone();
+        let parent = parent.clone();
+        manage.connect_clicked(move |_| {
+            templates(&parent, ctx.clone());
+        });
+    }
+    box_.append(&title);
+    box_.append(&defaults);
+    box_.append(&pick);
+    box_.append(&apply);
+    box_.append(&manage);
+    box_
 }
 
 pub(crate) fn path_status_label(
