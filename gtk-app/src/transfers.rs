@@ -189,6 +189,11 @@ pub fn transfer_card_paths(row: &TransferRow, job_src: &str, job_dst: &str) -> (
     )
 }
 
+pub fn qualify_transfer_row(row: &mut TransferRow, job_src: &str, job_dst: &str) {
+    row.src = qualify_transfer_side(&row.src, job_src, &row.name);
+    row.dst = qualify_transfer_side(&row.dst, job_dst, &row.name);
+}
+
 /// Angular `speedClass` thresholds (10 MiB/s fast, 1 MiB/s medium).
 pub fn transfer_speed_class(speed: f64) -> &'static str {
     if speed > 10_485_760.0 {
@@ -843,6 +848,10 @@ mod tests {
                 "testdrive:verify-ops/bad.txt".into()
             )
         );
+        let mut qualified = leaf_only.clone();
+        qualify_transfer_row(&mut qualified, "testdrive:Photos", "testdrive:verify-ops");
+        assert_eq!(qualified.src, "testdrive:Photos/ok.txt");
+        assert_eq!(qualified.dst, "testdrive:verify-ops/ok.txt");
         assert_eq!(
             transfer_size_caption(&done),
             format!(

@@ -10452,11 +10452,12 @@ fn append_transfer_rows(
     let hidden = ctx.hidden_transfer_ids.borrow();
     let mut matched = Vec::new();
     for item in arr {
-        let parsed = if active {
+        let mut parsed = if active {
             crate::transfers::parse_transfer_row(item)
         } else {
             crate::transfers::parse_completed_transfer_row(item)
         };
+        crate::transfers::qualify_transfer_row(&mut parsed, job_src, job_dst);
         if hidden.contains(&crate::transfers::transfer_row_id(&parsed)) {
             continue;
         }

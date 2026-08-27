@@ -3784,12 +3784,9 @@ impl Dashboard {
         for job in &jobs {
             if let Some(arr) = job.transferring.as_array() {
                 for item in arr {
-                    rows.push((
-                        job.operation.clone(),
-                        job.remote.clone(),
-                        crate::transfers::parse_transfer_row(item),
-                        false,
-                    ));
+                    let mut row = crate::transfers::parse_transfer_row(item);
+                    crate::transfers::qualify_transfer_row(&mut row, &job.src, &job.dst);
+                    rows.push((job.operation.clone(), job.remote.clone(), row, false));
                 }
             }
             for source in [
@@ -3800,12 +3797,9 @@ impl Dashboard {
             .flatten()
             {
                 for item in source {
-                    rows.push((
-                        job.operation.clone(),
-                        job.remote.clone(),
-                        crate::transfers::parse_completed_transfer_row(item),
-                        true,
-                    ));
+                    let mut row = crate::transfers::parse_completed_transfer_row(item);
+                    crate::transfers::qualify_transfer_row(&mut row, &job.src, &job.dst);
+                    rows.push((job.operation.clone(), job.remote.clone(), row, true));
                 }
             }
         }
