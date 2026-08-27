@@ -7003,7 +7003,12 @@ impl NautilusView {
             let view = self.clone();
             stop.connect_clicked(move |_| {
                 if let Some(client) = ctx.client() {
-                    let _ = client.job_stop(id);
+                    if client.job_stop(id).is_ok() {
+                        view.toast.add_toast(adw::Toast::new(&ctx.t_or(
+                            crate::jobs::job_stopped_toast_key(),
+                            "Job stopped successfully",
+                        )));
+                    }
                     ctx.refresh_runtime();
                     view.reload_ops();
                 }
@@ -7023,6 +7028,10 @@ impl NautilusView {
             dismiss.connect_clicked(move |_| {
                 ctx.store.borrow_mut().dismiss_job(id);
                 ctx.persist();
+                view.toast.add_toast(adw::Toast::new(&ctx.t_or(
+                    crate::jobs::job_deleted_toast_key(),
+                    "Job deleted successfully",
+                )));
                 view.reload_ops();
             });
             row.add_suffix(&dismiss);

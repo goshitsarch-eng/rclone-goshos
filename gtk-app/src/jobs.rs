@@ -2308,6 +2308,16 @@ pub fn job_detail_remote_title_key() -> &'static str {
     "modals.jobDetail.fields.remoteSource"
 }
 
+/// Manual `job/stop` confirmation (Angular `backendSuccess.job.stopped`).
+pub fn job_stopped_toast_key() -> &'static str {
+    "backendSuccess.job.stopped"
+}
+
+/// Remove-from-history confirmation (Angular `backendSuccess.job.deleted`).
+pub fn job_deleted_toast_key() -> &'static str {
+    "backendSuccess.job.deleted"
+}
+
 pub fn job_operation_matches(job_op: &str, op: OperationType) -> bool {
     let key = op.as_str();
     let lower = job_op.to_ascii_lowercase();
@@ -5433,6 +5443,8 @@ mod tests {
             job_origin_key("filemanager"),
             "generalOverview.jobs.originFiles"
         );
+        assert_eq!(job_stopped_toast_key(), "backendSuccess.job.stopped");
+        assert_eq!(job_deleted_toast_key(), "backendSuccess.job.deleted");
     }
 
     #[test]

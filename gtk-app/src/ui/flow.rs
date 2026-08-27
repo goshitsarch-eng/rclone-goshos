@@ -1215,10 +1215,17 @@ impl FlowView {
                     let ctx = self.ctx.clone();
                     let id = job.id;
                     let view = self.clone();
-                    delete.connect_clicked(move |_| {
+                    delete.connect_clicked(move |btn| {
                         ctx.store.borrow_mut().dismiss_job(id);
                         ctx.persist();
                         ctx.refresh_runtime();
+                        ctx.toast_near(
+                            btn,
+                            ctx.t_or(
+                                crate::jobs::job_deleted_toast_key(),
+                                "Job deleted successfully",
+                            ),
+                        );
                         view.refresh();
                     });
                 }

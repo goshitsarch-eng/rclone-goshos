@@ -9346,6 +9346,7 @@ pub fn job_detail(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, job_id: u64) {
     if try_spawn_standalone(&ctx, "job-detail", serde_json::json!({ "jobid": job_id })) {
         return;
     }
+    let toast_parent: gtk::Widget = parent.clone().upcast();
     let dialog = adw::Dialog::new();
     dialog.set_title(&ctx.tf("modals.jobDetail.title", &[("id", &job_id.to_string())]));
     dialog.set_content_width(640);
@@ -9393,9 +9394,17 @@ pub fn job_detail(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, job_id: u64) {
     stop.add_css_class("destructive-action");
     {
         let ctx = ctx.clone();
-        stop.connect_clicked(move |_| {
+        stop.connect_clicked(move |btn| {
             if let Some(client) = ctx.client() {
-                let _ = client.job_stop(job_id);
+                if client.job_stop(job_id).is_ok() {
+                    ctx.toast_near(
+                        btn,
+                        ctx.t_or(
+                            crate::jobs::job_stopped_toast_key(),
+                            "Job stopped successfully",
+                        ),
+                    );
+                }
                 ctx.refresh_runtime();
             }
         });
@@ -9437,10 +9446,18 @@ pub fn job_detail(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, job_id: u64) {
     {
         let ctx = ctx.clone();
         let dialog = dialog.clone();
+        let toast_parent = toast_parent.clone();
         delete.connect_clicked(move |_| {
             ctx.store.borrow_mut().dismiss_job(job_id);
             ctx.persist();
             ctx.refresh_runtime();
+            ctx.toast_near(
+                &toast_parent,
+                ctx.t_or(
+                    crate::jobs::job_deleted_toast_key(),
+                    "Job deleted successfully",
+                ),
+            );
             dialog.close();
         });
     }
@@ -12546,6 +12563,11 @@ pub(crate) fn download_file(
                 path
             };
             let dest_path = dest.to_string_lossy().into_owned();
+            let file_name = dest
+                .file_name()
+                .and_then(|n| n.to_str())
+                .unwrap_or("file")
+                .to_string();
             match client.start_job(
                 "operations/copyfile",
                 serde_json::json!({
@@ -12572,18 +12594,55 @@ pub(crate) fn download_file(
                     ctx.refresh_runtime();
                     add_action_toast(
                         &toast_host,
-                        &ctx.t_or(
-                            "shared.transferActivity.actions.successDownload",
-                            "File downloaded successfully",
+                        &ctx.tf(
+                            crate::fileops::download_progress_toast_key(),
+                            &[("name", &file_name)],
                         ),
                     );
+                    let toast_host = toast_host.clone();
+                    let ctx = ctx.clone();
+                    glib::timeout_add_local(std::time::Duration::from_millis(250), move || {
+                        let Some(client) = ctx.client() else {
+                            return glib::ControlFlow::Continue;
+                        };
+                        match client.job_status(id) {
+                            Ok(status) if crate::rclone::job_is_finished(&status) => {
+                                let ok = crate::fileops::download_job_succeeded(&status);
+                                add_action_toast(
+                                    &toast_host,
+                                    &ctx.t_or(
+                                        crate::fileops::download_result_toast_key(ok),
+                                        if ok {
+                                            "File downloaded successfully"
+                                        } else {
+                                            "Failed to download file"
+                                        },
+                                    ),
+                                );
+                                ctx.refresh_runtime();
+                                glib::ControlFlow::Break
+                            }
+                            Ok(_) => glib::ControlFlow::Continue,
+                            Err(e) => {
+                                log::warn!("download status failed: {e}");
+                                add_action_toast(
+                                    &toast_host,
+                                    &ctx.t_or(
+                                        crate::fileops::download_result_toast_key(false),
+                                        "Failed to download file",
+                                    ),
+                                );
+                                glib::ControlFlow::Break
+                            }
+                        }
+                    });
                 }
                 Err(e) => {
                     log::warn!("download failed: {e}");
                     add_action_toast(
                         &toast_host,
                         &ctx.t_or(
-                            "shared.transferActivity.actions.failDownload",
+                            crate::fileops::download_result_toast_key(false),
                             "Failed to download file",
                         ),
                     );

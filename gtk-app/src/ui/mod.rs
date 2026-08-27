@@ -1213,6 +1213,19 @@ impl AppCtx {
         overlay.add_toast(toast);
     }
 
+    /// Toast on the nearest `ToastOverlay` ancestor (survives closing a child dialog).
+    pub fn toast_near(&self, parent: &impl IsA<gtk::Widget>, message: impl AsRef<str>) {
+        let toast = adw::Toast::new(message.as_ref());
+        toast.set_button_label(Some(&self.t_or("common.ok", "OK")));
+        toast.set_timeout(5);
+        if let Some(overlay) = parent
+            .ancestor(adw::ToastOverlay::static_type())
+            .and_downcast::<adw::ToastOverlay>()
+        {
+            overlay.add_toast(toast);
+        }
+    }
+
     pub fn toast_action(
         &self,
         overlay: &adw::ToastOverlay,

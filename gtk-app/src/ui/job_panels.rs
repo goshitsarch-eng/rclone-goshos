@@ -338,9 +338,17 @@ pub fn overview_jobs_panel(
                 let ctx = ctx.clone();
                 let id = job.id;
                 let on_changed = on_changed.clone();
-                stop.connect_clicked(move |_| {
+                stop.connect_clicked(move |btn| {
                     if let Some(c) = ctx.client() {
-                        let _ = c.job_stop(id);
+                        if c.job_stop(id).is_ok() {
+                            ctx.toast_near(
+                                btn,
+                                ctx.t_or(
+                                    crate::jobs::job_stopped_toast_key(),
+                                    "Job stopped successfully",
+                                ),
+                            );
+                        }
                         ctx.refresh_runtime();
                         on_changed();
                     }
@@ -430,9 +438,17 @@ pub fn detail_jobs_panel(
             let ctx = ctx.clone();
             let id = job.id;
             let on_changed = on_changed.clone();
-            stop.connect_clicked(move |_| {
+            stop.connect_clicked(move |btn| {
                 if let Some(client) = ctx.client() {
-                    let _ = client.job_stop(id);
+                    if client.job_stop(id).is_ok() {
+                        ctx.toast_near(
+                            btn,
+                            ctx.t_or(
+                                crate::jobs::job_stopped_toast_key(),
+                                "Job stopped successfully",
+                            ),
+                        );
+                    }
                     ctx.refresh_runtime();
                     on_changed();
                 }
@@ -447,9 +463,16 @@ pub fn detail_jobs_panel(
             let ctx = ctx.clone();
             let id = job.id;
             let on_changed = on_changed.clone();
-            delete.connect_clicked(move |_| {
+            delete.connect_clicked(move |btn| {
                 ctx.store.borrow_mut().dismiss_job(id);
                 ctx.persist();
+                ctx.toast_near(
+                    btn,
+                    ctx.t_or(
+                        crate::jobs::job_deleted_toast_key(),
+                        "Job deleted successfully",
+                    ),
+                );
                 on_changed();
             });
             delete

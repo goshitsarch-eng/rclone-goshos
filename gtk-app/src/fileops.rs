@@ -610,6 +610,25 @@ pub fn ops_job_title(operation: &str, status_label: &str) -> String {
     format!("{operation} · {status_label}")
 }
 
+/// Shown as soon as `operations/copyfile` is queued (Angular `downloading`).
+pub fn download_progress_toast_key() -> &'static str {
+    "fileBrowser.fileViewer.downloading"
+}
+
+/// Success/fail only after the copyfile job finishes (not on start).
+pub fn download_result_toast_key(ok: bool) -> &'static str {
+    if ok {
+        "shared.transferActivity.actions.successDownload"
+    } else {
+        "shared.transferActivity.actions.failDownload"
+    }
+}
+
+/// rclone `job/status` payload: finished without an error.
+pub fn download_job_succeeded(status: &Value) -> bool {
+    crate::rclone::job_is_finished(status) && crate::rclone::job_error_message(status).is_none()
+}
+
 /// Files ops panel uses Cancelled for stopped jobs (Angular `fileBrowser.operations.cancelled`).
 pub fn ops_job_status_key(status: &str) -> &'static str {
     if status.eq_ignore_ascii_case("stopped") {
@@ -2216,6 +2235,25 @@ mod tests {
             ops_job_status_key("completed"),
             "detailShared.jobs.status.completed"
         );
+        assert_eq!(
+            download_progress_toast_key(),
+            "fileBrowser.fileViewer.downloading"
+        );
+        assert_eq!(
+            download_result_toast_key(true),
+            "shared.transferActivity.actions.successDownload"
+        );
+        assert_eq!(
+            download_result_toast_key(false),
+            "shared.transferActivity.actions.failDownload"
+        );
+        assert!(download_job_succeeded(
+            &json!({ "finished": true, "success": true })
+        ));
+        assert!(!download_job_succeeded(
+            &json!({ "finished": true, "success": false, "error": "disk full" })
+        ));
+        assert!(!download_job_succeeded(&json!({ "finished": false })));
         assert_eq!(remote_about_type_display("alias").as_deref(), Some("Alias"));
         assert_eq!(remote_about_type_display("  s3  ").as_deref(), Some("S3"));
         assert_eq!(remote_about_type_display(""), None);
