@@ -1213,15 +1213,12 @@ impl AppCtx {
         overlay.add_toast(toast);
     }
 
-    /// Toast on the nearest `ToastOverlay` ancestor (survives closing a child dialog).
+    /// Toast on the nearest `ToastOverlay` (ancestor, self, or window content).
     pub fn toast_near(&self, parent: &impl IsA<gtk::Widget>, message: impl AsRef<str>) {
         let toast = adw::Toast::new(message.as_ref());
         toast.set_button_label(Some(&self.t_or("common.ok", "OK")));
         toast.set_timeout(5);
-        if let Some(overlay) = parent
-            .ancestor(adw::ToastOverlay::static_type())
-            .and_downcast::<adw::ToastOverlay>()
-        {
+        if let Some(overlay) = find_toast_overlay(parent.upcast_ref()) {
             overlay.add_toast(toast);
         }
     }
@@ -1352,6 +1349,34 @@ fn collect_jobs(client: &crate::rclone::RcClient, known: &[u64]) -> Vec<crate::s
     }
     jobs.retain(|job| crate::jobs::keep_collected_job(job, known));
     jobs
+}
+
+fn find_toast_overlay(widget: &gtk::Widget) -> Option<adw::ToastOverlay> {
+    if let Ok(overlay) = widget.clone().downcast::<adw::ToastOverlay>() {
+        return Some(overlay);
+    }
+    if let Some(overlay) = widget
+        .ancestor(adw::ToastOverlay::static_type())
+        .and_downcast::<adw::ToastOverlay>()
+    {
+        return Some(overlay);
+    }
+    if let Some(child) = widget.first_child() {
+        if let Ok(overlay) = child.clone().downcast::<adw::ToastOverlay>() {
+            return Some(overlay);
+        }
+        if let Some(overlay) = find_toast_overlay(&child) {
+            return Some(overlay);
+        }
+    }
+    if let Some(root) = widget.root() {
+        if let Some(child) = root.first_child() {
+            if let Ok(overlay) = child.downcast::<adw::ToastOverlay>() {
+                return Some(overlay);
+            }
+        }
+    }
+    None
 }
 
 fn notify_job_changes(
