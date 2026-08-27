@@ -1,6 +1,7 @@
 mod automation_card;
 mod dashboard;
 mod dialogs;
+mod flag_widget;
 mod flow;
 mod interactive;
 mod job_panels;

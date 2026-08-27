@@ -254,6 +254,30 @@ pub fn parse_flag_value(type_name: &str, text: &str) -> Value {
     crate::value_mapper::human_to_machine(text, type_name)
 }
 
+/// Current flag value as the editor should display it.
+pub fn flag_display_text(flag: &FlagOption, current: &Value) -> String {
+    let value = current
+        .get(&flag.field_name)
+        .or_else(|| current.get(&flag.name))
+        .or_else(|| {
+            current
+                .get("_config")
+                .and_then(|cfg| cfg.get(&flag.field_name).or_else(|| cfg.get(&flag.name)))
+        });
+    match value {
+        Some(value) => {
+            let text =
+                crate::value_mapper::machine_to_human(value, &flag.type_name, &flag.default_str);
+            if text.is_empty() || text == "null" {
+                flag.default_str.clone()
+            } else {
+                text
+            }
+        }
+        None => flag.default_str.clone(),
+    }
+}
+
 pub fn static_flags_for(op: OperationType) -> Vec<FlagOption> {
     match op {
         OperationType::Move => vec![
@@ -636,6 +660,32 @@ mod tests {
         assert_eq!(classify_flag("FTP"), "network");
         assert_eq!(classify_flag("RC"), "other");
         assert_eq!(classify_flag("WebDAV"), "other");
+    }
+
+    #[test]
+    fn displays_bool_int_and_default_flag_text() {
+        let flag = bool_flag("createEmptySrcDirs", "Create empty dirs");
+        assert_eq!(
+            flag_display_text(&flag, &json!({ "createEmptySrcDirs": true })),
+            "true"
+        );
+        assert_eq!(flag_display_text(&flag, &json!({})), flag.default_str);
+        let transfers = FlagOption {
+            name: "transfers".into(),
+            field_name: "transfers".into(),
+            help: "parallel".into(),
+            type_name: "int".into(),
+            advanced: false,
+            groups: "Copy".into(),
+            default_str: "4".into(),
+            value: json!(4),
+            examples: vec![],
+            exclusive: false,
+        };
+        assert_eq!(
+            flag_display_text(&transfers, &json!({ "transfers": 8 })),
+            "8"
+        );
     }
 
     #[test]

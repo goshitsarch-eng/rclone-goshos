@@ -2,6 +2,7 @@
 //! helper configs (VFS / filter / backend / runtime), and remote metadata.
 
 use super::dialogs;
+use super::flag_widget::{FlagRow, FlagWidget, ServeFlagRow};
 use super::interactive::InteractivePanel;
 use super::AppCtx;
 use crate::config_steps::{editor_steps, parse_open_step, EditorStep};
@@ -10,8 +11,7 @@ use crate::flags::{
     FlagOption,
 };
 use crate::jobs::{
-    assemble_rclone, default_dest, default_source, extra_flags, flatten_rclone, path_list,
-    SOURCE_KEYS,
+    assemble_rclone, default_dest, default_source, flatten_rclone, path_list, SOURCE_KEYS,
 };
 use crate::operations::OperationType;
 use crate::rclone::validate_cron;
@@ -1085,8 +1085,7 @@ fn operation_page(
     let search = adw::EntryRow::new();
     search.set_title(&ctx.t_or("remoteConfig.filterFlags", "Filter flags"));
     flags_group.add(&search);
-    let flag_rows: Rc<RefCell<Vec<(String, adw::EntryRow, String)>>> =
-        Rc::new(RefCell::new(Vec::new()));
+    let flag_rows: Rc<RefCell<Vec<FlagRow>>> = Rc::new(RefCell::new(Vec::new()));
     let mut options: Vec<FlagOption> = static_flags_for(op);
     if let Some(category) = flag_category_for_op(op) {
         for (_, option) in options_for_category(blocks, category) {
@@ -1118,22 +1117,21 @@ fn operation_page(
             continue;
         }
         let row = flag_entry(&ctx, &flag, &rclone);
-        flags_group.add(&row);
+        row.add_to(&flags_group);
         flag_rows
             .borrow_mut()
             .push((flag.field_name, row, flag.type_name));
     }
-    let serve_flag_rows: Rc<RefCell<Vec<(String, String, adw::EntryRow, String)>>> =
-        Rc::new(RefCell::new(Vec::new()));
+    let serve_flag_rows: Rc<RefCell<Vec<ServeFlagRow>>> = Rc::new(RefCell::new(Vec::new()));
     if op == OperationType::Serve {
         for serve_type in serve_types.iter() {
             for flag in crate::flags::collect_serve_flags(blocks, serve_type) {
-                let row = flag_entry(&ctx, &flag, &rclone);
+                let mut row = flag_entry(&ctx, &flag, &rclone);
                 row.set_title(&format!("{serve_type} · {}", flag.name));
                 let selected =
                     crate::operations::selected_or(&serve_types, serve.selected(), "http");
                 row.set_visible(serve_type == selected);
-                flags_group.add(&row);
+                row.add_to(&flags_group);
                 serve_flag_rows.borrow_mut().push((
                     serve_type.clone(),
                     flag.field_name,
@@ -1254,16 +1252,16 @@ fn operation_page(
                 return;
             }
             for (field, row, _) in flag_rows.borrow().iter() {
-                let name = row.title().to_string();
-                let help = row.tooltip_text().unwrap_or_default().to_string();
+                let name = row.title();
+                let help = row.help();
                 row.set_visible(crate::config_search::matches_config_search(
                     &name, &help, field, &query,
                 ));
             }
             let selected = crate::operations::selected_or(&serve_types, serve.selected(), "http");
             for (serve_type, field, row, _) in serve_flag_rows.borrow().iter() {
-                let name = row.title().to_string();
-                let help = row.tooltip_text().unwrap_or_default().to_string();
+                let name = row.title();
+                let help = row.help();
                 let matches =
                     crate::config_search::matches_config_search(&name, &help, field, &query);
                 row.set_visible(serve_type == selected && matches);
@@ -1535,7 +1533,7 @@ fn operation_page(
                         |(field, row, type_name)| (field.clone(), row.clone(), type_name.clone()),
                     ))
                 {
-                    dialogs::toast_near(&row, &format!("{field}: {msg}"));
+                    dialogs::toast_near(&row.widget(), &format!("{field}: {msg}"));
                     return;
                 }
                 let selected_serve =
@@ -1551,7 +1549,7 @@ fn operation_page(
                         },
                     ))
                 {
-                    dialogs::toast_near(&row, &format!("{field}: {msg}"));
+                    dialogs::toast_near(&row.widget(), &format!("{field}: {msg}"));
                     return;
                 }
                 for (field, row, type_name) in flag_rows.borrow().iter() {
@@ -1675,8 +1673,7 @@ fn helper_page(
     } else {
         Vec::new()
     };
-    let flag_rows: Rc<RefCell<Vec<(String, adw::EntryRow, String)>>> =
-        Rc::new(RefCell::new(Vec::new()));
+    let flag_rows: Rc<RefCell<Vec<FlagRow>>> = Rc::new(RefCell::new(Vec::new()));
     let runtime_refs: Vec<(&str, &crate::flags::FlagOption)> = runtime_flags
         .iter()
         .map(|option| ("runtime", option))
@@ -1696,7 +1693,7 @@ fn helper_page(
         };
     for (_, option) in &options {
         let row = flag_entry(&ctx, option, &current);
-        flags_group.add(&row);
+        row.add_to(&flags_group);
         flag_rows
             .borrow_mut()
             .push((option.field_name.clone(), row, option.type_name.clone()));
@@ -1754,8 +1751,8 @@ fn helper_page(
                 return;
             }
             for (field, row, _) in flag_rows.borrow().iter() {
-                let name = row.title().to_string();
-                let help = row.tooltip_text().unwrap_or_default().to_string();
+                let name = row.title();
+                let help = row.help();
                 row.set_visible(crate::config_search::matches_config_search(
                     &name, &help, field, &query,
                 ));
@@ -1849,7 +1846,7 @@ fn helper_page(
                         |(field, row, type_name)| (field.clone(), row.clone(), type_name.clone()),
                     ))
                 {
-                    dialogs::toast_near(&row, &format!("{field}: {msg}"));
+                    dialogs::toast_near(&row.widget(), &format!("{field}: {msg}"));
                     return;
                 }
                 for (field, row, type_name) in flag_rows.borrow().iter() {
@@ -2327,25 +2324,8 @@ fn runtime_provider_flags(ctx: &AppCtx, remote: &str) -> Vec<FlagOption> {
     runtime_flags_for_type(ctx, &remote_type)
 }
 
-fn flag_entry(ctx: &AppCtx, flag: &FlagOption, current: &Value) -> adw::EntryRow {
-    let row = adw::EntryRow::new();
-    row.set_title(&ctx.option_label(&flag.name, "title", &flag.name));
-    let help = ctx.option_label(&flag.name, "help", &flag.help);
-    if !help.is_empty() {
-        row.set_tooltip_text(Some(&help));
-    }
-    let text = current
-        .get(&flag.field_name)
-        .or_else(|| current.get(&flag.name))
-        .map(value_to_text)
-        .or_else(|| {
-            extra_flags(current)
-                .get(&flag.field_name)
-                .map(value_to_text)
-        })
-        .unwrap_or_else(|| flag.default_str.clone());
-    row.set_text(&text);
-    row
+fn flag_entry(ctx: &AppCtx, flag: &FlagOption, current: &Value) -> FlagWidget {
+    FlagWidget::from_flag(ctx, flag, current)
 }
 
 fn value_to_text(value: &Value) -> String {

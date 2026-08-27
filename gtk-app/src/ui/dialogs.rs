@@ -5145,20 +5145,20 @@ pub fn start_operation(
 
     let flags_group = adw::PreferencesGroup::new();
     flags_group.set_title(&ctx.t_or("remoteConfig.flags", "Operation flags"));
-    let flag_rows: Rc<RefCell<Vec<(String, adw::EntryRow, String)>>> =
+    let flag_rows: Rc<RefCell<Vec<super::flag_widget::FlagRow>>> =
         Rc::new(RefCell::new(Vec::new()));
     let live_blocks = operation_flag_blocks(&ctx);
     for flag in crate::flags::merged_flags_for(op, &live_blocks) {
         if op == OperationType::Serve && flag.field_name == "type" {
             continue;
         }
-        let row = flag_value_row(&flag, &rclone);
-        flags_group.add(&row);
+        let row = flag_value_row(&ctx, &flag, &rclone);
+        row.add_to(&flags_group);
         flag_rows
             .borrow_mut()
             .push((flag.field_name, row, flag.type_name));
     }
-    let serve_flag_rows: Rc<RefCell<Vec<(String, String, adw::EntryRow, String)>>> =
+    let serve_flag_rows: Rc<RefCell<Vec<super::flag_widget::ServeFlagRow>>> =
         Rc::new(RefCell::new(Vec::new()));
     if op == OperationType::Serve {
         if let Some(client) = ctx.client() {
@@ -5166,20 +5166,12 @@ pub fn start_operation(
                 let blocks = client.option_flag_blocks();
                 for serve_type in serve_types.iter() {
                     for flag in crate::flags::collect_serve_flags(&blocks, serve_type) {
-                        let row = adw::EntryRow::new();
+                        let mut row = flag_value_row(&ctx, &flag, &rclone);
                         row.set_title(&format!("{serve_type} · {}", flag.name));
-                        if !flag.help.is_empty() {
-                            row.set_tooltip_text(Some(&flag.help));
-                        }
-                        let current = rclone
-                            .get(&flag.field_name)
-                            .map(|v| v.to_string().trim_matches('"').to_string())
-                            .unwrap_or_else(|| flag.default_str.clone());
-                        row.set_text(&current);
                         let selected =
                             crate::operations::selected_or(&serve_types, serve.selected(), "http");
                         row.set_visible(serve_type == selected);
-                        flags_group.add(&row);
+                        row.add_to(&flags_group);
                         serve_flag_rows.borrow_mut().push((
                             serve_type.clone(),
                             flag.field_name,
@@ -6325,9 +6317,9 @@ pub fn quick_run_editor(
     group.add(&resync);
     let flags_group = adw::PreferencesGroup::new();
     flags_group.set_title(&ctx.t_or("flow.quickRun.editor.flags", "Operation flags"));
-    let flag_rows: Rc<RefCell<Vec<(String, adw::EntryRow, String)>>> =
+    let flag_rows: Rc<RefCell<Vec<super::flag_widget::FlagRow>>> =
         Rc::new(RefCell::new(Vec::new()));
-    let serve_flag_rows: Rc<RefCell<Vec<(String, String, adw::EntryRow, String)>>> =
+    let serve_flag_rows: Rc<RefCell<Vec<super::flag_widget::ServeFlagRow>>> =
         Rc::new(RefCell::new(Vec::new()));
     let initial_rclone = existing
         .as_ref()
@@ -6335,6 +6327,7 @@ pub fn quick_run_editor(
         .unwrap_or(serde_json::json!({}));
     let live_blocks = operation_flag_blocks(&ctx);
     populate_flag_rows(
+        &ctx,
         &flags_group,
         &flag_rows,
         initial_op,
@@ -6369,6 +6362,7 @@ pub fn quick_run_editor(
     flags_group.add(&mount_type);
     if initial_op == OperationType::Serve {
         populate_serve_flag_rows(
+            &ctx,
             &flags_group,
             &serve_flag_rows,
             &live_blocks,
@@ -6459,9 +6453,10 @@ pub fn quick_run_editor(
             }
             clear_flag_rows(&flags_group, &flag_rows);
             clear_serve_flag_rows(&flags_group, &serve_flag_rows);
-            populate_flag_rows(&flags_group, &flag_rows, op, &rclone, &blocks);
+            populate_flag_rows(&ctx_titles, &flags_group, &flag_rows, op, &rclone, &blocks);
             if op == OperationType::Serve {
                 populate_serve_flag_rows(
+                    &ctx_titles,
                     &flags_group,
                     &serve_flag_rows,
                     &blocks,
@@ -6474,11 +6469,11 @@ pub fn quick_run_editor(
             refresh_guidance();
         });
     }
-    let vfs_flag_rows: Rc<RefCell<Vec<(String, adw::EntryRow, String)>>> =
+    let vfs_flag_rows: Rc<RefCell<Vec<super::flag_widget::FlagRow>>> =
         Rc::new(RefCell::new(Vec::new()));
-    let filter_flag_rows: Rc<RefCell<Vec<(String, adw::EntryRow, String)>>> =
+    let filter_flag_rows: Rc<RefCell<Vec<super::flag_widget::FlagRow>>> =
         Rc::new(RefCell::new(Vec::new()));
-    let backend_flag_rows: Rc<RefCell<Vec<(String, adw::EntryRow, String)>>> =
+    let backend_flag_rows: Rc<RefCell<Vec<super::flag_widget::FlagRow>>> =
         Rc::new(RefCell::new(Vec::new()));
     let vfs_flags = adw::PreferencesGroup::new();
     vfs_flags.set_title(&ctx.t_or("flow.quickRun.editor.tabVfs", "VFS"));
@@ -11601,25 +11596,19 @@ fn operation_flag_blocks(ctx: &AppCtx) -> Vec<crate::flags::FlagBlock> {
         .unwrap_or_default()
 }
 
-fn flag_value_row(flag: &crate::flags::FlagOption, rclone: &serde_json::Value) -> adw::EntryRow {
-    let row = adw::EntryRow::new();
-    row.set_title(&flag.name);
-    if !flag.help.is_empty() {
-        row.set_tooltip_text(Some(&flag.help));
-    }
-    let current = rclone
-        .get(&flag.field_name)
-        .map(|v| v.to_string().trim_matches('"').to_string())
-        .unwrap_or_else(|| flag.default_str.clone());
-    row.set_text(&current);
-    row
+fn flag_value_row(
+    ctx: &AppCtx,
+    flag: &crate::flags::FlagOption,
+    rclone: &serde_json::Value,
+) -> super::flag_widget::FlagWidget {
+    super::flag_widget::FlagWidget::from_flag(ctx, flag, rclone)
 }
 
 fn attach_cli_import(
     ctx: &AppCtx,
     parent: &impl IsA<gtk::Widget>,
     flags_group: &adw::PreferencesGroup,
-    flag_rows: Rc<RefCell<Vec<(String, adw::EntryRow, String)>>>,
+    flag_rows: Rc<RefCell<Vec<super::flag_widget::FlagRow>>>,
     src: Option<adw::EntryRow>,
     dst: Option<adw::EntryRow>,
     serve: Option<adw::ComboRow>,
@@ -12211,7 +12200,7 @@ fn fill_cli_preview(
 pub(super) fn apply_cli_to_form(
     apply: &CliImportApply,
     flags_group: Option<&adw::PreferencesGroup>,
-    flag_rows: &Rc<RefCell<Vec<(String, adw::EntryRow, String)>>>,
+    flag_rows: &Rc<RefCell<Vec<super::flag_widget::FlagRow>>>,
     src: Option<&adw::EntryRow>,
     dst: Option<&adw::EntryRow>,
     serve: Option<&adw::ComboRow>,
@@ -12232,10 +12221,8 @@ pub(super) fn apply_cli_to_form(
         }) {
             row.set_text(&value_as_text(value));
         } else if let Some(group) = flags_group {
-            let row = adw::EntryRow::new();
-            row.set_title(field);
-            row.set_text(&value_as_text(value));
-            group.add(&row);
+            let row = super::flag_widget::FlagWidget::plain_entry(field, &value_as_text(value));
+            row.add_to(group);
             rows.push((field.clone(), row, String::new()));
         }
     }
@@ -12254,27 +12241,28 @@ pub(super) fn apply_cli_to_form(
 
 fn clear_flag_rows(
     flags_group: &adw::PreferencesGroup,
-    flag_rows: &Rc<RefCell<Vec<(String, adw::EntryRow, String)>>>,
+    flag_rows: &Rc<RefCell<Vec<super::flag_widget::FlagRow>>>,
 ) {
     for (_, row, _) in flag_rows.borrow().iter() {
-        flags_group.remove(row);
+        row.remove_from(flags_group);
     }
     flag_rows.borrow_mut().clear();
 }
 
 fn clear_serve_flag_rows(
     flags_group: &adw::PreferencesGroup,
-    serve_flag_rows: &Rc<RefCell<Vec<(String, String, adw::EntryRow, String)>>>,
+    serve_flag_rows: &Rc<RefCell<Vec<super::flag_widget::ServeFlagRow>>>,
 ) {
     for (_, _, row, _) in serve_flag_rows.borrow().iter() {
-        flags_group.remove(row);
+        row.remove_from(flags_group);
     }
     serve_flag_rows.borrow_mut().clear();
 }
 
 fn populate_flag_rows(
+    ctx: &AppCtx,
     flags_group: &adw::PreferencesGroup,
-    flag_rows: &Rc<RefCell<Vec<(String, adw::EntryRow, String)>>>,
+    flag_rows: &Rc<RefCell<Vec<super::flag_widget::FlagRow>>>,
     op: OperationType,
     rclone: &serde_json::Value,
     blocks: &[crate::flags::FlagBlock],
@@ -12283,8 +12271,8 @@ fn populate_flag_rows(
         if op == OperationType::Serve && flag.field_name == "type" {
             continue;
         }
-        let row = flag_value_row(&flag, rclone);
-        flags_group.add(&row);
+        let row = flag_value_row(ctx, &flag, rclone);
+        row.add_to(flags_group);
         flag_rows
             .borrow_mut()
             .push((flag.field_name, row, flag.type_name));
@@ -12292,8 +12280,9 @@ fn populate_flag_rows(
 }
 
 fn populate_serve_flag_rows(
+    ctx: &AppCtx,
     flags_group: &adw::PreferencesGroup,
-    serve_flag_rows: &Rc<RefCell<Vec<(String, String, adw::EntryRow, String)>>>,
+    serve_flag_rows: &Rc<RefCell<Vec<super::flag_widget::ServeFlagRow>>>,
     blocks: &[crate::flags::FlagBlock],
     rclone: &serde_json::Value,
     serve: &adw::ComboRow,
@@ -12301,11 +12290,11 @@ fn populate_serve_flag_rows(
 ) {
     for serve_type in serve_types {
         for flag in crate::flags::collect_serve_flags(blocks, serve_type) {
-            let row = flag_value_row(&flag, rclone);
+            let mut row = flag_value_row(ctx, &flag, rclone);
             row.set_title(&format!("{serve_type} · {}", flag.name));
             let selected = crate::operations::selected_or(serve_types, serve.selected(), "http");
             row.set_visible(serve_type == selected);
-            flags_group.add(&row);
+            row.add_to(flags_group);
             serve_flag_rows.borrow_mut().push((
                 serve_type.clone(),
                 flag.field_name,
@@ -13398,7 +13387,7 @@ fn refresh_helper_combo(row: &adw::ComboRow, names: &[String], selected: &str) {
 fn populate_helper_flag_rows(
     ctx: &AppCtx,
     group: &adw::PreferencesGroup,
-    rows: &Rc<RefCell<Vec<(String, adw::EntryRow, String)>>>,
+    rows: &Rc<RefCell<Vec<super::flag_widget::FlagRow>>>,
     kind: &str,
     blocks: &[crate::flags::FlagBlock],
     remote: &str,
@@ -13416,8 +13405,8 @@ fn populate_helper_flag_rows(
         .and_then(|meta| meta.helper_profile(kind, selected))
         .unwrap_or_else(|| serde_json::json!({}));
     for (_, option) in crate::flags::options_for_category(blocks, kind) {
-        let row = flag_value_row(option, &current);
-        group.add(&row);
+        let row = flag_value_row(ctx, option, &current);
+        row.add_to(group);
         rows.borrow_mut()
             .push((option.field_name.clone(), row, option.type_name.clone()));
     }
@@ -13428,7 +13417,7 @@ fn save_helper_from_rows(
     remote: &str,
     kind: &str,
     name: &str,
-    rows: &[(String, adw::EntryRow, String)],
+    rows: &[super::flag_widget::FlagRow],
 ) -> Result<(), String> {
     if remote.is_empty() || name.is_empty() {
         return Ok(());
@@ -14320,14 +14309,14 @@ fn attach_path_autocomplete(
 }
 
 pub(crate) fn first_invalid_flag(
-    rows: impl IntoIterator<Item = (String, adw::EntryRow, String)>,
-) -> Option<(adw::EntryRow, String, String)> {
+    rows: impl IntoIterator<Item = super::flag_widget::FlagRow>,
+) -> Option<(super::flag_widget::FlagWidget, String, String)> {
     for (field, row, type_name) in rows {
-        let text = row.text().to_string();
+        let text = row.text();
         match crate::validators::validate_flag_text(&type_name, &text) {
-            Ok(()) => row.remove_css_class("error"),
+            Ok(()) => row.set_error(false),
             Err(msg) => {
-                row.add_css_class("error");
+                row.set_error(true);
                 return Some((row, field, msg));
             }
         }
