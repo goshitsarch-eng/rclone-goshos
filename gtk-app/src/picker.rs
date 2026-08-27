@@ -148,17 +148,7 @@ pub fn picker_bar_label(prompt: &str, selection: &str) -> String {
 }
 
 pub fn format_picker_path(remote: &str, path: &str) -> String {
-    if remote == "local" || remote.is_empty() {
-        if path.is_empty() {
-            "/".into()
-        } else {
-            path.to_string()
-        }
-    } else if path.is_empty() {
-        format!("{remote}:")
-    } else {
-        format!("{remote}:{path}")
-    }
+    crate::path_kind::format_location(remote, path, std::env::consts::OS)
 }
 
 pub fn is_location_allowed(loc: &str, cfg: &FilePickerConfig) -> bool {
@@ -340,7 +330,14 @@ mod tests {
 
     #[test]
     fn formats_picker_paths() {
-        assert_eq!(format_picker_path("local", "/tmp/out"), "/tmp/out");
+        assert_eq!(
+            format_picker_path("local", "/tmp/out"),
+            crate::path_kind::format_location("local", "/tmp/out", std::env::consts::OS)
+        );
+        assert_eq!(
+            format_picker_path("local", ""),
+            crate::path_kind::default_local_root(std::env::consts::OS)
+        );
         assert_eq!(format_picker_path("drive", ""), "drive:");
         assert_eq!(format_picker_path("drive", "Photos"), "drive:Photos");
         assert_eq!(

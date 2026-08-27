@@ -152,9 +152,29 @@ fn is_win_target(path: &str) -> bool {
         || lower.ends_with(".cmd")
 }
 
+/// Right-aligned gutter labels for a CodeMirror-style line-number column.
+pub fn line_gutter_text(line_count: i32) -> String {
+    let n = line_count.max(1);
+    let width = n.to_string().len();
+    (1..=n)
+        .map(|i| format!("{i:>width$}"))
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn formats_line_gutter() {
+        assert_eq!(line_gutter_text(0), "1");
+        assert_eq!(line_gutter_text(1), "1");
+        assert_eq!(
+            line_gutter_text(10),
+            " 1\n 2\n 3\n 4\n 5\n 6\n 7\n 8\n 9\n10"
+        );
+    }
 
     #[test]
     fn detects_lnk_names() {

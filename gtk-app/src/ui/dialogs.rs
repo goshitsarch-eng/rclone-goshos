@@ -9071,6 +9071,30 @@ pub fn job_detail(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, job_id: u64) {
     transfers.add_css_class("boxed-list");
     let completed = gtk::ListBox::new();
     completed.add_css_class("boxed-list");
+    let checks = gtk::ListBox::new();
+    checks.add_css_class("boxed-list");
+    let paths = gtk::ListBox::new();
+    paths.add_css_class("boxed-list");
+    let transfer_stack = gtk::Stack::new();
+    transfer_stack.set_hexpand(true);
+    transfer_stack.add_titled(
+        &transfers,
+        Some("active"),
+        &ctx.t_or("modals.jobDetail.tabs.active", "Active"),
+    );
+    transfer_stack.add_titled(
+        &completed,
+        Some("completed"),
+        &ctx.t_or("fileBrowser.operations.completed", "Completed"),
+    );
+    transfer_stack.add_titled(
+        &checks,
+        Some("checks"),
+        &ctx.t_or("shared.transferActivity.titleCheck", "Check Activity"),
+    );
+    let transfer_switcher = gtk::StackSwitcher::new();
+    transfer_switcher.set_stack(Some(&transfer_stack));
+    transfer_switcher.set_halign(gtk::Align::Center);
     let filter = gtk::SearchEntry::new();
     filter.set_placeholder_text(Some(
         &ctx.t_or("modals.jobDetail.filterTransfers", "Filter transfers"),
@@ -9143,21 +9167,14 @@ pub fn job_detail(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, job_id: u64) {
     overview_label.set_xalign(0.0);
     box_.append(&overview_label);
     box_.append(&meta);
+    let paths_label = gtk::Label::new(Some(&ctx.t_or("modals.jobDetail.sections.paths", "Paths")));
+    paths_label.add_css_class("heading");
+    paths_label.set_xalign(0.0);
+    box_.append(&paths_label);
+    box_.append(&paths);
     box_.append(&filter);
-    let xfer_label = gtk::Label::new(Some(
-        &ctx.t_or("generalOverview.jobs.transfers", "Active transfers"),
-    ));
-    xfer_label.add_css_class("heading");
-    xfer_label.set_xalign(0.0);
-    box_.append(&xfer_label);
-    box_.append(&transfers);
-    let done_label = gtk::Label::new(Some(
-        &ctx.t_or("fileBrowser.operations.completed", "Completed transfers"),
-    ));
-    done_label.add_css_class("heading");
-    done_label.set_xalign(0.0);
-    box_.append(&done_label);
-    box_.append(&completed);
+    box_.append(&transfer_switcher);
+    box_.append(&transfer_stack);
     let stats_label = gtk::Label::new(Some(
         &ctx.t_or("modals.jobDetail.sections.statistics", "Statistics"),
     ));
@@ -9264,6 +9281,9 @@ pub fn job_detail(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, job_id: u64) {
         let populate_opens = populate_opens.clone();
         let error_view = error_view.clone();
         let error_group = error_group.clone();
+        let paths = paths.clone();
+        let checks = checks.clone();
+        let transfer_stack = transfer_stack.clone();
         move || {
             while let Some(child) = meta.first_child() {
                 meta.remove(&child);
@@ -9276,6 +9296,12 @@ pub fn job_detail(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, job_id: u64) {
             }
             while let Some(child) = completed.first_child() {
                 completed.remove(&child);
+            }
+            while let Some(child) = paths.first_child() {
+                paths.remove(&child);
+            }
+            while let Some(child) = checks.first_child() {
+                checks.remove(&child);
             }
             let rc_job = ctx.client().and_then(|client| {
                 let status = client.job_status(job_id).ok()?;
@@ -9330,6 +9356,16 @@ pub fn job_detail(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, job_id: u64) {
             crate::jobs::decorate_job_transfers(&mut job, &registry, &siblings);
             crate::jobs::finalize_history_job(&mut job);
             populate_opens(&job.src, &job.dst);
+            paths.append(&job_path_row(
+                &ctx,
+                &ctx.t_or("fileBrowser.operations.details.source", "Source"),
+                &job.src,
+            ));
+            paths.append(&job_path_row(
+                &ctx,
+                &ctx.t_or("fileBrowser.operations.details.destination", "Destination"),
+                &job.dst,
+            ));
             let status_label = ctx.t_or(crate::jobs::job_status_key(&job.status), &job.status);
             let duration_label = if job.duration > 0.0 {
                 format!("{:.1}s", job.duration)
@@ -9426,14 +9462,6 @@ pub fn job_detail(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, job_id: u64) {
             }
             for (title, value) in [
                 (ctx.t_or("sidebar.remotes", "Remote"), job.remote.clone()),
-                (
-                    ctx.t_or("fileBrowser.operations.details.source", "Source"),
-                    job.src.clone(),
-                ),
-                (
-                    ctx.t_or("fileBrowser.operations.details.destination", "Destination"),
-                    job.dst.clone(),
-                ),
                 (
                     ctx.t_or("modals.jobDetail.fields.started", "Started"),
                     if crate::jobs::has_known_start_time(&job) {
@@ -9592,20 +9620,54 @@ pub fn job_detail(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, job_id: u64) {
                 &ctx.check_status_overrides.borrow(),
                 &query,
             );
-            if !results.is_empty() {
+            let active_n = job
+                .transferring
+                .as_array()
+                .map(|items| items.len())
+                .unwrap_or(0);
+            let done_n = job
+                .completed
+                .as_array()
+                .map(|items| items.len())
+                .unwrap_or(0);
+            let check_n = results.len();
+            transfer_stack.page(&transfers).set_title(&{
+                let n = active_n.to_string();
+                let label = ctx.tf("shared.transferActivity.tabs.active", &[("count", &n)]);
+                if label.contains("{{") {
+                    format!("Active ({n})")
+                } else {
+                    label
+                }
+            });
+            transfer_stack.page(&completed).set_title(&{
+                let n = done_n.to_string();
+                let label = ctx.tf("shared.transferActivity.tabs.recent", &[("count", &n)]);
+                if label.contains("{{") {
+                    format!("Completed ({n})")
+                } else {
+                    label
+                }
+            });
+            transfer_stack.page(&checks).set_title(&{
+                let n = check_n.to_string();
+                let label = ctx.tf("shared.transferActivity.tabs.recentCheck", &[("count", &n)]);
+                if label.contains("{{") {
+                    format!("Checked ({n})")
+                } else {
+                    label
+                }
+            });
+            if results.is_empty() {
                 let heading = adw::ActionRow::new();
-                heading.set_title(&format!(
-                    "{} · {}",
-                    ctx.t_or("shared.transferActivity.titleCheck", "Check Activity"),
-                    results.len()
-                ));
-                heading.set_subtitle(&ctx.t_or(
+                heading.set_title(&ctx.t_or(
                     "shared.transferActivity.empty.recentHintCheck",
                     "Checked files will appear here when the job completes",
                 ));
-                completed.append(&heading);
+                checks.append(&heading);
+            } else {
                 for item in results {
-                    completed.append(&check_result_row(&ctx, &item, &dialog));
+                    checks.append(&check_result_row(&ctx, &item, &dialog));
                 }
             }
         }
@@ -9660,6 +9722,24 @@ fn append_open_job_paths(
         });
         box_.append(&btn);
     }
+}
+
+fn job_path_row(ctx: &AppCtx, title: &str, value: &str) -> adw::ActionRow {
+    let row = adw::ActionRow::new();
+    row.set_title(title);
+    row.set_subtitle(if value.is_empty() { "—" } else { value });
+    row.set_subtitle_lines(3);
+    let copy = gtk::Button::from_icon_name("edit-copy-symbolic");
+    copy.set_valign(gtk::Align::Center);
+    copy.set_tooltip_text(Some(&ctx.t_or("common.copy", "Copy")));
+    let value = value.to_string();
+    copy.connect_clicked(move |_| {
+        if let Some(display) = gtk::gdk::Display::default() {
+            display.clipboard().set_text(&value);
+        }
+    });
+    row.add_suffix(&copy);
+    row
 }
 
 pub(crate) fn transfer_activity_row(
@@ -10411,14 +10491,23 @@ fn hex_encode(bytes: &[u8]) -> String {
     bytes.iter().map(|b| format!("{b:02x}")).collect()
 }
 
+fn sync_line_gutter(view: &gtk::TextView, gutter: &gtk::TextView) {
+    gutter.buffer().set_text(&crate::textfix::line_gutter_text(
+        view.buffer().line_count(),
+    ));
+}
+
 fn attach_text_preview(
     parent: &gtk::Box,
+    ctx: &AppCtx,
     name: &str,
     text: &str,
     editable: bool,
     save_path: Option<&str>,
     remote_save: Option<(AppCtx, String, String)>,
     md_images: Option<(AppCtx, String, String)>,
+    toolbar: Option<&gtk::Box>,
+    toast: Option<&adw::ToastOverlay>,
 ) {
     let shown = if text.len() > 200_000 {
         format!("{}\n\n… truncated …", &text[..200_000])
@@ -10428,11 +10517,58 @@ fn attach_text_preview(
     let view = gtk::TextView::new();
     view.set_monospace(true);
     view.set_editable(editable);
+    view.set_hexpand(true);
+    view.set_wrap_mode(gtk::WrapMode::None);
     apply_syntax_highlight(&view, name, &shown);
     attach_live_syntax(&view, name);
+    let gutter = gtk::TextView::new();
+    gutter.set_editable(false);
+    gutter.set_can_focus(false);
+    gutter.set_cursor_visible(false);
+    gutter.set_monospace(true);
+    gutter.set_wrap_mode(gtk::WrapMode::None);
+    gutter.add_css_class("dim-label");
+    gutter.set_left_margin(8);
+    gutter.set_right_margin(8);
+    sync_line_gutter(&view, &gutter);
+    {
+        let view = view.clone();
+        let gutter = gutter.clone();
+        view.buffer().connect_changed(move |_| {
+            sync_line_gutter(&view, &gutter);
+        });
+    }
+    let editor = gtk::Box::new(gtk::Orientation::Horizontal, 0);
+    editor.append(&gutter);
+    editor.append(&view);
     let source_scroll = gtk::ScrolledWindow::new();
     source_scroll.set_vexpand(true);
-    source_scroll.set_child(Some(&view));
+    source_scroll.set_child(Some(&editor));
+    let chrome = toolbar.cloned().unwrap_or_else(|| {
+        let bar = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+        parent.append(&bar);
+        bar
+    });
+    let wrap = gtk::ToggleButton::new();
+    wrap.set_icon_name("format-justify-left-symbolic");
+    wrap.set_tooltip_text(Some(
+        &ctx.t_or("fileBrowser.fileViewer.wrapLines", "Wrap lines"),
+    ));
+    wrap.set_valign(gtk::Align::Center);
+    {
+        let view = view.clone();
+        let gutter = gutter.clone();
+        wrap.connect_toggled(move |btn| {
+            if btn.is_active() {
+                view.set_wrap_mode(gtk::WrapMode::WordChar);
+                gutter.set_visible(false);
+            } else {
+                view.set_wrap_mode(gtk::WrapMode::None);
+                gutter.set_visible(true);
+            }
+        });
+    }
+    chrome.append(&wrap);
     if crate::markdown::is_markdown(name) {
         let preview = build_markdown_preview(&shown, md_images.as_ref());
         let preview_scroll = gtk::ScrolledWindow::new();
@@ -10444,46 +10580,44 @@ fn attach_text_preview(
         stack.add_named(&source_scroll, Some("source"));
         stack.add_named(&preview_scroll, Some("preview"));
         let toggle = gtk::ToggleButton::with_label(
-            &remote_save
-                .as_ref()
-                .map(|(ctx, _, _)| ctx.t_or("fileBrowser.fileViewer.showPreview", "Preview"))
-                .unwrap_or_else(|| "Preview".into()),
+            &ctx.t_or("fileBrowser.fileViewer.showPreview", "Preview"),
         );
-        // Label is set by caller context; keep short so the toggle fits the toolbar.
+        toggle.set_valign(gtk::Align::Center);
         {
             let stack = stack.clone();
+            let ctx = ctx.clone();
             toggle.connect_toggled(move |btn| {
                 stack.set_visible_child_name(if btn.is_active() { "preview" } else { "source" });
+                btn.set_label(&ctx.t_or(
+                    if btn.is_active() {
+                        "fileBrowser.fileViewer.showRawText"
+                    } else {
+                        "fileBrowser.fileViewer.showPreview"
+                    },
+                    if btn.is_active() {
+                        "Show Raw Text"
+                    } else {
+                        "Preview"
+                    },
+                ));
             });
         }
-        parent.append(&toggle);
+        chrome.append(&toggle);
         parent.append(&stack);
     } else {
         parent.append(&source_scroll);
     }
     if editable && (save_path.is_some() || remote_save.is_some()) {
         view.set_editable(false);
-        let edit = gtk::Button::with_label(
-            &remote_save
-                .as_ref()
-                .map(|(ctx, _, _)| ctx.t_or("fileBrowser.fileViewer.edit", "Edit"))
-                .unwrap_or_else(|| "Edit".into()),
-        );
-        let save = gtk::Button::with_label(
-            &remote_save
-                .as_ref()
-                .map(|(ctx, _, _)| ctx.t_or("fileBrowser.fileViewer.save", "Save"))
-                .unwrap_or_else(|| "Save".into()),
-        );
+        let edit = gtk::Button::with_label(&ctx.t_or("fileBrowser.fileViewer.edit", "Edit"));
+        edit.set_valign(gtk::Align::Center);
+        let save = gtk::Button::with_label(&ctx.t_or("fileBrowser.fileViewer.save", "Save"));
         save.add_css_class("suggested-action");
         save.set_sensitive(false);
-        let cancel = gtk::Button::with_label(
-            &remote_save
-                .as_ref()
-                .map(|(ctx, _, _)| ctx.t_or("fileBrowser.fileViewer.cancel", "Cancel"))
-                .unwrap_or_else(|| "Cancel".into()),
-        );
+        save.set_valign(gtk::Align::Center);
+        let cancel = gtk::Button::with_label(&ctx.t_or("fileBrowser.fileViewer.cancel", "Cancel"));
         cancel.set_sensitive(false);
+        cancel.set_valign(gtk::Align::Center);
         {
             let view = view.clone();
             let save = save.clone();
@@ -10508,6 +10642,9 @@ fn attach_text_preview(
         }
         let view = view.clone();
         let local = save_path.map(|p| p.to_string());
+        let toast = toast.cloned();
+        let notify_ctx = ctx.clone();
+        let cancel_for_save = cancel.clone();
         save.connect_clicked(move |btn| {
             let buffer = view.buffer();
             let text = buffer.text(&buffer.start_iter(), &buffer.end_iter(), false);
@@ -10535,19 +10672,28 @@ fn attach_text_preview(
             }
             view.set_editable(false);
             btn.set_sensitive(false);
-            if ok {
-                let label = remote_save
-                    .as_ref()
-                    .map(|(ctx, _, _)| ctx.t_or("common.ok", "OK"))
-                    .unwrap_or_else(|| "OK".into());
-                btn.set_label(&label);
+            cancel_for_save.set_sensitive(false);
+            let message = notify_ctx.t_or(
+                if ok {
+                    "fileBrowser.fileViewer.saveSuccess"
+                } else {
+                    "fileBrowser.fileViewer.saveError"
+                },
+                if ok {
+                    "File saved successfully"
+                } else {
+                    "Failed to save file"
+                },
+            );
+            if let Some(toast) = &toast {
+                toast.add_toast(adw::Toast::new(&message));
+            } else {
+                notify_ctx.notify(&message, "");
             }
         });
-        let bar = gtk::Box::new(gtk::Orientation::Horizontal, 8);
-        bar.append(&edit);
-        bar.append(&cancel);
-        bar.append(&save);
-        parent.append(&bar);
+        chrome.append(&edit);
+        chrome.append(&cancel);
+        chrome.append(&save);
     }
 }
 
@@ -10955,6 +11101,7 @@ pub fn file_viewer(
         let keys = gtk::EventControllerKey::new();
         let prev = prev.clone();
         let next = next.clone();
+        let dialog_keys = dialog.clone();
         keys.connect_key_pressed(move |_, key, _, _| {
             if key == gtk::gdk::Key::Left || key == gtk::gdk::Key::KP_Left {
                 prev.emit_clicked();
@@ -10962,6 +11109,17 @@ pub fn file_viewer(
             }
             if key == gtk::gdk::Key::Right || key == gtk::gdk::Key::KP_Right {
                 next.emit_clicked();
+                return glib::Propagation::Stop;
+            }
+            if key == gtk::gdk::Key::Escape {
+                if let Some(focus) = dialog_keys.focus() {
+                    if let Ok(view) = focus.downcast::<gtk::TextView>() {
+                        if view.is_editable() {
+                            return glib::Propagation::Stop;
+                        }
+                    }
+                }
+                dialog_keys.close();
                 return glib::Propagation::Stop;
             }
             glib::Propagation::Proceed
@@ -11037,6 +11195,64 @@ pub fn file_viewer(
     actions.append(&open);
     actions.append(&download);
     box_.append(&actions);
+    let toast = adw::ToastOverlay::new();
+    let content_stack = gtk::Stack::new();
+    let loading = adw::StatusPage::new();
+    loading.set_title(&ctx.t_or("fileBrowser.fileViewer.loadingContent", "Loading content"));
+    let spinner = gtk::Spinner::new();
+    spinner.set_spinning(true);
+    spinner.set_halign(gtk::Align::Center);
+    spinner.set_size_request(48, 48);
+    loading.set_child(Some(&spinner));
+    content_stack.add_named(&loading, Some("loading"));
+    content_stack.add_named(&box_, Some("body"));
+    content_stack.set_visible_child_name("loading");
+    toast.set_child(Some(&content_stack));
+    dialog.set_child(Some(&toast));
+    dialog.present(Some(parent));
+    let parent = parent.clone();
+    let ctx = ctx.clone();
+    let remote = remote.to_string();
+    let path = path.to_string();
+    let name = name.to_string();
+    let box_ = box_.clone();
+    let info = info.clone();
+    let actions = actions.clone();
+    let toast = toast.clone();
+    let content_stack = content_stack.clone();
+    glib::idle_add_local_once(move || {
+        populate_file_viewer_body(
+            &parent,
+            &ctx,
+            &remote,
+            &path,
+            &name,
+            is_dir,
+            category,
+            &box_,
+            &info,
+            &actions,
+            &toast,
+            remote_size,
+        );
+        content_stack.set_visible_child_name("body");
+    });
+}
+
+fn populate_file_viewer_body(
+    parent: &impl IsA<gtk::Widget>,
+    ctx: &AppCtx,
+    remote: &str,
+    path: &str,
+    name: &str,
+    is_dir: bool,
+    category: crate::operations::FileTypeCategory,
+    box_: &gtk::Box,
+    info: &gtk::Label,
+    actions: &gtk::Box,
+    toast: &adw::ToastOverlay,
+    remote_size: Option<i64>,
+) {
     if is_dir {
         let size_label = gtk::Label::new(Some(&ctx.t_or(
             "fileBrowser.fileViewer.calculatingFolderSize",
@@ -11238,12 +11454,15 @@ pub fn file_viewer(
                         ));
                         attach_text_preview(
                             &box_,
+                            &ctx,
                             name,
                             &text,
                             true,
                             None,
                             Some((ctx.clone(), fs, path.to_string())),
                             Some((ctx.clone(), remote.to_string(), path.to_string())),
+                            Some(&actions),
+                            Some(&toast),
                         );
                         append_markdown_targets(&box_, name, &text, remote, path, &ctx, parent);
                     }
@@ -11335,12 +11554,15 @@ pub fn file_viewer(
             } else {
                 attach_text_preview(
                     &box_,
+                    &ctx,
                     name,
                     &text,
                     true,
                     Some(&local.to_string_lossy()),
                     None,
                     Some((ctx.clone(), remote.to_string(), path.to_string())),
+                    Some(&actions),
+                    Some(&toast),
                 );
                 append_markdown_targets(&box_, name, &text, remote, path, &ctx, parent);
             }
@@ -11380,8 +11602,6 @@ pub fn file_viewer(
         page.set_description(Some(name));
         box_.append(&page);
     }
-    dialog.set_child(Some(&box_));
-    dialog.present(Some(parent));
 }
 
 fn metadata_item_row(ctx: &AppCtx, key: &str, meta: &serde_json::Value) -> adw::ActionRow {

@@ -5420,6 +5420,7 @@ impl NautilusView {
         } else {
             crate::mime::icon_for_entry(&entry.name, entry.is_dir, &entry.mime)
         });
+        icon.set_pixel_size(self.current_icon_size());
         if cut {
             icon.add_css_class("cut-icon");
         }
@@ -6298,13 +6299,7 @@ impl NautilusView {
             Some(name) => join_remote_path(&current.path, name),
             None => current.path.clone(),
         };
-        if current.remote == "local" {
-            path
-        } else if path.is_empty() {
-            format!("{}:", current.remote)
-        } else {
-            format!("{}:{}", current.remote, path)
-        }
+        crate::path_kind::format_location(&current.remote, &path, &self.ctx.engine_os())
     }
 
     fn copy_text(&self, text: &str) {

@@ -1028,3 +1028,11 @@ This client is the GTK 4 + libadwaita desktop UI. It talks to a local `rclone rc
 - Files window chrome accepts OS `FileList` drops onto the current folder (Tauri `onDragDropEvent` fallback)
 - File viewer live syntax highlighting is debounced (80ms) so large edits do not repaint on every keystroke
 - Live GUI: `--file-viewer testdrive:Photos/README.md` Preview shows inline **notes** button; clicking it opens **README.txt** (`2 / 7`)
+
+- Copy Path / location uses Angular `pathStyleForRemote` (`format_location`): local paths follow the engine OS, remotes stay posix
+- Files list-view icons honor View Options `icon_size` (`list_icon_px`) instead of the default symbolic size
+- File viewer Escape closes the dialog (ignored while the text editor is focused and editable)
+- File viewer presents immediately with a `loadingContent` spinner, then fills on idle
+- File viewer save shows `saveSuccess` / `saveError` toasts; Preview / Edit / Save / Wrap live on the header toolbar
+- Text editor has a CodeMirror-style line-number gutter and a wrap-lines toggle
+- Job detail has a dedicated Paths section (copy buttons) and Active / Completed / Checks transfer tabs
