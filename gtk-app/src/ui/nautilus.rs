@@ -526,8 +526,18 @@ impl NautilusView {
             .build();
         toolbar_scroll.add_css_class("nautilus-toolbar-scroll");
         toolbar_scroll.set_child(Some(&toolbar));
+        let filter_scroll = gtk::ScrolledWindow::builder()
+            .hscrollbar_policy(gtk::PolicyType::Automatic)
+            .vscrollbar_policy(gtk::PolicyType::Never)
+            .overlay_scrolling(true)
+            .propagate_natural_height(true)
+            .propagate_natural_width(false)
+            .hexpand(true)
+            .build();
+        filter_scroll.add_css_class("nautilus-toolbar-scroll");
+        filter_scroll.set_child(Some(&filter_bar));
         root.append(&toolbar_scroll);
-        root.append(&filter_bar);
+        root.append(&filter_scroll);
         root.append(&picker_bar);
         root.append(&share_bar);
         root.append(&split);
@@ -4054,6 +4064,13 @@ impl NautilusView {
         let Some(root) = widget.root() else {
             return;
         };
+        {
+            let view = self.clone();
+            widget.add_tick_callback(move |widget, _| {
+                view.sync_narrow_from_widget(widget);
+                glib::ControlFlow::Continue
+            });
+        }
         if let Some(surface) = root.surface() {
             let view = self.clone();
             surface.connect_notify_local(Some("width"), move |surface, _| {
