@@ -969,3 +969,9 @@ This client is the GTK 4 + libadwaita desktop UI. It talks to a local `rclone rc
 - Live GUI: at 640px the bottom bar shows **Toggle Sidebar** / **Toggle Layout**; sidebar is an overlay (Configure Sidebar Items / Starred / Home)
 - Live GUI: single-tap opens a folder (`Docs` → `note.txt`, **1 item**)
 - Live GUI: lasso hold at the listing bottom edge scrolls from `file-001` to `file-032+` and grows the selection to **42 items selected (327 B)**
+
+- Files operations jobs are compact one-line rows; clicking a row opens a floating details popover (Angular `detailsMenu`) with speed/ETA, source/dest, current and processed files, and Job details
+- Narrow Files bottom bar includes Pop-out (`openNewWindow`) and View options in addition to sidebar / layout
+- The active Files tab scrolls into the tab strip viewport
+- Live GUI: `--browse testdrive:batch250` Operations lists compact `job/4896 · Failed` rows; click opens a popover with Speed, Start time, and Processed files
+- Live GUI: at 640px the bottom bar exposes **Open in New Window**, **Toggle Layout**, and **View Options** (Icon Size / Sort / Hidden)
