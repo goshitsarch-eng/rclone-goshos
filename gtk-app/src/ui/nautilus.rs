@@ -81,6 +81,7 @@ pub struct NautilusView {
     lasso_drag: Rc<RefCell<Option<LassoDrag>>>,
     lasso_tick: Rc<Cell<bool>>,
     lasso_pointer_y: Rc<Cell<Option<f64>>>,
+    tab_drag_from: Rc<Cell<Option<u32>>>,
     is_narrow: Rc<Cell<bool>>,
     ignore_activate: Rc<Cell<bool>>,
     listing_menu_open: Rc<Cell<bool>>,
@@ -641,6 +642,7 @@ impl NautilusView {
             clipboard: Rc::new(RefCell::new(Vec::new())),
             pending_drag: Rc::new(RefCell::new(None)),
             skip_lasso: Rc::new(Cell::new(false)),
+            tab_drag_from: Rc::new(Cell::new(None)),
             lasso_drag: Rc::new(RefCell::new(None)),
             lasso_tick: Rc::new(Cell::new(false)),
             lasso_pointer_y: Rc::new(Cell::new(None)),
@@ -1964,6 +1966,9 @@ impl NautilusView {
                 if view.pending_drag.borrow().is_some() {
                     host.add_css_class("file-drag-over");
                 }
+                if let (Some(from), InternalDrop::Tab(to_id)) = (view.tab_drag_from.get(), &dest) {
+                    view.apply_tab_slide_preview(from, *to_id, false);
+                }
                 view.schedule_hover_open(&dest);
                 gtk::gdk::DragAction::COPY
             });
@@ -2157,6 +2162,7 @@ impl NautilusView {
         {
             let view = self.clone();
             source.connect_drag_begin(move |_, drag| {
+                view.tab_drag_from.set(Some(id));
                 let title = view
                     .tabs
                     .borrow()
@@ -2181,17 +2187,52 @@ impl NautilusView {
             let host = widget.clone().upcast::<gtk::Widget>();
             let start = start.clone();
             source.connect_drag_end(move |_, _, delete_data| {
+                let end = pointer_in_root(&host).unwrap_or_else(|| start.get());
+                let bounds = root_bounds(&host).unwrap_or((0.0, 0.0, 0.0, 0.0));
+                let outside = crate::dnd::should_detach_tab(false, start.get(), end, bounds);
+                view.apply_tab_slide_preview(id, id, outside);
+                view.clear_tab_slide_preview();
+                view.tab_drag_from.set(None);
                 if delete_data {
                     return;
                 }
-                let end = pointer_in_root(&host).unwrap_or_else(|| start.get());
-                let bounds = root_bounds(&host).unwrap_or((0.0, 0.0, 0.0, 0.0));
-                if crate::dnd::should_detach_tab(false, start.get(), end, bounds) {
+                if outside {
                     view.detach_tab(id);
                 }
             });
         }
         widget.add_controller(source);
+    }
+
+    fn apply_tab_slide_preview(&self, from_id: u32, to_id: u32, outside: bool) {
+        let tabs = self.tabs.borrow();
+        let Some(from) = tabs.iter().position(|tab| tab.id == from_id) else {
+            return;
+        };
+        let to = tabs.iter().position(|tab| tab.id == to_id).unwrap_or(from);
+        let mut child = self.tab_bar.first_child();
+        let width = child
+            .as_ref()
+            .map(|widget| f64::from(widget.width()).max(72.0))
+            .unwrap_or(80.0);
+        let mut index = 0usize;
+        while let Some(widget) = child {
+            let next = widget.next_sibling();
+            let x = crate::dnd::tab_slide_offset_px(from, to, index, width, outside);
+            let scale = crate::dnd::tab_slide_scale(from, index, outside);
+            apply_widget_slide(&widget, x, scale);
+            index += 1;
+            child = next;
+        }
+    }
+
+    fn clear_tab_slide_preview(&self) {
+        let mut child = self.tab_bar.first_child();
+        while let Some(widget) = child {
+            let next = widget.next_sibling();
+            apply_widget_slide(&widget, 0.0, 1.0);
+            child = next;
+        }
     }
 
     fn reorder_tab(&self, from_id: u32, to_id: u32) {
@@ -5889,6 +5930,8 @@ impl NautilusView {
             crate::platform::is_send_to_registered(&current.remote, Some(&current.path));
         let multi = selected.len() > 1;
         let stack = gtk::Stack::new();
+        stack.set_transition_type(gtk::StackTransitionType::SlideLeftRight);
+        stack.set_transition_duration(200);
         let main = self.listing_menu_page(popover, &actions, Some(&stack), multi, send_registered);
         stack.add_named(&main, Some("main"));
         if kind == crate::fileops::ListingMenuKind::SingleFolder {
@@ -6552,6 +6595,16 @@ impl NautilusView {
         box_.append(&list);
         box_
     }
+}
+
+fn apply_widget_slide(widget: &gtk::Widget, x: f64, scale: f64) {
+    let provider = gtk::CssProvider::new();
+    provider.load_from_string(&format!(
+        "* {{ transition: transform 120ms ease; transform: translateX({x}px) scale({scale}); }}"
+    ));
+    widget
+        .style_context()
+        .add_provider(&provider, gtk::STYLE_PROVIDER_PRIORITY_USER);
 }
 
 fn widget_point_in_root(widget: &gtk::Widget, x: f64, y: f64) -> Option<(f64, f64)> {

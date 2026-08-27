@@ -53,6 +53,39 @@ pub fn move_item_in_array<T>(items: &mut Vec<T>, from: usize, to: usize) {
     items.insert(to, item);
 }
 
+/// Horizontal offset for Angular `getTabTransform` while a tab is dragged.
+pub fn tab_slide_offset_px(
+    dragged: usize,
+    insert_at: usize,
+    index: usize,
+    width: f64,
+    outside: bool,
+) -> f64 {
+    if outside || dragged == insert_at {
+        return 0.0;
+    }
+    if index == dragged {
+        return (insert_at as f64 - dragged as f64) * width;
+    }
+    if dragged < insert_at {
+        if index > dragged && index <= insert_at {
+            return -width;
+        }
+    } else if index >= insert_at && index < dragged {
+        return width;
+    }
+    0.0
+}
+
+/// Angular `isOutside` scales the dragged tab to 0.
+pub fn tab_slide_scale(dragged: usize, index: usize, outside: bool) -> f64 {
+    if outside && index == dragged {
+        0.0
+    } else {
+        1.0
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct DragItem {
     pub remote: String,
@@ -452,5 +485,17 @@ mod tests {
         assert_eq!(items, vec!["B", "D", "C", "A"]);
         move_item_in_array(&mut items, 1, 1);
         assert_eq!(items, vec!["B", "D", "C", "A"]);
+    }
+
+    #[test]
+    fn tab_slide_transform_matches_angular_get_tab_transform() {
+        assert_eq!(tab_slide_offset_px(0, 2, 0, 80.0, false), 160.0);
+        assert_eq!(tab_slide_offset_px(0, 2, 1, 80.0, false), -80.0);
+        assert_eq!(tab_slide_offset_px(0, 2, 2, 80.0, false), -80.0);
+        assert_eq!(tab_slide_offset_px(2, 0, 1, 80.0, false), 80.0);
+        assert_eq!(tab_slide_offset_px(1, 1, 0, 80.0, false), 0.0);
+        assert_eq!(tab_slide_offset_px(0, 2, 0, 80.0, true), 0.0);
+        assert_eq!(tab_slide_scale(0, 0, true), 0.0);
+        assert_eq!(tab_slide_scale(0, 1, true), 1.0);
     }
 }

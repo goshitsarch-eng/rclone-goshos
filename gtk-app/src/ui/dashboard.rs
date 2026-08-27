@@ -983,6 +983,19 @@ impl Dashboard {
                 active.len(),
                 self.ctx.t_or("dashboard.statusOverview.active", "active")
             ));
+            let bar = gtk::LevelBar::new();
+            bar.set_mode(gtk::LevelBarMode::Continuous);
+            bar.set_min_value(0.0);
+            bar.set_max_value(1.0);
+            bar.set_value(if total == 0 {
+                0.0
+            } else {
+                active.len() as f64 / total as f64
+            });
+            bar.set_width_request(120);
+            bar.set_valign(gtk::Align::Center);
+            bar.add_css_class("status-overview-bar");
+            summary.add_suffix(&bar);
             self.host().append(&summary);
         }
         if !active.is_empty() {
