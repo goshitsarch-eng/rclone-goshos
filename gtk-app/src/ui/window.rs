@@ -75,9 +75,17 @@ fn apply_launch(app: &adw::Application, ctx: &AppCtx, args: &[String], first: bo
     }
     let standalone_dialogs = ctx.settings.borrow().general.standalone_dialogs;
     let launch = crate::navigation::parse_launch_args(args, standalone_dialogs);
+    let overlay_files = launch
+        .as_ref()
+        .and_then(|l| crate::navigation::launch_overlay_files(args, &l.target));
     if let Some(launch) = &launch {
         if !(launch.standalone && crate::navigation::standalone_skips_main_nav(&launch.target)) {
             ctx.request_nav(launch.target.clone());
+        }
+        if !launch.standalone {
+            if let Some((remote, path)) = overlay_files.clone() {
+                *ctx.pending_files_overlay.borrow_mut() = Some((remote, path));
+            }
         }
     }
     if !ctx.store.borrow().pending_share_paths.is_empty() && launch.is_none() {
@@ -97,6 +105,9 @@ fn apply_launch(app: &adw::Application, ctx: &AppCtx, args: &[String], first: bo
     }
     if let Some(launch) = launch.filter(|l| l.standalone) {
         present_standalone_workspace(app, ctx, &launch.target);
+        if let Some((remote, path)) = overlay_files {
+            present_files_window(app, ctx, &remote, &path);
+        }
     }
 }
 

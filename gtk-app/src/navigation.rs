@@ -479,10 +479,16 @@ pub fn parse_launch_args(args: &[String], standalone_dialogs: bool) -> Option<La
             }
             "--repair" => target = Some(NavTarget::Repair),
             "--starred" => {
-                target = Some(NavTarget::Files {
-                    remote: "starred".into(),
-                    path: String::new(),
-                })
+                // Dashboard/Flow stay the primary workspace; Files opens as an overlay.
+                if !matches!(
+                    target,
+                    Some(NavTarget::Dashboard { .. }) | Some(NavTarget::Flow { .. })
+                ) {
+                    target = Some(NavTarget::Files {
+                        remote: "starred".into(),
+                        path: String::new(),
+                    });
+                }
             }
             "--auto-add" => auto_add = true,
             "--clone-from" | "--cloneFrom" => {
@@ -885,6 +891,21 @@ fn is_standalone_target(
         NavTarget::Dashboard { .. } => kind == Some("main") || query.as_deref() == Some("main"),
         _ => false,
     }
+}
+
+/// When Dashboard or Flow is the primary launch target, `--browse` / `--starred`
+/// still open Files as an overlay (Angular `openBrowserOverlay` from those views).
+pub fn launch_overlay_files(args: &[String], target: &NavTarget) -> Option<(String, String)> {
+    if !matches!(target, NavTarget::Dashboard { .. } | NavTarget::Flow { .. }) {
+        return None;
+    }
+    if let Some(pair) = parse_browse_args(args) {
+        return Some(pair);
+    }
+    if args.iter().any(|a| a == "--starred") {
+        return Some(("starred".into(), String::new()));
+    }
+    None
 }
 
 /// Standalone Files / Flow / Dashboard windows already present the workspace.
@@ -1660,6 +1681,62 @@ mod tests {
         assert!(!standalone_skips_main_nav(&NavTarget::Preferences {
             page: None
         }));
+        let browse_dash = parse_launch_args(
+            &[
+                "app".into(),
+                "--browse".into(),
+                "testdrive".into(),
+                "--dashboard".into(),
+            ],
+            false,
+        );
+        assert_eq!(
+            browse_dash.as_ref().map(|l| &l.target),
+            Some(&NavTarget::Dashboard {
+                tab: AppTab::General,
+                remote: None,
+            })
+        );
+        assert_eq!(
+            launch_overlay_files(
+                &[
+                    "app".into(),
+                    "--browse".into(),
+                    "testdrive".into(),
+                    "--dashboard".into(),
+                ],
+                &browse_dash.unwrap().target
+            ),
+            Some(("testdrive".into(), String::new()))
+        );
+        let dash_starred = parse_launch_args(
+            &["app".into(), "--dashboard".into(), "--starred".into()],
+            false,
+        );
+        assert_eq!(
+            dash_starred.as_ref().map(|l| &l.target),
+            Some(&NavTarget::Dashboard {
+                tab: AppTab::General,
+                remote: None,
+            })
+        );
+        assert_eq!(
+            launch_overlay_files(
+                &["app".into(), "--dashboard".into(), "--starred".into()],
+                &dash_starred.unwrap().target
+            ),
+            Some(("starred".into(), String::new()))
+        );
+        assert_eq!(
+            launch_overlay_files(
+                &["app".into(), "--browse".into(), "testdrive:Photos".into()],
+                &NavTarget::Files {
+                    remote: "testdrive".into(),
+                    path: "Photos".into(),
+                }
+            ),
+            None
+        );
         assert_eq!(
             workspace_open_plan("main_menu", "main_menu"),
             WorkspaceOpen::SwitchStack
