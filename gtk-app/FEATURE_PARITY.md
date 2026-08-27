@@ -1138,3 +1138,13 @@ This client is the GTK 4 + libadwaita desktop UI. It talks to a local `rclone rc
 - Indexed VFS banner titles **VFS Controls Unavailable**; queue rows label Size / Status / Name
 
 - Live GUI: `--properties testdrive:Photos` shows **Storage** Used 102.6 GiB / Free 136.4 GiB / Total Capacity 251.9 GiB and **Content Stats** Contained Files 293 / Total Size 20.0 MiB
+
+- Remote cards use `overviews.remoteCard.actions` Mount/Unmount/Start Sync/Start Copy (not `Start` + op)
+- New Folder / Rename prompts take placeholders; Rename confirm is **Rename**
+- File viewer labels video, Close viewer, and Open-native tooltip
+- Job Detail shows Remote Source in overview; mount dest uses Mount Point
+
+- Live GUI: `--dashboard` testdrive compact actions **Unmount**, **Start Sync**, **Start Bi-Sync**; dummyexport **Mount**
+- Live GUI: `--browse testdrive:Photos` New Folder placeholder **Enter folder name**; Rename confirm **Rename** (Cancel)
+- Live GUI: `--file-viewer testdrive:Photos/preview.pdf` **Close viewer** and Open in External App tooltip **Open in default external application**
+- Live GUI: `--job 42424` Job Information **Remote Source** testdrive; Paths Source testdrive:Photos / Destination testdrive:verify-ops

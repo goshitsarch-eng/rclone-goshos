@@ -9759,6 +9759,10 @@ pub fn job_detail(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, job_id: u64) {
                     ctx.t_or("modals.jobDetail.fields.group", "Group"),
                     job.group.clone(),
                 ),
+                (
+                    ctx.t_or(crate::jobs::job_detail_remote_title_key(), "Remote Source"),
+                    job.remote.clone(),
+                ),
             ] {
                 let row = adw::ActionRow::new();
                 row.set_title(&title);
@@ -9772,10 +9776,6 @@ pub fn job_detail(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, job_id: u64) {
                 meta.append(&row);
             }
             for (title, value) in [
-                (
-                    ctx.t_or(crate::jobs::job_detail_remote_title_key(), "Remote Source"),
-                    job.remote.clone(),
-                ),
                 (
                     ctx.t_or("modals.jobDetail.fields.started", "Started"),
                     if crate::jobs::has_known_start_time(&job) {
