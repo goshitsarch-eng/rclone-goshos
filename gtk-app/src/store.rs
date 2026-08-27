@@ -344,6 +344,8 @@ pub struct JobMeta {
     #[serde(default)]
     pub group: String,
     #[serde(default)]
+    pub operation: String,
+    #[serde(default)]
     pub transfer_snapshot: Value,
 }
 

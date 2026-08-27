@@ -629,8 +629,14 @@ impl AppCtx {
         dst: &str,
         quick_run_id: &str,
     ) {
-        let meta =
-            crate::jobs::job_meta_for(remote, profile, origin, &self.backend_key(), quick_run_id);
+        let meta = crate::jobs::job_meta_for(
+            remote,
+            profile,
+            origin,
+            &self.backend_key(),
+            quick_run_id,
+            op,
+        );
         let profile_name = meta.profile.clone();
         {
             let mut store = self.store.borrow_mut();

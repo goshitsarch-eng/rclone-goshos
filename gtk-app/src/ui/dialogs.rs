@@ -12694,6 +12694,7 @@ pub(crate) fn download_file(
                             remote: remote.clone(),
                             backend: ctx.backend_key(),
                             target: dest_path,
+                            operation: "copy".into(),
                             ..Default::default()
                         },
                     );
@@ -13297,6 +13298,7 @@ pub fn archive_create(
                             "file-manager",
                             &ctx.backend_key(),
                             "",
+                            "archivecreate",
                         ),
                     );
                     ctx.store
@@ -13392,6 +13394,7 @@ pub fn copy_url_into(
                             "file-manager",
                             &ctx.backend_key(),
                             "",
+                            "copyurl",
                         ),
                     );
                     ctx.store
@@ -14903,6 +14906,7 @@ fn resolve_failed_transfer(
                         Some(parent_job_id)
                     },
                     target: parsed.name.clone(),
+                    operation: "copy".into(),
                     ..Default::default()
                 },
             );
@@ -14979,6 +14983,7 @@ fn resolve_check_item(
                     execute_id: uuid::Uuid::new_v4().to_string(),
                     parent_job_id: item.job_id,
                     target: item.name.clone(),
+                    operation: "copy".into(),
                     ..Default::default()
                 },
             );

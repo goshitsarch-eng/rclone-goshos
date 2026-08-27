@@ -1232,6 +1232,11 @@ pub fn apply_job_meta(job: &mut JobInfo, meta: Option<&JobMeta>) {
     if !meta.group.is_empty() && (job.group.is_empty() || job.group.starts_with("job/")) {
         job.group = meta.group.clone();
     }
+    if !meta.operation.is_empty()
+        && (job.operation.is_empty() || is_opaque_job_operation(&job.operation))
+    {
+        job.operation = meta.operation.clone();
+    }
 }
 
 pub fn is_overview_job(job: &JobInfo) -> bool {
@@ -1268,12 +1273,15 @@ pub fn job_from_meta(id: u64, meta: &JobMeta) -> JobInfo {
         .sum();
     let count = items.len() as i64;
     let snapshot = meta.transfer_snapshot.clone();
-    let operation = match meta.origin.as_str() {
-        "filemanager" | "files" | "check-resolve" => "copy",
-        other if !other.is_empty() => other,
-        _ => "job",
-    }
-    .to_string();
+    let operation = if !meta.operation.is_empty() {
+        meta.operation.clone()
+    } else {
+        match meta.origin.as_str() {
+            "filemanager" | "files" | "check-resolve" | "transfer-resolve" => "copy".into(),
+            other if !other.is_empty() => other.to_string(),
+            _ => "job".into(),
+        }
+    };
     let mut job = JobInfo {
         id,
         operation: operation.clone(),
@@ -1792,12 +1800,21 @@ pub fn find_stored_job(
 }
 
 pub fn history_with_meta(history: &[JobInfo], meta: &HashMap<u64, JobMeta>) -> Vec<JobInfo> {
+    let patched: Vec<JobInfo> = history
+        .iter()
+        .cloned()
+        .map(|mut job| {
+            let id = job.id;
+            apply_job_meta(&mut job, meta.get(&id));
+            job
+        })
+        .collect();
     let extra: Vec<JobInfo> = meta
         .iter()
-        .filter(|(id, _)| history.iter().all(|job| job.id != **id))
+        .filter(|(id, _)| patched.iter().all(|job| job.id != **id))
         .map(|(id, item)| job_from_meta(*id, item))
         .collect();
-    merge_job_lists(history, &extra)
+    merge_job_lists(&patched, &extra)
 }
 
 pub fn merge_job_lists(live: &[JobInfo], history: &[JobInfo]) -> Vec<JobInfo> {
@@ -1836,6 +1853,20 @@ pub fn merge_overview_jobs(
     }
     out.sort_by(|a, b| b.start_time.cmp(&a.start_time).then(b.id.cmp(&a.id)));
     out
+}
+
+pub fn job_completed_items(job: &JobInfo) -> Option<&[Value]> {
+    job.completed
+        .as_array()
+        .filter(|rows| !rows.is_empty())
+        .map(Vec::as_slice)
+        .or_else(|| {
+            job.stats
+                .get("completed")
+                .and_then(|value| value.as_array())
+                .filter(|rows| !rows.is_empty())
+                .map(Vec::as_slice)
+        })
 }
 
 pub fn job_has_transfer_activity(job: &JobInfo) -> bool {
@@ -2165,6 +2196,7 @@ pub fn job_meta_for(
     origin: &str,
     backend: &str,
     quick_run_id: &str,
+    operation: &str,
 ) -> JobMeta {
     JobMeta {
         origin: origin.to_string(),
@@ -2180,6 +2212,7 @@ pub fn job_meta_for(
         parent_job_id: None,
         target: String::new(),
         group: String::new(),
+        operation: operation.to_string(),
         transfer_snapshot: json!([]),
     }
 }
@@ -4373,7 +4406,15 @@ mod tests {
 
     #[test]
     fn job_meta_assigns_execute_id_and_session_flags() {
-        let meta = job_meta_for("drive", &ProfileConfig::default(), "dashboard", "local", "");
+        let meta = job_meta_for(
+            "drive",
+            &ProfileConfig::default(),
+            "dashboard",
+            "local",
+            "",
+            "sync",
+        );
+        assert_eq!(meta.operation, "sync");
         assert!(!meta.execute_id.is_empty());
         assert_eq!(meta.origin, "dashboard");
         let mut rclone = json!({});
@@ -4412,9 +4453,12 @@ mod tests {
                 ..Default::default()
             },
         );
-        let mut job = running_job(9, "", "sync", "default");
+        let mut job = running_job(9, "", "job/9", "default");
         apply_job_meta(&mut job, map.get(&9));
         assert_eq!(job.origin, "flow");
+        map.get_mut(&9).unwrap().operation = "sync".into();
+        apply_job_meta(&mut job, map.get(&9));
+        assert_eq!(job.operation, "sync");
         assert!(is_overview_job(&job));
         remember_grouped(
             &mut map,
@@ -5636,6 +5680,11 @@ mod tests {
         .unwrap();
         assert_eq!(idle.id, 24749);
         assert_eq!(idle.completed[0]["name"], "blob.bin");
+        let mut duped = idle.clone();
+        duped.stats = json!({ "completed": [{ "name": "blob.bin" }, { "name": "ghost.txt" }] });
+        let items = job_completed_items(&duped).unwrap();
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0]["name"], "blob.bin");
         let siblings = merge_job_lists(&[live.clone()], &history);
         assert_eq!(siblings.len(), 5);
         assert!(!nightly.iter().any(|job| job.id == 5));

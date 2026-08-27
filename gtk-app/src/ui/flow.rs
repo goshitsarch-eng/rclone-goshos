@@ -1103,14 +1103,8 @@ impl FlowView {
                     ));
                 }
             }
-            for source in [
-                job.completed.as_array(),
-                job.stats.get("completed").and_then(|v| v.as_array()),
-            ]
-            .into_iter()
-            .flatten()
-            {
-                for item in source {
+            if let Some(arr) = crate::jobs::job_completed_items(job) {
+                for item in arr {
                     let mut row = crate::transfers::parse_completed_transfer_row(item);
                     crate::transfers::qualify_transfer_row(&mut row, &job.src, &job.dst);
                     rows.push((

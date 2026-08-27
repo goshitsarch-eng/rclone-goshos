@@ -142,6 +142,7 @@ fn upload_send_to(ctx: &AppCtx, send: &crate::platform::SendToArgs) {
                     remote: send.remote.clone(),
                     backend: ctx.backend_key(),
                     group,
+                    operation: "copy".into(),
                     transfer_snapshot: crate::jobs::transfer_snapshot_from_items(&items),
                     ..Default::default()
                 },

@@ -6861,6 +6861,7 @@ impl NautilusView {
                     remote: remote.clone(),
                     backend: self.ctx.backend_key(),
                     group: group.into(),
+                    operation: op.into(),
                     transfer_snapshot: snapshot.clone(),
                     ..Default::default()
                 },

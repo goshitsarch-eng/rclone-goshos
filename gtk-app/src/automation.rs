@@ -623,7 +623,14 @@ pub fn fire(
             crate::jobs::remember_started(
                 &mut store.job_meta,
                 &result,
-                crate::jobs::job_meta_for(&record.remote, &profile, "automation", "", &record.id),
+                crate::jobs::job_meta_for(
+                    &record.remote,
+                    &profile,
+                    "automation",
+                    "",
+                    &record.id,
+                    record.operation.as_str(),
+                ),
             );
             store.automation_last_run.insert(record.id.clone(), now);
             Ok(result)

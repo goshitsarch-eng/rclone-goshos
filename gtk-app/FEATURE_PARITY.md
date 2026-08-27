@@ -1205,3 +1205,8 @@ This client is the GTK 4 + libadwaita desktop UI. It talks to a local `rclone rc
 
 - Live GUI: `--remote testdrive --tab operations` Transfer Activity for **gui-copy-test** shows **blob.bin** (not leftover **ok.txt** / **bad.txt** from copy #42424); Jobs list still lists **copy #42424**
 - Live GUI: testdrive Operations **Start** on **gui-copy-test** Transfer Activity shows live **blob.bin** **22%** `17.9 MiB / 80.0 MiB` with a speed-medium dot and **2.0 MiB/s**; Jobs list shows **copy #12376** Starting plus leftover **#42424**
+
+- Operations Job Information / stats use `latest_overview_job` (same resolver as Transfer Activity) so a running or latest transferred copy is not replaced by the empty-stats placeholder
+- Operations Jobs list passes the selected profile so rclone `job/<id>` leftovers for that profile appear beside copy-labeled history
+- Transfer Activity reads completed rows from one source (`job.completed`, else `stats.completed`)
+- `JobMeta.operation` is persisted on start and restored onto opaque `job/<id>` leftovers

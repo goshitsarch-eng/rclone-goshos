@@ -2055,9 +2055,17 @@ impl Dashboard {
             }
             self.detail_box().append(&chips);
             self.append_operation_controls(&name, detail_op, remote.as_ref());
-            if let Some(job) =
-                remote_jobs_preview(&snap.jobs, &name, selected_profile.as_deref(), scoped_op)
-            {
+            let preview_job = {
+                let store = self.ctx.store.borrow();
+                crate::jobs::latest_overview_job(
+                    &snap.jobs,
+                    &crate::jobs::history_with_meta(&store.job_history, &store.job_meta),
+                    &name,
+                    selected_profile.as_deref(),
+                    scoped_op,
+                )
+            };
+            if let Some(job) = preview_job.as_ref() {
                 self.detail_box()
                     .append(&job_panels::job_info_group(&self.ctx, job));
                 self.detail_box()
@@ -2082,7 +2090,7 @@ impl Dashboard {
                 &snap.jobs,
                 &crate::jobs::history_with_meta(&store.job_history, &store.job_meta),
                 &name,
-                None,
+                selected_profile.as_deref(),
                 scoped_op,
             )
         };
@@ -3799,14 +3807,8 @@ impl Dashboard {
                     ));
                 }
             }
-            for source in [
-                job.completed.as_array(),
-                job.stats.get("completed").and_then(|v| v.as_array()),
-            ]
-            .into_iter()
-            .flatten()
-            {
-                for item in source {
+            if let Some(arr) = crate::jobs::job_completed_items(job) {
+                for item in arr {
                     let mut row = crate::transfers::parse_completed_transfer_row(item);
                     crate::transfers::qualify_transfer_row(&mut row, &job.src, &job.dst);
                     rows.push((
@@ -4420,7 +4422,14 @@ fn toggle_mount(ctx: &AppCtx, name: &str, mounted: bool, toast: &adw::ToastOverl
                 crate::jobs::remember_started(
                     &mut ctx.store.borrow_mut().job_meta,
                     &id,
-                    crate::jobs::job_meta_for(name, &profile, "dashboard", &ctx.backend_key(), ""),
+                    crate::jobs::job_meta_for(
+                        name,
+                        &profile,
+                        "dashboard",
+                        &ctx.backend_key(),
+                        "",
+                        "mount",
+                    ),
                 );
                 ctx.store.borrow_mut().log_operation(
                     name,
@@ -4703,23 +4712,6 @@ fn start_operation(
     }
     let profile = names.into_iter().next().unwrap_or_else(|| "default".into());
     toggle_profile(ctx, name, op, &profile, toast, dry_run, resync);
-}
-
-fn remote_jobs_preview<'a>(
-    jobs: &'a [crate::store::JobInfo],
-    name: &str,
-    profile: Option<&str>,
-    operation: Option<OperationType>,
-) -> Option<&'a crate::store::JobInfo> {
-    jobs.iter()
-        .filter(|j| j.remote == name)
-        .filter(|j| {
-            profile.is_none_or(|wanted| {
-                j.profile == wanted || j.profile.is_empty() || j.profile == "default"
-            })
-        })
-        .filter(|j| operation.is_none_or(|op| crate::jobs::job_operation_matches(&j.operation, op)))
-        .max_by_key(|j| j.id)
 }
 
 fn default_mount_point(name: &str) -> String {
