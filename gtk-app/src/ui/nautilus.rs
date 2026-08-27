@@ -80,6 +80,7 @@ pub struct NautilusView {
     skip_lasso: Rc<Cell<bool>>,
     lasso_drag: Rc<RefCell<Option<LassoDrag>>>,
     lasso_tick: Rc<Cell<bool>>,
+    lasso_pointer_y: Rc<Cell<Option<f64>>>,
     is_narrow: Rc<Cell<bool>>,
     ignore_activate: Rc<Cell<bool>>,
     listing_menu_open: Rc<Cell<bool>>,
@@ -599,6 +600,7 @@ impl NautilusView {
             skip_lasso: Rc::new(Cell::new(false)),
             lasso_drag: Rc::new(RefCell::new(None)),
             lasso_tick: Rc::new(Cell::new(false)),
+            lasso_pointer_y: Rc::new(Cell::new(None)),
             is_narrow: Rc::new(Cell::new(false)),
             ignore_activate: Rc::new(Cell::new(false)),
             listing_menu_open: Rc::new(Cell::new(false)),
@@ -643,6 +645,32 @@ impl NautilusView {
             pending_undo: Rc::new(RefCell::new(Vec::new())),
         };
         view.refresh_type_filters();
+        {
+            let view = view.clone();
+            let motion = gtk::EventControllerMotion::new();
+            motion.connect_motion({
+                let view = view.clone();
+                move |_, x, y| {
+                    let primary = view
+                        .lasso_drag
+                        .borrow()
+                        .map(|drag| drag.primary)
+                        .unwrap_or(true);
+                    let scroll = if primary {
+                        &view.files_scroll
+                    } else {
+                        &view.right_scroll
+                    };
+                    if let Some(pt) = view
+                        .root
+                        .compute_point(scroll, &gtk::graphene::Point::new(x as f32, y as f32))
+                    {
+                        view.lasso_pointer_y.set(Some(f64::from(pt.y())));
+                    }
+                }
+            });
+            view.root.add_controller(motion);
+        }
         {
             let view = view.clone();
             files_scroll
@@ -1683,6 +1711,7 @@ impl NautilusView {
             let view = self.clone();
             drag.connect_drag_end(move |g, _, _| {
                 view.lasso_tick.set(false);
+                view.lasso_pointer_y.set(None);
                 if view.skip_lasso.get() {
                     view.lasso_drag.borrow_mut().take();
                     return;
@@ -2241,6 +2270,12 @@ impl NautilusView {
         self.maybe_lasso_scroll();
     }
 
+    fn lasso_viewport_y(&self, scroll: &gtk::ScrolledWindow, fallback_content_y: f64) -> f64 {
+        self.lasso_pointer_y
+            .get()
+            .unwrap_or_else(|| fallback_content_y - scroll.vadjustment().value())
+    }
+
     fn maybe_lasso_scroll(&self) {
         let Some(drag) = *self.lasso_drag.borrow() else {
             return;
@@ -2250,8 +2285,13 @@ impl NautilusView {
         } else {
             &self.right_scroll
         };
-        let height = f64::from(scroll.height());
-        let viewport_y = drag.y2 - scroll.vadjustment().value();
+        let adj = scroll.vadjustment();
+        let height = if adj.page_size() > 0.0 {
+            adj.page_size()
+        } else {
+            f64::from(scroll.height())
+        };
+        let viewport_y = self.lasso_viewport_y(scroll, drag.y2);
         let delta = crate::fileops::lasso_edge_scroll(
             viewport_y,
             0.0,
@@ -2280,9 +2320,15 @@ impl NautilusView {
             } else {
                 &view.right_scroll
             };
-            let height = f64::from(scroll.height());
+            let adj = scroll.vadjustment();
+            let height = if adj.page_size() > 0.0 {
+                adj.page_size()
+            } else {
+                f64::from(scroll.height())
+            };
+            let viewport_y = view.lasso_viewport_y(scroll, drag.y2);
             let delta = crate::fileops::lasso_edge_scroll(
-                drag.y2 - scroll.vadjustment().value(),
+                viewport_y,
                 0.0,
                 height,
                 crate::fileops::LASSO_EDGE_PX,
