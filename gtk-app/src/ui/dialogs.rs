@@ -11184,7 +11184,24 @@ pub fn templates(parent: &impl IsA<gtk::Widget>, ctx: AppCtx) {
     templates_open(parent, ctx, false);
 }
 
+pub fn templates_with_on_change(
+    parent: &impl IsA<gtk::Widget>,
+    ctx: AppCtx,
+    on_change: Rc<dyn Fn()>,
+) {
+    templates_open_ex(parent, ctx, false, Some(on_change));
+}
+
 pub fn templates_capture_for_remote(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, remote: &str) {
+    templates_capture_for_remote_ex(parent, ctx, remote, None);
+}
+
+pub fn templates_capture_for_remote_ex(
+    parent: &impl IsA<gtk::Widget>,
+    ctx: AppCtx,
+    remote: &str,
+    on_change: Option<Rc<dyn Fn()>>,
+) {
     if try_spawn_standalone(
         &ctx,
         "template-manager",
@@ -11198,8 +11215,12 @@ pub fn templates_capture_for_remote(parent: &impl IsA<gtk::Widget>, ctx: AppCtx,
     dialog.set_content_height(640);
     let on_saved = {
         let dialog = dialog.clone();
+        let on_change = on_change.clone();
         Rc::new(move || {
             dialog.close();
+            if let Some(cb) = &on_change {
+                cb();
+            }
         }) as Rc<dyn Fn()>
     };
     dialog.set_child(Some(&build_capture_page(
@@ -11208,10 +11229,19 @@ pub fn templates_capture_for_remote(parent: &impl IsA<gtk::Widget>, ctx: AppCtx,
         on_saved,
         Some(remote),
     )));
-    present_window_or_dialog(parent, &ctx, &dialog);
+    present_templates_dialog(parent, &ctx, &dialog, on_change);
 }
 
 pub fn templates_open(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, save: bool) {
+    templates_open_ex(parent, ctx, save, None);
+}
+
+fn templates_open_ex(
+    parent: &impl IsA<gtk::Widget>,
+    ctx: AppCtx,
+    save: bool,
+    on_change: Option<Rc<dyn Fn()>>,
+) {
     if try_spawn_standalone(
         &ctx,
         "template-manager",
@@ -11290,7 +11320,48 @@ pub fn templates_open(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, save: bool) {
     box_.append(&switcher);
     box_.append(&stack);
     dialog.set_child(Some(&box_));
-    present_window_or_dialog(parent, &ctx, &dialog);
+    present_templates_dialog(parent, &ctx, &dialog, on_change);
+}
+
+fn present_templates_dialog(
+    parent: &impl IsA<gtk::Widget>,
+    ctx: &AppCtx,
+    dialog: &adw::Dialog,
+    on_change: Option<Rc<dyn Fn()>>,
+) {
+    if let Some(cb) = on_change {
+        dialog.connect_closed(move |_| cb());
+    }
+    present_window_or_dialog(parent, ctx, dialog);
+}
+
+pub(crate) fn combo_selected_label(row: &adw::ComboRow) -> Option<String> {
+    let list = row.model()?.downcast::<gtk::StringList>().ok()?;
+    let text = list.string(row.selected())?.to_string();
+    if text.is_empty() || text == "—" {
+        None
+    } else {
+        Some(text)
+    }
+}
+
+pub(crate) fn fill_template_combo(pick: &adw::ComboRow, apply: &gtk::Button, names: &[String]) {
+    let previous = combo_selected_label(pick);
+    if names.is_empty() {
+        pick.set_model(Some(&gtk::StringList::new(&["—"])));
+        pick.set_sensitive(false);
+        apply.set_sensitive(false);
+        return;
+    }
+    let labels: Vec<&str> = names.iter().map(|s| s.as_str()).collect();
+    pick.set_model(Some(&gtk::StringList::new(&labels)));
+    pick.set_sensitive(true);
+    apply.set_sensitive(true);
+    if let Some(prev) = previous {
+        if let Some(idx) = names.iter().position(|name| name == &prev) {
+            pick.set_selected(idx as u32);
+        }
+    }
 }
 
 fn fill_manage_template_list(
@@ -14203,25 +14274,21 @@ fn quick_run_preset_bar(
             toast.present(Some(&parent));
         });
     }
-    let names: Vec<String> = ctx
-        .store
-        .borrow()
-        .templates
-        .iter()
-        .map(|template| template.name.clone())
-        .collect();
     let pick = adw::ComboRow::new();
     pick.set_title(&ctx.t_or("templates.userTemplates", "Saved User Templates"));
-    let labels: Vec<&str> = names.iter().map(|s| s.as_str()).collect();
-    if labels.is_empty() {
-        pick.set_model(Some(&gtk::StringList::new(&["—"])));
-        pick.set_sensitive(false);
-    } else {
-        pick.set_model(Some(&gtk::StringList::new(&labels)));
-    }
     let apply = gtk::Button::with_label(&ctx.t_or("common.apply", "Apply"));
     apply.add_css_class("suggested-action");
-    apply.set_sensitive(!names.is_empty());
+    let refresh_combo = {
+        let ctx = ctx.clone();
+        let pick = pick.clone();
+        let apply = apply.clone();
+        Rc::new(move || {
+            let names =
+                crate::user_templates::template_display_names(&ctx.store.borrow().templates);
+            fill_template_combo(&pick, &apply, &names);
+        }) as Rc<dyn Fn()>
+    };
+    refresh_combo();
     {
         let ctx = ctx.clone();
         let parent = parent.clone();
@@ -14230,7 +14297,10 @@ fn quick_run_preset_bar(
         let current_op = current_op.clone();
         apply.connect_clicked(move |_| {
             let templates = ctx.store.borrow().templates.clone();
-            let Some(template) = templates.get(pick.selected() as usize) else {
+            let Some(name) = combo_selected_label(&pick) else {
+                return;
+            };
+            let Some(template) = crate::user_templates::template_by_name(&templates, &name) else {
                 return;
             };
             apply_patch(crate::user_templates::template_form_patch(
@@ -14248,8 +14318,9 @@ fn quick_run_preset_bar(
     {
         let ctx = ctx.clone();
         let parent = parent.clone();
+        let refresh_combo = refresh_combo.clone();
         manage.connect_clicked(move |_| {
-            templates(&parent, ctx.clone());
+            templates_with_on_change(&parent, ctx.clone(), refresh_combo.clone());
         });
     }
     box_.append(&title);

@@ -142,6 +142,17 @@ pub const TEMPLATE_CATEGORIES: &[&str] = &[
     "remote",
 ];
 
+/// Angular remote-config `onApplyTemplate()` only patches helper + remote forms.
+pub const REMOTE_CONFIG_TEMPLATE_CATEGORIES: &[&str] =
+    &["vfs", "mount", "backend", "filter", "remote"];
+
+/// Optional helper / operation profile to receive a template apply.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct ApplyTarget {
+    pub helper_name: Option<String>,
+    pub profile_name: Option<String>,
+}
+
 pub fn is_template_category(value: &str) -> bool {
     TEMPLATE_CATEGORIES
         .iter()
@@ -192,12 +203,43 @@ fn default_profile_name(meta: &RemoteMeta, op: OperationType) -> String {
         .unwrap_or_else(|| "default".into())
 }
 
+fn resolved_helper_name(meta: &RemoteMeta, kind: &str, target: &ApplyTarget) -> String {
+    target
+        .helper_name
+        .as_deref()
+        .map(str::trim)
+        .filter(|name| !name.is_empty())
+        .map(ToOwned::to_owned)
+        .unwrap_or_else(|| default_helper_name(meta, kind))
+}
+
+fn resolved_profile_name(meta: &RemoteMeta, op: OperationType, target: &ApplyTarget) -> String {
+    target
+        .profile_name
+        .as_deref()
+        .map(str::trim)
+        .filter(|name| !name.is_empty())
+        .map(ToOwned::to_owned)
+        .unwrap_or_else(|| default_profile_name(meta, op))
+}
+
 /// Apply categorized template values onto helper maps and operation profiles.
 pub fn apply_to_meta(
     meta: &mut RemoteMeta,
     values: &Value,
     categories: Option<&[&str]>,
     overwrite: bool,
+) -> usize {
+    apply_to_meta_with_target(meta, values, categories, overwrite, &ApplyTarget::default())
+}
+
+/// Apply categorized values, targeting a named helper / operation profile when set.
+pub fn apply_to_meta_with_target(
+    meta: &mut RemoteMeta,
+    values: &Value,
+    categories: Option<&[&str]>,
+    overwrite: bool,
+    target: &ApplyTarget,
 ) -> usize {
     let Some(obj) = values.as_object() else {
         return 0;
@@ -218,7 +260,7 @@ pub fn apply_to_meta(
             continue;
         }
         if let Some(kind) = helper_kind(category) {
-            let name = default_helper_name(meta, kind);
+            let name = resolved_helper_name(meta, kind, target);
             let mut current = meta
                 .helper_profile(kind, &name)
                 .and_then(|value| value.as_object().cloned())
@@ -239,7 +281,7 @@ pub fn apply_to_meta(
             continue;
         }
         if let Some(op) = OperationType::parse(category) {
-            let name = default_profile_name(meta, op);
+            let name = resolved_profile_name(meta, op, target);
             let mut profile = meta
                 .get_profile(op, &name)
                 .unwrap_or_else(|| ProfileConfig {
@@ -254,6 +296,23 @@ pub fn apply_to_meta(
         }
     }
     applied
+}
+
+/// Display names in store order, for ComboRow models.
+pub fn template_display_names(templates: &[UserTemplate]) -> Vec<String> {
+    templates
+        .iter()
+        .map(|template| template.name.clone())
+        .collect()
+}
+
+/// First template whose name matches the ComboRow selection.
+pub fn template_by_name<'a>(templates: &'a [UserTemplate], name: &str) -> Option<&'a UserTemplate> {
+    let name = name.trim();
+    if name.is_empty() || name == "—" {
+        return None;
+    }
+    templates.iter().find(|template| template.name == name)
 }
 
 /// Snapshot helper + operation values for the selected categories.
@@ -769,5 +828,103 @@ mod tests {
         let empty = template_form_patch(&json!({}), OperationType::Sync);
         assert!(empty.source.is_none());
         assert!(empty.operation.is_empty());
+    }
+
+    #[test]
+    fn remote_config_apply_skips_operation_profiles() {
+        let mut meta = RemoteMeta::default();
+        meta.upsert_profile(
+            OperationType::Copy,
+            ProfileConfig {
+                name: "gui-copy-test".into(),
+                rclone: json!({ "createEmptySrcDirs": false }),
+                ..ProfileConfig::default()
+            },
+        );
+        let applied = apply_to_meta(
+            &mut meta,
+            &json!({
+                "vfs": { "vfs_cache_mode": "full" },
+                "copy": { "createEmptySrcDirs": true, "srcFs": "testdrive:Photos" }
+            }),
+            Some(REMOTE_CONFIG_TEMPLATE_CATEGORIES),
+            true,
+        );
+        assert_eq!(applied, 1);
+        assert_eq!(
+            meta.get_profile(OperationType::Copy, "gui-copy-test")
+                .unwrap()
+                .rclone["createEmptySrcDirs"],
+            false
+        );
+        assert!(meta.get_profile(OperationType::Copy, "default").is_none());
+        assert_eq!(
+            meta.helper_profile("vfs", "default").unwrap()["vfs_cache_mode"],
+            "full"
+        );
+    }
+
+    #[test]
+    fn apply_targets_named_profile_not_default() {
+        let mut meta = RemoteMeta::default();
+        meta.upsert_profile(
+            OperationType::Copy,
+            ProfileConfig {
+                name: "default".into(),
+                rclone: json!({ "transfers": 4 }),
+                ..ProfileConfig::default()
+            },
+        );
+        meta.upsert_profile(
+            OperationType::Copy,
+            ProfileConfig {
+                name: "gui-copy-test".into(),
+                rclone: json!({ "transfers": 4 }),
+                ..ProfileConfig::default()
+            },
+        );
+        let applied = apply_to_meta_with_target(
+            &mut meta,
+            &json!({ "copy": { "transfers": 8 } }),
+            None,
+            true,
+            &ApplyTarget {
+                profile_name: Some("gui-copy-test".into()),
+                ..ApplyTarget::default()
+            },
+        );
+        assert_eq!(applied, 1);
+        assert_eq!(
+            meta.get_profile(OperationType::Copy, "default")
+                .unwrap()
+                .rclone["transfers"],
+            4
+        );
+        assert_eq!(
+            meta.get_profile(OperationType::Copy, "gui-copy-test")
+                .unwrap()
+                .rclone["transfers"],
+            8
+        );
+    }
+
+    #[test]
+    fn template_lookup_skips_placeholder_and_matches_name() {
+        let templates = vec![UserTemplate {
+            id: "1".into(),
+            name: "QR Copy Paths".into(),
+            description: String::new(),
+            icon: "emblem-ok-symbolic".into(),
+            created_at: "t0".into(),
+            updated_at: "t0".into(),
+            values: json!({ "vfs": { "vfs_cache_mode": "full" } }),
+        }];
+        assert_eq!(template_display_names(&templates), vec!["QR Copy Paths"]);
+        assert!(template_by_name(&templates, "—").is_none());
+        assert!(template_by_name(&templates, "").is_none());
+        assert_eq!(
+            template_by_name(&templates, "QR Copy Paths").unwrap().id,
+            "1"
+        );
     }
 }

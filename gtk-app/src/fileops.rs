@@ -163,6 +163,58 @@ impl FileOp {
     }
 }
 
+/// Angular `NautilusFileOperationsService` keeps at most 20 undo entries.
+pub const MAX_UNDO_STACK: usize = 20;
+
+/// Encode one undo token. A single op stays a FileOp JSON; several become a batch.
+pub fn encode_undo(ops: &[FileOp]) -> Option<String> {
+    match ops {
+        [] => None,
+        [op] => Some(op.encode()),
+        items => Some(
+            serde_json::to_string(&json!({
+                "op": "batch",
+                "items": items,
+            }))
+            .unwrap_or_default(),
+        ),
+    }
+}
+
+/// Decode a single FileOp or a batch token into the original apply order.
+pub fn decode_undo(text: &str) -> Option<Vec<FileOp>> {
+    if let Ok(value) = serde_json::from_str::<Value>(text) {
+        if value.get("op").and_then(Value::as_str) == Some("batch") {
+            return serde_json::from_value(value.get("items")?.clone()).ok();
+        }
+    }
+    FileOp::decode(text).map(|op| vec![op])
+}
+
+/// Invert a batch in reverse order, skipping ops that cannot be undone.
+pub fn invert_ops(ops: &[FileOp]) -> Option<Vec<FileOp>> {
+    let inverted: Vec<FileOp> = ops.iter().rev().filter_map(FileOp::invert).collect();
+    if inverted.is_empty() {
+        None
+    } else {
+        Some(inverted)
+    }
+}
+
+pub fn apply_ops(client: &RcClient, ops: &[FileOp]) -> Result<(), String> {
+    for op in ops {
+        op.apply(client)?;
+    }
+    Ok(())
+}
+
+pub fn push_capped(stack: &mut Vec<String>, token: String) {
+    stack.push(token);
+    while stack.len() > MAX_UNDO_STACK {
+        stack.remove(0);
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct TransferItem {
     pub src_fs: String,
@@ -1461,6 +1513,59 @@ mod tests {
                 source: String::new(),
             }
         );
+    }
+
+    #[test]
+    fn batch_undo_encodes_inverts_and_caps() {
+        let copy_a = FileOp::Copy {
+            src_fs: "testdrive:".into(),
+            src: "Photos/a.txt".into(),
+            dst_fs: "testdrive:".into(),
+            dst: "Backup/a.txt".into(),
+        };
+        let copy_b = FileOp::Copy {
+            src_fs: "testdrive:".into(),
+            src: "Photos/b.txt".into(),
+            dst_fs: "testdrive:".into(),
+            dst: "Backup/b.txt".into(),
+        };
+        assert_eq!(encode_undo(&[]), None);
+        assert_eq!(
+            decode_undo(&encode_undo(&[copy_a.clone()]).unwrap()),
+            Some(vec![copy_a.clone()])
+        );
+        let token = encode_undo(&[copy_a.clone(), copy_b.clone()]).unwrap();
+        assert!(token.contains("\"op\":\"batch\""));
+        let decoded = decode_undo(&token).unwrap();
+        assert_eq!(decoded, vec![copy_a.clone(), copy_b.clone()]);
+        assert_eq!(
+            invert_ops(&decoded),
+            Some(vec![
+                FileOp::Delete {
+                    fs: "testdrive:".into(),
+                    path: "Backup/b.txt".into(),
+                    trash: None,
+                },
+                FileOp::Delete {
+                    fs: "testdrive:".into(),
+                    path: "Backup/a.txt".into(),
+                    trash: None,
+                },
+            ])
+        );
+        assert!(invert_ops(&[FileOp::Delete {
+            fs: "testdrive:".into(),
+            path: "gone".into(),
+            trash: None,
+        }])
+        .is_none());
+        let mut stack = vec!["one".into(), "two".into()];
+        for i in 0..MAX_UNDO_STACK {
+            push_capped(&mut stack, format!("n{i}"));
+        }
+        assert_eq!(stack.len(), MAX_UNDO_STACK);
+        assert_eq!(stack.first().map(String::as_str), Some("n0"));
+        assert_eq!(decode_undo(&copy_a.encode()), Some(vec![copy_a]));
     }
 
     #[test]

@@ -341,25 +341,21 @@ fn preset_bar(
             toast.present(Some(&parent));
         });
     }
-    let names: Vec<String> = ctx
-        .store
-        .borrow()
-        .templates
-        .iter()
-        .map(|t| t.name.clone())
-        .collect();
     let pick = adw::ComboRow::new();
     pick.set_title(&ctx.t_or("templates.userTemplates", "Saved User Templates"));
-    let labels: Vec<&str> = names.iter().map(|s| s.as_str()).collect();
-    if labels.is_empty() {
-        pick.set_model(Some(&gtk::StringList::new(&["—"])));
-        pick.set_sensitive(false);
-    } else {
-        pick.set_model(Some(&gtk::StringList::new(&labels)));
-    }
     let apply = gtk::Button::with_label(&ctx.t_or("common.apply", "Apply"));
     apply.add_css_class("suggested-action");
-    apply.set_sensitive(!names.is_empty());
+    let refresh_combo = {
+        let ctx = ctx.clone();
+        let pick = pick.clone();
+        let apply = apply.clone();
+        Rc::new(move || {
+            let names =
+                crate::user_templates::template_display_names(&ctx.store.borrow().templates);
+            dialogs::fill_template_combo(&pick, &apply, &names);
+        }) as Rc<dyn Fn()>
+    };
+    refresh_combo();
     {
         let ctx = ctx.clone();
         let remote = remote.clone();
@@ -368,22 +364,19 @@ fn preset_bar(
         let pick = pick.clone();
         apply.connect_clicked(move |_| {
             let templates = ctx.store.borrow().templates.clone();
-            let Some(template) = templates.get(pick.selected() as usize) else {
+            let Some(name) = dialogs::combo_selected_label(&pick) else {
                 return;
             };
-            let applied = if let Some(meta) = ctx.store.borrow_mut().remotes.get_mut(&remote) {
-                crate::user_templates::apply_to_meta(meta, &template.values, None, true)
-            } else {
-                0
+            let Some(template) = crate::user_templates::template_by_name(&templates, &name) else {
+                return;
             };
-            if applied == 0 && !crate::user_templates::is_categorized(&template.values) {
-                if let Some(meta) = ctx.store.borrow_mut().remotes.get_mut(&remote) {
-                    for profiles in meta.profiles.values_mut() {
-                        for profile in profiles.values_mut() {
-                            crate::jobs::merge_template_into(&mut profile.rclone, &template.values);
-                        }
-                    }
-                }
+            if let Some(meta) = ctx.store.borrow_mut().remotes.get_mut(&remote) {
+                crate::user_templates::apply_to_meta(
+                    meta,
+                    &template.values,
+                    Some(crate::user_templates::REMOTE_CONFIG_TEMPLATE_CATEGORIES),
+                    true,
+                );
             }
             ctx.persist();
             rebuild();
@@ -401,8 +394,14 @@ fn preset_bar(
         let ctx = ctx.clone();
         let remote = remote.clone();
         let parent = parent.clone();
+        let refresh_combo = refresh_combo.clone();
         save.connect_clicked(move |_| {
-            capture_remote_template(&parent, ctx.clone(), &remote);
+            dialogs::templates_capture_for_remote_ex(
+                &parent,
+                ctx.clone(),
+                &remote,
+                Some(refresh_combo.clone()),
+            );
         });
     }
     let manage =
@@ -410,8 +409,9 @@ fn preset_bar(
     {
         let ctx = ctx.clone();
         let parent = parent.clone();
+        let refresh_combo = refresh_combo.clone();
         manage.connect_clicked(move |_| {
-            dialogs::templates(&parent, ctx.clone());
+            dialogs::templates_with_on_change(&parent, ctx.clone(), refresh_combo.clone());
         });
     }
     box_.append(&title);
@@ -421,10 +421,6 @@ fn preset_bar(
     box_.append(&save);
     box_.append(&manage);
     box_
-}
-
-fn capture_remote_template(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, remote: &str) {
-    dialogs::templates_capture_for_remote(parent, ctx, remote);
 }
 
 fn step_icon(step: EditorStep) -> &'static str {

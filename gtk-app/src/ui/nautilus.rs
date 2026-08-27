@@ -552,10 +552,7 @@ impl NautilusView {
         {
             let view = view.clone();
             view.search_entry.clone().connect_stop_search(move |_| {
-                view.search_entry.set_text("");
-                view.search_filter.borrow_mut().clear();
-                view.show_crumbs();
-                view.reload();
+                view.clear_search();
             });
         }
         {
@@ -1942,9 +1939,7 @@ impl NautilusView {
                             &group,
                             crate::jobs::transfer_snapshot_from_items(&transfers),
                         );
-                        for item in &transfers {
-                            self.push_undo(item.file_op().encode());
-                        }
+                        self.push_undo_ops(transfers.iter().map(|item| item.file_op()).collect());
                         self.ctx.refresh_runtime();
                         self.reload();
                         self.toast.add_toast(adw::Toast::new(&format!(
@@ -2017,10 +2012,7 @@ impl NautilusView {
                 return glib::Propagation::Stop;
             }
             if key == gtk::gdk::Key::Escape {
-                view.search_entry.set_text("");
-                view.search_filter.borrow_mut().clear();
-                view.show_crumbs();
-                view.reload();
+                view.clear_search();
                 return glib::Propagation::Stop;
             }
             if key == gtk::gdk::Key::F5 || (ctrl && key == gtk::gdk::Key::r) {
@@ -2794,7 +2786,23 @@ impl NautilusView {
         (req.on_pick)(result);
     }
 
+    fn search_is_active(&self) -> bool {
+        self.path_stack.visible_child_name().as_deref() == Some("search")
+            || !self.search_filter.borrow().is_empty()
+    }
+
+    fn clear_search(&self) {
+        self.search_entry.set_text("");
+        self.search_filter.borrow_mut().clear();
+        self.show_crumbs();
+        self.reload();
+    }
+
     fn go_back(&self) {
+        if self.search_is_active() {
+            self.clear_search();
+            return;
+        }
         if let Some((remote, path)) = self.history.borrow_mut().pop() {
             let current = self.current.borrow().clone();
             self.future
@@ -3458,13 +3466,10 @@ impl NautilusView {
                     view.toast.add_toast(adw::Toast::new(&e.to_string()));
                     return;
                 }
-                view.push_undo(
-                    crate::fileops::FileOp::Mkdir {
-                        fs: fs.clone(),
-                        path: folder_remote.clone(),
-                    }
-                    .encode(),
-                );
+                let mut ops = vec![crate::fileops::FileOp::Mkdir {
+                    fs: fs.clone(),
+                    path: folder_remote.clone(),
+                }];
                 for item in &names {
                     let src = join_remote_path(&current.path, item);
                     let src_remote = if current.remote == "local" {
@@ -3474,18 +3479,16 @@ impl NautilusView {
                     };
                     let dst_remote = join_remote_path(&folder_remote, item);
                     match client.move_file(&fs, &src_remote, &fs, &dst_remote) {
-                        Ok(_) => view.push_undo(
-                            crate::fileops::FileOp::Move {
-                                src_fs: fs.clone(),
-                                src: src_remote,
-                                dst_fs: fs.clone(),
-                                dst: dst_remote,
-                            }
-                            .encode(),
-                        ),
+                        Ok(_) => ops.push(crate::fileops::FileOp::Move {
+                            src_fs: fs.clone(),
+                            src: src_remote,
+                            dst_fs: fs.clone(),
+                            dst: dst_remote,
+                        }),
                         Err(e) => view.toast.add_toast(adw::Toast::new(&e.to_string())),
                     }
                 }
+                view.push_undo_ops(ops);
                 view.reload();
                 view.toast.add_toast(adw::Toast::new(&format!(
                     "Moved {} items into {name}",
@@ -3663,16 +3666,16 @@ impl NautilusView {
                         self.ctx.snapshot.borrow_mut().jobs.insert(0, preparing);
                     }
                 }
-                for item in &items {
-                    self.push_undo(
-                        crate::fileops::FileOp::Upload {
+                self.push_undo_ops(
+                    items
+                        .iter()
+                        .map(|item| crate::fileops::FileOp::Upload {
                             fs: item.dst_fs.clone(),
                             path: item.dst.clone(),
                             source: item.src.clone(),
-                        }
-                        .encode(),
-                    );
-                }
+                        })
+                        .collect(),
+                );
                 self.ctx.refresh_runtime();
                 self.reload();
                 self.toast.add_toast(adw::Toast::new(&self.ctx.tf(
@@ -3780,8 +3783,14 @@ impl NautilusView {
     }
 
     fn push_undo(&self, op: String) {
-        self.undo.borrow_mut().push(op);
+        crate::fileops::push_capped(&mut self.undo.borrow_mut(), op);
         self.redo.borrow_mut().clear();
+    }
+
+    fn push_undo_ops(&self, ops: Vec<crate::fileops::FileOp>) {
+        if let Some(token) = crate::fileops::encode_undo(&ops) {
+            self.push_undo(token);
+        }
     }
 
     fn undo_last(&self) {
@@ -3824,12 +3833,12 @@ impl NautilusView {
         let Some(client) = self.ctx.client() else {
             return;
         };
-        let Some(decoded) = crate::fileops::FileOp::decode(op) else {
+        let Some(decoded) = crate::fileops::decode_undo(op) else {
             return;
         };
-        match decoded.invert() {
+        match crate::fileops::invert_ops(&decoded) {
             Some(inv) => {
-                if let Err(e) = inv.apply(&client) {
+                if let Err(e) = crate::fileops::apply_ops(&client, &inv) {
                     self.toast.add_toast(adw::Toast::new(&e));
                 }
             }
@@ -3845,8 +3854,8 @@ impl NautilusView {
         let Some(client) = self.ctx.client() else {
             return;
         };
-        if let Some(decoded) = crate::fileops::FileOp::decode(op) {
-            if let Err(e) = decoded.apply(&client) {
+        if let Some(decoded) = crate::fileops::decode_undo(op) {
+            if let Err(e) = crate::fileops::apply_ops(&client, &decoded) {
                 self.toast.add_toast(adw::Toast::new(&e));
             }
             self.reload();
@@ -4142,15 +4151,13 @@ impl NautilusView {
                 path: remote,
                 is_dir,
             };
-            undos.push(item.file_op(trash).encode());
+            undos.push(item.file_op(trash));
             items.push(item);
         }
         match crate::fileops::start_grouped_deletes(&client, &items, "filemanager") {
             Ok((_group, ids)) => {
                 self.remember_file_jobs(&ids, "filemanager");
-                for token in undos {
-                    self.push_undo(token);
-                }
+                self.push_undo_ops(undos);
                 self.ctx.refresh_runtime();
                 self.reload();
             }
@@ -4283,9 +4290,7 @@ impl NautilusView {
                     &group,
                     crate::jobs::transfer_snapshot_from_items(&transfers),
                 );
-                for item in &transfers {
-                    self.push_undo(item.file_op().encode());
-                }
+                self.push_undo_ops(transfers.iter().map(|item| item.file_op()).collect());
                 self.ctx.refresh_runtime();
                 self.reload();
                 self.toast.add_toast(adw::Toast::new(&format!(
