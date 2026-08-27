@@ -1063,3 +1063,12 @@ This client is the GTK 4 + libadwaita desktop UI. It talks to a local `rclone rc
 
 - Live GUI: `--export` Select Export Type lists Full Backup, Application Settings, Alerts, **Templates**, **Quick Runs**, Remotes, Connections, **Nautilus File Browser**, Backend
 - Live GUI: `--restore-preview /tmp/legacy-migrate.rcman` Type **rcman**, Remote Configurations **photos**, contents Profiles + Rclone Configuration (Restore not confirmed)
+
+- Edit Layout / order dialogs use a dedicated drag handle (`list-drag-handle-symbolic`) so MOVE does not fight row activation
+- Remote order dialog has Reset (live remote list, all visible)
+- Disk usage shows loading, not-supported, error, Used/Free/Total legend, then idle `operations/about`
+- Configure primary actions numbers the visible 1/2/3 slots
+
+- Live GUI: `--remote testdrive --tab general` Disk Usage **Used: 89.1 GiB · Free: 150.0 GiB · Total: 251.9 GiB** with a usage bar and Retry
+- Live GUI: Configure primary actions shows ranks **1 Mount / 2 Sync / 3 Copy**, drag handles, and Reset
+- Live GUI: Remote order dialog lists remotes with Reset + Save
