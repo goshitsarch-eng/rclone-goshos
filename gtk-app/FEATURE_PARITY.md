@@ -1219,9 +1219,9 @@ This client is the GTK 4 + libadwaita desktop UI. It talks to a local `rclone rc
 - File viewer Download uses `gtk::FileDialog::save` then `operations/copyfile`; start toast `fileBrowser.fileViewer.downloading` and success/fail `shared.transferActivity.actions.successDownload` / `failDownload` after the job finishes
 - File-viewer download toasts host on the dialog `ToastOverlay` (the viewer button), not the main window under the AdwDialog
 - Multi-rename (`F2` with multiple selection) shows template/replace, Original name / New name preview, and placeholder chips; Escape closes without applying
-- VFS dialog for testdrive on rclone 1.60 shows **No VFS Found** (`vfs/list` empty); indexed `:[n]` **VFS Controls Unavailable** banner (rclone #9120) cannot be live-clicked here
+- VFS Control for a non-indexed name (e.g. `testdrive:`) shows stats/queue/advanced actions; the rclone #9120 **VFS Controls Unavailable** banner only appears when `is_indexed_vfs` matches a `:[digits]` suffix
 
 - Live GUI: `--file-viewer testdrive:Photos/README.md` **Download README.md** opens **Save a File**; dest `/tmp/rclone-dl-readme-ok.md` toasts **Downloading rclone-dl-readme-ok.md** then **File downloaded successfully**; 191 B matches `testdrive:Photos/README.md`
 - Live GUI: `--browse testdrive:Photos` Ctrl+click **README.md** + **README.txt** then **F2** opens **Rename using a template** with Template `[Original file name]`, Original name / Counter / Date / Extension chips, Find text / Replace with, Case sensitive, preview **README.md** / **README.txt**; Escape cancels (files unchanged)
-- Live GUI: `--vfs testdrive` **No VFS Found** — No VFS instances are running for this remote (testdrive is FUSE-mounted; rclone 1.60 `vfs/list` is empty)
+- Live GUI: `--vfs testdrive` VFS Control shows Metadata / Upload Queue / Cache Information / Advanced Configuration plus **Refresh Metadata**, **Clear Metadata Cache**, and **Refresh All Data**; no `testdrive:[0]` instance so the indexed **VFS Controls Unavailable** banner was not shown
 - Live GUI: `--repair` **Configuration Password / Unlock** opens the password prompt; **Cancel** leaves `config_password` unset
