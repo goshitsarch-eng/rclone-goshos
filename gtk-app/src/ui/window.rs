@@ -726,6 +726,10 @@ fn app_menu(ctx: &AppCtx) -> gio::Menu {
         Some("win.import"),
     );
     file.append(
+        Some(&ctx.t_or("backup.importConfig.title", "Import rclone.conf")),
+        Some("win.import-config"),
+    );
+    file.append(
         Some(&ctx.t_or("titlebar.menu.export", "Export settings")),
         Some("win.export"),
     );
@@ -1099,6 +1103,21 @@ fn install_actions(
             "import",
             Box::new(move || {
                 dialogs::import_backup(&window, ctx.clone(), toast.clone(), {
+                    let dash = dash.clone();
+                    Rc::new(move || dash.refresh())
+                })
+            }),
+        );
+    }
+    {
+        let ctx = ctx.clone();
+        let window = window.clone();
+        let toast = toast.clone();
+        let dash = dashboard.clone();
+        add_action(
+            "import-config",
+            Box::new(move || {
+                dialogs::import_rclone_config_picker(&window, ctx.clone(), toast.clone(), {
                     let dash = dash.clone();
                     Rc::new(move || dash.refresh())
                 })
@@ -1814,6 +1833,23 @@ fn install_overlay_actions(
             "import",
             Box::new(move || {
                 dialogs::import_backup(&window, ctx.clone(), toast.clone(), refresh.clone())
+            }),
+        );
+    }
+    {
+        let ctx = ctx.clone();
+        let window = window.clone();
+        let toast = toast.clone();
+        let refresh = refresh.clone();
+        add_action(
+            "import-config",
+            Box::new(move || {
+                dialogs::import_rclone_config_picker(
+                    &window,
+                    ctx.clone(),
+                    toast.clone(),
+                    refresh.clone(),
+                )
             }),
         );
     }

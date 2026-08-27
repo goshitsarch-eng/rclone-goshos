@@ -4281,22 +4281,59 @@ fn rc_client_for_entry(entry: &crate::settings::BackendEntry) -> crate::rclone::
     )
 }
 
+fn backend_copy_sources(ctx: &AppCtx, existing: Option<&str>) -> (Vec<String>, Vec<String>) {
+    let mut labels = vec![ctx.t_or("modals.backend.copyOptions.fromZero", "Start from Zero")];
+    let mut ids = vec![String::new()];
+    labels.push(ctx.t_or("modals.backend.local", "Local rclone RC"));
+    ids.push("local".into());
+    for backend in ctx.settings.borrow().core.extra_backends.clone() {
+        if existing.is_some_and(|name| name == backend.name) {
+            continue;
+        }
+        labels.push(backend.name.clone());
+        ids.push(backend.name);
+    }
+    (labels, ids)
+}
+
+fn backend_editor_alert(parent: &impl IsA<gtk::Widget>, ctx: &AppCtx, title: &str, message: &str) {
+    let alert = adw::AlertDialog::new(Some(title), Some(message));
+    alert.add_response("ok", &ctx.t_or("common.ok", "OK"));
+    alert.present(Some(parent));
+}
+
 fn backend_editor(
     parent: &impl IsA<gtk::Widget>,
     ctx: AppCtx,
     existing: Option<crate::settings::BackendEntry>,
 ) {
     let dialog = adw::Dialog::new();
-    dialog.set_title(&ctx.t_or("modals.backend.addTitle", "Remote RC backend"));
-    dialog.set_content_width(480);
+    dialog.set_title(&ctx.t_or(
+        if existing.is_some() {
+            "modals.backend.editBackend"
+        } else {
+            "modals.backend.addBackend"
+        },
+        if existing.is_some() {
+            "Edit Backend"
+        } else {
+            "Add Backend"
+        },
+    ));
+    dialog.set_content_width(520);
+    dialog.set_content_height(640);
+    let editing_name = existing.as_ref().map(|entry| entry.name.clone());
     let name = adw::EntryRow::new();
     name.set_title(&ctx.t_or("modals.backend.name", "Name"));
+    name.set_sensitive(existing.is_none());
     let host = adw::EntryRow::new();
     host.set_title(&ctx.t_or("modals.backend.fields.host.label", "Host"));
     host.set_text("127.0.0.1");
     let port = adw::EntryRow::new();
     port.set_title(&ctx.t_or("modals.backend.fields.port.label", "Port"));
     port.set_text("5573");
+    let auth = adw::SwitchRow::new();
+    auth.set_title(&ctx.t_or("modals.backend.enableAuth", "Customize Authentication"));
     let user = adw::EntryRow::new();
     user.set_title(&ctx.t_or("modals.backend.fields.username.label", "Username"));
     let pass = adw::PasswordEntryRow::new();
@@ -4308,6 +4345,33 @@ fn backend_editor(
         "modals.backend.fields.configPassword.label",
         "Config password",
     ));
+    let stored = adw::ActionRow::new();
+    stored.set_title(&ctx.t_or(
+        "modals.backend.remoteSecurity.noPasswordStored",
+        "No Password Stored",
+    ));
+    stored.set_subtitle(&ctx.t_or(
+        "modals.backend.remoteSecurity.limitation",
+        "Note: Rclone does not support changing or verifying remote config passwords via API.",
+    ));
+    let refresh_stored = {
+        let stored = stored.clone();
+        let config_pass = config_pass.clone();
+        let ctx = ctx.clone();
+        Rc::new(move || {
+            if config_pass.text().is_empty() {
+                stored.set_title(&ctx.t_or(
+                    "modals.backend.remoteSecurity.noPasswordStored",
+                    "No Password Stored",
+                ));
+            } else {
+                stored.set_title(&ctx.t_or(
+                    "modals.backend.remoteSecurity.passwordStored",
+                    "Password Stored",
+                ));
+            }
+        }) as Rc<dyn Fn()>
+    };
     if let Some(entry) = &existing {
         name.set_text(&entry.name);
         host.set_text(&entry.host);
@@ -4316,36 +4380,39 @@ fn backend_editor(
         pass.set_text(&entry.pass);
         config_path.set_text(&entry.config_path);
         config_pass.set_text(&entry.config_password);
+        auth.set_active(!entry.user.is_empty() || !entry.pass.is_empty());
     }
-    let mut copy_labels = vec![
-        ctx.t_or("modals.backend.copyOptions.fromZero", "Don't copy remotes"),
-        ctx.t_or("modals.backend.local", "Local rclone RC"),
-    ];
-    let mut copy_ids = vec![String::new(), "local".to_string()];
-    for backend in ctx.settings.borrow().core.extra_backends.clone() {
-        if existing
-            .as_ref()
-            .map(|e| e.name == backend.name)
-            .unwrap_or(false)
-        {
-            continue;
-        }
-        copy_labels.push(backend.name.clone());
-        copy_ids.push(backend.name);
+    refresh_stored();
+    user.set_visible(auth.is_active());
+    pass.set_visible(auth.is_active());
+    {
+        let user = user.clone();
+        let pass = pass.clone();
+        auth.connect_active_notify(move |row| {
+            user.set_visible(row.is_active());
+            pass.set_visible(row.is_active());
+        });
     }
+    let (copy_labels, copy_ids) = backend_copy_sources(&ctx, editing_name.as_deref());
     let copy_refs: Vec<&str> = copy_labels.iter().map(|s| s.as_str()).collect();
-    let copy_from = gtk::DropDown::from_strings(&copy_refs);
-    copy_from.set_selected(0);
-    let copy_row = adw::ActionRow::new();
-    copy_row.set_title(&ctx.t_or(
+    let copy_options = gtk::DropDown::from_strings(&copy_refs);
+    copy_options.set_selected(0);
+    let copy_options_row = adw::ActionRow::new();
+    copy_options_row.set_title(&ctx.t_or(
+        "modals.backend.copyOptions.backendConfig",
+        "Copy Backend Settings",
+    ));
+    copy_options_row.add_suffix(&copy_options);
+    let copy_remotes = gtk::DropDown::from_strings(&copy_refs);
+    copy_remotes.set_selected(0);
+    let copy_remotes_row = adw::ActionRow::new();
+    copy_remotes_row.set_title(&ctx.t_or(
         "modals.backend.copyOptions.remotesConfig",
-        "Copy remotes from",
+        "Copy Remote Settings",
     ));
-    copy_row.set_subtitle(&ctx.t_or(
-        "modals.backend.copyOptions.description",
-        "Optional: clone remotes from another RC backend after saving",
-    ));
-    copy_row.add_suffix(&copy_from);
+    copy_remotes_row.add_suffix(&copy_remotes);
+    let copy_ids_options = copy_ids.clone();
+    let copy_ids_remotes = copy_ids;
     let test =
         gtk::Button::with_label(&ctx.t_or("modals.backend.testConnection", "Test connection"));
     let save = gtk::Button::with_label(&ctx.t_or("modals.backend.save", "Save"));
@@ -4357,14 +4424,23 @@ fn backend_editor(
         let port = port.clone();
         let user = user.clone();
         let pass = pass.clone();
+        let auth = auth.clone();
         test.connect_clicked(move |_| {
             let port_n = port.text().parse::<u16>().unwrap_or(5573);
             let entry = crate::settings::BackendEntry {
                 name: "test".into(),
                 host: host.text().to_string(),
                 port: port_n,
-                user: user.text().to_string(),
-                pass: pass.text().to_string(),
+                user: if auth.is_active() {
+                    user.text().to_string()
+                } else {
+                    String::new()
+                },
+                pass: if auth.is_active() {
+                    pass.text().to_string()
+                } else {
+                    String::new()
+                },
                 ..Default::default()
             };
             let client = rc_client_for_entry(&entry);
@@ -4379,12 +4455,12 @@ fn backend_editor(
             } else {
                 ctx.t_or("modals.backend.status.failed", "Connection failed")
             };
-            let alert = adw::AlertDialog::new(
-                Some(&ctx.t_or("modals.backend.testConnection", "Test connection")),
-                Some(&msg),
+            backend_editor_alert(
+                &dialog,
+                &ctx,
+                &ctx.t_or("modals.backend.testConnection", "Test connection"),
+                &msg,
             );
-            alert.add_response("ok", &ctx.t("common.ok"));
-            alert.present(Some(&dialog));
         });
     }
     {
@@ -4396,26 +4472,99 @@ fn backend_editor(
         let port = port.clone();
         let user = user.clone();
         let pass = pass.clone();
+        let auth = auth.clone();
         let config_path = config_path.clone();
         let config_pass = config_pass.clone();
-        let copy_from = copy_from.clone();
+        let copy_options = copy_options.clone();
+        let copy_remotes = copy_remotes.clone();
+        let editing_name = editing_name.clone();
         save.connect_clicked(move |_| {
-            let port_n = port.text().parse::<u16>().unwrap_or(5573);
+            let title = ctx.t_or("modals.backend.save", "Save");
+            let Some(port_n) = port.text().parse::<u16>().ok() else {
+                backend_editor_alert(&dialog, &ctx, &title, "1024 - 65535");
+                return;
+            };
+            if !crate::backend_options::valid_backend_port(port_n) {
+                backend_editor_alert(&dialog, &ctx, &title, "1024 - 65535");
+                return;
+            }
+            let name_text = name.text().trim().to_string();
+            let host_text = host.text().trim().to_string();
+            if !crate::backend_options::valid_backend_name(&name_text) {
+                backend_editor_alert(
+                    &dialog,
+                    &ctx,
+                    &title,
+                    &ctx.t_or("modals.backend.nameExists", "Name exists"),
+                );
+                return;
+            }
+            if host_text.is_empty() {
+                backend_editor_alert(
+                    &dialog,
+                    &ctx,
+                    &title,
+                    &ctx.t_or("modals.backend.fields.host.label", "Host"),
+                );
+                return;
+            }
+            let extras = ctx.settings.borrow().core.extra_backends.clone();
+            if crate::backend_options::backend_name_taken(
+                &extras,
+                &name_text,
+                editing_name.as_deref(),
+            ) {
+                backend_editor_alert(
+                    &dialog,
+                    &ctx,
+                    &title,
+                    &ctx.t_or("modals.backend.nameExists", "Name exists"),
+                );
+                return;
+            }
+            if crate::backend_options::backend_host_taken(
+                &extras,
+                &host_text,
+                port_n,
+                editing_name.as_deref(),
+            ) {
+                backend_editor_alert(
+                    &dialog,
+                    &ctx,
+                    &title,
+                    &ctx.t_or(
+                        "modals.backend.hostExists",
+                        "This host:port is already in use",
+                    ),
+                );
+                return;
+            }
             let entry = crate::settings::BackendEntry {
-                name: name.text().to_string(),
-                host: host.text().to_string(),
+                name: name_text,
+                host: host_text,
                 port: port_n,
-                user: user.text().to_string(),
-                pass: pass.text().to_string(),
+                user: if auth.is_active() {
+                    user.text().to_string()
+                } else {
+                    String::new()
+                },
+                pass: if auth.is_active() {
+                    pass.text().to_string()
+                } else {
+                    String::new()
+                },
                 config_path: config_path.text().to_string(),
                 config_password: config_pass.text().to_string(),
                 ..Default::default()
             };
-            if entry.name.is_empty() || entry.host.is_empty() {
-                return;
-            }
-            let source_idx = copy_from.selected() as usize;
-            let source_id = copy_ids.get(source_idx).cloned().unwrap_or_default();
+            let options_id = copy_ids_options
+                .get(copy_options.selected() as usize)
+                .cloned()
+                .unwrap_or_default();
+            let remotes_id = copy_ids_remotes
+                .get(copy_remotes.selected() as usize)
+                .cloned()
+                .unwrap_or_default();
             let mut settings = ctx.settings.borrow_mut();
             if let Some(idx) = settings
                 .core
@@ -4429,19 +4578,9 @@ fn backend_editor(
             }
             drop(settings);
             ctx.persist();
-            let options_from = if source_id.is_empty() {
-                ctx.backend_key()
-            } else {
-                source_id.clone()
-            };
-            if options_from != entry.name {
-                let dest_empty = crate::backend_options::load_for(&entry.name)
-                    .as_object()
-                    .is_none_or(|o| o.is_empty());
-                if dest_empty {
-                    if let Err(e) = crate::backend_options::copy_for(&options_from, &entry.name) {
-                        log::warn!("copy backend.json failed: {e}");
-                    }
+            if !options_id.is_empty() && options_id != entry.name {
+                if let Err(e) = crate::backend_options::copy_for(&options_id, &entry.name) {
+                    log::warn!("copy backend.json failed: {e}");
                 }
             }
             crate::rclone::apply_backend_rc_config(
@@ -4449,21 +4588,18 @@ fn backend_editor(
                 Some(entry.config_path.as_str()),
                 Some(entry.config_password.as_str()),
             );
-            if !source_id.is_empty() {
-                if let (Some(source), dest) =
-                    (rc_client_for(&ctx, &source_id), rc_client_for_entry(&entry))
-                {
+            if !remotes_id.is_empty() {
+                if let (Some(source), dest) = (
+                    rc_client_for(&ctx, &remotes_id),
+                    rc_client_for_entry(&entry),
+                ) {
                     if let Err(e) = dest.copy_remotes_from(&source) {
-                        let alert =
-                            adw::AlertDialog::new(
-                                Some(&ctx.t_or(
-                                    "modals.backend.copyOptions.remotesConfig",
-                                    "Copy remotes",
-                                )),
-                                Some(&e.to_string()),
-                            );
-                        alert.add_response("ok", &ctx.t_or("common.ok", "OK"));
-                        alert.present(Some(&parent));
+                        backend_editor_alert(
+                            &parent,
+                            &ctx,
+                            &ctx.t_or("modals.backend.copyOptions.remotesConfig", "Copy remotes"),
+                            &e.to_string(),
+                        );
                     }
                 }
             }
@@ -4471,20 +4607,81 @@ fn backend_editor(
             backends(&parent, ctx.clone());
         });
     }
-    let group = adw::PreferencesGroup::new();
-    group.add(&name);
-    group.add(&host);
-    group.add(&port);
-    group.add(&user);
-    group.add(&pass);
-    group.add(&config_path);
-    group.add(&config_pass);
-    group.add(&copy_row);
+    let remove_pass = gtk::Button::with_label(&ctx.t_or(
+        "modals.backend.remoteSecurity.removePassword",
+        "Remove Stored Password",
+    ));
+    {
+        let config_pass = config_pass.clone();
+        let refresh_stored = refresh_stored.clone();
+        let ctx = ctx.clone();
+        let editing_name = editing_name.clone();
+        remove_pass.connect_clicked(move |_| {
+            config_pass.set_text("");
+            if let Some(name) = &editing_name {
+                if let Some(entry) = ctx
+                    .settings
+                    .borrow_mut()
+                    .core
+                    .extra_backends
+                    .iter_mut()
+                    .find(|backend| backend.name == *name)
+                {
+                    entry.config_password.clear();
+                }
+                ctx.persist();
+            }
+            refresh_stored();
+        });
+    }
+    let connection = adw::PreferencesGroup::new();
+    connection.set_title(&ctx.t_or("modals.backend.connectionTab", "Connection"));
+    connection.add(&name);
+    connection.add(&host);
+    connection.add(&port);
+    connection.add(&auth);
+    connection.add(&user);
+    connection.add(&pass);
+    let security = adw::PreferencesGroup::new();
+    security.set_title(&ctx.t_or("modals.backend.securityTab", "Security"));
+    security.add(&config_path);
+    security.add(&config_pass);
+    security.add(&stored);
+    security.add(&{
+        let row = adw::ActionRow::new();
+        row.set_title(&ctx.t_or(
+            "modals.backend.remoteSecurity.removePassword",
+            "Remove Stored Password",
+        ));
+        row.add_suffix(&remove_pass);
+        row
+    });
+    if existing.is_none() {
+        connection.add(&copy_options_row);
+        connection.add(&copy_remotes_row);
+    }
+    let stack = adw::ViewStack::new();
+    stack.add_titled(
+        &connection,
+        Some("connection"),
+        &ctx.t_or("modals.backend.connectionTab", "Connection"),
+    );
+    stack.add_titled(
+        &security,
+        Some("security"),
+        &ctx.t_or("modals.backend.securityTab", "Security"),
+    );
+    let switcher = adw::ViewSwitcher::new();
+    switcher.set_stack(Some(&stack));
+    switcher.set_policy(adw::ViewSwitcherPolicy::Wide);
     let box_ = gtk::Box::new(gtk::Orientation::Vertical, 8);
-    box_.set_margin_top(12);
-    box_.append(&group);
+    box_.set_margin_top(8);
+    box_.append(&switcher);
+    box_.append(&stack);
     let buttons = gtk::Box::new(gtk::Orientation::Horizontal, 8);
     buttons.set_halign(gtk::Align::End);
+    buttons.set_margin_end(12);
+    buttons.set_margin_bottom(8);
     buttons.append(&test);
     buttons.append(&save);
     box_.append(&buttons);
@@ -7749,6 +7946,33 @@ pub fn import_backup(
             if let Ok(file) = result {
                 if let Some(path) = file.path() {
                     restore_preview(&parent_widget, ctx.clone(), toast.clone(), path, on_done);
+                }
+            }
+        },
+    );
+}
+
+pub fn import_rclone_config_picker(
+    parent: &(impl IsA<gtk::Window> + Clone),
+    ctx: AppCtx,
+    toast: adw::ToastOverlay,
+    on_done: Rc<dyn Fn()>,
+) {
+    let dialog = gtk::FileDialog::new();
+    let parent_widget = parent.clone();
+    dialog.open(
+        Some(parent),
+        None::<gio::Cancellable>.as_ref(),
+        move |result| {
+            if let Ok(file) = result {
+                if let Some(path) = file.path() {
+                    import_rclone_config(
+                        &parent_widget,
+                        ctx.clone(),
+                        toast.clone(),
+                        path,
+                        on_done.clone(),
+                    );
                 }
             }
         },
