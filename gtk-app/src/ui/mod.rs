@@ -3,6 +3,7 @@ mod dashboard;
 mod dialogs;
 mod flag_widget;
 mod flow;
+mod installation_options;
 mod interactive;
 mod job_panels;
 mod json_editor;

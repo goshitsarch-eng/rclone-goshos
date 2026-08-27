@@ -478,6 +478,12 @@ pub fn parse_launch_args(args: &[String], standalone_dialogs: bool) -> Option<La
                 });
             }
             "--repair" => target = Some(NavTarget::Repair),
+            "--starred" => {
+                target = Some(NavTarget::Files {
+                    remote: "starred".into(),
+                    path: String::new(),
+                })
+            }
             "--auto-add" => auto_add = true,
             "--clone-from" | "--cloneFrom" => {
                 clone_from = value.filter(|v| !v.is_empty() && !v.starts_with('-'));
@@ -1396,6 +1402,29 @@ mod tests {
             Some(LaunchRequest {
                 target: NavTarget::Files {
                     remote: "local".into(),
+                    path: String::new(),
+                },
+                standalone: true,
+            })
+        );
+        let starred = parse_launch_args(&["app".into(), "--starred".into()], false);
+        assert_eq!(
+            starred,
+            Some(LaunchRequest {
+                target: NavTarget::Files {
+                    remote: "starred".into(),
+                    path: String::new(),
+                },
+                standalone: true,
+            })
+        );
+        let browse_starred =
+            parse_launch_args(&["app".into(), "--browse".into(), "starred".into()], false);
+        assert_eq!(
+            browse_starred,
+            Some(LaunchRequest {
+                target: NavTarget::Files {
+                    remote: "starred".into(),
                     path: String::new(),
                 },
                 standalone: true,

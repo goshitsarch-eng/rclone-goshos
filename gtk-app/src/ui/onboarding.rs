@@ -352,7 +352,9 @@ fn page_install(
             let path = binary.text().to_string();
             ctx.settings.borrow_mut().core.rclone_binary = path.clone();
             ctx.persist();
-            if rclone_exists(&path) {
+            if crate::installation::test_rclone_binary(&path)
+                == crate::installation::BinaryStatus::Valid
+            {
                 message
                     .set_text(&ctx.t_or("onboarding.installButton.useBinary", "Binary is valid"));
             } else {
@@ -391,7 +393,9 @@ fn page_install(
                 let path = binary.text().to_string();
                 ctx.settings.borrow_mut().core.rclone_binary = path.clone();
                 ctx.persist();
-                if rclone_exists(&path) {
+                if crate::installation::test_rclone_binary(&path)
+                    == crate::installation::BinaryStatus::Valid
+                {
                     status.set_icon_name(Some("emblem-ok-symbolic"));
                     message.set_text(
                         &ctx.t_or("onboarding.installButton.useBinary", "Binary is valid"),

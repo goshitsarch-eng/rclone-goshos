@@ -19,6 +19,7 @@ mod fileops;
 mod flags;
 mod guidance;
 mod i18n;
+mod installation;
 mod interactive;
 mod jobs;
 mod json_editor;
@@ -353,6 +354,12 @@ fn register_application_options(app: &adw::Application) {
     );
     add("repair", OptionArg::None, "Open the Repair sheet", None);
     add(
+        "starred",
+        OptionArg::None,
+        "Open the Files workspace on Starred",
+        None,
+    );
+    add(
         "remote-config",
         OptionArg::String,
         "Open remote configuration",
@@ -454,6 +461,7 @@ fn command_line_option_flags(
         "quick-run-editor",
         "export",
         "repair",
+        "starred",
         "remote-config",
         "step",
         "profile",

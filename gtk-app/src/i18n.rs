@@ -508,6 +508,12 @@ mod tests {
         for key in [
             "repairSheet.titles.missingRclone",
             "repairSheet.actions.installPlugin",
+            "repairSheet.showAdvanced",
+            "repairSheet.hideAdvanced",
+            "repairSheet.useDifferentConfig",
+            "repairSheet.buttons.useThisBinary",
+            "shared.installationOptions.tabs.quickFix",
+            "shared.installationOptions.status.valid",
             "modals.remoteConfig.profile.noProfiles",
             "mount.successMount",
             "operations.successStart",

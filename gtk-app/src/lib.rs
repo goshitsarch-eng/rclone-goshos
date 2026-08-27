@@ -21,6 +21,7 @@ pub mod fileops;
 pub mod flags;
 pub mod guidance;
 pub mod i18n;
+pub mod installation;
 pub mod interactive;
 pub mod jobs;
 pub mod json_editor;

@@ -982,3 +982,7 @@ This client is the GTK 4 + libadwaita desktop UI. It talks to a local `rclone rc
 - Files tab reorder applies Angular `getTabTransform` slide offsets while dragging; dragging outside scales the source tab to 0
 - Folder context-menu Open submenu uses a 200ms left/right GtkStack slide (Angular `slide-menu`)
 - Dashboard Status overview row includes a LevelBar for active/total remotes
+
+- Repair sheet embeds Angular `installation-options`: Recommended / Custom / Existing tabs, path browse, and `rclone version` binary Test
+- Advanced install can download to a custom directory or apply a validated existing binary; Use Different Config sets `--config=`
+- `--starred` / `--browse starred` open Files on the Starred collection

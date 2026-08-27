@@ -5,6 +5,10 @@ use crate::cli_import::{
     LookupOption, ProfileMode,
 };
 use crate::guidance::{operation_banners, BannerKind};
+use crate::installation::{
+    config_action_key, default_install_dest, install_action_key, installation_valid,
+    rclone_install_dest, repair_tooltip_key, InstallLocation, InstallationMode,
+};
 use crate::jobs::{
     assemble_rclone, default_dest, default_source, flatten_rclone, job_from_status,
     merge_template_into, path_list, start_request, SOURCE_KEYS,
@@ -2066,9 +2070,15 @@ fn start_app_update(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, toast: adw::Toa
 }
 
 fn start_rclone_update(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, toast: adw::ToastOverlay) {
-    let dest = dirs::home_dir()
-        .unwrap_or_else(|| std::path::PathBuf::from("."))
-        .join(".local/bin");
+    start_rclone_update_to(parent, ctx, toast, default_install_dest());
+}
+
+fn start_rclone_update_to(
+    parent: &impl IsA<gtk::Widget>,
+    ctx: AppCtx,
+    toast: adw::ToastOverlay,
+    dest: std::path::PathBuf,
+) {
     let installing = ctx.t_or("repair.progress.installingRclone", "Installing rclone");
     run_download_job(
         parent,
@@ -16839,6 +16849,9 @@ pub fn repair(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, toast: adw::ToastOver
     );
     let list = gtk::ListBox::new();
     list.add_css_class("boxed-list");
+    let needs_config = issues
+        .iter()
+        .any(|issue| issue.kind == crate::repair::RepairKind::PasswordRequired);
     if issues.is_empty() {
         let row = adw::ActionRow::new();
         row.set_title(&ctx.t_or("repair.noIssues", "No issues detected"));
@@ -16957,14 +16970,195 @@ pub fn repair(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, toast: adw::ToastOver
         row.add_suffix(&btn);
         list.append(&row);
     }
-    let install = gtk::Button::with_label(&ctx.t_or("repair.installRclone", "Install rclone"));
+    let box_ = gtk::Box::new(gtk::Orientation::Vertical, 8);
+    box_.set_margin_top(16);
+    box_.set_margin_start(16);
+    box_.set_margin_end(16);
+    box_.set_margin_bottom(16);
+    let scroll = gtk::ScrolledWindow::new();
+    scroll.set_vexpand(true);
+    scroll.set_min_content_height(180);
+    scroll.set_child(Some(&list));
+    box_.append(&scroll);
+
+    let show_advanced = Rc::new(Cell::new(false));
+    let show_config = Rc::new(Cell::new(false));
+    let install_opts = Rc::new(super::installation_options::InstallationOptions::new(
+        &ctx,
+        InstallationMode::Install,
+        true,
+    ));
+    let config_opts = Rc::new(super::installation_options::InstallationOptions::new(
+        &ctx,
+        InstallationMode::Config,
+        false,
+    ));
+    install_opts.root.set_visible(false);
+    config_opts.root.set_visible(false);
+
+    let advanced = gtk::Button::with_label(&ctx.t_or("repairSheet.showAdvanced", "Show Advanced"));
+    advanced.add_css_class("flat");
+    {
+        let ctx = ctx.clone();
+        let show_advanced = show_advanced.clone();
+        let install_opts = install_opts.clone();
+        advanced.connect_clicked(move |btn| {
+            let next = !show_advanced.get();
+            show_advanced.set(next);
+            install_opts.root.set_visible(next);
+            btn.set_label(&ctx.t_or(
+                if next {
+                    "repairSheet.hideAdvanced"
+                } else {
+                    "repairSheet.showAdvanced"
+                },
+                if next {
+                    "Hide Advanced"
+                } else {
+                    "Show Advanced"
+                },
+            ));
+        });
+    }
+    box_.append(&advanced);
+    box_.append(&install_opts.root);
+
+    let config_toggle = gtk::Button::with_label(
+        &ctx.t_or("repairSheet.useDifferentConfig", "Use Different Config"),
+    );
+    config_toggle.add_css_class("flat");
+    config_toggle.set_visible(needs_config);
+    {
+        let ctx = ctx.clone();
+        let show_config = show_config.clone();
+        let config_opts = config_opts.clone();
+        config_toggle.connect_clicked(move |btn| {
+            let next = !show_config.get();
+            show_config.set(next);
+            config_opts.root.set_visible(next);
+            btn.set_label(&ctx.t_or(
+                if next {
+                    "repairSheet.hideConfigOptions"
+                } else {
+                    "repairSheet.useDifferentConfig"
+                },
+                if next {
+                    "Hide Options"
+                } else {
+                    "Use Different Config"
+                },
+            ));
+        });
+    }
+    box_.append(&config_toggle);
+    box_.append(&config_opts.root);
+
+    let install =
+        gtk::Button::with_label(&ctx.t_or("repairSheet.actions.installRclone", "Install rclone"));
+    install.add_css_class("suggested-action");
+    let refresh_install = {
+        let ctx = ctx.clone();
+        let install = install.clone();
+        let install_opts = install_opts.clone();
+        let config_opts = config_opts.clone();
+        let show_advanced = show_advanced.clone();
+        let show_config = show_config.clone();
+        Rc::new(move || {
+            if show_config.get() {
+                let data = config_opts.data();
+                install.set_label(&ctx.t_or(config_action_key(&data), "Use This Config"));
+                install.set_sensitive(installation_valid(InstallationMode::Config, &data));
+                install.set_tooltip_text(
+                    repair_tooltip_key(InstallationMode::Config, &data)
+                        .map(|key| ctx.t_or(key, ""))
+                        .as_deref(),
+                );
+            } else if show_advanced.get() {
+                let data = install_opts.data();
+                install.set_label(&ctx.t_or(install_action_key(&data), "Install rclone"));
+                install.set_sensitive(installation_valid(InstallationMode::Install, &data));
+                install.set_tooltip_text(
+                    repair_tooltip_key(InstallationMode::Install, &data)
+                        .map(|key| ctx.t_or(key, ""))
+                        .as_deref(),
+                );
+            } else {
+                install.set_label(&ctx.t_or("repairSheet.actions.installRclone", "Install rclone"));
+                install.set_sensitive(true);
+                install.set_tooltip_text(None::<&str>);
+            }
+        })
+    };
+    install_opts.connect_changed({
+        let refresh_install = refresh_install.clone();
+        move |_| refresh_install()
+    });
+    config_opts.connect_changed({
+        let refresh_install = refresh_install.clone();
+        move |_| refresh_install()
+    });
+    {
+        let refresh_install = refresh_install.clone();
+        advanced.connect_clicked(move |_| refresh_install());
+    }
+    {
+        let refresh_install = refresh_install.clone();
+        config_toggle.connect_clicked(move |_| refresh_install());
+    }
     {
         let ctx = ctx.clone();
         let toast = toast.clone();
         let parent = parent.clone();
+        let install_opts = install_opts.clone();
+        let config_opts = config_opts.clone();
+        let show_advanced = show_advanced.clone();
+        let show_config = show_config.clone();
+        let refresh_install = refresh_install.clone();
         install.connect_clicked(move |_| {
+            if show_config.get() {
+                let data = config_opts.data();
+                if !installation_valid(InstallationMode::Config, &data) {
+                    return;
+                }
+                let path = if data.location == InstallLocation::Custom {
+                    data.custom_path
+                } else {
+                    String::new()
+                };
+                crate::repair::set_config_path_flag(
+                    &mut ctx.settings.borrow_mut().core.rclone_additional_flags,
+                    &path,
+                );
+                ctx.persist();
+                ctx.restart_engine();
+                toast.add_toast(adw::Toast::new(
+                    &ctx.t_or("repairSheet.progress.configuring", "Configuring..."),
+                ));
+                return;
+            }
+            if show_advanced.get() {
+                let data = install_opts.data();
+                if !installation_valid(InstallationMode::Install, &data) {
+                    return;
+                }
+                if data.location == InstallLocation::Existing {
+                    ctx.settings.borrow_mut().core.rclone_binary = data.existing_binary;
+                    ctx.persist();
+                    ctx.restart_engine();
+                    toast.add_toast(adw::Toast::new(
+                        &ctx.t_or("repairSheet.progress.configuring", "Configuring..."),
+                    ));
+                    return;
+                }
+                if let Some(dest) = rclone_install_dest(data.location, &data.custom_path) {
+                    start_rclone_update_to(&parent, ctx.clone(), toast.clone(), dest);
+                    ctx.restart_engine();
+                }
+                return;
+            }
             install_rclone_update(&parent, ctx.clone(), toast.clone());
             ctx.restart_engine();
+            refresh_install();
         });
     }
     let browse = gtk::Button::with_label(&ctx.t_or("repair.chooseBinary", "Choose binary…"));
@@ -16987,20 +17181,11 @@ pub fn repair(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, toast: adw::ToastOver
             ctx.restart_engine();
         });
     }
-    let box_ = gtk::Box::new(gtk::Orientation::Vertical, 8);
-    box_.set_margin_top(16);
-    box_.set_margin_start(16);
-    box_.set_margin_end(16);
-    box_.set_margin_bottom(16);
-    let scroll = gtk::ScrolledWindow::new();
-    scroll.set_vexpand(true);
-    scroll.set_min_content_height(220);
-    scroll.set_child(Some(&list));
-    box_.append(&scroll);
     box_.append(&install);
     box_.append(&browse);
     box_.append(&config_btn);
     box_.append(&restart);
+    dialog.set_content_height(640);
     dialog.set_child(Some(&box_));
     present_window_or_dialog(parent, &ctx, &dialog);
 }
