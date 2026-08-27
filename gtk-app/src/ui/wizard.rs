@@ -2735,7 +2735,7 @@ fn attach_provider_typeahead(
             "No matching remote types",
         );
         Rc::new(move || {
-            if !search.has_focus() {
+            if !super::dialogs::row_is_editing(&search) {
                 popover.popdown();
                 return;
             }

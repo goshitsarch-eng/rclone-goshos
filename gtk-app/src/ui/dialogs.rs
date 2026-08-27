@@ -13918,6 +13918,25 @@ pub(crate) fn attach_path_picker_with(
     attach_path_autocomplete(&auto_ctx, row, &auto_config);
 }
 
+pub(crate) fn row_is_editing(widget: &impl IsA<gtk::Widget>) -> bool {
+    let widget = widget.as_ref();
+    widget.has_focus() || widget.has_css_class("focused") || widget_tree_has_focus(widget)
+}
+
+fn widget_tree_has_focus(widget: &gtk::Widget) -> bool {
+    if widget.has_focus() {
+        return true;
+    }
+    let mut child = widget.first_child();
+    while let Some(node) = child {
+        if widget_tree_has_focus(&node) {
+            return true;
+        }
+        child = node.next_sibling();
+    }
+    false
+}
+
 pub(crate) fn attach_example_typeahead(
     ctx: &AppCtx,
     search: &adw::EntryRow,
@@ -13956,7 +13975,7 @@ pub(crate) fn attach_example_typeahead(
             "No matching providers",
         );
         Rc::new(move || {
-            if !search.has_focus() {
+            if !row_is_editing(&search) {
                 popover.popdown();
                 return;
             }
@@ -14068,7 +14087,7 @@ fn attach_path_autocomplete(
         let applying = applying.clone();
         let default_remote = default_remote.clone();
         Rc::new(move || {
-            if !row.has_focus() {
+            if !row_is_editing(&row) {
                 popover.popdown();
                 return;
             }
