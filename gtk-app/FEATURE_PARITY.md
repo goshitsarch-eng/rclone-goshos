@@ -1057,3 +1057,9 @@ This client is the GTK 4 + libadwaita desktop UI. It talks to a local `rclone rc
 - Live GUI: job Source Browse opens Files at **testdrive » Photos** (**7 items**)
 - Live GUI: `--properties testdrive:Photos` Location **testdrive:Photos**; Copy puts `testdrive:Photos` on the clipboard
 - Live GUI: `--alerts` Jobs & File Operations + testdrive filters show pills **testdrive ×** and **Jobs & File Operations ×** plus **Reset**; Reset clears the chips
+
+- Export categories include Templates, Quick Runs, and Files/Nautilus preferences (store/settings filters + merge)
+- Restore analyzes and imports Tauri/Angular `.rcman` zips (remotes, quick runs, connections, alerts, templates, rclone.conf)
+
+- Live GUI: `--export` Select Export Type lists Full Backup, Application Settings, Alerts, **Templates**, **Quick Runs**, Remotes, Connections, **Nautilus File Browser**, Backend
+- Live GUI: `--restore-preview /tmp/legacy-migrate.rcman` Type **rcman**, Remote Configurations **photos**, contents Profiles + Rclone Configuration (Restore not confirmed)
