@@ -2882,12 +2882,13 @@ impl NautilusView {
             return;
         }
         let current = self.current.borrow().clone();
-        if let Some((remote, path)) = listing::pop_nav_back(
+        let dest = listing::pop_nav_back(
             &mut self.history.borrow_mut(),
             &mut self.future.borrow_mut(),
             &current.remote,
             &current.path,
-        ) {
+        );
+        if let Some((remote, path)) = dest {
             self.current.borrow_mut().remote = remote;
             self.current.borrow_mut().path = path;
             self.current.borrow_mut().starred = false;
@@ -2898,12 +2899,13 @@ impl NautilusView {
 
     fn go_forward(&self) {
         let current = self.current.borrow().clone();
-        if let Some((remote, path)) = listing::pop_nav_forward(
+        let dest = listing::pop_nav_forward(
             &mut self.history.borrow_mut(),
             &mut self.future.borrow_mut(),
             &current.remote,
             &current.path,
-        ) {
+        );
+        if let Some((remote, path)) = dest {
             self.current.borrow_mut().remote = remote;
             self.current.borrow_mut().path = path;
             self.current.borrow_mut().starred = false;
