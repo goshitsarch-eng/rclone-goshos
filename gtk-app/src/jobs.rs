@@ -1351,10 +1351,19 @@ fn merge_rc_with_stored(mut rc: JobInfo, stored: JobInfo) -> JobInfo {
     if rc.duration <= 0.0 && stored.duration > 0.0 {
         rc.duration = stored.duration;
     }
-    if (transfer_list_empty(&rc.completed) || completed_needs_sizes(&rc.completed))
-        && !transfer_list_empty(&stored.completed)
-    {
-        rc.completed = stored.completed;
+    if !transfer_list_empty(&stored.completed) {
+        let rc_n = rc.completed.as_array().map(|rows| rows.len()).unwrap_or(0);
+        let stored_n = stored
+            .completed
+            .as_array()
+            .map(|rows| rows.len())
+            .unwrap_or(0);
+        let prefer_stored = transfer_list_empty(&rc.completed)
+            || completed_needs_sizes(&rc.completed)
+            || (stored_n > rc_n && !job_is_running(&rc) && !job_is_pending(&rc));
+        if prefer_stored {
+            rc.completed = stored.completed;
+        }
     }
     scope_job_transfers(&mut rc);
     rc
@@ -5767,6 +5776,33 @@ mod tests {
             .filter_map(|item| item.get("name").and_then(|v| v.as_str()))
             .collect();
         assert_eq!(names, vec!["README.txt"]);
+    }
+
+    #[test]
+    fn finished_detail_job_keeps_richer_stored_transfers() {
+        let mut rc = sample_job(42424, "testdrive:Photos", "testdrive:verify-ops");
+        rc.status = "failed".into();
+        rc.completed = json!([{ "name": "testdrive:Photos", "srcFs": "testdrive:Photos" }]);
+        let mut stored = rc.clone();
+        stored.completed = json!([
+            { "name": "ok.txt", "bytes": 3, "size": 3, "percentage": 100 },
+            { "name": "bad.txt", "error": "permission denied", "size": 8 }
+        ]);
+        let resolved = resolve_detail_job(Some(rc), Some(stored)).unwrap();
+        assert_eq!(resolved.completed.as_array().unwrap().len(), 2);
+        assert_eq!(resolved.completed[0]["name"], "ok.txt");
+        assert_eq!(resolved.completed[1]["name"], "bad.txt");
+        let mut running = sample_job(9, "testdrive:Photos", "testdrive:verify-ops");
+        running.status = "running".into();
+        running.completed = json!([{ "name": "ok.txt" }]);
+        let mut older = running.clone();
+        older.completed = json!([
+            { "name": "ok.txt" },
+            { "name": "stale.txt" }
+        ]);
+        let live = resolve_detail_job(Some(running), Some(older)).unwrap();
+        assert_eq!(live.completed.as_array().unwrap().len(), 1);
+        assert_eq!(live.completed[0]["name"], "ok.txt");
     }
 
     #[test]
