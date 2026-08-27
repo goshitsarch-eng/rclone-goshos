@@ -11884,13 +11884,15 @@ pub fn file_viewer(
         }
     });
     {
-        let parent = parent.clone();
+        let host = download.clone();
         let ctx = ctx.clone();
         let remote = remote.to_string();
         let path = path.to_string();
         let name = name.to_string();
         download.connect_clicked(move |_| {
-            download_file(&parent, ctx.clone(), &remote, &path, &name);
+            // Host is the viewer button so toasts land on the dialog overlay,
+            // not the main window underneath the AdwDialog.
+            download_file(&host, ctx.clone(), &remote, &path, &name);
         });
     }
     let box_ = gtk::Box::new(gtk::Orientation::Vertical, 12);
@@ -12638,7 +12640,11 @@ pub(crate) fn download_file(
     path: &str,
     name: &str,
 ) {
-    let Some(win) = parent.root().and_downcast::<gtk::Window>() else {
+    let Some(win) = parent.root().and_downcast::<gtk::Window>().or_else(|| {
+        parent
+            .ancestor(gtk::Window::static_type())
+            .and_downcast::<gtk::Window>()
+    }) else {
         return;
     };
     let dialog = gtk::FileDialog::new();
