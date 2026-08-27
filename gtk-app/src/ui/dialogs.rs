@@ -14197,10 +14197,7 @@ fn quick_run_preset_bar(
                     "wizards.presets.applied",
                     "Default presets applied successfully",
                 )),
-                Some(&ctx.t_or(
-                    "templates.applySuccess",
-                    "Default provider / OS presets were merged into this Quick Run.",
-                )),
+                None::<&str>,
             );
             toast.add_response("ok", &ctx.t_or("common.ok", "OK"));
             toast.present(Some(&parent));

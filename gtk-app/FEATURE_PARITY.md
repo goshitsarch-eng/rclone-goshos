@@ -882,3 +882,8 @@ This client is the GTK 4 + libadwaita desktop UI. It talks to a local `rclone rc
 - Home search lists matching flags (`service › category`) and opens that category; category pages keep typed FlagWidgets, JSON mode, Apply, and Reset All
 - When rclone has no `options/info` (1.60), flags are synthesized from `options/get` so services still appear
 - Live GUI: `--rclone-flags` home shows General Settings (Log, Main, Rc), File System (Filter, Mount, Vfs), and Network (Dlna, Http, Sftp); Main › General shows **Ask Password** switch, **Buffer Size** spin `16777216`, and `Showing 91 of 91 flags`; home search `buffer` opens Main › General filtered to Buffer Size
+
+- Quick Run editor Runtime Remote tab uses typed provider FlagWidgets (plus JSON mode), not a raw JSON EntryRow; values save as `rclone.runtimeRemote`
+- Quick Run editor has a Presets & Templates bar that patches form values (vfs/backend/runtime/operation flags and src/dst) instead of remote metadata
+- `--quick-run-editor <name>` opens the saved run by name as well as UUID
+- Live GUI: `--quick-run-editor gui-qr-copy` shows **Presets & Templates** and Runtime Remote **remote** + **JSON** for testdrive alias; Apply Default Presets reports success; Save persists `runtimeRemote.remote: /tmp/rclone-test-remote`
