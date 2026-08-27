@@ -1838,7 +1838,22 @@ pub fn merge_overview_jobs(
     out
 }
 
-/// Angular `getLatestJobForRemote`: newest matching overview job by start_time, then id.
+pub fn job_has_transfer_activity(job: &JobInfo) -> bool {
+    !transfer_list_empty(&job.transferring)
+        || !transfer_list_empty(&job.completed)
+        || job
+            .stats
+            .get("completed")
+            .is_some_and(|value| !transfer_list_empty(value))
+        || job
+            .stats
+            .get("transferring")
+            .is_some_and(|value| !transfer_list_empty(value))
+}
+
+/// Angular `getLatestJobForRemote`, preferring a live job and then the newest
+/// job that actually has transfer rows (rclone 1.60 leftover `job/<id>`
+/// stubs can be newer than the copy that transferred files).
 pub fn latest_overview_job(
     live: &[JobInfo],
     history: &[JobInfo],
@@ -1846,9 +1861,16 @@ pub fn latest_overview_job(
     profile: Option<&str>,
     operation: Option<OperationType>,
 ) -> Option<JobInfo> {
-    merge_overview_jobs(live, history, remote, profile, operation)
-        .into_iter()
-        .next()
+    let jobs = merge_overview_jobs(live, history, remote, profile, operation);
+    jobs.iter()
+        .find(|job| job_is_running(job) || job_is_pending(job))
+        .cloned()
+        .or_else(|| {
+            jobs.iter()
+                .find(|job| job_has_transfer_activity(job))
+                .cloned()
+        })
+        .or_else(|| jobs.into_iter().next())
 }
 
 pub fn job_status_value(job: &JobInfo) -> Value {
@@ -5584,9 +5606,14 @@ mod tests {
             merged_copies.iter().map(|job| job.id).collect::<Vec<_>>(),
             vec![24749, 42424]
         );
+        let mut empty_newer = running_job(16996, "testdrive", "job/16996", "gui-copy-test");
+        empty_newer.status = "completed".into();
+        empty_newer.start_time = DateTime::parse_from_rfc3339("2026-08-27T22:05:03Z")
+            .unwrap()
+            .with_timezone(&Utc);
         let latest = latest_overview_job(
-            &[live_copy],
-            &[leftover],
+            &[live_copy.clone()],
+            &[leftover.clone(), empty_newer.clone()],
             "testdrive",
             Some("gui-copy-test"),
             Some(OperationType::Copy),
@@ -5595,6 +5622,20 @@ mod tests {
         assert_eq!(latest.id, 24749);
         assert_eq!(latest.transferring[0]["name"], "blob.bin");
         assert!(latest.completed.as_array().unwrap().is_empty());
+        let mut done_copy = live_copy;
+        done_copy.status = "completed".into();
+        done_copy.transferring = json!([]);
+        done_copy.completed = json!([{ "name": "blob.bin" }]);
+        let idle = latest_overview_job(
+            &[],
+            &[leftover, done_copy, empty_newer],
+            "testdrive",
+            Some("gui-copy-test"),
+            Some(OperationType::Copy),
+        )
+        .unwrap();
+        assert_eq!(idle.id, 24749);
+        assert_eq!(idle.completed[0]["name"], "blob.bin");
         let siblings = merge_job_lists(&[live.clone()], &history);
         assert_eq!(siblings.len(), 5);
         assert!(!nightly.iter().any(|job| job.id == 5));
