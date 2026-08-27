@@ -996,7 +996,10 @@ impl Dashboard {
             bar.set_valign(gtk::Align::Center);
             bar.add_css_class("status-overview-bar");
             summary.add_suffix(&bar);
-            self.host().append(&summary);
+            let list = gtk::ListBox::new();
+            list.add_css_class("boxed-list");
+            list.append(&summary);
+            self.host().append(&list);
         }
         if !active.is_empty() {
             self.host().append(&section_label(

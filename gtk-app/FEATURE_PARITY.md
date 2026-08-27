@@ -992,3 +992,4 @@ This client is the GTK 4 + libadwaita desktop UI. It talks to a local `rclone rc
 
 - Opening Starred cancels in-flight `operations/list` jobs so the collection is not replaced by the previous folder (Angular `starredMode`)
 - Dragging a tab outside the tab strip scales it to 0 while the pointer is over the listing or sidebar, not only on drag-end
+- Dashboard Status overview row is hosted in a boxed ListBox so the LevelBar is visible (ActionRow on a plain Box did not paint)
