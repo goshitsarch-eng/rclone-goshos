@@ -1072,3 +1072,12 @@ This client is the GTK 4 + libadwaita desktop UI. It talks to a local `rclone rc
 - Live GUI: `--remote testdrive --tab general` Disk Usage **Used: 89.1 GiB · Free: 150.0 GiB · Total: 251.9 GiB** with a usage bar and Retry
 - Live GUI: Configure primary actions shows ranks **1 Mount / 2 Sync / 3 Copy**, drag handles, and Reset
 - Live GUI: Remote order dialog lists remotes with Reset + Save
+
+- Tray Browse is profile-aware (`browse|{remote}` or `browse|{remote}|{profile}`) and becomes a submenu when a remote has multiple mounts
+- Remote tray labels add job count and `serve` when those are active
+- OS notifications register Open actions; clicks focus the app and open Job / Alerts / Repair
+- Job alert toasts carry `job_id` so OS click-through opens that job
+- In-app toasts can show OK (dismiss) or action buttons (Undo, View Details)
+
+- Live GUI: testdrive Photos New Folder shows toast **New Folder** with **Undo**; Undo removes the folder
+- Live GUI: `--tray-action browse|testdrive` opens Files at testdrive (**28 items**, batch250 / Photos)
