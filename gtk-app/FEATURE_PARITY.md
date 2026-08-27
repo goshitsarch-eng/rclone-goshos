@@ -1167,3 +1167,7 @@ This client is the GTK 4 + libadwaita desktop UI. It talks to a local `rclone rc
 
 - Live GUI: `--remote testdrive --tab mount` expand default shows **Mount point usage** `/tmp/rclone-testdrive-mnt · 117.0 GiB used / 134.8 GiB free · 251.9 GiB` plus a LevelBar; Unmount is enabled for the host FUSE alias
 - Live GUI: `--alerts` Rules **Notify on events** subtitle **Info · 1 Actions · Enabled · 969 · Last Fired 08/27/26, 06:59 PM**
+
+- Backend error toasts go through `translate_error` (`toast_error` / start-failed / window / VFS / export / password unlock)
+- Bandwidth panel shows Angular Upload / Download / Total rows when limited, highlights the active preset, and offers retry when `core/bwlimit` fails
+- Remote stream file-viewer video/audio uses `fileBrowser.fileViewer.videoLabel` / `audioLabel`

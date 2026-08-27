@@ -792,7 +792,7 @@ fn relaunch_application(widget: &impl IsA<gtk::Widget>, ctx: &AppCtx, toast: &ad
                 app.quit();
             }
         }
-        Err(e) => toast.add_toast(adw::Toast::new(&e)),
+        Err(e) => ctx.toast_error(toast, &e),
     }
 }
 
@@ -2269,7 +2269,7 @@ fn run_progress_job<T, F, OnOk>(
                     ));
                 }
                 Err(e) => {
-                    toast_done.add_toast(adw::Toast::new(&e));
+                    ctx_done.toast_error(&toast_done, &e);
                 }
             }
             return glib::ControlFlow::Break;
@@ -3468,7 +3468,7 @@ fn flags_category_page(
                         &toast,
                         serde_json::json!({ service.clone(): map }),
                     ),
-                    Err(err) => toast.add_toast(adw::Toast::new(&err)),
+                    Err(err) => ctx.toast_error(&toast, &err),
                 }
             } else {
                 apply_rclone_flag_payload(
@@ -8155,7 +8155,7 @@ pub fn export_backup(
                                         "modals.export.confSuccess",
                                         "rclone.conf exported",
                                     ))),
-                                    Err(e) => toast.add_toast(adw::Toast::new(&e)),
+                                    Err(e) => ctx.toast_error(&toast, &e),
                                 }
                                 return;
                             }
@@ -8179,7 +8179,7 @@ pub fn export_backup(
                                         "Backup created successfully",
                                     )))
                                 }
-                                Err(e) => toast.add_toast(adw::Toast::new(&e)),
+                                Err(e) => ctx.toast_error(&toast, &e),
                             }
                         }
                     }
@@ -11384,6 +11384,8 @@ fn attach_remote_stream_preview(
     parent: &gtk::Box,
     url: &str,
     category: crate::operations::FileTypeCategory,
+    name: &str,
+    ctx: &AppCtx,
 ) {
     let file = gio::File::for_uri(url);
     if matches!(category, crate::operations::FileTypeCategory::Image) {
@@ -11401,6 +11403,20 @@ fn attach_remote_stream_preview(
         video.set_vexpand(true);
         video.set_autoplay(true);
         parent.append(&video);
+        let key = if matches!(category, crate::operations::FileTypeCategory::Video) {
+            "fileBrowser.fileViewer.videoLabel"
+        } else {
+            "fileBrowser.fileViewer.audioLabel"
+        };
+        let fallback = if matches!(category, crate::operations::FileTypeCategory::Video) {
+            "Video: {{name}}"
+        } else {
+            "Audio: {{name}}"
+        };
+        let label = gtk::Label::new(Some(&ctx.tf_or(key, fallback, &[("name", name)])));
+        label.add_css_class("dim-label");
+        label.set_xalign(0.0);
+        parent.append(&label);
     }
 }
 
@@ -12117,7 +12133,7 @@ fn populate_file_viewer_body(
                     "fileBrowser.fileViewer.remoteStream",
                     "Streaming remote preview",
                 ));
-                attach_remote_stream_preview(&box_, &url, category);
+                attach_remote_stream_preview(&box_, &url, category, name, &ctx);
                 if matches!(category, crate::operations::FileTypeCategory::Audio) {
                     attach_audio_cover(&box_, None, Some((&ctx, remote, path, name)));
                 }
@@ -18253,7 +18269,7 @@ pub fn password_prompt(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, toast: adw::
                     Ok(_) => toast.add_toast(adw::Toast::new(
                         &ctx.t_or("repair.passwordUnlocked", "Config unlocked"),
                     )),
-                    Err(e) => toast.add_toast(adw::Toast::new(&e.to_string())),
+                    Err(e) => ctx.toast_error(&toast, &e.to_string()),
                 }
             }
             ctx.restart_engine();

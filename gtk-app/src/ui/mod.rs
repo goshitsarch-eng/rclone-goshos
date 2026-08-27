@@ -1214,6 +1214,11 @@ impl AppCtx {
         overlay.add_toast(toast);
     }
 
+    /// Translate backend JSON/keys, then toast (Angular `NotificationService.show`).
+    pub fn toast_error(&self, overlay: &adw::ToastOverlay, message: impl AsRef<str>) {
+        self.toast(overlay, self.translate_error(message.as_ref()));
+    }
+
     /// Toast on the nearest `ToastOverlay` (ancestor, self, or window content).
     pub fn toast_near(&self, parent: &impl IsA<gtk::Widget>, message: impl AsRef<str>) {
         let toast = adw::Toast::new(message.as_ref());
@@ -1222,6 +1227,10 @@ impl AppCtx {
         if let Some(overlay) = find_toast_overlay(parent.upcast_ref()) {
             overlay.add_toast(toast);
         }
+    }
+
+    pub fn toast_error_near(&self, parent: &impl IsA<gtk::Widget>, message: impl AsRef<str>) {
+        self.toast_near(parent, self.translate_error(message.as_ref()));
     }
 
     pub fn toast_action(

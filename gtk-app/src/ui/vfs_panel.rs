@@ -508,7 +508,7 @@ pub fn vfs_panel(ctx: AppCtx, remote: &str, toast: adw::ToastOverlay) -> gtk::Wi
                     "shared.vfsControl.actions.messages.intervalSet",
                     &[("val", &poll.text())],
                 ))),
-                Err(e) => toast.add_toast(adw::Toast::new(&e.to_string())),
+                Err(e) => ctx.toast_error(&toast, &e.to_string()),
             }
         });
     }
@@ -527,7 +527,7 @@ pub fn vfs_panel(ctx: AppCtx, remote: &str, toast: adw::ToastOverlay) -> gtk::Wi
                         )));
                         refresh_ui();
                     }
-                    Err(e) => toast.add_toast(adw::Toast::new(&e.to_string())),
+                    Err(e) => ctx.toast_error(&toast, &e.to_string()),
                 }
             }
         });
@@ -552,7 +552,7 @@ pub fn vfs_panel(ctx: AppCtx, remote: &str, toast: adw::ToastOverlay) -> gtk::Wi
                         )));
                         refresh_ui();
                     }
-                    Err(e) => toast.add_toast(adw::Toast::new(&e.to_string())),
+                    Err(e) => ctx.toast_error(&toast, &e.to_string()),
                 }
             }
         });
@@ -726,7 +726,7 @@ fn set_expiry(
         }
         Err(e) => toast.add_toast(adw::Toast::new(&ctx.tf(
             "shared.vfsControl.actions.messages.actionFailed",
-            &[("error", &e.to_string())],
+            &[("error", &ctx.translate_error(&e.to_string()))],
         ))),
     }
 }

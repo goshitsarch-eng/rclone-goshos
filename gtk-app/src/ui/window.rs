@@ -423,7 +423,7 @@ fn present_main_with(app: &adw::Application, ctx: AppCtx, hidden: bool) {
                 ctx.settings.borrow_mut().runtime.app_restart_required = false;
                 ctx.persist();
                 if let Err(e) = crate::platform::relaunch() {
-                    toast.add_toast(adw::Toast::new(&e));
+                    ctx.toast_error(&toast, &e);
                 } else if let Some(app) = window.application() {
                     app.quit();
                 }
@@ -1322,7 +1322,7 @@ fn install_actions(
                     &ctx.t_or("shortcuts.mountsRefreshSuccess", "Mounts refreshed"),
                 ));
             }
-            Err(error) => toast.add_toast(adw::Toast::new(&error)),
+            Err(error) => ctx.toast_error(&toast, &error),
         });
         window.add_action(&action);
     }
@@ -1338,7 +1338,7 @@ fn install_actions(
                     &ctx.t_or("shortcuts.servesRefreshSuccess", "Serves refreshed"),
                 ));
             }
-            Err(error) => toast.add_toast(adw::Toast::new(&error)),
+            Err(error) => ctx.toast_error(&toast, &error),
         });
         window.add_action(&action);
     }
@@ -1401,7 +1401,7 @@ fn install_actions(
                         Ok(_) => toast.add_toast(adw::Toast::new(
                             &ctx.t_or("developerTools.gcStarted", "Garbage collection started"),
                         )),
-                        Err(e) => toast.add_toast(adw::Toast::new(&e.to_string())),
+                        Err(e) => ctx.toast_error(&toast, &e.to_string()),
                     }
                 }
             }),
@@ -1418,7 +1418,7 @@ fn install_actions(
                         Ok(_) => toast.add_toast(adw::Toast::new(
                             &ctx.t_or("modals.about.cacheCleared", "Cache cleared successfully"),
                         )),
-                        Err(e) => toast.add_toast(adw::Toast::new(&e.to_string())),
+                        Err(e) => ctx.toast_error(&toast, &e.to_string()),
                     }
                 }
             }),
@@ -1474,11 +1474,12 @@ fn install_actions(
     {
         let app = app.clone();
         let toast = toast.clone();
+        let ctx = ctx.clone();
         add_action(
             "relaunch",
             Box::new(move || match crate::platform::relaunch() {
                 Ok(()) => app.quit(),
-                Err(e) => toast.add_toast(adw::Toast::new(&e)),
+                Err(e) => ctx.toast_error(&toast, &e),
             }),
         );
     }
@@ -2055,7 +2056,7 @@ fn install_overlay_actions(
                 Ok(_) => toast.add_toast(adw::Toast::new(
                     &ctx.t_or("shortcuts.mountsRefreshSuccess", "Mounts refreshed"),
                 )),
-                Err(error) => toast.add_toast(adw::Toast::new(&error)),
+                Err(error) => ctx.toast_error(&toast, &error),
             }),
         );
     }
@@ -2068,7 +2069,7 @@ fn install_overlay_actions(
                 Ok(_) => toast.add_toast(adw::Toast::new(
                     &ctx.t_or("shortcuts.servesRefreshSuccess", "Serves refreshed"),
                 )),
-                Err(error) => toast.add_toast(adw::Toast::new(&error)),
+                Err(error) => ctx.toast_error(&toast, &error),
             }),
         );
     }
@@ -2111,7 +2112,7 @@ fn install_overlay_actions(
                         Ok(_) => toast.add_toast(adw::Toast::new(
                             &ctx.t_or("developerTools.gcStarted", "Garbage collection started"),
                         )),
-                        Err(e) => toast.add_toast(adw::Toast::new(&e.to_string())),
+                        Err(e) => ctx.toast_error(&toast, &e.to_string()),
                     }
                 }
             }),
@@ -2128,7 +2129,7 @@ fn install_overlay_actions(
                         Ok(_) => toast.add_toast(adw::Toast::new(
                             &ctx.t_or("modals.about.cacheCleared", "Cache cleared successfully"),
                         )),
-                        Err(e) => toast.add_toast(adw::Toast::new(&e.to_string())),
+                        Err(e) => ctx.toast_error(&toast, &e.to_string()),
                     }
                 }
             }),
@@ -2195,6 +2196,7 @@ fn install_overlay_actions(
     {
         let app = window.application();
         let toast = toast.clone();
+        let ctx = ctx.clone();
         add_action(
             "relaunch",
             Box::new(move || match crate::platform::relaunch() {
@@ -2203,7 +2205,7 @@ fn install_overlay_actions(
                         app.quit();
                     }
                 }
-                Err(e) => toast.add_toast(adw::Toast::new(&e)),
+                Err(e) => ctx.toast_error(&toast, &e),
             }),
         );
     }

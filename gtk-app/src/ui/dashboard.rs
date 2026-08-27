@@ -51,6 +51,9 @@ struct OverviewLive {
     transfer: adw::ActionRow,
     saved: adw::ActionRow,
     live: Option<adw::ActionRow>,
+    upload: Option<adw::ActionRow>,
+    download: Option<adw::ActionRow>,
+    total: Option<adw::ActionRow>,
 }
 
 impl Dashboard {
@@ -381,14 +384,29 @@ impl Dashboard {
         let limit = ctx_settings_bandwidth(&self.ctx);
         live.saved
             .set_subtitle(&bandwidth_limit_subtitle(&self.ctx, &limit));
-        if let Some(row) = &live.live {
-            if let Some(bw) = self
-                .ctx
-                .client()
-                .and_then(|c| c.bwlimit(None).ok())
-                .map(|v| crate::jobs::parse_bwlimit(&v))
-            {
+        if let Some(bw) = self
+            .ctx
+            .client()
+            .and_then(|c| c.bwlimit(None).ok())
+            .map(|v| crate::jobs::parse_bwlimit(&v))
+        {
+            if let Some(row) = &live.live {
                 row.set_subtitle(&bandwidth_live_subtitle(&self.ctx, &bw));
+            }
+            if crate::jobs::bandwidth_shows_details(&bw) {
+                let values = crate::jobs::bandwidth_details(&bw);
+                for (row, (_, _, bytes)) in [
+                    live.upload.as_ref(),
+                    live.download.as_ref(),
+                    live.total.as_ref(),
+                ]
+                .into_iter()
+                .zip(values)
+                {
+                    if let Some(row) = row {
+                        row.set_subtitle(&crate::jobs::format_bandwidth_rate(bytes));
+                    }
+                }
             }
         }
     }
@@ -1597,22 +1615,43 @@ impl Dashboard {
         );
         limit_row.set_subtitle(&bandwidth_limit_subtitle(&self.ctx, &limit));
         bw_group.append(&limit_row);
-        let live_row = self
+        let fetched = self
             .ctx
             .client()
-            .and_then(|c| c.bwlimit(None).ok())
-            .map(|v| crate::jobs::parse_bwlimit(&v))
-            .map(|live| {
+            .map(|c| c.bwlimit(None).map(|v| crate::jobs::parse_bwlimit(&v)));
+        let (live_row, upload_row, download_row, total_row) = match fetched {
+            Some(Ok(live)) => {
                 let live_row = adw::ActionRow::new();
                 live_row.set_title(&self.ctx.t_or("dashboard.bandwidth.liveLimit", "Live limit"));
                 live_row.set_subtitle(&bandwidth_live_subtitle(&self.ctx, &live));
                 bw_group.append(&live_row);
-                live_row
-            });
+                let mut details = (None, None, None);
+                if crate::jobs::bandwidth_shows_details(&live) {
+                    let rows = append_bandwidth_detail_rows(&self.ctx, &bw_group, &live);
+                    details = (
+                        Some(rows[0].clone()),
+                        Some(rows[1].clone()),
+                        Some(rows[2].clone()),
+                    );
+                }
+                (Some(live_row), details.0, details.1, details.2)
+            }
+            Some(Err(_)) => {
+                append_bandwidth_error_row(&self.ctx, &bw_group, {
+                    let dash = self.clone();
+                    Rc::new(move || dash.refresh())
+                });
+                (None, None, None, None)
+            }
+            None => (None, None, None, None),
+        };
         *self.overview_live.borrow_mut() = Some(OverviewLive {
             transfer: current,
             saved: limit_row,
             live: live_row,
+            upload: upload_row,
+            download: download_row,
+            total: total_row,
         });
         self.host().append(&bw_group);
         let presets = gtk::Box::new(gtk::Orientation::Horizontal, 6);
@@ -1620,6 +1659,9 @@ impl Dashboard {
         presets.add_css_class("linked");
         for (value, label) in crate::jobs::BANDWIDTH_PRESETS {
             let btn = gtk::Button::with_label(label);
+            if crate::jobs::bandwidth_preset_is_active(&limit, value) {
+                btn.add_css_class("suggested-action");
+            }
             let ctx = self.ctx.clone();
             let dash = self.clone();
             let value = (*value).to_string();
@@ -4346,7 +4388,7 @@ fn toggle_mount(ctx: &AppCtx, name: &str, mounted: bool, toast: &adw::ToastOverl
             &fallbacks,
         ) {
             Ok(msg) => toast.add_toast(adw::Toast::new(&msg)),
-            Err(e) => toast.add_toast(adw::Toast::new(&e)),
+            Err(e) => ctx.toast_error(toast, &e),
         }
         ctx.refresh_runtime();
         return;
@@ -4464,7 +4506,7 @@ fn toggle_profile(
             &fallbacks,
         ) {
             Ok(msg) => toast.add_toast(adw::Toast::new(&msg)),
-            Err(e) => toast.add_toast(adw::Toast::new(&e)),
+            Err(e) => ctx.toast_error(toast, &e),
         }
         ctx.refresh_runtime();
         return;
@@ -4777,11 +4819,15 @@ fn serve_badge_tooltip(ctx: &AppCtx, activity: &crate::jobs::RemoteActivity) -> 
 }
 
 fn toast_start_failed(ctx: &AppCtx, toast: &adw::ToastOverlay, op: &str, remote: &str, err: &str) {
-    toast.add_toast(adw::Toast::new(&ctx.tf_or(
-        "operations.failedStart",
-        "Failed to start {{type}} for {{remote}}: {{error}}",
-        &[("type", op), ("remote", remote), ("error", err)],
-    )));
+    let error = ctx.translate_error(err);
+    ctx.toast(
+        toast,
+        ctx.tf_or(
+            "operations.failedStart",
+            "Failed to start {{type}} for {{remote}}: {{error}}",
+            &[("type", op), ("remote", remote), ("error", &error)],
+        ),
+    );
 }
 
 fn remote_sync_op_running(remote: &str, op: OperationType, jobs: &[crate::store::JobInfo]) -> bool {
@@ -4930,16 +4976,40 @@ fn bandwidth_limit_subtitle(ctx: &AppCtx, limit: &str) -> String {
 }
 
 fn bandwidth_live_subtitle(ctx: &AppCtx, live: &crate::jobs::BwLimitStatus) -> String {
-    format!(
-        "{} · tx {}/s · rx {}/s",
-        if live.rate == "off" {
-            ctx.t_or("dashboard.bandwidth.unlimited", "Unlimited")
-        } else {
-            live.rate.clone()
-        },
-        format_bytes(live.bytes_per_sec_tx),
-        format_bytes(live.bytes_per_sec_rx)
+    crate::jobs::bandwidth_rate_display(
+        &live.rate,
+        &ctx.t_or("generalOverview.bandwidth.unlimited", "Unlimited (Off)"),
     )
+}
+
+fn append_bandwidth_detail_rows(
+    ctx: &AppCtx,
+    list: &gtk::ListBox,
+    live: &crate::jobs::BwLimitStatus,
+) -> [adw::ActionRow; 3] {
+    crate::jobs::bandwidth_details(live).map(|(key, fallback, bytes)| {
+        let row = adw::ActionRow::new();
+        row.set_title(&ctx.t_or(key, fallback));
+        row.set_subtitle(&crate::jobs::format_bandwidth_rate(bytes));
+        list.append(&row);
+        row
+    })
+}
+
+fn append_bandwidth_error_row(ctx: &AppCtx, list: &gtk::ListBox, on_retry: Rc<dyn Fn()>) {
+    let row = adw::ActionRow::new();
+    row.set_title(&ctx.t_or(
+        "generalOverview.bandwidth.error",
+        "Error loading bandwidth info",
+    ));
+    let retry = gtk::Button::from_icon_name("view-refresh-symbolic");
+    retry.set_valign(gtk::Align::Center);
+    retry.set_tooltip_text(Some(
+        &ctx.t_or("generalOverview.bandwidth.retry", "Retry loading bandwidth"),
+    ));
+    retry.connect_clicked(move |_| on_retry());
+    row.add_suffix(&retry);
+    list.append(&row);
 }
 
 fn apply_bandwidth(

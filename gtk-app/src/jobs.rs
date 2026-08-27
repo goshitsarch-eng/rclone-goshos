@@ -3662,6 +3662,47 @@ fn json_i64(value: &Value, keys: &[&str]) -> i64 {
         .unwrap_or(0)
 }
 
+pub fn format_bandwidth_rate(bytes_per_sec: i64) -> String {
+    format!("{}/s", crate::rclone::format_bytes(bytes_per_sec))
+}
+
+pub fn bandwidth_rate_display(rate: &str, unlimited: &str) -> String {
+    if normalize_bandwidth(rate) == "off" {
+        unlimited.to_string()
+    } else {
+        rate.to_string()
+    }
+}
+
+pub fn bandwidth_preset_is_active(saved: &str, preset: &str) -> bool {
+    normalize_bandwidth(saved) == normalize_bandwidth(preset)
+}
+
+/// Angular `bandwidthDetails`: upload / download / total when a limit is set.
+pub fn bandwidth_details(live: &BwLimitStatus) -> [(&'static str, &'static str, i64); 3] {
+    [
+        (
+            "generalOverview.bandwidth.upload",
+            "Upload:",
+            live.bytes_per_sec_tx,
+        ),
+        (
+            "generalOverview.bandwidth.download",
+            "Download:",
+            live.bytes_per_sec_rx,
+        ),
+        (
+            "generalOverview.bandwidth.total",
+            "Total:",
+            live.bytes_per_sec,
+        ),
+    ]
+}
+
+pub fn bandwidth_shows_details(live: &BwLimitStatus) -> bool {
+    normalize_bandwidth(&live.rate) != "off"
+}
+
 pub fn parse_bwlimit(value: &Value) -> BwLimitStatus {
     let rate = value
         .get("rate")
@@ -4342,6 +4383,30 @@ mod tests {
         assert_eq!(bandwidth_entry_state("10M", ""), (true, true));
         assert_eq!(bandwidth_draft_text(Some("xyz"), "10M"), "xyz");
         assert_eq!(bandwidth_draft_text(None, "10M"), "10M");
+        assert!(bandwidth_preset_is_active("10M:50M", "10M:50M"));
+        assert!(bandwidth_preset_is_active("", "off"));
+        assert!(!bandwidth_preset_is_active("10M", "50M"));
+        assert_eq!(format_bandwidth_rate(1024), "1.0 KiB/s");
+        assert_eq!(
+            bandwidth_rate_display("off", "Unlimited (Off)"),
+            "Unlimited (Off)"
+        );
+        assert_eq!(
+            bandwidth_rate_display("10M:50M", "Unlimited (Off)"),
+            "10M:50M"
+        );
+        let limited = BwLimitStatus {
+            rate: "10M:50M".into(),
+            bytes_per_sec: 60,
+            bytes_per_sec_tx: 10,
+            bytes_per_sec_rx: 50,
+        };
+        assert!(bandwidth_shows_details(&limited));
+        assert_eq!(
+            bandwidth_details(&limited)[0],
+            ("generalOverview.bandwidth.upload", "Upload:", 10)
+        );
+        assert!(!bandwidth_shows_details(&BwLimitStatus::default()));
     }
 
     #[test]

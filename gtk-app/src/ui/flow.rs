@@ -644,31 +644,60 @@ impl FlowView {
         let list = gtk::ListBox::new();
         list.add_css_class("boxed-list");
         list.append(&current);
-        if let Some(live) = self
+        match self
             .ctx
             .client()
-            .and_then(|c| c.bwlimit(None).ok())
-            .map(|v| crate::jobs::parse_bwlimit(&v))
+            .map(|c| c.bwlimit(None).map(|v| crate::jobs::parse_bwlimit(&v)))
         {
-            let live_row = adw::ActionRow::new();
-            live_row.set_title(&self.ctx.t_or("dashboard.bandwidth.liveLimit", "Live limit"));
-            live_row.set_subtitle(&format!(
-                "{} · tx {}/s · rx {}/s",
-                if live.rate == "off" {
-                    self.ctx.t_or("dashboard.bandwidth.unlimited", "Unlimited")
-                } else {
-                    live.rate.clone()
-                },
-                crate::rclone::format_bytes(live.bytes_per_sec_tx),
-                crate::rclone::format_bytes(live.bytes_per_sec_rx)
-            ));
-            list.append(&live_row);
+            Some(Ok(live)) => {
+                let live_row = adw::ActionRow::new();
+                live_row.set_title(&self.ctx.t_or("dashboard.bandwidth.liveLimit", "Live limit"));
+                live_row.set_subtitle(&crate::jobs::bandwidth_rate_display(
+                    &live.rate,
+                    &self
+                        .ctx
+                        .t_or("generalOverview.bandwidth.unlimited", "Unlimited (Off)"),
+                ));
+                list.append(&live_row);
+                if crate::jobs::bandwidth_shows_details(&live) {
+                    for (key, fallback, bytes) in crate::jobs::bandwidth_details(&live) {
+                        let row = adw::ActionRow::new();
+                        row.set_title(&self.ctx.t_or(key, fallback));
+                        row.set_subtitle(&crate::jobs::format_bandwidth_rate(bytes));
+                        list.append(&row);
+                    }
+                }
+            }
+            Some(Err(_)) => {
+                let row = adw::ActionRow::new();
+                row.set_title(&self.ctx.t_or(
+                    "generalOverview.bandwidth.error",
+                    "Error loading bandwidth info",
+                ));
+                let retry = gtk::Button::from_icon_name("view-refresh-symbolic");
+                retry.set_valign(gtk::Align::Center);
+                retry.set_tooltip_text(Some(
+                    &self
+                        .ctx
+                        .t_or("generalOverview.bandwidth.retry", "Retry loading bandwidth"),
+                ));
+                {
+                    let view = self.clone();
+                    retry.connect_clicked(move |_| view.refresh());
+                }
+                row.add_suffix(&retry);
+                list.append(&row);
+            }
+            None => {}
         }
         group.append(&list);
         let presets = gtk::Box::new(gtk::Orientation::Horizontal, 6);
         presets.add_css_class("linked");
         for (value, label) in crate::jobs::BANDWIDTH_PRESETS {
             let btn = gtk::Button::with_label(label);
+            if crate::jobs::bandwidth_preset_is_active(&limit, value) {
+                btn.add_css_class("suggested-action");
+            }
             let ctx = self.ctx.clone();
             let view = self.clone();
             let value = (*value).to_string();
