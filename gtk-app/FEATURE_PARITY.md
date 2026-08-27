@@ -1184,3 +1184,8 @@ This client is the GTK 4 + libadwaita desktop UI. It talks to a local `rclone rc
 - Start-profile / start-request missing paths and stop_profile idle/unmount messages use localized JSON keys (`operations.failedStart`, `mount.notMounted`, `mount.successUnmount`)
 
 - Live GUI: `--job 42424` Stop job toasts **Job execution failed: HTTP 500: job not found** (OK); history job 42424 remains
+
+- File viewer syntax matches the Angular CodeMirror map: `.sql`, `.zsh`, and `.sass` are Text (not binary), with SQL `--`/`/* */` highlighting, zsh→shell, sass→css, and markdown source headings/code/links
+- Archive extract failures show `translate_error` instead of a raw `RcError`
+
+- Live GUI: `--file-viewer testdrive:Photos/sample.sql` shows **Remote preview via operations/cat**, SQL keywords **SELECT** / **FROM** / **WHERE** / **AND** / **ORDER BY** in blue, `-- testdrive syntax sample` and `/* block comment */` in gray, `'active'` in green, `42` in orange; Edit then Cancel keeps the highlighted source
