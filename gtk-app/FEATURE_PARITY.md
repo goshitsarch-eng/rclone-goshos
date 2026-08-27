@@ -1021,3 +1021,9 @@ This client is the GTK 4 + libadwaita desktop UI. It talks to a local `rclone rc
 - Embedded file picker honors Angular `FilePickerConfig.minSelection` (confirm disabled / `nautilus.errors.minSelection`)
 - Properties size and hashsum run as grouped `_async` jobs (`filemanager/properties/...`) and `job/stopgroup` on close
 - Live GUI: `--properties testdrive:Photos` opens immediately; Contained Files **292** and Total Size fill from the async `operations/size` job
+
+- Markdown preview keeps inline `[label](url)` links (LinkButton / open-in-viewer) and bare `http(s)` autolinks
+- What's New release notes render the same markdown/link preview instead of a plain TextView
+- Logs expanders split Angular `terminalOutput` (ANSI) from `logContext` JSON
+- Files window chrome accepts OS `FileList` drops onto the current folder (Tauri `onDragDropEvent` fallback)
+- File viewer live syntax highlighting is debounced (80ms) so large edits do not repaint on every keystroke

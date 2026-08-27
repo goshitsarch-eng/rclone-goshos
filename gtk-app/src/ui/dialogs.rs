@@ -1726,22 +1726,16 @@ pub fn whats_new(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, kind: &str) {
                 }),
         )
     };
-    let view = gtk::TextView::new();
-    view.set_editable(false);
-    view.set_wrap_mode(gtk::WrapMode::WordChar);
-    view.set_left_margin(8);
-    view.set_right_margin(8);
-    view.set_top_margin(8);
-    view.set_bottom_margin(8);
-    view.buffer().set_text(&notes.unwrap_or_else(|| {
+    let body = notes.unwrap_or_else(|| {
         ctx.t_or(
             "modals.logs.noLogsFound",
             "No release notes are available yet.",
         )
-    }));
+    });
+    let preview = build_markdown_preview(&body, None);
     let scroll = gtk::ScrolledWindow::new();
     scroll.set_vexpand(true);
-    scroll.set_child(Some(&view));
+    scroll.set_child(Some(&preview));
     let open = gtk::LinkButton::with_label(&url, &ctx.t_or("common.open", "Open in browser"));
     open.set_halign(gtk::Align::Start);
     let box_ = gtk::Box::new(gtk::Orientation::Vertical, 8);
@@ -2668,6 +2662,7 @@ pub fn logs(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, remote: Option<String>)
     ));
     let copy_label = ctx.t_or("common.copy", "Copy");
     let context_label = ctx.t_or("modals.logs.logContext", "Log Context");
+    let output_label = ctx.t_or("modals.logs.terminalOutput", "Terminal Output");
     let apply = {
         let ctx = ctx.clone();
         let list = list.clone();
@@ -2677,6 +2672,7 @@ pub fn logs(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, remote: Option<String>)
         let remote_filter = remote_filter.clone();
         let copy_label = copy_label.clone();
         let context_label = context_label.clone();
+        let output_label = output_label.clone();
         move |query: &str| {
             while let Some(child) = list.first_child() {
                 list.remove(&child);
@@ -2737,8 +2733,29 @@ pub fn logs(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, remote: Option<String>)
                 row_box.append(&text);
                 row_box.append(&copy);
                 if let Some(details) = &entry.context {
+                    let col = gtk::Box::new(gtk::Orientation::Vertical, 4);
+                    col.append(&row_box);
+                    if let Some(output) = crate::logs::extract_command_output(details) {
+                        let expander = gtk::Expander::new(Some(&output_label));
+                        let label = gtk::Label::new(None);
+                        if crate::ansi::has_ansi(&output) {
+                            label.set_markup(&crate::ansi::ansi_to_pango(&output));
+                        } else {
+                            label.set_text(&output);
+                        }
+                        label.set_wrap(true);
+                        label.set_xalign(0.0);
+                        label.set_selectable(true);
+                        label.add_css_class("monospace");
+                        label.set_margin_start(12);
+                        label.set_margin_end(12);
+                        label.set_margin_top(4);
+                        label.set_margin_bottom(8);
+                        expander.set_child(Some(&label));
+                        col.append(&expander);
+                    }
                     let expander = gtk::Expander::new(Some(&context_label));
-                    let label = gtk::Label::new(Some(details));
+                    let label = gtk::Label::new(Some(&crate::logs::format_log_context(details)));
                     label.set_wrap(true);
                     label.set_xalign(0.0);
                     label.set_selectable(true);
@@ -2748,8 +2765,6 @@ pub fn logs(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, remote: Option<String>)
                     label.set_margin_top(4);
                     label.set_margin_bottom(8);
                     expander.set_child(Some(&label));
-                    let col = gtk::Box::new(gtk::Orientation::Vertical, 4);
-                    col.append(&row_box);
                     col.append(&expander);
                     let row = gtk::ListBoxRow::new();
                     row.set_child(Some(&col));
@@ -10165,10 +10180,15 @@ fn pdf_panel(path: Option<std::path::PathBuf>, name: &str, ctx: &AppCtx) -> gtk:
 
 fn build_markdown_preview(source: &str, images: Option<&(AppCtx, String, String)>) -> gtk::Widget {
     let parts = crate::markdown::preview_parts(source);
-    let has_images = parts
+    let has_rich = parts.iter().any(|part| {
+        matches!(
+            part,
+            crate::markdown::PreviewPart::Image { .. } | crate::markdown::PreviewPart::Link { .. }
+        )
+    }) || crate::markdown::split_autolinks(source)
         .iter()
-        .any(|part| matches!(part, crate::markdown::PreviewPart::Image { .. }));
-    if !has_images {
+        .any(|part| matches!(part, crate::markdown::PreviewPart::Link { .. }));
+    if !has_rich {
         let preview = gtk::TextView::new();
         preview.set_editable(false);
         preview.set_wrap_mode(gtk::WrapMode::WordChar);
@@ -10181,28 +10201,44 @@ fn build_markdown_preview(source: &str, images: Option<&(AppCtx, String, String)
     let box_ = gtk::Box::new(gtk::Orientation::Vertical, 8);
     box_.set_hexpand(true);
     box_.set_valign(gtk::Align::Start);
-    let mut text_buf = String::new();
-    let flush_text = |text_buf: &mut String, box_: &gtk::Box| {
+    let flow = gtk::Box::new(gtk::Orientation::Vertical, 4);
+    flow.set_hexpand(true);
+    let flush_text = |text_buf: &mut String, flow: &gtk::Box| {
         let trimmed = text_buf.trim();
         if trimmed.is_empty() {
             text_buf.clear();
             return;
         }
-        let view = gtk::TextView::new();
-        view.set_editable(false);
-        view.set_wrap_mode(gtk::WrapMode::WordChar);
-        view.set_hexpand(true);
-        view.set_vexpand(false);
-        view.set_valign(gtk::Align::Start);
-        view.buffer().set_text(trimmed);
-        box_.append(&view);
+        for part in crate::markdown::split_autolinks(trimmed) {
+            match part {
+                crate::markdown::PreviewPart::Text(text) => {
+                    let view = gtk::TextView::new();
+                    view.set_editable(false);
+                    view.set_wrap_mode(gtk::WrapMode::WordChar);
+                    view.set_hexpand(true);
+                    view.set_vexpand(false);
+                    view.set_valign(gtk::Align::Start);
+                    view.buffer().set_text(&text);
+                    flow.append(&view);
+                }
+                crate::markdown::PreviewPart::Link { label, href } => {
+                    append_markdown_link(flow, &label, &href, images);
+                }
+                crate::markdown::PreviewPart::Image { .. } => {}
+            }
+        }
         text_buf.clear();
     };
+    let mut text_buf = String::new();
     for part in parts {
         match part {
             crate::markdown::PreviewPart::Text(text) => text_buf.push_str(&text),
+            crate::markdown::PreviewPart::Link { label, href } => {
+                flush_text(&mut text_buf, &flow);
+                append_markdown_link(&flow, &label, &href, images);
+            }
             crate::markdown::PreviewPart::Image { alt, href } => {
-                flush_text(&mut text_buf, &box_);
+                flush_text(&mut text_buf, &flow);
                 if let Some((ctx, remote, file_path)) = images {
                     if let Some(path) = materialize_preview_image(ctx, remote, file_path, &href) {
                         let image = gtk::Image::from_file(&path);
@@ -10219,7 +10255,7 @@ fn build_markdown_preview(source: &str, images: Option<&(AppCtx, String, String)
                         }));
                         frame.set_halign(gtk::Align::Start);
                         frame.set_child(Some(&image));
-                        box_.append(&frame);
+                        flow.append(&frame);
                     }
                 }
                 if !alt.is_empty() {
@@ -10227,13 +10263,84 @@ fn build_markdown_preview(source: &str, images: Option<&(AppCtx, String, String)
                     cap.set_xalign(0.0);
                     cap.add_css_class("dim-label");
                     cap.set_wrap(true);
-                    box_.append(&cap);
+                    flow.append(&cap);
                 }
             }
         }
     }
-    flush_text(&mut text_buf, &box_);
+    flush_text(&mut text_buf, &flow);
+    box_.append(&flow);
     box_.upcast()
+}
+
+fn append_markdown_link(
+    host: &gtk::Box,
+    label: &str,
+    href: &str,
+    nav: Option<&(AppCtx, String, String)>,
+) {
+    let title = if label.is_empty() { href } else { label };
+    if crate::markdown::is_web_href(href) {
+        let link = gtk::LinkButton::with_label(href, title);
+        link.set_uri(href);
+        link.set_halign(gtk::Align::Start);
+        host.append(&link);
+        return;
+    }
+    if let Some((ctx, remote, file_path)) = nav {
+        let resolved = crate::markdown::resolve_relative_path(file_path, href);
+        let btn = gtk::Button::with_label(title);
+        btn.add_css_class("flat");
+        btn.set_halign(gtk::Align::Start);
+        btn.set_tooltip_text(Some(&resolved));
+        let ctx = ctx.clone();
+        let host = host.clone();
+        let open_remote = if crate::markdown::is_passthrough_ref(&resolved)
+            && resolved.contains(':')
+            && !resolved.starts_with('/')
+        {
+            crate::rclone::split_remote_path(&resolved).0
+        } else {
+            remote.clone()
+        };
+        let path = if open_remote == "local" && crate::markdown::is_passthrough_ref(&resolved) {
+            resolved.clone()
+        } else if crate::markdown::is_passthrough_ref(&resolved)
+            && resolved.contains(':')
+            && !resolved.starts_with('/')
+        {
+            crate::rclone::split_remote_path(&resolved).1
+        } else {
+            resolved.clone()
+        };
+        let file_name = path
+            .rsplit('/')
+            .next()
+            .filter(|s| !s.is_empty())
+            .unwrap_or(path.as_str())
+            .to_string();
+        {
+            let host = host.clone();
+            btn.connect_clicked(move |_| {
+                file_viewer(
+                    &host,
+                    ctx.clone(),
+                    &open_remote,
+                    &path,
+                    &file_name,
+                    false,
+                    &[],
+                    None,
+                );
+            });
+        }
+        host.append(&btn);
+        return;
+    }
+    let label = gtk::Label::new(Some(title));
+    label.set_xalign(0.0);
+    label.add_css_class("dim-label");
+    host.append(&label);
 }
 
 fn materialize_preview_image(
@@ -15709,9 +15816,20 @@ fn apply_syntax_highlight(view: &gtk::TextView, name: &str, text: &str) {
 
 fn attach_live_syntax(view: &gtk::TextView, name: &str) {
     let name = name.to_string();
+    let gen = Rc::new(Cell::new(0u64));
     view.buffer().connect_changed(move |buffer| {
-        let text = buffer.text(&buffer.start_iter(), &buffer.end_iter(), false);
-        paint_syntax(buffer, &name, text.as_str());
+        let n = gen.get().wrapping_add(1);
+        gen.set(n);
+        let gen = gen.clone();
+        let buffer = buffer.clone();
+        let name = name.clone();
+        glib::timeout_add_local_once(std::time::Duration::from_millis(80), move || {
+            if gen.get() != n {
+                return;
+            }
+            let text = buffer.text(&buffer.start_iter(), &buffer.end_iter(), false);
+            paint_syntax(&buffer, &name, text.as_str());
+        });
     });
 }
 

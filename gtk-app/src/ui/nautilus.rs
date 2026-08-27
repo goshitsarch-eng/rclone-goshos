@@ -2556,6 +2556,7 @@ impl NautilusView {
         self.root.connect_realize(move |widget| {
             if let Some(win) = widget.root().and_downcast::<gtk::Window>() {
                 view.attach_file_keybinds(&win, true);
+                view.attach_current_os_file_drop(&win);
             }
         });
     }
@@ -3063,6 +3064,31 @@ impl NautilusView {
             self.attach_os_file_drop(&row, target);
         }
         self.sidebar.append(&row);
+    }
+
+    fn attach_current_os_file_drop(&self, widget: &impl IsA<gtk::Widget>) {
+        let drop = gtk::DropTarget::new(
+            gtk::gdk::FileList::static_type(),
+            gtk::gdk::DragAction::COPY,
+        );
+        {
+            let view = self.clone();
+            drop.connect_drop(move |_, value, _, _| {
+                if let Ok(list) = value.get::<gtk::gdk::FileList>() {
+                    let paths: Vec<std::path::PathBuf> = list
+                        .files()
+                        .into_iter()
+                        .filter_map(|file| file.path())
+                        .collect();
+                    if !paths.is_empty() {
+                        view.upload_local_paths(&paths);
+                        return true;
+                    }
+                }
+                false
+            });
+        }
+        widget.add_controller(drop);
     }
 
     fn attach_os_file_drop(&self, widget: &impl IsA<gtk::Widget>, location: &str) {

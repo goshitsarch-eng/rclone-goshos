@@ -11,11 +11,12 @@ pub fn is_markdown(name: &str) -> bool {
     )
 }
 
-/// A display block for the GTK markdown preview (text or an inline image).
+/// A display block for the GTK markdown preview (text, image, or link).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PreviewPart {
     Text(String),
     Image { alt: String, href: String },
+    Link { label: String, href: String },
 }
 
 /// Where a resolved markdown image should be loaded from.
@@ -33,6 +34,7 @@ pub fn to_preview(source: &str) -> String {
         match part {
             PreviewPart::Text(text) => out.push_str(&text),
             PreviewPart::Image { alt, .. } => out.push_str(&alt),
+            PreviewPart::Link { label, .. } => out.push_str(&label),
         }
     }
     out.trim().to_string()
@@ -306,6 +308,59 @@ fn ends_with_newline(parts: &[PreviewPart]) -> bool {
     }
 }
 
+/// True for browser-openable markdown/What's New hrefs.
+pub fn is_web_href(href: &str) -> bool {
+    let href = href.trim();
+    href.starts_with("http://")
+        || href.starts_with("https://")
+        || href.starts_with("mailto:")
+        || href.starts_with("file://")
+}
+
+/// Split plain text so bare `http://` / `https://` URLs become [`PreviewPart::Link`].
+pub fn split_autolinks(text: &str) -> Vec<PreviewPart> {
+    let mut out = Vec::new();
+    let mut rest = text;
+    while let Some((start, end)) = next_autolink(rest) {
+        if start > 0 {
+            push_text(&mut out, &rest[..start]);
+        }
+        let href = rest[start..end].trim_end_matches(['.', ',', ';', ':', ')', ']']);
+        let label = href.to_string();
+        out.push(PreviewPart::Link {
+            label,
+            href: href.to_string(),
+        });
+        if href.len() < end - start {
+            push_text(&mut out, &rest[start + href.len()..end]);
+        }
+        rest = &rest[end..];
+    }
+    if !rest.is_empty() {
+        push_text(&mut out, rest);
+    }
+    out
+}
+
+fn next_autolink(text: &str) -> Option<(usize, usize)> {
+    let https = text.find("https://");
+    let http = text.find("http://");
+    let start = match (https, http) {
+        (Some(a), Some(b)) => a.min(b),
+        (Some(a), None) => a,
+        (None, Some(b)) => b,
+        (None, None) => return None,
+    };
+    let end = text[start..]
+        .find(|c: char| c.is_whitespace() || "<>\"'".contains(c))
+        .map(|idx| start + idx)
+        .unwrap_or(text.len());
+    if end <= start + "http://".len() {
+        return None;
+    }
+    Some((start, end))
+}
+
 fn push_text(out: &mut Vec<PreviewPart>, text: &str) {
     if text.is_empty() {
         return;
@@ -336,6 +391,15 @@ fn extend_inline_parts(out: &mut Vec<PreviewPart>, line: &str) {
                 push_text(out, &inline(&buf));
                 buf.clear();
                 out.push(PreviewPart::Image { alt, href });
+                i = next;
+                continue;
+            }
+        }
+        if chars[i] == '[' {
+            if let Some((label, href, next)) = parse_link(&chars, i) {
+                push_text(out, &inline(&buf));
+                buf.clear();
+                out.push(PreviewPart::Link { label, href });
                 i = next;
                 continue;
             }
@@ -481,5 +545,34 @@ mod tests {
             resolve_preview_source("testdrive", "Photos/README.md", "/abs.png"),
             PreviewSource::Path("/abs.png".into())
         );
+    }
+
+    #[test]
+    fn preview_parts_keep_inline_links() {
+        let parts = preview_parts("See [docs](https://example.com) and [help](../help.md).\n");
+        assert!(parts.iter().any(|p| matches!(
+            p,
+            PreviewPart::Link { label, href }
+                if label == "docs" && href == "https://example.com"
+        )));
+        assert!(parts.iter().any(|p| matches!(
+            p,
+            PreviewPart::Link { label, href } if label == "help" && href == "../help.md"
+        )));
+        let preview = to_preview("See [docs](https://example.com).\n");
+        assert!(preview.contains("docs"));
+        assert!(!preview.contains("https://example.com"));
+        assert!(is_web_href("https://example.com"));
+        assert!(is_web_href("mailto:a@b"));
+        assert!(!is_web_href("../help.md"));
+        let auto = split_autolinks("Read https://rclone.org/docs, please.");
+        assert!(auto.iter().any(|p| matches!(
+            p,
+            PreviewPart::Link { href, .. } if href == "https://rclone.org/docs"
+        )));
+        assert!(auto.iter().any(|p| matches!(
+            p,
+            PreviewPart::Text(t) if t.contains("please")
+        )));
     }
 }
