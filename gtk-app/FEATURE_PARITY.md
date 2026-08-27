@@ -871,3 +871,6 @@ This client is the GTK 4 + libadwaita desktop UI. It talks to a local `rclone rc
 
 - Structured JSON editor (chips, parse/unknown-key banners, key/value autocomplete, restrict-mode masking, src/dst path reconciliation) replaces raw TextView JSON on operation profiles, helper pages, wizard JSON, and helper-profile dialogs
 - Delete-remote confirmation lists mounts/serves/jobs with icons plus saved profiles, quick runs, and automations
+
+- Live GUI: testdrive Copy JSON mode shows chip `createEmptySrcDirs · false`, info banner for srcFs/dstFs, parse error `Invalid JSON syntax. Please check your formatting.`, and warning `Unknown option(s): 'nope'`
+- Live GUI: Delete Remote for testdrive lists Saved Profiles (17) with icons (`archivecreate/default`, `backend/default`, …) plus Associated Quick Runs (1); Cancel leaves the remote intact
