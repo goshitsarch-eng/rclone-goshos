@@ -3030,6 +3030,12 @@ pub fn is_managed_job(job: &JobInfo) -> bool {
     is_identifiable_job(job)
 }
 
+/// rclone 1.60 `operations/copyfile` jobs often return empty `output`, so
+/// `job_from_status` looks like RC noise until `apply_job_meta` runs.
+pub fn keep_collected_job(job: &JobInfo, known: &[u64]) -> bool {
+    known.contains(&job.id) || is_managed_job(job)
+}
+
 /// Local job shown immediately after `start_job` returns, before rclone reports transfers.
 pub fn preparing_job(
     id: u64,
@@ -4025,6 +4031,8 @@ mod tests {
             "testdrive:verify-gui-copy/",
         );
         assert!(is_managed_job(&started));
+        assert!(keep_collected_job(&running_noise, &[100]));
+        assert!(!keep_collected_job(&running_noise, &[99]));
         assert_eq!(started.status, "starting");
         assert_eq!(started.operation, "copy");
         assert_eq!(started.src, "testdrive:a.txt");

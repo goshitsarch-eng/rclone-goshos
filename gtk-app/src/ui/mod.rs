@@ -1303,7 +1303,7 @@ fn collect_jobs(client: &crate::rclone::RcClient, known: &[u64]) -> Vec<crate::s
         }
         jobs.push(crate::jobs::job_from_status(jobid, &status, Some(&stats)));
     }
-    jobs.retain(crate::jobs::is_managed_job);
+    jobs.retain(|job| crate::jobs::keep_collected_job(job, known));
     jobs
 }
 
