@@ -429,12 +429,7 @@ pub fn clipboard_marks_cut(
     if remote.is_empty() || path.is_empty() {
         return false;
     }
-    let key = clipboard_item_key(remote, path);
-    items
-        .iter()
-        .any(|(item_remote, item_path, cut, _)| {
-            *cut && clipboard_item_key(item_remote, item_path) == key
-        })
+    cut_item_keys(items).contains(&clipboard_item_key(remote, path))
 }
 
 /// Encode Files copy/cut items so paste still works after a view rebuild.
