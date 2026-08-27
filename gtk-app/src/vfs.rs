@@ -263,6 +263,10 @@ pub fn vfs_opt_matches(key: &str, value: &str, query: &str) -> bool {
     crate::config_search::matches_config_search(key, value, "", query)
 }
 
+pub fn vfs_opt_group_i18n_key(group: &str) -> String {
+    format!("shared.vfsControl.advancedConfig.categories.{group}")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -359,6 +363,10 @@ mod tests {
         assert_eq!(vfs_opt_group("ChunkSize"), "Sizes");
         assert_eq!(vfs_opt_group("DirCacheTime"), "Durations");
         assert_eq!(vfs_opt_group("ReadOnly"), "Booleans");
+        assert_eq!(
+            vfs_opt_group_i18n_key("Permissions"),
+            "shared.vfsControl.advancedConfig.categories.Permissions"
+        );
         assert!(vfs_opt_matches("ChunkSize", "128Mi", "chunk"));
         assert!(!vfs_opt_matches("ReadOnly", "false", "perm"));
     }

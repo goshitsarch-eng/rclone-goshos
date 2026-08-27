@@ -2203,6 +2203,16 @@ impl BackendIdentity {
     }
 }
 
+/// Elapsed seconds since a local process started (`/proc/<pid>` mtime).
+pub fn process_uptime_secs(pid: u64) -> Option<u64> {
+    if pid == 0 {
+        return None;
+    }
+    let meta = std::fs::metadata(format!("/proc/{pid}")).ok()?;
+    let started = meta.created().or_else(|_| meta.modified()).ok()?;
+    Some(started.elapsed().ok()?.as_secs())
+}
+
 pub fn backend_identity(info: &Value) -> BackendIdentity {
     BackendIdentity {
         version: info
@@ -2463,6 +2473,8 @@ mod tests {
             "isBeta": true
         }));
         assert_eq!(beta.channel_badge(), Some("beta"));
+        assert!(process_uptime_secs(std::process::id() as u64).is_some());
+        assert!(process_uptime_secs(0).is_none());
     }
 
     #[test]

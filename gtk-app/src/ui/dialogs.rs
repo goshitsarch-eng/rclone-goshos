@@ -11312,6 +11312,14 @@ fn attach_local_media_preview(
         video.set_autoplay(true);
         parent.append(&video);
         if matches!(category, crate::operations::FileTypeCategory::Audio) {
+            let label = gtk::Label::new(Some(&ctx.tf_or(
+                "fileBrowser.fileViewer.audioLabel",
+                "Audio: {{name}}",
+                &[("name", name)],
+            )));
+            label.add_css_class("dim-label");
+            label.set_xalign(0.0);
+            parent.append(&label);
             attach_audio_cover(parent, Some(local), None);
         }
     }
@@ -11868,6 +11876,12 @@ fn populate_file_viewer_body(
                         );
                         append_markdown_targets(&box_, name, &text, remote, path, &ctx, parent);
                     }
+                } else {
+                    info.set_text(&ctx.tf_or(
+                        "fileBrowser.fileViewer.errorLoadFile",
+                        "Failed to load {{name}}",
+                        &[("name", name)],
+                    ));
                 }
             } else if matches!(category, crate::operations::FileTypeCategory::Pdf) {
                 if let Some(dest) =
@@ -11926,6 +11940,11 @@ fn populate_file_viewer_body(
                 append_download_preview_button(&actions, &ctx, &box_, &fs, path, name, category);
             } else {
                 let dest = std::env::temp_dir().join(name);
+                info.set_text(&ctx.tf_or(
+                    "fileBrowser.fileViewer.downloading",
+                    "Downloading {{name}}",
+                    &[("name", name)],
+                ));
                 if client
                     .copy_file(&fs, path, "/", &dest.to_string_lossy())
                     .is_ok()
@@ -11938,6 +11957,11 @@ fn populate_file_viewer_body(
                         info.set_text(&format!("Downloaded preview to {}", dest.display()));
                     }
                     preview_path = Some(dest);
+                } else {
+                    info.set_text(&ctx.t_or(
+                        "fileBrowser.fileViewer.errorDownload",
+                        "Error downloading file",
+                    ));
                 }
             }
         }

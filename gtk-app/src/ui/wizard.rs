@@ -1151,6 +1151,7 @@ fn present_ex(
         let editing = existing.clone();
         cancel_oauth.connect_clicked(move |_| {
             if let Some(client) = ctx.client() {
+                oauth.set_status(&ctx.t_or("modals.remoteConfig.buttons.cleanup", "Cleaning up"));
                 match client.oauth_stop() {
                     Ok(_) => {
                         if editing.is_none() {
@@ -1313,6 +1314,9 @@ fn present_ex(
     step_title.add_css_class("title-3");
     step_title.set_xalign(0.0);
     step_title.set_hexpand(true);
+    let step_indicator = gtk::Label::new(None);
+    step_indicator.add_css_class("dim-label");
+    step_indicator.set_xalign(1.0);
     let side_toggle = gtk::Button::from_icon_name("sidebar-show-symbolic");
     side_toggle.set_tooltip_text(Some(&ctx.t_or("sidebar.toggleSidebar", "Toggle Sidebar")));
     {
@@ -1327,6 +1331,7 @@ fn present_ex(
     title_row.set_margin_top(10);
     title_row.append(&side_toggle);
     title_row.append(&step_title);
+    title_row.append(&step_indicator);
 
     let continue_btn = gtk::Button::with_label(&ctx.t_or(
         "wizards.remoteConfig.readyToContinue",
@@ -1385,6 +1390,7 @@ fn present_ex(
         let split = split.clone();
         let sidebar = sidebar.clone();
         let step_title = step_title.clone();
+        let step_indicator = step_indicator.clone();
         let back = back.clone();
         let next = next.clone();
         let continue_btn = continue_btn.clone();
@@ -1408,6 +1414,19 @@ fn present_ex(
                 ctx.t_or(&step.i18n_key(), step.fallback_label())
             };
             step_title.set_text(&title);
+            let current = if interactive {
+                steps.len().max(1)
+            } else {
+                idx + 1
+            };
+            step_indicator.set_text(&format!(
+                "{} · {current} / {}",
+                ctx.t_or(
+                    "modals.remoteConfig.aria.stepIndicator",
+                    "Configuration Steps"
+                ),
+                steps.len().max(1)
+            ));
             for (i, _) in steps.iter().enumerate() {
                 if let Some(row) = sidebar.row_at_index(i as i32) {
                     row.set_sensitive(config_steps::is_step_clickable(

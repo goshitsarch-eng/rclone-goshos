@@ -10,8 +10,9 @@ pub use client::{
     job_is_finished, job_output, join_remote_path, listing_caption, looks_missing_endpoint,
     merge_mount_context, nanoseconds_to_duration, parent_remote_path, parse_batch_results,
     parse_du, parse_fscache_entry_count, parse_hashsum, parse_hashsum_list, parse_named_list,
-    parse_object_size, parse_stat, properties_read_group, public_link_expiry_value, remote_fs,
-    split_remote_path, upload_dest_path, ArchiveCreateOpts, BackendIdentity, DirEntry, DiskUsage,
-    FsInfo, MountedRemote, RcClient, RcError, RcJobStart, ServeItem, StatItem, CAT_PREVIEW_BYTES,
+    parse_object_size, parse_stat, process_uptime_secs, properties_read_group,
+    public_link_expiry_value, remote_fs, split_remote_path, upload_dest_path, ArchiveCreateOpts,
+    BackendIdentity, DirEntry, DiskUsage, FsInfo, MountedRemote, RcClient, RcError, RcJobStart,
+    ServeItem, StatItem, CAT_PREVIEW_BYTES,
 };
 pub use engine::{describe_cron, describe_cron_i18n, rclone_exists, validate_cron, RcloneEngine};

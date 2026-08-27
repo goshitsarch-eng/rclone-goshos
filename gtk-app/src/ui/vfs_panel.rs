@@ -140,6 +140,13 @@ pub fn vfs_panel(ctx: AppCtx, remote: &str, toast: adw::ToastOverlay) -> gtk::Wi
     poll.add_suffix(&apply_poll);
     let poll_group = adw::PreferencesGroup::new();
     poll_group.add(&poll);
+    let poll_unsupported = adw::ActionRow::new();
+    poll_unsupported.set_title(&ctx.t_or(
+        "shared.vfsControl.actions.pollIntervalNotSupported",
+        "Poll interval not supported",
+    ));
+    poll_unsupported.set_visible(false);
+    poll_group.add(&poll_unsupported);
     root.append(&poll_group);
 
     let actions = gtk::Box::new(gtk::Orientation::Horizontal, 8);
@@ -180,6 +187,9 @@ pub fn vfs_panel(ctx: AppCtx, remote: &str, toast: adw::ToastOverlay) -> gtk::Wi
         let cache = cache.clone();
         let advanced_list = advanced_list.clone();
         let advanced_search = advanced_search.clone();
+        let poll = poll.clone();
+        let apply_poll = apply_poll.clone();
+        let poll_unsupported = poll_unsupported.clone();
         let toast = toast.clone();
         Rc::new(move || {
             clear_list(&stats);
@@ -335,18 +345,18 @@ pub fn vfs_panel(ctx: AppCtx, remote: &str, toast: adw::ToastOverlay) -> gtk::Wi
                     }
                     if let Some(map) = parsed.opt.as_object() {
                         let query = advanced_search.text().to_string();
-                        let mut keys: Vec<_> = map.keys().cloned().collect();
-                        keys.sort();
-                        for key in keys {
-                            let value = &map[&key];
-                            let display = format_opt_value(value);
-                            let group = crate::vfs::vfs_opt_group(&key);
-                            let row = adw::ActionRow::new();
-                            row.set_title(&key);
-                            row.set_subtitle(&format!("{group} · {display}"));
-                            row.set_widget_name(&key);
-                            row.set_visible(crate::vfs::vfs_opt_matches(&key, &display, &query));
-                            advanced_list.append(&row);
+                        fill_advanced_opts(&ctx, &advanced_list, map, &query);
+                    }
+                    match client.vfs_poll_interval(&fs, None) {
+                        Ok(_) => {
+                            poll.set_sensitive(true);
+                            apply_poll.set_sensitive(true);
+                            poll_unsupported.set_visible(false);
+                        }
+                        Err(_) => {
+                            poll.set_sensitive(false);
+                            apply_poll.set_sensitive(false);
+                            poll_unsupported.set_visible(true);
                         }
                     }
                 }
@@ -418,17 +428,7 @@ pub fn vfs_panel(ctx: AppCtx, remote: &str, toast: adw::ToastOverlay) -> gtk::Wi
     {
         let advanced_list = advanced_list.clone();
         advanced_search.connect_search_changed(move |entry| {
-            let query = entry.text().to_string();
-            let mut child = advanced_list.first_child();
-            while let Some(widget) = child {
-                let next = widget.next_sibling();
-                if let Ok(row) = widget.clone().downcast::<adw::ActionRow>() {
-                    let key = row.widget_name().to_string();
-                    let value = row.subtitle().unwrap_or_default().to_string();
-                    row.set_visible(crate::vfs::vfs_opt_matches(&key, &value, &query));
-                }
-                child = next;
-            }
+            apply_advanced_filter(&advanced_list, &entry.text());
         });
     }
     refresh_ui();
@@ -738,12 +738,107 @@ fn path_row(ctx: &AppCtx, title: &str, path: &str, tooltip: &str) -> adw::Action
     row
 }
 
-fn format_opt_value(value: &serde_json::Value) -> String {
+fn format_opt_value(ctx: &AppCtx, value: &serde_json::Value) -> String {
     match value {
-        serde_json::Value::Bool(true) => "✓".into(),
-        serde_json::Value::Bool(false) => "✗".into(),
+        serde_json::Value::Bool(true) => ctx.t_or(
+            "shared.vfsControl.advancedConfig.booleanEnabled",
+            "✓ Enabled",
+        ),
+        serde_json::Value::Bool(false) => ctx.t_or(
+            "shared.vfsControl.advancedConfig.booleanDisabled",
+            "✗ Disabled",
+        ),
         serde_json::Value::String(s) => s.clone(),
         other => other.to_string(),
+    }
+}
+
+fn fill_advanced_opts(
+    ctx: &AppCtx,
+    list: &gtk::ListBox,
+    map: &serde_json::Map<String, serde_json::Value>,
+    query: &str,
+) {
+    let mut groups: Vec<(&str, Vec<String>)> = Vec::new();
+    let mut keys: Vec<_> = map.keys().cloned().collect();
+    keys.sort();
+    for key in keys {
+        let group = crate::vfs::vfs_opt_group(&key);
+        if let Some((_, items)) = groups.iter_mut().find(|(name, _)| *name == group) {
+            items.push(key);
+        } else {
+            groups.push((group, vec![key]));
+        }
+    }
+    for (group, items) in groups {
+        let header = adw::ActionRow::new();
+        header.set_title(&ctx.t_or(&crate::vfs::vfs_opt_group_i18n_key(group), group));
+        header.set_sensitive(false);
+        header.set_widget_name(&format!("group:{group}"));
+        header.add_css_class("heading");
+        list.append(&header);
+        for key in items {
+            let display = format_opt_value(ctx, &map[&key]);
+            let row = adw::ActionRow::new();
+            row.set_title(&key);
+            row.set_subtitle(&display);
+            row.set_widget_name(&key);
+            list.append(&row);
+        }
+    }
+    let empty = adw::ActionRow::new();
+    empty.set_title(&ctx.t_or(
+        "shared.vfsControl.advancedConfig.noResults",
+        "No options match your search",
+    ));
+    empty.set_widget_name("no-results");
+    empty.set_sensitive(false);
+    list.append(&empty);
+    apply_advanced_filter(list, query);
+}
+
+fn apply_advanced_filter(list: &gtk::ListBox, query: &str) {
+    let mut child = list.first_child();
+    let mut any_option = false;
+    while let Some(widget) = child {
+        let next = widget.next_sibling();
+        if let Ok(row) = widget.clone().downcast::<adw::ActionRow>() {
+            let name = row.widget_name().to_string();
+            if name.starts_with("group:") || name == "no-results" {
+                child = next;
+                continue;
+            }
+            let value = row.subtitle().unwrap_or_default().to_string();
+            let visible = crate::vfs::vfs_opt_matches(&name, &value, query);
+            row.set_visible(visible);
+            any_option |= visible;
+        }
+        child = next;
+    }
+    let mut child = list.first_child();
+    while let Some(widget) = child {
+        let next = widget.next_sibling();
+        if let Ok(row) = widget.clone().downcast::<adw::ActionRow>() {
+            let name = row.widget_name().to_string();
+            if name.starts_with("group:") {
+                let mut show = false;
+                let mut sibling = next.clone();
+                while let Some(next_row) = sibling {
+                    if let Ok(opt) = next_row.clone().downcast::<adw::ActionRow>() {
+                        let opt_name = opt.widget_name().to_string();
+                        if opt_name.starts_with("group:") || opt_name == "no-results" {
+                            break;
+                        }
+                        show |= opt.is_visible();
+                    }
+                    sibling = next_row.next_sibling();
+                }
+                row.set_visible(show);
+            } else if name == "no-results" {
+                row.set_visible(!any_option);
+            }
+        }
+        child = next;
     }
 }
 

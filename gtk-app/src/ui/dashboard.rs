@@ -1493,12 +1493,23 @@ impl Dashboard {
                     }
                 }
                 if groups == 0 {
-                    let empty = gtk::Label::new(Some(&self.ctx.t_or(
+                    let empty = gtk::Box::new(gtk::Orientation::Vertical, 2);
+                    let title = gtk::Label::new(Some(&self.ctx.t_or(
+                        "overviews.remoteCard.emptyState.title",
+                        "No profiles configured",
+                    )));
+                    title.add_css_class("heading");
+                    title.set_xalign(0.0);
+                    title.set_wrap(true);
+                    let message = gtk::Label::new(Some(&self.ctx.t_or(
                         "overviews.remoteCard.emptyState.message",
                         "This remote has no operation profiles to show.",
                     )));
-                    empty.add_css_class("dim-label");
-                    empty.set_wrap(true);
+                    message.add_css_class("dim-label");
+                    message.set_xalign(0.0);
+                    message.set_wrap(true);
+                    empty.append(&title);
+                    empty.append(&message);
                     card.append(&empty);
                 }
                 let wrap = gtk::ListBoxRow::new();
@@ -1677,25 +1688,91 @@ impl Dashboard {
     fn render_system_panel(&self, snap: &crate::store::RuntimeSnapshot) {
         let sys = gtk::ListBox::new();
         sys.add_css_class("boxed-list");
-        let version = self
+        let ready = self.ctx.engine_ready();
+        let status = adw::ActionRow::new();
+        status.set_title(
+            &self
+                .ctx
+                .t_or("generalOverview.system.status", "Engine Status:"),
+        );
+        status.set_subtitle(&if ready {
+            self.ctx.t_or("generalOverview.system.active", "Active")
+        } else {
+            self.ctx.t_or("generalOverview.system.inactive", "Inactive")
+        });
+        sys.append(&status);
+        let identity = self
             .ctx
-            .engine
-            .borrow()
+            .client()
+            .and_then(|c| c.version_info().ok())
+            .map(|info| crate::rclone::backend_identity(&info));
+        let version = identity
             .as_ref()
-            .map(|e| e.version.clone())
+            .map(|id| id.version.clone())
             .filter(|s| !s.is_empty())
-            .or_else(|| self.ctx.client().and_then(|c| c.version().ok()))
-            .unwrap_or_else(|| "unknown".into());
+            .or_else(|| {
+                self.ctx
+                    .engine
+                    .borrow()
+                    .as_ref()
+                    .map(|e| e.version.clone())
+                    .filter(|s| !s.is_empty())
+            })
+            .unwrap_or_else(|| self.ctx.t_or("generalOverview.system.unknown", "unknown"));
         let ver_row = adw::ActionRow::new();
-        ver_row.set_title("rclone");
+        ver_row.set_title(
+            &self
+                .ctx
+                .t_or("generalOverview.system.version", "Engine Version:"),
+        );
         ver_row.set_subtitle(&version);
         sys.append(&ver_row);
+        if let Some(id) = &identity {
+            if !id.os.is_empty() && id.os != "unknown" {
+                let row = adw::ActionRow::new();
+                row.set_title(
+                    &self
+                        .ctx
+                        .t_or("generalOverview.system.platform", "Platform:"),
+                );
+                row.set_subtitle(&format!("{}/{}", id.os, id.arch));
+                sys.append(&row);
+            }
+            if !id.go.is_empty() {
+                let row = adw::ActionRow::new();
+                row.set_title(
+                    &self
+                        .ctx
+                        .t_or("generalOverview.system.goVersion", "Go Runtime:"),
+                );
+                row.set_subtitle(&id.go);
+                sys.append(&row);
+            }
+        }
+        let remotes_row = adw::ActionRow::new();
+        remotes_row.set_title(
+            &self
+                .ctx
+                .t_or("generalOverview.system.totalRemotes", "Total Remotes:"),
+        );
+        remotes_row.set_subtitle(&snap.remotes.len().to_string());
+        sys.append(&remotes_row);
         if let Some(client) = self.ctx.client() {
             if let Ok(pid) = client.pid() {
                 let row = adw::ActionRow::new();
-                row.set_title(&self.ctx.t_or("dashboard.system.pid", "rclone PID"));
+                row.set_title(&self.ctx.t_or("generalOverview.system.pid", "Process ID:"));
                 row.set_subtitle(&pid.to_string());
                 sys.append(&row);
+                if let Some(secs) = crate::rclone::process_uptime_secs(pid) {
+                    let row = adw::ActionRow::new();
+                    row.set_title(
+                        &self
+                            .ctx
+                            .t_or("generalOverview.system.uptime", "Engine Uptime:"),
+                    );
+                    row.set_subtitle(&crate::jobs::format_seconds(secs as f64));
+                    sys.append(&row);
+                }
             }
             if let Ok(groups) = client.group_list() {
                 let count = groups
@@ -1716,7 +1793,11 @@ impl Dashboard {
             let alloc = mem.get("Alloc").and_then(|x| x.as_i64()).unwrap_or(0);
             let sys_bytes = mem.get("Sys").and_then(|x| x.as_i64()).unwrap_or(0);
             let row = adw::ActionRow::new();
-            row.set_title(&self.ctx.t_or("dashboard.system.memory", "Memory"));
+            row.set_title(
+                &self
+                    .ctx
+                    .t_or("generalOverview.system.memoryUsage", "Heap Memory:"),
+            );
             row.set_subtitle(&format!(
                 "{} alloc · {} sys",
                 format_bytes(alloc),
@@ -1983,6 +2064,15 @@ impl Dashboard {
                 .cloned()
                 .collect();
             if !remote_serves.is_empty() {
+                let heading = gtk::Label::new(Some(
+                    &self
+                        .ctx
+                        .t_or("dashboard.appDetail.activeServes", "Active Serves"),
+                ));
+                heading.add_css_class("heading");
+                heading.set_xalign(0.0);
+                heading.set_margin_top(8);
+                self.detail_box().append(&heading);
                 let serves = gtk::ListBox::new();
                 serves.add_css_class("boxed-list");
                 for serve in remote_serves {

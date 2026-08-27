@@ -2429,7 +2429,18 @@ impl NautilusView {
                         true
                     }
                     Err(e) => {
-                        self.toast.add_toast(adw::Toast::new(&e));
+                        let count = transfers.len().max(1).to_string();
+                        let key = if move_items {
+                            "nautilus.errors.moveFailed"
+                        } else {
+                            "nautilus.errors.copyFailed"
+                        };
+                        let fallback = if move_items {
+                            "Failed to move items"
+                        } else {
+                            "Failed to copy items"
+                        };
+                        self.toast_error(key, fallback, &[("count", &count), ("error", &e)]);
                         true
                     }
                 }
@@ -4275,7 +4286,11 @@ impl NautilusView {
                     folder
                 };
                 if let Err(e) = client.mkdir(&fs, &folder_remote) {
-                    view.toast.add_toast(adw::Toast::new(&e.to_string()));
+                    view.toast_error(
+                        "nautilus.errors.createFolderFailed",
+                        "Failed to create folder",
+                        &[("name", &name), ("error", &e.to_string())],
+                    );
                     return;
                 }
                 let mut ops = vec![crate::fileops::FileOp::Mkdir {
@@ -4297,7 +4312,11 @@ impl NautilusView {
                             dst_fs: fs.clone(),
                             dst: dst_remote,
                         }),
-                        Err(e) => view.toast.add_toast(adw::Toast::new(&e.to_string())),
+                        Err(e) => view.toast_error(
+                            "nautilus.errors.moveFailed",
+                            "Failed to move items",
+                            &[("count", "1"), ("error", &e.to_string())],
+                        ),
                     }
                 }
                 view.push_undo_ops(ops);
@@ -4363,7 +4382,11 @@ impl NautilusView {
                                         .t_or("nautilus.contextMenu.newFolder", "New folder"),
                                 );
                             }
-                            Err(e) => view.toast.add_toast(adw::Toast::new(&e.to_string())),
+                            Err(e) => view.toast_error(
+                                "nautilus.errors.createFolderFailed",
+                                "Failed to create folder",
+                                &[("name", &name), ("error", &e.to_string())],
+                            ),
                         }
                     }
                 },
@@ -4414,7 +4437,11 @@ impl NautilusView {
         let items = match crate::fileops::collect_local_upload_items(paths, &dest_fs, &dest_dir) {
             Ok(items) => items,
             Err(e) => {
-                self.toast.add_toast(adw::Toast::new(&e));
+                self.toast_error(
+                    "nautilus.errors.externalDropFailed",
+                    "Failed to process external file drop.",
+                    &[("error", &e)],
+                );
                 return;
             }
         };
@@ -5042,6 +5069,11 @@ impl NautilusView {
         }
     }
 
+    fn toast_error(&self, key: &str, fallback: &str, params: &[(&str, &str)]) {
+        self.toast
+            .add_toast(adw::Toast::new(&self.ctx.tf_or(key, fallback, params)));
+    }
+
     fn toast_with_undo(&self, message: impl AsRef<str>) {
         let view = self.clone();
         self.ctx.toast_action(
@@ -5098,7 +5130,11 @@ impl NautilusView {
         match crate::fileops::invert_ops(&decoded) {
             Some(inv) => {
                 if let Err(e) = crate::fileops::apply_ops(&client, &inv) {
-                    self.toast.add_toast(adw::Toast::new(&e));
+                    self.toast_error(
+                        "nautilus.errors.undoFailed",
+                        "Undo failed",
+                        &[("count", "1"), ("error", &e)],
+                    );
                 }
             }
             None => self.toast.add_toast(adw::Toast::new(&self.ctx.t_or(
@@ -5115,7 +5151,11 @@ impl NautilusView {
         };
         if let Some(decoded) = crate::fileops::decode_undo(op) {
             if let Err(e) = crate::fileops::apply_ops(&client, &decoded) {
-                self.toast.add_toast(adw::Toast::new(&e));
+                self.toast_error(
+                    "nautilus.errors.redoFailed",
+                    "Redo failed",
+                    &[("count", "1"), ("error", &e)],
+                );
             }
             self.reload();
         }
@@ -6442,7 +6482,14 @@ impl NautilusView {
                     "Removed empty directories",
                 )));
             }
-            Err(e) => self.toast.add_toast(adw::Toast::new(&e.to_string())),
+            Err(e) => {
+                let leaf = crate::checks::leaf_name(&path);
+                self.toast_error(
+                    "nautilus.errors.rmdirsFailed",
+                    "Failed to remove empty folders",
+                    &[("name", &leaf), ("error", &e.to_string())],
+                );
+            }
         }
     }
 
