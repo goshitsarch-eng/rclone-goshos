@@ -986,3 +986,6 @@ This client is the GTK 4 + libadwaita desktop UI. It talks to a local `rclone rc
 - Repair sheet embeds Angular `installation-options`: Recommended / Custom / Existing tabs, path browse, and `rclone version` binary Test
 - Advanced install can download to a custom directory or apply a validated existing binary; Use Different Config sets `--config=`
 - `--starred` / `--browse starred` open Files on the Starred collection
+
+- Live GUI: `--repair` Show Advanced reveals Recommended / Custom / Existing; Existing `/usr/bin/rclone` Test shows **Valid binary** and **Use This Binary**
+- Live GUI: `--starred` opens Files on Starred with per-item Unstar buttons
