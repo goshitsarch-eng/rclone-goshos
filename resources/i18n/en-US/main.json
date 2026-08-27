@@ -2677,6 +2677,7 @@
   },
   "nautilus": {
     "loadMore": "Show {{count}} more",
+    "progressiveRender": "Showing {{shown}} of {{total}}",
     "sidebar": {
       "configureTitle": "Configure Sidebar Items",
       "configureDescription": "Drag items to reorder them, or toggle the eye icon to hide or show drives and cloud remotes in the sidebar."

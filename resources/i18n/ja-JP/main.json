@@ -2675,6 +2675,7 @@
   },
   "nautilus": {
     "loadMore": "さらに {{count}} 件表示",
+    "progressiveRender": "{{shown}} / {{total}} 件を表示",
     "sidebar": {
       "configureTitle": "サイドバー項目の設定",
       "configureDescription": "ドラッグして並べ替えたり、目のアイコンでサイドバーのドライブやクラウドリモートの表示/非表示を切り替えたりできます。"

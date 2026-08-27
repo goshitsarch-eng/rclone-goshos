@@ -256,6 +256,8 @@ pub struct NautilusSettings {
     pub split_secondary_remote: String,
     #[serde(default)]
     pub split_secondary_path: String,
+    #[serde(default = "default_true")]
+    pub ops_panel_expanded: bool,
 }
 
 impl Default for NautilusSettings {
@@ -277,6 +279,7 @@ impl Default for NautilusSettings {
             split_divider_pos: 0,
             split_secondary_remote: String::new(),
             split_secondary_path: String::new(),
+            ops_panel_expanded: true,
         }
     }
 }
@@ -605,6 +608,7 @@ mod tests {
         assert_eq!(loaded.nautilus.split_divider_pos, 0);
         assert!(loaded.nautilus.split_secondary_remote.is_empty());
         assert!(loaded.nautilus.split_secondary_path.is_empty());
+        assert!(loaded.nautilus.ops_panel_expanded);
         assert!(loaded.nautilus.sidebar_visible);
     }
 

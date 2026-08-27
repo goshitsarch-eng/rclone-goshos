@@ -522,6 +522,45 @@ pub fn next_listing_batch(total: usize, shown: usize) -> (usize, usize) {
     (start, end)
 }
 
+/// Angular view-pane `onGridScroll` near-bottom threshold (px).
+pub const LISTING_SCROLL_LOAD_PX: f64 = 200.0;
+
+/// True when the scrolled listing is close enough to the bottom to paint the next batch.
+pub fn listing_near_bottom(value: f64, page_size: f64, upper: f64, threshold: f64) -> bool {
+    if page_size <= 0.0 || upper <= page_size {
+        return false;
+    }
+    value + page_size >= upper - threshold
+}
+
+/// `Some((shown, total))` while the listing is only partially painted.
+pub fn listing_progress_caption(shown: usize, total: usize) -> Option<(usize, usize)> {
+    if shown > 0 && shown < total {
+        Some((shown, total))
+    } else {
+        None
+    }
+}
+
+pub fn active_ops_count<I, S>(statuses: I) -> usize
+where
+    I: IntoIterator<Item = S>,
+    S: AsRef<str>,
+{
+    statuses
+        .into_iter()
+        .filter(|status| matches!(status.as_ref(), "running" | "preparing" | "starting"))
+        .count()
+}
+
+pub fn ops_panel_title(base: &str, active: usize) -> String {
+    if active == 0 {
+        base.to_string()
+    } else {
+        format!("{base} ({active})")
+    }
+}
+
 pub fn file_item_menu_widget_name(entry_name: &str) -> String {
     format!("file-menu-{entry_name}")
 }
@@ -1955,6 +1994,22 @@ mod tests {
         assert_eq!(next_listing_batch(250, 200), (200, 250));
         assert_eq!(next_listing_batch(250, 250), (250, 250));
         assert_eq!(next_listing_batch(10, 99), (10, 10));
+        assert_eq!(listing_progress_caption(200, 250), Some((200, 250)));
+        assert_eq!(listing_progress_caption(250, 250), None);
+        assert_eq!(listing_progress_caption(0, 250), None);
+        assert_eq!(listing_progress_caption(10, 0), None);
+        assert!(!listing_near_bottom(0.0, 400.0, 400.0, 200.0));
+        assert!(!listing_near_bottom(0.0, 0.0, 800.0, 200.0));
+        assert!(!listing_near_bottom(0.0, 400.0, 1200.0, 200.0));
+        assert!(listing_near_bottom(650.0, 400.0, 1200.0, 200.0));
+        assert!(listing_near_bottom(1000.0, 400.0, 1200.0, 200.0));
+        assert_eq!(
+            active_ops_count(["running", "completed", "preparing", "failed", "starting"]),
+            3
+        );
+        assert_eq!(active_ops_count(std::iter::empty::<&str>()), 0);
+        assert_eq!(ops_panel_title("Operations", 0), "Operations");
+        assert_eq!(ops_panel_title("Operations", 2), "Operations (2)");
     }
 
     #[test]

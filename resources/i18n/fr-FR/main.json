@@ -2675,6 +2675,7 @@
   },
   "nautilus": {
     "loadMore": "Afficher {{count}} de plus",
+    "progressiveRender": "Affichage de {{shown}} sur {{total}}",
     "sidebar": {
       "configureTitle": "Configurer les éléments de la barre latérale",
       "configureDescription": "Faites glisser les éléments pour les réordonner, ou utilisez l'icône de l'œil pour masquer ou afficher les disques et distants."

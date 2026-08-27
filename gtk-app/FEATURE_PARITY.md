@@ -954,3 +954,8 @@ This client is the GTK 4 + libadwaita desktop UI. It talks to a local `rclone rc
 - Live GUI: Cut on `appeared.txt` dims the tile, draws a dashed outline, and swaps the icon for scissors; a Cut toast confirms the clipboard
 - Live GUI: copy `Photos/job-refresh-gui.txt` then Back and Paste into testdrive root; after `filemanager/...` completes the listing count goes 27 → 28 items (23 B / 23 B) without a manual refresh
 - Split-view copy/cut uses the secondary pane path when only that pane has a selection
+
+- Files listings paint the first 200 items, then append on scroll-near-bottom (Angular `onGridScroll`) and keep **Show N more**
+- Status caption is **Showing X of Y** while a listing is only partially painted
+- Operations panel is a collapsible expander (`fileBrowser.operations.title`) with an active-job badge; expanded state persists as `nautilus.ops_panel_expanded`
+- File-manager ops history is no longer capped at 12 finished jobs

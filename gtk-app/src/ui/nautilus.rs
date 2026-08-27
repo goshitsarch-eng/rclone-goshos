@@ -79,6 +79,7 @@ pub struct NautilusView {
     split_enabled: Rc<RefCell<bool>>,
     paned: gtk::Paned,
     ops: gtk::ListBox,
+    ops_title: gtk::Label,
     last_listing: Rc<RefCell<Vec<DirEntry>>>,
     last_listing_right: Rc<RefCell<Vec<DirEntry>>>,
     listing_shown: Rc<Cell<usize>>,
@@ -411,8 +412,22 @@ impl NautilusView {
         let ops = gtk::ListBox::new();
         ops.add_css_class("boxed-list");
         let ops_scroll = gtk::ScrolledWindow::new();
-        ops_scroll.set_min_content_height(260);
+        ops_scroll.set_min_content_height(180);
+        ops_scroll.set_max_content_height(260);
         ops_scroll.set_child(Some(&ops));
+        let ops_title = gtk::Label::new(Some(
+            &ctx.t_or("fileBrowser.operations.title", "Operations"),
+        ));
+        ops_title.add_css_class("heading");
+        ops_title.set_xalign(0.0);
+        ops_title.set_hexpand(true);
+        let ops_expander = gtk::Expander::new(None);
+        ops_expander.set_label_widget(Some(&ops_title));
+        ops_expander.set_expanded(ctx.settings.borrow().nautilus.ops_panel_expanded);
+        ops_expander.set_child(Some(&ops_scroll));
+        ops_expander.set_margin_start(8);
+        ops_expander.set_margin_end(8);
+        ops_expander.set_margin_top(4);
 
         let status = gtk::Label::new(Some(&ctx.t_or("common.ready", "Ready")));
         status.add_css_class("dim-label");
@@ -467,7 +482,7 @@ impl NautilusView {
         root.append(&picker_bar);
         root.append(&share_bar);
         root.append(&split);
-        root.append(&ops_scroll);
+        root.append(&ops_expander);
         root.append(&status);
 
         let initial = TabState {
@@ -533,6 +548,7 @@ impl NautilusView {
             split_enabled: Rc::new(RefCell::new(split_on)),
             paned,
             ops,
+            ops_title,
             last_listing: Rc::new(RefCell::new(Vec::new())),
             last_listing_right: Rc::new(RefCell::new(Vec::new())),
             listing_shown: Rc::new(Cell::new(0)),
@@ -560,6 +576,29 @@ impl NautilusView {
             pending_undo: Rc::new(RefCell::new(Vec::new())),
         };
         view.refresh_type_filters();
+        {
+            let view = view.clone();
+            files_scroll
+                .vadjustment()
+                .connect_value_changed(move |adj| {
+                    view.maybe_scroll_load(true, adj);
+                });
+        }
+        {
+            let view = view.clone();
+            right_scroll
+                .vadjustment()
+                .connect_value_changed(move |adj| {
+                    view.maybe_scroll_load(false, adj);
+                });
+        }
+        {
+            let view = view.clone();
+            ops_expander.connect_notify_local(Some("expanded"), move |expander, _| {
+                view.ctx.settings.borrow_mut().nautilus.ops_panel_expanded = expander.is_expanded();
+                view.ctx.persist();
+            });
+        }
         {
             let view = view.clone();
             cancel_left.connect_clicked(move |_| view.cancel_listing(true));
@@ -1216,6 +1255,60 @@ impl NautilusView {
         box_
     }
 
+    fn listing_progress_label(&self) -> String {
+        let total = self.last_listing.borrow().len();
+        let shown = self.listing_shown.get();
+        if let Some((shown, total)) = crate::fileops::listing_progress_caption(shown, total) {
+            return self.ctx.tf_or(
+                "nautilus.progressiveRender",
+                "Showing {{shown}} of {{total}}",
+                &[("shown", &shown.to_string()), ("total", &total.to_string())],
+            );
+        }
+        self.listing_count_label(total)
+    }
+
+    fn refresh_listing_status(&self) {
+        let text = self.selection_status();
+        if text.is_empty() {
+            self.status.set_text(&self.listing_progress_label());
+        } else {
+            self.status.set_text(&text);
+        }
+        if let Some(prompt) = self.picker_prompt() {
+            let label = crate::picker::picker_bar_label(&prompt, &text);
+            if self.picker_label.text().as_str() != label {
+                self.picker_label.set_text(&label);
+            }
+        }
+    }
+
+    fn maybe_scroll_load(&self, primary: bool, adj: &gtk::Adjustment) {
+        if !crate::fileops::listing_near_bottom(
+            adj.value(),
+            adj.page_size(),
+            adj.upper(),
+            crate::fileops::LISTING_SCROLL_LOAD_PX,
+        ) {
+            return;
+        }
+        let (shown, total) = if primary {
+            (self.listing_shown.get(), self.last_listing.borrow().len())
+        } else {
+            (
+                self.listing_shown_right.get(),
+                self.last_listing_right.borrow().len(),
+            )
+        };
+        if shown >= total {
+            return;
+        }
+        self.append_listing_batch(primary);
+        if primary {
+            self.refresh_listing_status();
+        }
+    }
+
     fn listing_count_label(&self, count: usize) -> String {
         if count == 0 {
             return self
@@ -1298,19 +1391,7 @@ impl NautilusView {
     }
 
     fn refresh_selection_status(&self) {
-        let text = self.selection_status();
-        if text.is_empty() {
-            self.status
-                .set_text(&self.listing_count_label(self.last_listing.borrow().len()));
-        } else {
-            self.status.set_text(&text);
-        }
-        if let Some(prompt) = self.picker_prompt() {
-            let label = crate::picker::picker_bar_label(&prompt, &text);
-            if self.picker_label.text().as_str() != label {
-                self.picker_label.set_text(&label);
-            }
-        }
+        self.refresh_listing_status();
     }
 
     fn current_location(&self) -> String {
@@ -3042,6 +3123,7 @@ impl NautilusView {
         }
         if primary {
             self.listing_shown.set(end);
+            self.refresh_listing_status();
         } else {
             self.listing_shown_right.set(end);
         }
@@ -4025,11 +4107,10 @@ impl NautilusView {
         self.set_list_job(primary, None);
         self.set_listing_loading(primary, false);
         let entries = self.filter_listing_entries(entries, primary);
-        if primary {
-            self.status
-                .set_text(&self.listing_count_label(entries.len()));
-        }
         self.populate_entries(&entries, primary);
+        if primary {
+            self.refresh_listing_status();
+        }
     }
 
     fn finish_listing_error(&self, primary: bool, message: &str) {
@@ -5760,6 +5841,8 @@ impl NautilusView {
                     .t_or("nautilus.noFileOperations", "No file operations"),
             );
             self.ops.append(&row);
+            self.ops_title
+                .set_text(&self.ctx.t_or("fileBrowser.operations.title", "Operations"));
             return;
         }
         let registry = self.ctx.store.borrow().job_meta.clone();
@@ -5777,11 +5860,12 @@ impl NautilusView {
             self.ops.append(&self.ops_row(job, true));
         }
         let running_ids: std::collections::HashSet<u64> = jobs.iter().map(|j| j.id).collect();
-        for mut job in history
-            .into_iter()
-            .filter(|j| !running_ids.contains(&j.id))
-            .take(12)
-        {
+        let active = crate::fileops::active_ops_count(jobs.iter().map(|job| job.status.as_str()));
+        self.ops_title.set_text(&crate::fileops::ops_panel_title(
+            &self.ctx.t_or("fileBrowser.operations.title", "Operations"),
+            active,
+        ));
+        for mut job in history.into_iter().filter(|j| !running_ids.contains(&j.id)) {
             crate::jobs::decorate_job_transfers(&mut job, &registry, &siblings);
             self.ops.append(&self.ops_row(&job, false));
         }
