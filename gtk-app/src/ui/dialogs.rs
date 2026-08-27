@@ -6826,7 +6826,6 @@ pub fn quick_run_editor(
     backend_flags.set_title(&ctx.t_or("flow.quickRun.editor.tabBackend", "Backend"));
     let runtime_flag_rows: Rc<RefCell<Vec<super::flag_widget::FlagRow>>> =
         Rc::new(RefCell::new(Vec::new()));
-    let runtime_page = adw::PreferencesPage::new();
     let runtime_flags = adw::PreferencesGroup::new();
     runtime_flags.set_title(&ctx.t_or("flow.quickRun.editor.tabRuntimeRemote", "Runtime Remote"));
     runtime_flags.set_description(Some(&ctx.t_or(
@@ -6848,18 +6847,12 @@ pub fn quick_run_editor(
     runtime_editor
         .root
         .set_visible(runtime_json_toggle.is_active());
-    let runtime_json_holder = adw::PreferencesGroup::new();
-    runtime_json_holder.set_title(&ctx.t_or("remoteConfig.jsonPayload", "JSON"));
-    runtime_json_holder.add(&{
-        let row = adw::ActionRow::new();
-        row.set_title(&ctx.t_or("remoteConfig.jsonMode", "JSON"));
-        row.set_activatable(false);
-        row.set_child(Some(&runtime_editor.root));
-        row
-    });
-    runtime_json_holder.set_visible(runtime_json_toggle.is_active());
-    runtime_page.add(&runtime_flags);
-    runtime_page.add(&runtime_json_holder);
+    let runtime_json_row = adw::ActionRow::new();
+    runtime_json_row.set_title(&ctx.t_or("remoteConfig.jsonPayload", "JSON"));
+    runtime_json_row.set_activatable(false);
+    runtime_json_row.set_child(Some(&runtime_editor.root));
+    runtime_json_row.set_visible(runtime_json_toggle.is_active());
+    runtime_flags.add(&runtime_json_row);
     let fill_runtime_rows = {
         let ctx = ctx.clone();
         let runtime_flags = runtime_flags.clone();
@@ -6868,11 +6861,19 @@ pub fn quick_run_editor(
         let runtime_editor = runtime_editor.clone();
         let runtime_empty = runtime_empty.clone();
         let runtime_json_toggle = runtime_json_toggle.clone();
+        let runtime_json_row = runtime_json_row.clone();
         let remote = remote.clone();
         Rc::new(move || {
             let name = remote.text().to_string();
             let current = runtime_current.borrow().clone();
             populate_qr_runtime_rows(&ctx, &runtime_flags, &runtime_flag_rows, &name, &current);
+            if runtime_json_row
+                .parent()
+                .is_some_and(|parent| parent == runtime_flags)
+            {
+                runtime_flags.remove(&runtime_json_row);
+            }
+            runtime_flags.add(&runtime_json_row);
             let remote_type = remote_type_of(ctx.clone(), &name);
             let flags = super::remote_config::runtime_flags_for_type(&ctx, &remote_type);
             runtime_editor.set_fields(
@@ -6887,19 +6888,20 @@ pub fn quick_run_editor(
             for (_, row, _) in runtime_flag_rows.borrow().iter() {
                 row.set_visible(!json_on);
             }
+            runtime_json_row.set_visible(json_on);
             let empty = name.trim().is_empty() || runtime_flag_rows.borrow().is_empty();
             runtime_empty.set_visible(empty && !json_on);
         }) as Rc<dyn Fn()>
     };
     fill_runtime_rows();
     {
-        let runtime_json_holder = runtime_json_holder.clone();
+        let runtime_json_row = runtime_json_row.clone();
         let runtime_editor = runtime_editor.clone();
         let runtime_empty = runtime_empty.clone();
         let runtime_flag_rows = runtime_flag_rows.clone();
         runtime_json_toggle.connect_active_notify(move |row| {
             let on = row.is_active();
-            runtime_json_holder.set_visible(on);
+            runtime_json_row.set_visible(on);
             runtime_editor.root.set_visible(on);
             for (_, widget, _) in runtime_flag_rows.borrow().iter() {
                 widget.set_visible(!on);
@@ -6933,6 +6935,7 @@ pub fn quick_run_editor(
     }
     let flag_stack = adw::ViewStack::new();
     flag_stack.set_vhomogeneous(false);
+    flag_stack.set_vexpand(true);
     flag_stack.add_titled(
         &flags_group,
         Some("operation"),
@@ -6954,7 +6957,7 @@ pub fn quick_run_editor(
         &ctx.t_or("flow.quickRun.editor.tabBackend", "Backend"),
     );
     flag_stack.add_titled(
-        &runtime_page,
+        &runtime_flags,
         Some("runtime"),
         &ctx.t_or("flow.quickRun.editor.tabRuntimeRemote", "Runtime Remote"),
     );
