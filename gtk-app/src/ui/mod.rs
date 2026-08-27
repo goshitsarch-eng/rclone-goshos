@@ -950,7 +950,10 @@ impl AppCtx {
             .local_disks()
             .unwrap_or_else(|_| local_fallback_disks(&self.engine_os()));
         let hidden = self.store.borrow().hidden_remotes.clone();
-        let known: Vec<u64> = self.store.borrow().job_meta.keys().copied().collect();
+        let known = {
+            let store = self.store.borrow();
+            crate::jobs::known_job_ids(&store.job_history, &store.job_meta)
+        };
         let mut jobs = crate::jobs::merge_preparing_jobs(
             collect_jobs(&client, &known),
             &self.store.borrow().job_history,

@@ -1667,10 +1667,12 @@ fn present_overlay_window(
     install_debug_context_menu(&window, ctx);
     if let Some(files) = files {
         let window_poll = window.clone();
+        let ctx_poll = ctx.clone();
         glib::timeout_add_local(crate::refresh::BUSY_POLL, move || {
             if !window_poll.is_visible() {
                 return glib::ControlFlow::Break;
             }
+            ctx_poll.refresh_runtime();
             files.poll_refresh();
             glib::ControlFlow::Continue
         });

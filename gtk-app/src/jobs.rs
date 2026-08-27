@@ -2985,19 +2985,34 @@ pub fn job_from_status(jobid: u64, status: &Value, stats: Option<&Value>) -> Job
 pub const MAX_JOB_STATUS_FETCH: usize = 48;
 
 /// rclone 1.60 `job/list` can return hundreds of thousands of leftover IDs.
-/// Prefer jobs we started; only scan unknowns when the list is small.
+/// Prefer jobs we started (even when rclone omitted a finished id from that
+/// leftover list); only scan unknowns when the list is small.
 pub fn select_job_ids(listed: &[u64], known: &[u64], max: usize) -> Vec<u64> {
     if listed.len() <= max {
         return listed.to_vec();
     }
-    let known_set: std::collections::HashSet<u64> = known.iter().copied().collect();
-    let mut selected: Vec<u64> = listed
-        .iter()
-        .copied()
-        .filter(|id| known_set.contains(id))
-        .collect();
-    selected.truncate(max);
+    let mut selected = Vec::new();
+    let mut seen = HashSet::new();
+    for id in known {
+        if selected.len() >= max {
+            break;
+        }
+        if seen.insert(*id) {
+            selected.push(*id);
+        }
+    }
     selected
+}
+
+/// Newest history first, then remaining `job_meta` keys (higher id first).
+pub fn known_job_ids(history: &[JobInfo], meta: &HashMap<u64, JobMeta>) -> Vec<u64> {
+    let mut ids: Vec<u64> = history.iter().map(|job| job.id).collect();
+    let mut seen: HashSet<u64> = ids.iter().copied().collect();
+    let mut extra: Vec<u64> = meta.keys().copied().filter(|id| seen.insert(*id)).collect();
+    extra.sort_unstable();
+    extra.reverse();
+    ids.extend(extra);
+    ids
 }
 
 /// rclone 1.60 `job/list` includes finished internal RC jobs (empty src/dst,
@@ -4019,7 +4034,40 @@ mod tests {
             "small lists are fetched in full"
         );
         let huge: Vec<u64> = (1..=200).collect();
-        assert_eq!(select_job_ids(&huge, &[7, 9, 400], 48), vec![7, 9]);
+        assert_eq!(
+            select_job_ids(&huge, &[7, 9, 400], 48),
+            vec![7, 9, 400],
+            "known jobs are fetched even when rclone omitted them from the leftover list"
+        );
+        assert_eq!(
+            select_job_ids(&huge, &[3143, 7], 48),
+            vec![3143, 7],
+            "leftover listed ids must not crowd out jobs we started"
+        );
+        let many_known: Vec<u64> = (1..=60).collect();
+        let capped = select_job_ids(&huge, &many_known, 48);
+        assert_eq!(capped.len(), 48);
+        assert_eq!(capped[0], 1);
+        assert_eq!(capped[47], 48);
+        let mut meta = HashMap::new();
+        meta.insert(400, JobMeta::default());
+        meta.insert(9, JobMeta::default());
+        meta.insert(7, JobMeta::default());
+        assert_eq!(
+            known_job_ids(
+                &[started_operation_job(
+                    3143,
+                    "copy",
+                    "testdrive",
+                    "default",
+                    "filemanager",
+                    "testdrive:Photos/README.txt",
+                    "testdrive:README.txt",
+                )],
+                &meta
+            ),
+            vec![3143, 400, 9, 7]
+        );
     }
 
     #[test]
