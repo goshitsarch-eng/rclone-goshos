@@ -1171,3 +1171,5 @@ This client is the GTK 4 + libadwaita desktop UI. It talks to a local `rclone rc
 - Backend error toasts go through `translate_error` (`toast_error` / start-failed / window / VFS / export / password unlock)
 - Bandwidth panel shows Angular Upload / Download / Total rows when limited, highlights the active preset, and offers retry when `core/bwlimit` fails
 - Remote stream file-viewer video/audio uses `fileBrowser.fileViewer.videoLabel` / `audioLabel`
+
+- Live GUI: `--dashboard` Bandwidth Limit **Saved limit** `2M`, **Live limit** `2Mi`, **Upload:** / **Download:** / **Total:** `2.0 MiB/s`
