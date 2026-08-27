@@ -959,3 +959,5 @@ This client is the GTK 4 + libadwaita desktop UI. It talks to a local `rclone rc
 - Status caption is **Showing X of Y** while a listing is only partially painted
 - Operations panel is a collapsible expander (`fileBrowser.operations.title`) with an active-job badge; expanded state persists as `nautilus.ops_panel_expanded`
 - File-manager ops history is no longer capped at 12 finished jobs
+
+- Live GUI: `--browse testdrive:batch250` first paint is **Showing 200 of 250**; collapsing **Operations** persists `ops_panel_expanded: false`; scrolling the grid reaches `file-250.txt` and the status becomes **250 items**
