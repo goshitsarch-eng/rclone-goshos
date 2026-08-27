@@ -172,8 +172,27 @@ pub fn transfer_status(completed: bool, row: &TransferRow) -> TransferStatus {
     TransferStatus::Progress
 }
 
-pub fn transfer_meta_caption(row: &TransferRow) -> String {
-    let size = if row.size > 0 {
+pub fn transfer_path_display(path: &str) -> &str {
+    if path.is_empty() {
+        "—"
+    } else {
+        path
+    }
+}
+
+/// Angular `speedClass` thresholds (10 MiB/s fast, 1 MiB/s medium).
+pub fn transfer_speed_class(speed: f64) -> &'static str {
+    if speed > 10_485_760.0 {
+        "speed-fast"
+    } else if speed > 1_048_576.0 {
+        "speed-medium"
+    } else {
+        "speed-slow"
+    }
+}
+
+pub fn transfer_size_caption(row: &TransferRow) -> String {
+    if row.size > 0 {
         format!(
             "{} / {}",
             crate::rclone::format_bytes(row.bytes.max(0)),
@@ -183,19 +202,52 @@ pub fn transfer_meta_caption(row: &TransferRow) -> String {
         crate::rclone::format_bytes(row.bytes)
     } else {
         String::new()
-    };
+    }
+}
+
+pub fn transfer_speed_caption(row: &TransferRow) -> String {
+    if row.speed > 0.0 {
+        format!(
+            "{}/s",
+            crate::rclone::format_bytes(row.speed.round() as i64)
+        )
+    } else {
+        String::new()
+    }
+}
+
+pub fn transfer_eta_caption(row: &TransferRow) -> String {
+    if row.eta > 0.0 {
+        crate::jobs::format_seconds(row.eta)
+    } else {
+        String::new()
+    }
+}
+
+pub fn transfer_footer_right(row: &TransferRow, completed: bool) -> String {
     let mut parts = Vec::new();
+    let speed = transfer_speed_caption(row);
+    if !speed.is_empty() {
+        parts.push(speed);
+    }
+    if !completed {
+        let eta = transfer_eta_caption(row);
+        if !eta.is_empty() {
+            parts.push(eta);
+        }
+    }
+    parts.join(" · ")
+}
+
+pub fn transfer_meta_caption(row: &TransferRow) -> String {
+    let mut parts = Vec::new();
+    let size = transfer_size_caption(row);
     if !size.is_empty() {
         parts.push(size);
     }
-    if row.speed > 0.0 {
-        parts.push(format!(
-            "{}/s",
-            crate::rclone::format_bytes(row.speed.round() as i64)
-        ));
-    }
-    if row.eta > 0.0 {
-        parts.push(crate::jobs::format_seconds(row.eta));
+    let right = transfer_footer_right(row, false);
+    if !right.is_empty() {
+        parts.push(right);
     }
     parts.join(" · ")
 }
@@ -748,6 +800,23 @@ mod tests {
         assert_eq!(transfer_status(true, &done), TransferStatus::Completed);
         let caption = transfer_meta_caption(&done);
         assert!(caption.contains("KiB"));
+        assert_eq!(transfer_speed_class(512.0), "speed-slow");
+        assert_eq!(transfer_speed_class(2_000_000.0), "speed-medium");
+        assert_eq!(transfer_speed_class(12_000_000.0), "speed-fast");
+        assert_eq!(transfer_path_display(""), "—");
+        assert_eq!(transfer_path_display("testdrive:a"), "testdrive:a");
+        assert_eq!(
+            transfer_size_caption(&done),
+            format!(
+                "{} / {}",
+                crate::rclone::format_bytes(1024),
+                crate::rclone::format_bytes(1024)
+            )
+        );
+        assert!(transfer_speed_caption(&done).ends_with("/s"));
+        assert!(!transfer_eta_caption(&done).is_empty());
+        assert!(transfer_footer_right(&done, true).contains("/s"));
+        assert!(transfer_footer_right(&done, false).contains(" · "));
         let failed = parse_transfer_row(&json!({
             "name": "c.bin",
             "error": "denied",

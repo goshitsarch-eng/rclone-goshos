@@ -10208,38 +10208,11 @@ pub(crate) fn transfer_activity_row(
     job_src: &str,
     job_dst: &str,
 ) -> gtk::ListBoxRow {
-    let wrap = gtk::Box::new(gtk::Orientation::Vertical, 4);
-    wrap.set_margin_top(4);
-    wrap.set_margin_bottom(4);
-    let row = adw::ActionRow::new();
-    row.set_title(&parsed.name);
-    row.set_activatable(true);
-    {
-        let name = parsed.name.clone();
-        let toast = parent
-            .upcast_ref::<gtk::Widget>()
-            .downcast_ref::<adw::ToastOverlay>()
-            .cloned();
-        let copied = ctx.t_or("common.copied", "Copied to clipboard");
-        row.connect_activated(move |_| {
-            if let Some(display) = gtk::gdk::Display::default() {
-                display.clipboard().set_text(&name);
-            }
-            if let Some(toast) = &toast {
-                toast.add_toast(adw::Toast::new(&copied));
-            }
-        });
-    }
-    let src = if parsed.src.is_empty() {
-        "—".into()
-    } else {
-        parsed.src.clone()
-    };
-    let dst = if parsed.dst.is_empty() {
-        "—".into()
-    } else {
-        parsed.dst.clone()
-    };
+    let wrap = gtk::Box::new(gtk::Orientation::Vertical, 6);
+    wrap.set_margin_top(6);
+    wrap.set_margin_bottom(6);
+    wrap.set_margin_start(8);
+    wrap.set_margin_end(8);
     let status = match crate::transfers::transfer_status(completed, parsed) {
         crate::transfers::TransferStatus::Preparing => {
             ctx.t_or("shared.transferActivity.status.preparing", "Preparing")
@@ -10257,34 +10230,46 @@ pub(crate) fn transfer_activity_row(
         ),
         crate::transfers::TransferStatus::Progress => format!("{}%", parsed.percentage),
     };
-    let meta = crate::transfers::transfer_meta_caption(parsed);
-    let mut subtitle = if meta.is_empty() {
-        format!("{status} · {src} → {dst}")
-    } else {
-        format!("{status} · {meta} · {src} → {dst}")
-    };
-    if let Some(at) = parsed.completed_at {
-        let (key, count) = crate::checks::relative_time_parts(at, chrono::Utc::now());
-        let relative = if count == 0 {
-            ctx.t_or(key, "Just now")
-        } else {
-            ctx.tf(key, &[("count", &count.to_string())])
-        };
-        subtitle.push_str(" · ");
-        subtitle.push_str(&relative);
-        if let Some(started) = parsed.started_at {
-            let elapsed = crate::transfers::transfer_elapsed_caption(started, at);
-            if !elapsed.is_empty() {
-                subtitle.push_str(" · ");
-                subtitle.push_str(&elapsed);
+    let header = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+    let icon = gtk::Image::from_icon_name("text-x-generic-symbolic");
+    icon.set_valign(gtk::Align::Center);
+    header.append(&icon);
+    let name = gtk::Label::new(Some(&parsed.name));
+    name.set_xalign(0.0);
+    name.set_hexpand(true);
+    name.set_ellipsize(gtk::pango::EllipsizeMode::End);
+    name.set_selectable(true);
+    name.set_tooltip_text(Some(&parsed.name));
+    {
+        let text = parsed.name.clone();
+        let toast = parent
+            .upcast_ref::<gtk::Widget>()
+            .downcast_ref::<adw::ToastOverlay>()
+            .cloned();
+        let copied = ctx.t_or("common.copied", "Copied to clipboard");
+        let click = gtk::GestureClick::new();
+        click.connect_released(move |_, _, _, _| {
+            if let Some(display) = gtk::gdk::Display::default() {
+                display.clipboard().set_text(&text);
             }
-        }
+            if let Some(toast) = &toast {
+                toast.add_toast(adw::Toast::new(&copied));
+            }
+        });
+        name.add_controller(click);
     }
-    row.set_subtitle(&subtitle);
+    header.append(&name);
+    let badge = gtk::Label::new(Some(&status));
+    badge.add_css_class("caption");
+    badge.add_css_class("pill");
     if !parsed.error.is_empty() {
-        row.add_css_class("error");
-        row.set_tooltip_text(Some(&parsed.error));
+        badge.add_css_class("error");
+        badge.set_tooltip_text(Some(&parsed.error));
+        wrap.add_css_class("error");
+    } else if completed {
+        badge.add_css_class("success");
     }
+    header.append(&badge);
     let unique = crate::transfers::transfer_row_id(parsed);
     let on_deleted = Some(Rc::new({
         let ctx = ctx.clone();
@@ -10295,7 +10280,7 @@ pub(crate) fn transfer_activity_row(
             wrap.set_visible(false);
         }
     }) as Rc<dyn Fn(bool)>);
-    row.add_suffix(&transfer_row_actions(
+    header.append(&transfer_row_actions(
         ctx,
         parent,
         parsed,
@@ -10338,9 +10323,74 @@ pub(crate) fn transfer_activity_row(
         resolve.connect_clicked(move |_| {
             resolve_failed_transfer(&ctx, &parsed, parent_job_id, &job_src, &job_dst, &parent);
         });
-        row.add_suffix(&resolve);
+        header.append(&resolve);
     }
-    wrap.append(&row);
+    wrap.append(&header);
+
+    let paths = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+    let src_pill = gtk::Label::new(Some(crate::transfers::transfer_path_display(&parsed.src)));
+    src_pill.set_xalign(0.0);
+    src_pill.set_hexpand(true);
+    src_pill.set_ellipsize(gtk::pango::EllipsizeMode::Middle);
+    src_pill.set_selectable(true);
+    src_pill.add_css_class("monospace");
+    src_pill.add_css_class("dim-label");
+    src_pill.set_tooltip_text(Some(crate::transfers::transfer_path_display(&parsed.src)));
+    paths.append(&src_pill);
+    let arrow = gtk::Image::from_icon_name("go-next-symbolic");
+    arrow.add_css_class("dim-label");
+    paths.append(&arrow);
+    let dst_pill = gtk::Label::new(Some(crate::transfers::transfer_path_display(&parsed.dst)));
+    dst_pill.set_xalign(0.0);
+    dst_pill.set_hexpand(true);
+    dst_pill.set_ellipsize(gtk::pango::EllipsizeMode::Middle);
+    dst_pill.set_selectable(true);
+    dst_pill.add_css_class("monospace");
+    dst_pill.add_css_class("dim-label");
+    dst_pill.set_tooltip_text(Some(crate::transfers::transfer_path_display(&parsed.dst)));
+    paths.append(&dst_pill);
+    wrap.append(&paths);
+
+    let footer = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+    let size = crate::transfers::transfer_size_caption(parsed);
+    if !size.is_empty() {
+        let left = gtk::Label::new(Some(&size));
+        left.set_xalign(0.0);
+        left.set_hexpand(true);
+        left.add_css_class("caption");
+        left.add_css_class("dim-label");
+        footer.append(&left);
+    }
+    let mut right_parts = Vec::new();
+    let speed = crate::transfers::transfer_footer_right(parsed, completed);
+    if !speed.is_empty() {
+        right_parts.push(speed);
+    }
+    if let Some(at) = parsed.completed_at {
+        let (key, count) = crate::checks::relative_time_parts(at, chrono::Utc::now());
+        right_parts.push(if count == 0 {
+            ctx.t_or(key, "Just now")
+        } else {
+            ctx.tf(key, &[("count", &count.to_string())])
+        });
+        if let Some(started) = parsed.started_at {
+            let elapsed = crate::transfers::transfer_elapsed_caption(started, at);
+            if !elapsed.is_empty() {
+                right_parts.push(elapsed);
+            }
+        }
+    }
+    if !right_parts.is_empty() {
+        let right = gtk::Label::new(Some(&right_parts.join(" · ")));
+        right.set_xalign(1.0);
+        right.set_hexpand(size.is_empty());
+        right.add_css_class("caption");
+        right.add_css_class(crate::transfers::transfer_speed_class(parsed.speed));
+        footer.append(&right);
+    }
+    if footer.first_child().is_some() {
+        wrap.append(&footer);
+    }
     if !completed {
         let bar = gtk::ProgressBar::new();
         bar.set_fraction((parsed.percentage as f64 / 100.0).clamp(0.0, 1.0));
