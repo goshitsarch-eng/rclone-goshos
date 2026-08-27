@@ -12626,6 +12626,32 @@ pub(super) fn present_cli_import(
     dialog.set_title(&ctx.t_or("wizards.cliImport.title", "Import from CLI"));
     dialog.set_content_width(560);
     dialog.set_content_height(640);
+    let on_apply = Rc::new(on_apply);
+    let widget = cli_import_widget(
+        ctx,
+        Rc::new(RefCell::new(options)),
+        Rc::new({
+            let dialog = dialog.clone();
+            move |apply| {
+                on_apply(apply);
+                dialog.close();
+            }
+        }),
+    );
+    let scroll_all = gtk::ScrolledWindow::new();
+    scroll_all.set_vexpand(true);
+    scroll_all.set_child(Some(&widget));
+    dialog.set_child(Some(&scroll_all));
+    dialog.present(Some(parent));
+}
+
+/// Angular `app-cli-import` body: paste, preview, and apply. Hosted in a dialog
+/// or the remote-config slide-down overlay.
+pub(super) fn cli_import_widget(
+    ctx: AppCtx,
+    options: Rc<RefCell<CliImportOptions>>,
+    on_apply: Rc<dyn Fn(CliImportApply)>,
+) -> gtk::Widget {
     let box_ = gtk::Box::new(gtk::Orientation::Vertical, 10);
     box_.set_margin_top(12);
     box_.set_margin_bottom(12);
@@ -12642,7 +12668,7 @@ pub(super) fn present_cli_import(
     let view = gtk::TextView::new();
     view.set_wrap_mode(gtk::WrapMode::WordChar);
     view.set_monospace(true);
-    view.buffer().set_text(&options.initial_cli);
+    view.buffer().set_text(&options.borrow().initial_cli);
     let scroll = gtk::ScrolledWindow::new();
     scroll.set_min_content_height(110);
     scroll.set_child(Some(&view));
@@ -12663,7 +12689,7 @@ pub(super) fn present_cli_import(
     box_.append(&actions);
     let results = gtk::Box::new(gtk::Orientation::Vertical, 10);
     box_.append(&results);
-    let apply_btn = gtk::Button::with_label(&if options.is_quick_run {
+    let apply_btn = gtk::Button::with_label(&if options.borrow().is_quick_run {
         ctx.t_or("wizards.cliImport.applyToTask", "Apply to Task")
     } else {
         ctx.t_or("wizards.cliImport.applyConfig", "Apply to Profile")
@@ -12674,9 +12700,9 @@ pub(super) fn present_cli_import(
     let selected = Rc::new(RefCell::new(HashSet::<String>::new()));
     let import_source = Rc::new(Cell::new(true));
     let import_dest = Rc::new(Cell::new(true));
-    let profile_mode = Rc::new(Cell::new(if options.is_quick_run {
+    let profile_mode = Rc::new(Cell::new(if options.borrow().is_quick_run {
         ProfileMode::Patch
-    } else if options.can_create_new {
+    } else if options.borrow().can_create_new {
         ProfileMode::New
     } else {
         ProfileMode::Patch
@@ -12731,6 +12757,7 @@ pub(super) fn present_cli_import(
                 return;
             }
             let blocks = operation_flag_blocks(&ctx);
+            let options = options.borrow().clone();
             let runtime = if options.remote_type.is_empty() {
                 Vec::new()
             } else {
@@ -12788,13 +12815,13 @@ pub(super) fn present_cli_import(
         let profile_mode = profile_mode.clone();
         let profile_name = profile_name.clone();
         let options = options.clone();
-        let dialog = dialog.clone();
         apply_btn.connect_clicked(move |_| {
             let Some(result) = last_result.borrow().clone() else {
                 return;
             };
             let mode = profile_mode.get();
             let name = profile_name.borrow().trim().to_string();
+            let options = options.borrow().clone();
             if !options.is_quick_run {
                 match mode {
                     ProfileMode::New if options.can_create_new && name.is_empty() => return,
@@ -12815,14 +12842,9 @@ pub(super) fn present_cli_import(
                 return;
             }
             on_apply(apply);
-            dialog.close();
         });
     }
-    let scroll_all = gtk::ScrolledWindow::new();
-    scroll_all.set_vexpand(true);
-    scroll_all.set_child(Some(&box_));
-    dialog.set_child(Some(&scroll_all));
-    dialog.present(Some(parent));
+    box_.upcast()
 }
 
 fn fill_cli_preview(
@@ -17050,6 +17072,20 @@ impl ObscureTool {
         group.add(&self.result);
         group.add(&self.target);
         group.add(&self.actions);
+    }
+
+    /// Full-width slide-in panel (Angular `app-obscure-tool`), not a sidebar strip.
+    pub fn panel(&self, ctx: &AppCtx) -> adw::PreferencesPage {
+        let page = adw::PreferencesPage::new();
+        let group = adw::PreferencesGroup::new();
+        group.set_title(&ctx.t_or("wizards.obscure.title", "Obscure Password"));
+        group.set_description(Some(&ctx.t_or(
+            "wizards.obscure.description",
+            "Obscures a clear string using rclone's standard obscuring algorithm so it can be safely saved to configuration files or parameters.",
+        )));
+        self.add_to_group(&group);
+        page.add(&group);
+        page
     }
 
     pub fn refresh_targets(&self) {

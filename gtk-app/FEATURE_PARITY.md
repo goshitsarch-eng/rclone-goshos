@@ -937,3 +937,7 @@ This client is the GTK 4 + libadwaita desktop UI. It talks to a local `rclone rc
 - Remote-config edit sidebar matches Angular: Remote shows General / Auth / Advanced section jump; operations show profile rows plus shared VFS/filter/backend/runtime (VFS only from mount/serve/filter/backend)
 - `navigateToShared` / `returnFromShared` keep a Back stack and hide shared rows while stacked
 - Live GUI: `--remote-config testdrive --step copy` lists **Copy Profiles** (`gui-copy-multi` / `gui-copy-nightly` / `gui-copy-test`) and **Shared** Filter / Backend / Runtime Remote (no VFS); Filter opens **Filter Profiles** with Back **Copy** and hides Shared; Remote page lists **Sections** General / Authentication / Advanced
+
+- Remote-config CLI Import and Obscure are exclusive slide-down content panels (Angular `app-cli-import` / `app-obscure-tool`), not a cramped sidebar strip or only a modal
+- Sidebar footer toggles Import from CLI / Obscure Password; opening one closes the other; Escape hides the overlay before page search
+- CLI apply still creates/overrides/patches the current operation profile; Obscure applies to password-typed fields on the open step, then remote secrets

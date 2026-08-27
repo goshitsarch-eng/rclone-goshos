@@ -256,6 +256,49 @@ pub fn edit_profile_names(meta: &crate::store::RemoteMeta, step: EditorStep) -> 
     names
 }
 
+/// Angular remote-config content overlay: CLI import and obscure are exclusive.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SlidePanel {
+    Hidden,
+    CliImport,
+    Obscure,
+}
+
+/// Toggle one footer tool. Opening CLI closes Obscure and vice versa.
+pub fn toggle_slide_panel(current: SlidePanel, clicked: SlidePanel) -> SlidePanel {
+    if clicked == SlidePanel::Hidden {
+        return SlidePanel::Hidden;
+    }
+    if current == clicked {
+        SlidePanel::Hidden
+    } else {
+        clicked
+    }
+}
+
+/// Password-like flag keys for the obscure apply-to-field list.
+pub fn is_sensitive_flag(name: &str, type_name: &str) -> bool {
+    if type_name.eq_ignore_ascii_case("Password") {
+        return true;
+    }
+    let key = name.replace('-', "_").to_ascii_lowercase();
+    matches!(
+        key.as_str(),
+        "password"
+            | "pass"
+            | "passwd"
+            | "secret"
+            | "token"
+            | "access_key"
+            | "secret_access_key"
+            | "client_secret"
+            | "auth_token"
+    ) || key.ends_with("_pass")
+        || key.ends_with("_password")
+        || key.ends_with("_secret")
+        || key.ends_with("_token")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -371,5 +414,38 @@ mod tests {
         assert!(edit_profile_names(&meta, EditorStep::Remote).is_empty());
         assert_eq!(REMOTE_EDIT_SECTIONS[0].id, "section-general");
         assert_eq!(REMOTE_EDIT_SECTIONS[2].id, "section-advanced");
+    }
+
+    #[test]
+    fn slide_panels_are_exclusive_and_toggle_off() {
+        assert_eq!(
+            toggle_slide_panel(SlidePanel::Hidden, SlidePanel::CliImport),
+            SlidePanel::CliImport
+        );
+        assert_eq!(
+            toggle_slide_panel(SlidePanel::CliImport, SlidePanel::CliImport),
+            SlidePanel::Hidden
+        );
+        assert_eq!(
+            toggle_slide_panel(SlidePanel::CliImport, SlidePanel::Obscure),
+            SlidePanel::Obscure
+        );
+        assert_eq!(
+            toggle_slide_panel(SlidePanel::Obscure, SlidePanel::CliImport),
+            SlidePanel::CliImport
+        );
+        assert_eq!(
+            toggle_slide_panel(SlidePanel::Obscure, SlidePanel::Hidden),
+            SlidePanel::Hidden
+        );
+    }
+
+    #[test]
+    fn sensitive_flag_detects_password_types_and_names() {
+        assert!(is_sensitive_flag("pass", "Password"));
+        assert!(is_sensitive_flag("client_secret", "string"));
+        assert!(is_sensitive_flag("ftp-pass", "string"));
+        assert!(!is_sensitive_flag("srcFs", "string"));
+        assert!(!is_sensitive_flag("key", "string"));
     }
 }

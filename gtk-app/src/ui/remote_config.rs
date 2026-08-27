@@ -5,9 +5,11 @@ use super::dialogs;
 use super::flag_widget::{FlagRow, FlagWidget, ServeFlagRow};
 use super::interactive::InteractivePanel;
 use super::AppCtx;
+use crate::cli_import::CliImportApply;
 use crate::config_steps::{
-    edit_profile_names, editor_steps, navigate_to_shared, parse_open_step, return_from_shared,
-    shared_sidebar_types, show_shared_sidebar, EditorStep, REMOTE_EDIT_SECTIONS,
+    edit_profile_names, editor_steps, is_sensitive_flag, navigate_to_shared, parse_open_step,
+    return_from_shared, shared_sidebar_types, show_shared_sidebar, toggle_slide_panel, EditorStep,
+    SlidePanel, REMOTE_EDIT_SECTIONS,
 };
 use crate::flags::{
     flag_category_for_op, options_for_category, parse_flag_value, static_flags_for, FlagBlock,
@@ -75,30 +77,37 @@ pub fn present_with(
     ));
     side_col.append(&search);
     side_col.append(&side_scroll);
+    let slide = Rc::new(Cell::new(SlidePanel::Hidden));
     let obscure_fields = Rc::new(RefCell::new(sensitive_fields_for(&ctx, &remote)));
-    {
+    let cli_apply: Rc<RefCell<Box<dyn Fn(CliImportApply)>>> =
+        Rc::new(RefCell::new(Box::new(|_| {})));
+    let obscure_apply: Rc<RefCell<Box<dyn Fn(&str, &str)>>> = {
         let ctx = ctx.clone();
         let remote = remote.clone();
-        let fields = obscure_fields.clone();
-        let apply_ctx = ctx.clone();
-        dialogs::obscure_tool(
-            &ctx,
-            fields,
-            Rc::new(move |key, value| {
-                if let Some(client) = apply_ctx.client() {
-                    let mut params = serde_json::Map::new();
-                    params.insert(key.to_string(), json!(value));
-                    if client
-                        .update_remote(&remote, Value::Object(params), None)
-                        .is_ok()
-                    {
-                        apply_ctx.refresh_runtime();
-                    }
-                }
-            }),
-        )
-        .add_to_box(&side_col);
-    }
+        Rc::new(RefCell::new(Box::new(move |key: &str, value: &str| {
+            apply_obscured_remote(&ctx, &remote, key, value);
+        }) as Box<dyn Fn(&str, &str)>))
+    };
+    let cli_btn = gtk::ToggleButton::new();
+    cli_btn.set_label(&ctx.t_or("wizards.cliImport.title", "Import from CLI"));
+    cli_btn.set_widget_name("slide-cli-import");
+    cli_btn.set_tooltip_text(Some(&ctx.t_or(
+        "wizards.cliImport.description",
+        "Paste an rclone command, preview mapped flags, then apply them.",
+    )));
+    let obscure_btn = gtk::ToggleButton::new();
+    obscure_btn.set_label(&ctx.t_or("wizards.obscure.title", "Obscure Password"));
+    obscure_btn.set_widget_name("slide-obscure");
+    obscure_btn.set_tooltip_text(Some(&ctx.t_or(
+        "wizards.obscure.description",
+        "Obscure a password with rclone and apply it to a field.",
+    )));
+    let footer = gtk::Box::new(gtk::Orientation::Vertical, 4);
+    footer.set_margin_start(8);
+    footer.set_margin_end(8);
+    footer.append(&cli_btn);
+    footer.append(&obscure_btn);
+    side_col.append(&footer);
     split.set_sidebar(Some(&side_col));
 
     let content = gtk::Box::new(gtk::Orientation::Vertical, 8);
@@ -145,6 +154,67 @@ pub fn present_with(
     let body_scroll = gtk::ScrolledWindow::new();
     body_scroll.set_vexpand(true);
     body_scroll.set_child(Some(&body));
+    let overlay_stack = gtk::Stack::new();
+    overlay_stack.set_widget_name("slide-overlay");
+    overlay_stack.set_transition_type(gtk::StackTransitionType::Crossfade);
+    let cli_options = Rc::new(RefCell::new(dialogs::CliImportOptions {
+        preferred: None,
+        remote_type: remote_type_of(&ctx, &remote),
+        is_quick_run: false,
+        can_create_new: true,
+        can_patch: true,
+        existing_profiles: Vec::new(),
+        initial_cli: String::new(),
+    }));
+    let hide_slide: Rc<RefCell<Box<dyn Fn()>>> = Rc::new(RefCell::new(Box::new(|| {})));
+    let open_cli: Rc<RefCell<Box<dyn Fn()>>> = Rc::new(RefCell::new(Box::new(|| {})));
+    let remote_obscure = {
+        let ctx = ctx.clone();
+        let remote = remote.clone();
+        Rc::new(move |key: &str, value: &str| {
+            apply_obscured_remote(&ctx, &remote, key, value);
+        }) as Rc<dyn Fn(&str, &str)>
+    };
+    let overlay_hooks = OverlayHooks {
+        cli_apply: cli_apply.clone(),
+        obscure_fields: obscure_fields.clone(),
+        obscure_apply: obscure_apply.clone(),
+        cli_options: cli_options.clone(),
+        open_cli: open_cli.clone(),
+        remote_obscure: remote_obscure.clone(),
+    };
+    let cli_panel = dialogs::cli_import_widget(
+        ctx.clone(),
+        cli_options.clone(),
+        Rc::new({
+            let cli_apply = cli_apply.clone();
+            let hide_slide = hide_slide.clone();
+            move |apply| {
+                cli_apply.borrow()(apply);
+                hide_slide.borrow()();
+            }
+        }),
+    );
+    let cli_scroll = gtk::ScrolledWindow::new();
+    cli_scroll.set_min_content_height(220);
+    cli_scroll.set_max_content_height(380);
+    cli_scroll.set_policy(gtk::PolicyType::Never, gtk::PolicyType::Automatic);
+    cli_scroll.set_child(Some(&cli_panel));
+    overlay_stack.add_named(&cli_scroll, Some("cli"));
+    let obscure_tool = dialogs::obscure_tool(
+        &ctx,
+        obscure_fields.clone(),
+        Rc::new({
+            let obscure_apply = obscure_apply.clone();
+            move |key, value| obscure_apply.borrow()(key, value)
+        }),
+    );
+    let obscure_page = obscure_tool.panel(&ctx);
+    overlay_stack.add_named(&obscure_page, Some("obscure"));
+    let overlay_reveal = gtk::Revealer::new();
+    overlay_reveal.set_transition_type(gtk::RevealerTransitionType::SlideDown);
+    overlay_reveal.set_reveal_child(false);
+    overlay_reveal.set_child(Some(&overlay_stack));
     let save_bar = gtk::Box::new(gtk::Orientation::Horizontal, 8);
     save_bar.set_margin_start(12);
     save_bar.set_margin_end(12);
@@ -156,6 +226,7 @@ pub fn present_with(
     save_bar.append(&close);
     content.append(&title_row);
     content.append(&page_search_bar);
+    content.append(&overlay_reveal);
     content.append(&body_scroll);
     content.append(&save_bar);
     split.set_content(Some(&content));
@@ -193,6 +264,7 @@ pub fn present_with(
         let on_done = on_done.clone();
         let preferred_profile = preferred_profile.clone();
         let auto_add = auto_add.clone();
+        let overlay_hooks = overlay_hooks.clone();
         Rc::new(move || {
             persist_step.borrow()();
             while let Some(child) = body.first_child() {
@@ -200,6 +272,12 @@ pub fn present_with(
             }
             let step = *current.borrow();
             title.set_text(&step_label(&ctx, step));
+            refresh_cli_options(&ctx, &remote, step, &overlay_hooks.cli_options);
+            *overlay_hooks.obscure_fields.borrow_mut() = sensitive_fields_for(&ctx, &remote);
+            let remote_obscure = overlay_hooks.remote_obscure.clone();
+            *overlay_hooks.obscure_apply.borrow_mut() =
+                Box::new(move |key, value| remote_obscure(key, value));
+            *overlay_hooks.cli_apply.borrow_mut() = Box::new(|_| {});
             match step {
                 EditorStep::Remote => {
                     let (page, saver) = remote_page(&parent, ctx.clone(), &remote, on_done.clone());
@@ -217,6 +295,7 @@ pub fn present_with(
                         flag_blocks.as_ref(),
                         profile.as_deref(),
                         add_now,
+                        Some(&overlay_hooks),
                     );
                     body.append(&page);
                     *persist_step.borrow_mut() = Box::new(saver);
@@ -230,6 +309,7 @@ pub fn present_with(
                         kind,
                         flag_blocks.as_ref(),
                         profile.as_deref(),
+                        Some(&overlay_hooks),
                     );
                     body.append(&page);
                     *persist_step.borrow_mut() = Box::new(saver);
@@ -248,9 +328,11 @@ pub fn present_with(
         let current = current.clone();
         let edit_stack = edit_stack.clone();
         let preferred_profile = preferred_profile.clone();
+        let obscure_tool = obscure_tool.clone();
         Rc::new(move || {
             inner();
             apply_page_search(&body, &page_query.borrow());
+            obscure_tool.refresh_targets();
             fill_edit_sidebar(
                 &ctx,
                 &remote,
@@ -290,6 +372,8 @@ pub fn present_with(
     {
         let page_search_btn = page_search_btn.clone();
         let page_search = page_search.clone();
+        let slide = slide.clone();
+        let hide_slide = hide_slide.clone();
         let keys = gtk::EventControllerKey::new();
         keys.connect_key_pressed(move |_, keyval, _, modifier| {
             let ctrl = modifier.contains(gtk::gdk::ModifierType::CONTROL_MASK)
@@ -299,6 +383,10 @@ pub fn present_with(
                 page_search.grab_focus();
                 return glib::Propagation::Stop;
             }
+            if keyval == gtk::gdk::Key::Escape && slide.get() != SlidePanel::Hidden {
+                hide_slide.borrow()();
+                return glib::Propagation::Stop;
+            }
             if keyval == gtk::gdk::Key::Escape && page_search_btn.is_active() {
                 page_search_btn.set_active(false);
                 return glib::Propagation::Stop;
@@ -306,6 +394,73 @@ pub fn present_with(
             glib::Propagation::Proceed
         });
         split.add_controller(keys);
+    }
+    let syncing_slide = Rc::new(Cell::new(false));
+    let apply_slide = {
+        let slide = slide.clone();
+        let overlay_reveal = overlay_reveal.clone();
+        let overlay_stack = overlay_stack.clone();
+        let cli_btn = cli_btn.clone();
+        let obscure_btn = obscure_btn.clone();
+        let obscure_tool = obscure_tool.clone();
+        let syncing_slide = syncing_slide.clone();
+        Rc::new(move |next: SlidePanel| {
+            syncing_slide.set(true);
+            show_slide_panel(
+                next,
+                &slide,
+                &overlay_reveal,
+                &overlay_stack,
+                &cli_btn,
+                &obscure_btn,
+                &obscure_tool,
+            );
+            syncing_slide.set(false);
+        }) as Rc<dyn Fn(SlidePanel)>
+    };
+    *hide_slide.borrow_mut() = Box::new({
+        let apply_slide = apply_slide.clone();
+        move || apply_slide(SlidePanel::Hidden)
+    });
+    *open_cli.borrow_mut() = Box::new({
+        let apply_slide = apply_slide.clone();
+        move || apply_slide(SlidePanel::CliImport)
+    });
+    {
+        let slide = slide.clone();
+        let apply_slide = apply_slide.clone();
+        let syncing_slide = syncing_slide.clone();
+        cli_btn.connect_toggled(move |_| {
+            if syncing_slide.get() {
+                return;
+            }
+            apply_slide(toggle_slide_panel(slide.get(), SlidePanel::CliImport));
+        });
+    }
+    {
+        let slide = slide.clone();
+        let apply_slide = apply_slide.clone();
+        let syncing_slide = syncing_slide.clone();
+        obscure_btn.connect_toggled(move |_| {
+            if syncing_slide.get() {
+                return;
+            }
+            apply_slide(toggle_slide_panel(slide.get(), SlidePanel::Obscure));
+        });
+    }
+    {
+        let apply_slide = apply_slide.clone();
+        let slide = slide.clone();
+        let keys = gtk::EventControllerKey::new();
+        keys.set_propagation_phase(gtk::PropagationPhase::Capture);
+        keys.connect_key_pressed(move |_, keyval, _, _| {
+            if keyval == gtk::gdk::Key::Escape && slide.get() != SlidePanel::Hidden {
+                apply_slide(SlidePanel::Hidden);
+                return glib::Propagation::Stop;
+            }
+            glib::Propagation::Proceed
+        });
+        overlay_reveal.add_controller(keys);
     }
     side_col.append(&preset_bar(
         parent,
@@ -350,6 +505,173 @@ pub fn present_with(
     }
 
     dialogs::present_window_or_dialog(parent, &ctx, &dialog);
+}
+
+#[derive(Clone)]
+struct OverlayHooks {
+    cli_apply: Rc<RefCell<Box<dyn Fn(CliImportApply)>>>,
+    obscure_fields: Rc<RefCell<Vec<(String, String)>>>,
+    obscure_apply: Rc<RefCell<Box<dyn Fn(&str, &str)>>>,
+    cli_options: Rc<RefCell<dialogs::CliImportOptions>>,
+    open_cli: Rc<RefCell<Box<dyn Fn()>>>,
+    remote_obscure: Rc<dyn Fn(&str, &str)>,
+}
+
+fn show_slide_panel(
+    next: SlidePanel,
+    slide: &Rc<Cell<SlidePanel>>,
+    reveal: &gtk::Revealer,
+    stack: &gtk::Stack,
+    cli_btn: &gtk::ToggleButton,
+    obscure_btn: &gtk::ToggleButton,
+    obscure_tool: &dialogs::ObscureTool,
+) {
+    slide.set(next);
+    reveal.set_reveal_child(next != SlidePanel::Hidden);
+    match next {
+        SlidePanel::CliImport => {
+            stack.set_visible_child_name("cli");
+        }
+        SlidePanel::Obscure => {
+            stack.set_visible_child_name("obscure");
+            obscure_tool.refresh_targets();
+        }
+        SlidePanel::Hidden => {}
+    }
+    cli_btn.set_active(next == SlidePanel::CliImport);
+    obscure_btn.set_active(next == SlidePanel::Obscure);
+}
+
+fn apply_obscured_remote(ctx: &AppCtx, remote: &str, key: &str, value: &str) {
+    if let Some(client) = ctx.client() {
+        let mut params = serde_json::Map::new();
+        params.insert(key.to_string(), json!(value));
+        if client
+            .update_remote(remote, Value::Object(params), None)
+            .is_ok()
+        {
+            ctx.refresh_runtime();
+        }
+    }
+}
+
+fn refresh_cli_options(
+    ctx: &AppCtx,
+    remote: &str,
+    step: EditorStep,
+    options: &Rc<RefCell<dialogs::CliImportOptions>>,
+) {
+    let names = ctx
+        .store
+        .borrow()
+        .remotes
+        .get(remote)
+        .map(|meta| edit_profile_names(meta, step))
+        .unwrap_or_default();
+    let mut opts = options.borrow_mut();
+    opts.preferred = match step {
+        EditorStep::Op(op) => Some(op.as_str().to_string()),
+        EditorStep::Helper(kind) => Some(kind.to_string()),
+        _ => None,
+    };
+    opts.remote_type = remote_type_of(ctx, remote);
+    opts.existing_profiles = names;
+    opts.can_create_new = !matches!(step, EditorStep::Remote | EditorStep::QuickOps);
+    opts.can_patch = true;
+}
+
+fn apply_cli_to_operation(
+    ctx: &AppCtx,
+    remote: &str,
+    op: OperationType,
+    apply: &CliImportApply,
+    names: &Rc<RefCell<Vec<String>>>,
+    combo: &adw::ComboRow,
+    selected: &Rc<RefCell<String>>,
+    flags_group: &adw::PreferencesGroup,
+    flag_rows: &Rc<RefCell<Vec<FlagRow>>>,
+    src: &adw::EntryRow,
+    dst: &adw::EntryRow,
+    serve: &adw::ComboRow,
+    serve_types: &[String],
+) {
+    match apply.profile_mode {
+        crate::cli_import::ProfileMode::New if !apply.profile_name.is_empty() => {
+            mutate_profiles(ctx, remote, Some(op), None, |meta| {
+                meta.upsert_profile(
+                    op,
+                    ProfileConfig {
+                        name: apply.profile_name.clone(),
+                        ..Default::default()
+                    },
+                );
+            });
+            if !names.borrow().iter().any(|n| n == &apply.profile_name) {
+                names.borrow_mut().push(apply.profile_name.clone());
+            }
+            refresh_combo(combo, &names.borrow());
+            if let Some(idx) = names.borrow().iter().position(|n| n == &apply.profile_name) {
+                combo.set_selected(idx as u32);
+            }
+            *selected.borrow_mut() = apply.profile_name.clone();
+        }
+        crate::cli_import::ProfileMode::Override if !apply.profile_name.is_empty() => {
+            if let Some(idx) = names.borrow().iter().position(|n| n == &apply.profile_name) {
+                combo.set_selected(idx as u32);
+            }
+            *selected.borrow_mut() = apply.profile_name.clone();
+        }
+        _ => {}
+    }
+    let apply = apply.clone();
+    let flag_rows = flag_rows.clone();
+    let flags_group = flags_group.clone();
+    let src = src.clone();
+    let dst = dst.clone();
+    let serve = serve.clone();
+    let serve_types = serve_types.to_vec();
+    glib::idle_add_local_once(move || {
+        dialogs::apply_cli_to_form(
+            &apply,
+            Some(&flags_group),
+            &flag_rows,
+            Some(&src),
+            Some(&dst),
+            Some(&serve),
+            serve_types.as_ref(),
+            None,
+        );
+    });
+}
+
+fn sensitive_from_flags(rows: &[(String, FlagWidget, String)]) -> Vec<(String, String)> {
+    rows.iter()
+        .filter(|(name, _, ty)| is_sensitive_flag(name, ty))
+        .map(|(name, row, _)| (name.clone(), row.title()))
+        .collect()
+}
+
+fn bind_flag_obscure(hooks: &OverlayHooks, flag_rows: &Rc<RefCell<Vec<FlagRow>>>) {
+    let fields = sensitive_from_flags(&flag_rows.borrow());
+    if fields.is_empty() {
+        *hooks.obscure_fields.borrow_mut() = Vec::new();
+    } else {
+        *hooks.obscure_fields.borrow_mut() = fields;
+    }
+    let rows = flag_rows.clone();
+    let fallback = hooks.remote_obscure.clone();
+    *hooks.obscure_apply.borrow_mut() = Box::new(move |key, value| {
+        let mut found = false;
+        for (name, row, _) in rows.borrow().iter() {
+            if name == key || name.replace('-', "_") == key.replace('-', "_") {
+                row.set_text(value);
+                found = true;
+            }
+        }
+        if !found {
+            fallback(key, value);
+        }
+    });
 }
 
 fn step_label(ctx: &AppCtx, step: EditorStep) -> String {
@@ -890,6 +1212,7 @@ fn operation_page(
     blocks: &[FlagBlock],
     preferred_profile: Option<&str>,
     auto_add: bool,
+    hooks: Option<&OverlayHooks>,
 ) -> (gtk::Box, impl Fn() + 'static) {
     let names = {
         let store = ctx.store.borrow();
@@ -1523,102 +1846,41 @@ fn operation_page(
     ));
     let preview = gtk::Button::with_label(&ctx.t_or("wizards.cliImport.preview", "Preview"));
     {
+        let open_cli = hooks.map(|h| h.open_cli.clone());
+        preview.connect_clicked(move |_| {
+            if let Some(open) = &open_cli {
+                open.borrow()();
+            }
+        });
+    }
+    if let Some(hooks) = hooks {
+        bind_flag_obscure(hooks, &flag_rows);
         let ctx = ctx.clone();
-        let parent = parent.clone();
+        let remote = remote.to_string();
+        let names = switcher.names.clone();
+        let combo = switcher.combo.clone();
+        let selected = selected.clone();
         let flag_rows = flag_rows.clone();
         let flags_group = flags_group.clone();
         let src = src.clone();
         let dst = dst.clone();
         let serve = serve.clone();
         let serve_types = serve_types.clone();
-        let remote = remote.to_string();
-        let names = switcher.names.clone();
-        let combo = switcher.combo.clone();
-        let selected = selected.clone();
-        preview.connect_clicked(move |_| {
-            let flags_group = flags_group.clone();
-            let remote_type = remote_type_of(&ctx, &remote);
-            dialogs::present_cli_import(
-                &parent,
-                ctx.clone(),
-                dialogs::CliImportOptions {
-                    preferred: Some(op.as_str().to_string()),
-                    remote_type,
-                    is_quick_run: false,
-                    can_create_new: true,
-                    can_patch: true,
-                    existing_profiles: names.borrow().clone(),
-                    initial_cli: String::new(),
-                },
-                {
-                    let ctx = ctx.clone();
-                    let remote = remote.clone();
-                    let names = names.clone();
-                    let combo = combo.clone();
-                    let selected = selected.clone();
-                    let flag_rows = flag_rows.clone();
-                    let src = src.clone();
-                    let dst = dst.clone();
-                    let serve = serve.clone();
-                    let serve_types = serve_types.clone();
-                    move |apply| {
-                        match apply.profile_mode {
-                            crate::cli_import::ProfileMode::New
-                                if !apply.profile_name.is_empty() =>
-                            {
-                                mutate_profiles(&ctx, &remote, Some(op), None, |meta| {
-                                    meta.upsert_profile(
-                                        op,
-                                        ProfileConfig {
-                                            name: apply.profile_name.clone(),
-                                            ..Default::default()
-                                        },
-                                    );
-                                });
-                                if !names.borrow().iter().any(|n| n == &apply.profile_name) {
-                                    names.borrow_mut().push(apply.profile_name.clone());
-                                }
-                                refresh_combo(&combo, &names.borrow());
-                                if let Some(idx) =
-                                    names.borrow().iter().position(|n| n == &apply.profile_name)
-                                {
-                                    combo.set_selected(idx as u32);
-                                }
-                                *selected.borrow_mut() = apply.profile_name.clone();
-                            }
-                            crate::cli_import::ProfileMode::Override
-                                if !apply.profile_name.is_empty() =>
-                            {
-                                if let Some(idx) =
-                                    names.borrow().iter().position(|n| n == &apply.profile_name)
-                                {
-                                    combo.set_selected(idx as u32);
-                                }
-                                *selected.borrow_mut() = apply.profile_name.clone();
-                            }
-                            _ => {}
-                        }
-                        let apply = apply.clone();
-                        let flag_rows = flag_rows.clone();
-                        let flags_group = flags_group.clone();
-                        let src = src.clone();
-                        let dst = dst.clone();
-                        let serve = serve.clone();
-                        let serve_types = serve_types.clone();
-                        glib::idle_add_local_once(move || {
-                            dialogs::apply_cli_to_form(
-                                &apply,
-                                Some(&flags_group),
-                                &flag_rows,
-                                Some(&src),
-                                Some(&dst),
-                                Some(&serve),
-                                serve_types.as_ref(),
-                                None,
-                            );
-                        });
-                    }
-                },
+        *hooks.cli_apply.borrow_mut() = Box::new(move |apply| {
+            apply_cli_to_operation(
+                &ctx,
+                &remote,
+                op,
+                &apply,
+                &names,
+                &combo,
+                &selected,
+                &flags_group,
+                &flag_rows,
+                &src,
+                &dst,
+                &serve,
+                &serve_types,
             );
         });
     }
@@ -1883,6 +2145,7 @@ fn helper_page(
     kind: &'static str,
     blocks: &[FlagBlock],
     preferred_profile: Option<&str>,
+    hooks: Option<&OverlayHooks>,
 ) -> (gtk::Box, impl Fn() + 'static) {
     let names = {
         let mut names = ctx
@@ -2113,6 +2376,23 @@ fn helper_page(
             ctx.persist();
         }
     };
+    if let Some(hooks) = hooks {
+        bind_flag_obscure(hooks, &flag_rows);
+        let flag_rows = flag_rows.clone();
+        let flags_group = flags_group.clone();
+        *hooks.cli_apply.borrow_mut() = Box::new(move |apply| {
+            dialogs::apply_cli_to_form(
+                &apply,
+                Some(&flags_group),
+                &flag_rows,
+                None,
+                None,
+                None,
+                &[],
+                None,
+            );
+        });
+    }
     (box_, saver)
 }
 
