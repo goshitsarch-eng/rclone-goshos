@@ -271,6 +271,15 @@ pub fn check_status_key(status: &str) -> &'static str {
     }
 }
 
+/// Angular `onResolve` success/error toasts after starting a check copy.
+pub fn resolve_sync_toast_key(ok: bool) -> &'static str {
+    if ok {
+        "shared.transferActivity.actions.successSync"
+    } else {
+        "shared.transferActivity.actions.failSync"
+    }
+}
+
 pub fn visible_check_items(
     items: impl IntoIterator<Item = CheckResult>,
     hidden: &HashSet<String>,
@@ -441,6 +450,14 @@ mod tests {
         assert_eq!(
             format_resolve_progress(512, 1024, 0.0, 12),
             "512 B / 1.0 KiB · ETA 12s"
+        );
+        assert_eq!(
+            resolve_sync_toast_key(true),
+            "shared.transferActivity.actions.successSync"
+        );
+        assert_eq!(
+            resolve_sync_toast_key(false),
+            "shared.transferActivity.actions.failSync"
         );
     }
 }

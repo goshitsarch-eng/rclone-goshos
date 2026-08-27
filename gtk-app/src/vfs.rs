@@ -267,6 +267,20 @@ pub fn vfs_opt_group_i18n_key(group: &str) -> String {
     format!("shared.vfsControl.advancedConfig.categories.{group}")
 }
 
+/// Angular indexed-VFS banner title when controls are hidden (`:[0]` instances).
+pub fn vfs_indexed_banner_title_key() -> &'static str {
+    "shared.vfsControl.controlsUnavailable"
+}
+
+/// Queue row subtitle using Angular column headers: size · status · tries.
+pub fn vfs_queue_subtitle(size_label: &str, status: &str, tries: i64, tries_label: &str) -> String {
+    if tries > 0 {
+        format!("{size_label} · {status} · {tries} {tries_label}")
+    } else {
+        format!("{size_label} · {status}")
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -355,6 +369,18 @@ mod tests {
             ..delayed
         };
         assert_eq!(queue_item_status(&waiting), QueueStatus::Waiting);
+        assert_eq!(
+            vfs_indexed_banner_title_key(),
+            "shared.vfsControl.controlsUnavailable"
+        );
+        assert_eq!(
+            vfs_queue_subtitle("1.0 KiB", "Delayed", 0, "try"),
+            "1.0 KiB · Delayed"
+        );
+        assert_eq!(
+            vfs_queue_subtitle("1.0 KiB", "Delayed", 2, "try"),
+            "1.0 KiB · Delayed · 2 try"
+        );
     }
 
     #[test]

@@ -646,6 +646,26 @@ pub fn multi_rename_preview_subtitle(new_name: &str, has_error: bool, error_labe
     }
 }
 
+/// Angular Properties group titles for folder size and disk usage.
+pub fn properties_section_title_key(section: &str) -> &'static str {
+    match section {
+        "content" => "fileBrowser.properties.contentStats",
+        "storage" => "fileBrowser.properties.storage",
+        _ => "fileBrowser.properties.title",
+    }
+}
+
+/// Hash row status: loading types, failed checksum, or in-progress calculate.
+pub fn properties_hash_status_key(loading: bool, failed: bool) -> &'static str {
+    if loading {
+        "fileBrowser.properties.loadingHashes"
+    } else if failed {
+        "fileBrowser.properties.failLoadHashes"
+    } else {
+        "fileBrowser.properties.calculating"
+    }
+}
+
 /// Compact Angular ops row subtitle: `#42 · 80% · remote:path · 1.2 MB / 2.0 MB`.
 pub fn ops_job_subtitle(id: u64, percent: i32, src: &str, done: &str, total: &str) -> String {
     format!("#{id} · {percent}% · {src} · {done} / {total}")
@@ -2208,6 +2228,22 @@ mod tests {
         assert_eq!(
             multi_rename_preview_subtitle("a.txt", true, "Duplicate or invalid name"),
             "a.txt — Duplicate or invalid name"
+        );
+        assert_eq!(
+            properties_section_title_key("content"),
+            "fileBrowser.properties.contentStats"
+        );
+        assert_eq!(
+            properties_section_title_key("storage"),
+            "fileBrowser.properties.storage"
+        );
+        assert_eq!(
+            properties_hash_status_key(true, false),
+            "fileBrowser.properties.loadingHashes"
+        );
+        assert_eq!(
+            properties_hash_status_key(false, true),
+            "fileBrowser.properties.failLoadHashes"
         );
         assert_eq!(
             ops_job_subtitle(42, 80, "testdrive:Photos", "8 B", "10 B"),

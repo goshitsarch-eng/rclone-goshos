@@ -1132,3 +1132,7 @@ This client is the GTK 4 + libadwaita desktop UI. It talks to a local `rclone rc
 - Live GUI: `--alerts` Clear History opens confirm **Clear History** / Are you sure you want to clear all alert history? This action cannot be undone. Cancel leaves 500 history events
 - Live GUI: `--remote-about testdrive` Overview shows Reload Usage, Total/Used/Free Space, **Object Count** `293 · 20.0 MiB`, **Type** Alias, **Root Path** `/tmp/rclone-test-remote`, Time Precision, hashes, features
 - Live GUI: Files Operations job popover shows **Files**, **Speed**, **ETA** (finished jobs use `0 / 0` and `—`)
+
+- Check-result resolve toasts use `successSync` / `failSync`; job detail check rows toast on the dialog overlay
+- Properties groups folder size under Content Stats and disk usage under Storage; hash load/fail use dedicated keys
+- Indexed VFS banner titles **VFS Controls Unavailable**; queue rows label Size / Status / Name

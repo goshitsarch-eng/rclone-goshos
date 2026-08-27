@@ -8811,6 +8811,14 @@ pub fn properties(
             }
         }
         if let Ok(about) = client.about(&fs) {
+            let storage_header = adw::ActionRow::new();
+            storage_header.set_title(&ctx.t_or(
+                crate::fileops::properties_section_title_key("storage"),
+                "Storage",
+            ));
+            storage_header.set_activatable(false);
+            storage_header.set_selectable(false);
+            list.append(&storage_header);
             for (key, label, fallback) in [
                 ("used", "fileBrowser.properties.used", "Used"),
                 ("free", "fileBrowser.properties.free", "Free"),
@@ -8843,6 +8851,14 @@ pub fn properties(
             }
         }
         if is_dir {
+            let content_header = adw::ActionRow::new();
+            content_header.set_title(&ctx.t_or(
+                crate::fileops::properties_section_title_key("content"),
+                "Content Stats",
+            ));
+            content_header.set_activatable(false);
+            content_header.set_selectable(false);
+            list.append(&content_header);
             let calculating = ctx.t_or(
                 "fileBrowser.properties.calculating",
                 "Calculating folder size...",
@@ -8993,8 +9009,8 @@ pub fn properties(
                     calc.connect_clicked(move |_| {
                         calc_btn.set_sensitive(false);
                         row.set_subtitle(&ctx.t_or(
-                            "fileBrowser.properties.calculating",
-                            "Calculating folder size...",
+                            crate::fileops::properties_hash_status_key(true, false),
+                            "Loading hash types...",
                         ));
                         let Some(client) = ctx.client() else {
                             calc_btn.set_sensitive(true);
@@ -9042,14 +9058,28 @@ pub fn properties(
                                                     "No hashes returned",
                                                 )),
                                             },
-                                            Err(e) => row.set_subtitle(&e),
+                                            Err(e) => row.set_subtitle(&format!(
+                                                "{}: {e}",
+                                                ctx.t_or(
+                                                    crate::fileops::properties_hash_status_key(
+                                                        false, true
+                                                    ),
+                                                    "Failed to load checksums",
+                                                )
+                                            )),
                                         }
                                     },
                                 );
                             }
                             Err(e) => {
                                 calc_btn.set_sensitive(true);
-                                row.set_subtitle(&e.to_string());
+                                row.set_subtitle(&format!(
+                                    "{}: {e}",
+                                    ctx.t_or(
+                                        crate::fileops::properties_hash_status_key(false, true),
+                                        "Failed to load checksums",
+                                    )
+                                ));
                             }
                         }
                     });
@@ -9078,8 +9108,8 @@ pub fn properties(
                     calc.connect_clicked(move |_| {
                         calc_btn.set_sensitive(false);
                         row.set_subtitle(&ctx.t_or(
-                            "fileBrowser.properties.calculating",
-                            "Calculating folder size...",
+                            crate::fileops::properties_hash_status_key(true, false),
+                            "Loading hash types...",
                         ));
                         let Some(client) = ctx.client() else {
                             calc_btn.set_sensitive(true);
@@ -9107,6 +9137,7 @@ pub fn properties(
                             Ok(start) => {
                                 let row = row.clone();
                                 let calc_btn = calc_btn.clone();
+                                let ctx_poll = ctx.clone();
                                 start_or_poll_properties_job(
                                     ctx.clone(),
                                     start,
@@ -9121,14 +9152,28 @@ pub fn properties(
                                         }
                                         Err(e) => {
                                             calc_btn.set_sensitive(true);
-                                            row.set_subtitle(&e);
+                                            row.set_subtitle(&format!(
+                                                "{}: {e}",
+                                                ctx_poll.t_or(
+                                                    crate::fileops::properties_hash_status_key(
+                                                        false, true
+                                                    ),
+                                                    "Failed to load checksums",
+                                                )
+                                            ));
                                         }
                                     },
                                 );
                             }
                             Err(e) => {
                                 calc_btn.set_sensitive(true);
-                                row.set_subtitle(&e.to_string());
+                                row.set_subtitle(&format!(
+                                    "{}: {e}",
+                                    ctx.t_or(
+                                        crate::fileops::properties_hash_status_key(false, true),
+                                        "Failed to load checksums",
+                                    )
+                                ));
                             }
                         }
                     });
@@ -9936,7 +9981,7 @@ pub fn job_detail(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, job_id: u64) {
                 let end = crate::jobs::activity_visible_end(results.len(), check_limit.get());
                 let remaining = crate::jobs::activity_remaining(results.len(), check_limit.get());
                 for item in &results[..end] {
-                    checks.append(&check_result_row(&ctx, item, &dialog));
+                    checks.append(&check_result_row(&ctx, item, &toast));
                 }
                 if remaining > 0 {
                     checks.append(&activity_more_row(&ctx, remaining, {
@@ -14442,7 +14487,14 @@ pub(super) fn check_result_row(
         let item = item.clone();
         let parent = parent.clone();
         resolve.connect_clicked(move |_| {
-            let go = || resolve_check_item(&ctx, &item, kind);
+            let go: Rc<dyn Fn()> = {
+                let ctx = ctx.clone();
+                let item = item.clone();
+                let parent = parent.clone();
+                Rc::new(move || {
+                    toast_check_resolve(&parent, &ctx, resolve_check_item(&ctx, &item, kind))
+                })
+            };
             if item.needs_overwrite_confirm() {
                 let title = ctx.t_or(
                     "shared.transferActivity.actions.resolveOverwriteTitle",
@@ -14462,11 +14514,10 @@ pub(super) fn check_result_row(
                     ),
                 );
                 confirm.set_response_appearance("ok", adw::ResponseAppearance::Destructive);
-                let ctx = ctx.clone();
-                let item = item.clone();
+                let go = go.clone();
                 confirm.connect_response(None, move |_, response| {
                     if response == "ok" {
-                        resolve_check_item(&ctx, &item, kind);
+                        go();
                     }
                 });
                 confirm.present(Some(&parent));
@@ -14636,9 +14687,32 @@ fn resolve_failed_transfer(
     }
 }
 
-fn resolve_check_item(ctx: &AppCtx, item: &crate::checks::CheckResult, kind: &str) {
+fn toast_check_resolve(parent: &impl IsA<gtk::Widget>, ctx: &AppCtx, result: Result<(), String>) {
+    match result {
+        Ok(()) => add_action_toast(
+            parent,
+            &ctx.t_or(
+                crate::checks::resolve_sync_toast_key(true),
+                "File sync operation started successfully",
+            ),
+        ),
+        Err(e) => add_action_toast(
+            parent,
+            &ctx.tf(
+                crate::checks::resolve_sync_toast_key(false),
+                &[("error", &e)],
+            ),
+        ),
+    }
+}
+
+fn resolve_check_item(
+    ctx: &AppCtx,
+    item: &crate::checks::CheckResult,
+    kind: &str,
+) -> Result<(), String> {
     let Some(client) = ctx.client() else {
-        return;
+        return Err(ctx.t_or("errors.engineOffline", "rclone engine is offline"));
     };
     let (src_fs, dst_fs) = if kind == "copy_dst_to_src" {
         (item.dst_fs.as_str(), item.src_fs.as_str())
@@ -14671,12 +14745,15 @@ fn resolve_check_item(ctx: &AppCtx, item: &crate::checks::CheckResult, kind: &st
             );
             ctx.persist();
             ctx.refresh_runtime();
+            Ok(())
         }
         Err(e) => {
             if let Err(fallback) = client.copy_file(src_fs, &item.name, dst_fs, &item.name) {
                 log::warn!("check resolve failed: {e}; fallback {fallback}");
+                Err(fallback.to_string())
             } else {
                 ctx.refresh_runtime();
+                Ok(())
             }
         }
     }

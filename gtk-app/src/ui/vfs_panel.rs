@@ -32,6 +32,12 @@ pub fn vfs_panel(ctx: AppCtx, remote: &str, toast: adw::ToastOverlay) -> gtk::Wi
 
     let indexed = gtk::Box::new(gtk::Orientation::Vertical, 4);
     indexed.set_visible(false);
+    let indexed_title = gtk::Label::new(Some(&ctx.t_or(
+        crate::vfs::vfs_indexed_banner_title_key(),
+        "VFS Controls Unavailable",
+    )));
+    indexed_title.add_css_class("heading");
+    indexed_title.set_xalign(0.0);
     let indexed_label = gtk::Label::new(None);
     indexed_label.add_css_class("warning");
     indexed_label.set_wrap(true);
@@ -39,6 +45,7 @@ pub fn vfs_panel(ctx: AppCtx, remote: &str, toast: adw::ToastOverlay) -> gtk::Wi
     let indexed_link =
         gtk::LinkButton::with_label("https://github.com/rclone/rclone/issues/9120", "#9120");
     indexed_link.set_halign(gtk::Align::Start);
+    indexed.append(&indexed_title);
     indexed.append(&indexed_label);
     indexed.append(&indexed_link);
     root.append(&indexed);
@@ -579,11 +586,16 @@ fn queue_row(
     refresh_slot: Rc<RefCell<Rc<dyn Fn()>>>,
 ) -> adw::ActionRow {
     let row = adw::ActionRow::new();
-    row.set_title(&if item.name.is_empty() {
+    let name = if item.name.is_empty() {
         format!("#{}", item.id)
     } else {
         item.name.clone()
-    });
+    };
+    row.set_title(&name);
+    row.set_tooltip_text(Some(&format!(
+        "{}: {name}",
+        ctx.t_or("shared.vfsControl.queue.name", "Name")
+    )));
     let status = match queue_item_status(item) {
         QueueStatus::Uploading => ctx.t_or(
             "shared.vfsControl.queue.statusText.uploading",
@@ -599,15 +611,21 @@ fn queue_row(
             &[("seconds", &format!("{:.1}", item.expiry_secs))],
         ),
     };
-    let mut subtitle = format!("{} · {}", crate::rclone::format_bytes(item.size), status);
-    if item.tries > 0 {
-        subtitle.push_str(&format!(
-            " · {} {}",
-            item.tries,
-            ctx.t_or("shared.vfsControl.queue.tries", "try")
-        ));
-    }
-    row.set_subtitle(&subtitle);
+    let size_label = format!(
+        "{} {}",
+        ctx.t_or("shared.vfsControl.queue.size", "Size"),
+        crate::rclone::format_bytes(item.size)
+    );
+    row.set_subtitle(&crate::vfs::vfs_queue_subtitle(
+        &size_label,
+        &format!(
+            "{} {}",
+            ctx.t_or("shared.vfsControl.queue.status", "Status"),
+            status
+        ),
+        item.tries,
+        &ctx.t_or("shared.vfsControl.queue.tries", "try"),
+    ));
 
     if !item.uploading {
         if item.expiry_secs > 5.0 {
