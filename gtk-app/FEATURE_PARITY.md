@@ -942,3 +942,7 @@ This client is the GTK 4 + libadwaita desktop UI. It talks to a local `rclone rc
 - Sidebar footer toggles Import from CLI / Obscure Password; opening one closes the other; Escape hides the overlay before page search
 - CLI apply still creates/overrides/patches the current operation profile; Obscure applies to password-typed fields on the open step, then remote secrets
 - Live GUI: `--remote-config testdrive --step copy` sidebar **Import from CLI** slides a full-width paste/preview panel over Copy; **Obscure Password** replaces it (exclusive); Preview of `rclone copy testdrive: testdrive: --transfers 4` shows Detected Configuration and Apply to Profile; Apply Patch hides the overlay
+
+- Files folder open (double-click / Enter) and Go Up push Back history like Angular `navigate(..., newHistory: true)`
+- Each Files tab keeps its own Back/Forward stack; switching tabs restores that tab's history
+- Finished jobs refresh every matching open listing (active tab, split pane, and other tab paths)

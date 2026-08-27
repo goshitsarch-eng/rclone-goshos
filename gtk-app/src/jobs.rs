@@ -1586,6 +1586,18 @@ pub fn listing_is_affected(remote: &str, path: &str, affected: &[AffectedListing
     })
 }
 
+/// Indexes of open listings (tabs / panes) that a finished job should refresh.
+pub fn open_listings_needing_refresh(
+    open: &[(String, String)],
+    affected: &[AffectedListing],
+) -> Vec<usize> {
+    open.iter()
+        .enumerate()
+        .filter(|(_, (remote, path))| listing_is_affected(remote, path, affected))
+        .map(|(idx, _)| idx)
+        .collect()
+}
+
 pub fn ops_panel_signature(jobs: &[JobInfo], history: &[JobInfo]) -> String {
     let mut parts = Vec::with_capacity(jobs.len() + history.len().min(12));
     for job in jobs {
@@ -5341,6 +5353,12 @@ mod tests {
         assert!(listing_is_affected("testdrive", "Photos", &affected));
         assert!(listing_is_affected("testdrive", "verify-ops", &affected));
         assert!(!listing_is_affected("testdrive", "other", &affected));
+        let open = vec![
+            ("testdrive".into(), "other".into()),
+            ("testdrive".into(), "verify-ops".into()),
+            ("testdrive".into(), "Photos".into()),
+        ];
+        assert_eq!(open_listings_needing_refresh(&open, &affected), vec![1, 2]);
         let upload = JobInfo {
             src: "/tmp/rclone-upload-undo.txt".into(),
             dst: "testdrive:Photos/rclone-upload-undo.txt".into(),

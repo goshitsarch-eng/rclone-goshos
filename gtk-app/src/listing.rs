@@ -60,6 +60,43 @@ pub fn parent_list_target(remote: &str, path: &str) -> (String, String) {
     list_target(remote, &parent_remote_path(path))
 }
 
+/// Record the location we are leaving so Back can return here (Angular `newHistory`).
+pub fn push_nav_history(
+    history: &mut Vec<(String, String)>,
+    future: &mut Vec<(String, String)>,
+    remote: &str,
+    path: &str,
+) {
+    history.push((remote.to_string(), path.to_string()));
+    future.clear();
+}
+
+pub fn same_nav_location(a_remote: &str, a_path: &str, b_remote: &str, b_path: &str) -> bool {
+    a_remote == b_remote && a_path.trim_matches('/') == b_path.trim_matches('/')
+}
+
+pub fn pop_nav_back(
+    history: &mut Vec<(String, String)>,
+    future: &mut Vec<(String, String)>,
+    current_remote: &str,
+    current_path: &str,
+) -> Option<(String, String)> {
+    let prev = history.pop()?;
+    future.push((current_remote.to_string(), current_path.to_string()));
+    Some(prev)
+}
+
+pub fn pop_nav_forward(
+    history: &mut Vec<(String, String)>,
+    future: &mut Vec<(String, String)>,
+    current_remote: &str,
+    current_path: &str,
+) -> Option<(String, String)> {
+    let next = future.pop()?;
+    history.push((current_remote.to_string(), current_path.to_string()));
+    Some(next)
+}
+
 pub fn listing_siblings(entries: &[DirEntry]) -> Vec<(String, bool)> {
     entries
         .iter()
@@ -311,6 +348,39 @@ mod tests {
             given
         );
         assert!(resolve_siblings(None, "testdrive", "Photos/README.md", &[]).is_empty());
+    }
+
+    #[test]
+    fn nav_history_records_back_and_clears_forward() {
+        let mut history = vec![("testdrive".into(), String::new())];
+        let mut future = vec![("testdrive".into(), "old".into())];
+        push_nav_history(&mut history, &mut future, "testdrive", "Photos");
+        assert_eq!(
+            history,
+            vec![
+                ("testdrive".into(), String::new()),
+                ("testdrive".into(), "Photos".into())
+            ]
+        );
+        assert!(future.is_empty());
+        assert!(same_nav_location(
+            "testdrive",
+            "Photos",
+            "testdrive",
+            "Photos/"
+        ));
+        assert!(same_nav_location(
+            "testdrive",
+            "Photos",
+            "testdrive",
+            "Photos"
+        ));
+        assert!(!same_nav_location("testdrive", "Photos", "testdrive", ""));
+        let back = pop_nav_back(&mut history, &mut future, "testdrive", "verify");
+        assert_eq!(back, Some(("testdrive".into(), "Photos".into())));
+        assert_eq!(future, vec![("testdrive".into(), "verify".into())]);
+        let fwd = pop_nav_forward(&mut history, &mut future, "testdrive", "Photos");
+        assert_eq!(fwd, Some(("testdrive".into(), "verify".into())));
     }
 
     #[test]

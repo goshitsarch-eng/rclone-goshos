@@ -37,6 +37,8 @@ struct TabState {
     remote: String,
     path: String,
     starred: bool,
+    history: Vec<(String, String)>,
+    future: Vec<(String, String)>,
 }
 
 #[derive(Clone)]
@@ -476,6 +478,8 @@ impl NautilusView {
                 .map(|p| p.to_string_lossy().into_owned())
                 .unwrap_or_else(|| "/".into()),
             starred: false,
+            history: Vec::new(),
+            future: Vec::new(),
         };
         let mut secondary = initial.clone();
         {
@@ -2711,11 +2715,14 @@ impl NautilusView {
             }
         }
         let current = self.current.borrow().clone();
-        self.history
-            .borrow_mut()
-            .push((current.remote, current.path));
-        self.future.borrow_mut().clear();
         let (remote, path) = split_remote_path(input);
+        if listing::same_nav_location(&current.remote, &current.path, &remote, &path) {
+            self.current.borrow_mut().starred = false;
+            self.sync_current_tab();
+            self.reload();
+            return;
+        }
+        self.record_nav(&current.remote, &current.path);
         self.current.borrow_mut().remote = remote;
         self.current.borrow_mut().path = path;
         self.current.borrow_mut().starred = false;
@@ -2874,27 +2881,33 @@ impl NautilusView {
             self.clear_search();
             return;
         }
-        if let Some((remote, path)) = self.history.borrow_mut().pop() {
-            let current = self.current.borrow().clone();
-            self.future
-                .borrow_mut()
-                .push((current.remote, current.path));
+        let current = self.current.borrow().clone();
+        if let Some((remote, path)) = listing::pop_nav_back(
+            &mut self.history.borrow_mut(),
+            &mut self.future.borrow_mut(),
+            &current.remote,
+            &current.path,
+        ) {
             self.current.borrow_mut().remote = remote;
             self.current.borrow_mut().path = path;
             self.current.borrow_mut().starred = false;
+            self.sync_current_tab();
             self.reload();
         }
     }
 
     fn go_forward(&self) {
-        if let Some((remote, path)) = self.future.borrow_mut().pop() {
-            let current = self.current.borrow().clone();
-            self.history
-                .borrow_mut()
-                .push((current.remote, current.path));
+        let current = self.current.borrow().clone();
+        if let Some((remote, path)) = listing::pop_nav_forward(
+            &mut self.history.borrow_mut(),
+            &mut self.future.borrow_mut(),
+            &current.remote,
+            &current.path,
+        ) {
             self.current.borrow_mut().remote = remote;
             self.current.borrow_mut().path = path;
             self.current.borrow_mut().starred = false;
+            self.sync_current_tab();
             self.reload();
         }
     }
@@ -2905,10 +2918,24 @@ impl NautilusView {
             self.reload();
             return;
         }
-        let path = self.current.borrow().path.clone();
-        let parent = parent_remote_path(&path);
+        let current = self.current.borrow().clone();
+        let parent = parent_remote_path(&current.path);
+        if listing::same_nav_location(&current.remote, &current.path, &current.remote, &parent) {
+            return;
+        }
+        self.record_nav(&current.remote, &current.path);
         self.current.borrow_mut().path = parent;
         self.reload();
+    }
+
+    fn record_nav(&self, remote: &str, path: &str) {
+        listing::push_nav_history(
+            &mut self.history.borrow_mut(),
+            &mut self.future.borrow_mut(),
+            remote,
+            path,
+        );
+        self.sync_current_tab();
     }
 
     fn reload(&self) {
@@ -3423,6 +3450,9 @@ impl NautilusView {
             next.clone()
         };
         if client.list_dir(&fs, &list_path).is_ok() {
+            if !listing::same_nav_location(&current.remote, &current.path, &current.remote, &next) {
+                self.record_nav(&current.remote, &current.path);
+            }
             self.current.borrow_mut().path = next;
             self.reload();
             return;
@@ -4086,12 +4116,21 @@ impl NautilusView {
             return;
         }
         let current = self.current.borrow().clone();
-        let refresh_primary = !current.starred
-            && crate::jobs::listing_is_affected(&current.remote, &current.path, &affected);
-        let refresh_secondary = *self.split_enabled.borrow() && {
+        let mut open = vec![(current.remote.clone(), current.path.clone())];
+        let split_on = *self.split_enabled.borrow();
+        if split_on {
             let secondary = self.secondary.borrow().clone();
-            crate::jobs::listing_is_affected(&secondary.remote, &secondary.path, &affected)
-        };
+            open.push((secondary.remote, secondary.path));
+        }
+        let current_id = current.id;
+        for tab in self.tabs.borrow().iter() {
+            if tab.id != current_id {
+                open.push((tab.remote.clone(), tab.path.clone()));
+            }
+        }
+        let need = crate::jobs::open_listings_needing_refresh(&open, &affected);
+        let refresh_primary = !current.starred && need.contains(&0);
+        let refresh_secondary = split_on && need.contains(&1);
         if refresh_primary {
             self.reload();
         } else if refresh_secondary {
@@ -4678,6 +4717,8 @@ impl NautilusView {
             tab.remote = current.remote.clone();
             tab.path = current.path.clone();
             tab.starred = current.starred;
+            tab.history = self.history.borrow().clone();
+            tab.future = self.future.borrow().clone();
             tab.title = if current.starred {
                 self.ctx.t_or("nautilus.titles.starred", "Starred")
             } else if current.path.is_empty() {
@@ -4803,15 +4844,17 @@ impl NautilusView {
         *self.next_tab_id.borrow_mut() = new_id + 1;
         let mut copy = tab;
         copy.id = new_id;
+        self.persist_nav_stacks();
         self.tabs.borrow_mut().push(copy.clone());
-        *self.current.borrow_mut() = copy;
+        self.adopt_tab(copy);
         self.reload();
     }
 
     fn close_other_tabs(&self, keep: u32) {
+        self.persist_nav_stacks();
         self.tabs.borrow_mut().retain(|t| t.id == keep);
         if let Some(tab) = self.tabs.borrow().iter().find(|t| t.id == keep).cloned() {
-            *self.current.borrow_mut() = tab;
+            self.adopt_tab(tab);
         }
         if self.tabs.borrow().is_empty() {
             self.open_new_tab();
@@ -4830,17 +4873,43 @@ impl NautilusView {
         self.tabs.borrow_mut().truncate(idx + 1);
         if self.current.borrow().id != id {
             if let Some(tab) = self.tabs.borrow().iter().find(|t| t.id == id).cloned() {
-                *self.current.borrow_mut() = tab;
+                self.adopt_tab(tab);
             }
         }
         self.reload();
     }
 
+    fn persist_nav_stacks(&self) {
+        let current = self.current.borrow().clone();
+        if let Some(tab) = self
+            .tabs
+            .borrow_mut()
+            .iter_mut()
+            .find(|t| t.id == current.id)
+        {
+            tab.remote = current.remote;
+            tab.path = current.path;
+            tab.starred = current.starred;
+            tab.history = self.history.borrow().clone();
+            tab.future = self.future.borrow().clone();
+        }
+    }
+
     fn activate_tab(&self, id: u32) {
+        if self.current.borrow().id == id {
+            return;
+        }
+        self.persist_nav_stacks();
         if let Some(tab) = self.tabs.borrow().iter().find(|t| t.id == id).cloned() {
-            *self.current.borrow_mut() = tab;
+            self.adopt_tab(tab);
             self.reload();
         }
+    }
+
+    fn adopt_tab(&self, tab: TabState) {
+        *self.history.borrow_mut() = tab.history.clone();
+        *self.future.borrow_mut() = tab.future.clone();
+        *self.current.borrow_mut() = tab;
     }
 
     fn cycle_tab(&self, reverse: bool) {
@@ -4866,16 +4935,21 @@ impl NautilusView {
     }
 
     fn open_new_tab(&self) {
+        self.persist_nav_stacks();
         let mut current = self.current.borrow().clone();
         let id = *self.next_tab_id.borrow();
         *self.next_tab_id.borrow_mut() = id + 1;
         current.id = id;
+        current.history.clear();
+        current.future.clear();
         current.title = format!("{}:{}", current.remote, current.path)
             .rsplit('/')
             .next()
             .unwrap_or("tab")
             .to_string();
         self.tabs.borrow_mut().push(current.clone());
+        *self.history.borrow_mut() = Vec::new();
+        *self.future.borrow_mut() = Vec::new();
         *self.current.borrow_mut() = current;
         self.reload();
     }
@@ -4893,7 +4967,7 @@ impl NautilusView {
         }
         if self.current.borrow().id == id {
             if let Some(next) = self.tabs.borrow().first().cloned() {
-                *self.current.borrow_mut() = next;
+                self.adopt_tab(next);
             }
         }
         self.reload();
