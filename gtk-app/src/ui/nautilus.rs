@@ -4635,9 +4635,42 @@ impl NautilusView {
         self.start_grouped_file_transfers(transfers);
     }
 
+    fn selection_from_secondary(&self) -> bool {
+        crate::fileops::clipboard_uses_secondary(
+            *self.split_enabled.borrow(),
+            self.primary_has_selection(),
+            self.secondary_has_selection(),
+        )
+    }
+
+    fn primary_has_selection(&self) -> bool {
+        if self.is_grid() {
+            !self.grid.selected_children().is_empty()
+        } else {
+            !selected_list_names(&self.list).is_empty()
+        }
+    }
+
+    fn secondary_has_selection(&self) -> bool {
+        if self.is_grid() {
+            !self.grid_right.selected_children().is_empty()
+        } else {
+            !selected_list_names(&self.list_right).is_empty()
+        }
+    }
+
     fn selection_clipboard_items(&self, cut: bool) -> Vec<(String, String, bool, bool)> {
-        let current = self.current.borrow().clone();
-        let listing = self.last_listing.borrow().clone();
+        let secondary = self.selection_from_secondary();
+        let tab = if secondary {
+            self.secondary.borrow().clone()
+        } else {
+            self.current.borrow().clone()
+        };
+        let listing = if secondary {
+            self.last_listing_right.borrow().clone()
+        } else {
+            self.last_listing.borrow().clone()
+        };
         self.selected_names()
             .into_iter()
             .map(|name| {
@@ -4647,8 +4680,8 @@ impl NautilusView {
                     .map(|entry| entry.is_dir)
                     .unwrap_or(false);
                 (
-                    current.remote.clone(),
-                    join_remote_path(&current.path, &name),
+                    tab.remote.clone(),
+                    join_remote_path(&tab.path, &name),
                     cut,
                     is_dir,
                 )

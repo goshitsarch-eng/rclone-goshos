@@ -949,3 +949,8 @@ This client is the GTK 4 + libadwaita desktop UI. It talks to a local `rclone rc
 
 - Live GUI: `--browse testdrive` double-click **Photos** then toolbar Back (`<`, not Alt+Left) returns to testdrive root (batch250 / Docs / Photos) without aborting; toolbar Forward returns to Photos (`photo1.jpg`, README.md)
 - Files cut items dim to 50% opacity and swap the file icon for `edit-cut-symbolic` (Angular `cut-item` / scissors); copy restyles so cut marks clear
+
+- Live GUI: `--browse testdrive:NoSuchFolder999` shows **Failed to load directory** / `directory not found` and **Retry**; creating the folder and clicking Retry lists `appeared.txt`
+- Live GUI: Cut on `appeared.txt` dims the tile, draws a dashed outline, and swaps the icon for scissors; a Cut toast confirms the clipboard
+- Live GUI: copy `Photos/job-refresh-gui.txt` then Back and Paste into testdrive root; after `filemanager/...` completes the listing count goes 27 → 28 items (23 B / 23 B) without a manual refresh
+- Split-view copy/cut uses the secondary pane path when only that pane has a selection

@@ -421,6 +421,15 @@ pub fn cut_item_keys(items: &[(String, String, bool, bool)]) -> HashSet<String> 
         .collect()
 }
 
+/// Split-view copy/cut must use the secondary pane when only it has a selection.
+pub fn clipboard_uses_secondary(
+    split: bool,
+    primary_has_selection: bool,
+    secondary_has_selection: bool,
+) -> bool {
+    split && !primary_has_selection && secondary_has_selection
+}
+
 pub fn clipboard_marks_cut(
     items: &[(String, String, bool, bool)],
     remote: &str,
@@ -1348,6 +1357,10 @@ mod tests {
             clipboard_item_key("testdrive", "Photos/b.txt"),
             "testdrive:Photos/b.txt"
         );
+        assert!(clipboard_uses_secondary(true, false, true));
+        assert!(!clipboard_uses_secondary(true, true, true));
+        assert!(!clipboard_uses_secondary(true, false, false));
+        assert!(!clipboard_uses_secondary(false, false, true));
     }
 
     #[test]
