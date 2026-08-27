@@ -1010,3 +1010,8 @@ This client is the GTK 4 + libadwaita desktop UI. It talks to a local `rclone rc
 - Files Ctrl+Y is redo (Angular); system-clipboard paste stays on the context menu
 - Files shortcuts attach to the window on realize (capture) so they work after a popover leaves focus on the header
 - Live GUI: testdrive Photos Actions then Escape closes the menu while **"Photos" selected**; a second Escape restores **28 items**
+
+- Path bar and `navigate_to` use Angular `parseLocation` plus relative append (`resolve_path_bar`)
+- Navigating to a file (`--browse remote:dir/file`) lists the parent and opens the viewer (`pendingPreviewFilePath`)
+- Files context / path menus show Paste when the OS clipboard has uri-list paths (`menu_has_paste`)
+- Live GUI: `--browse testdrive:Photos/README.md` opens Photos with **README.md selected (191 B)** and the file viewer (**6 / 7 · 191 B**, markdown preview)
