@@ -2,6 +2,8 @@
 
 This client is the GTK 4 + libadwaita desktop UI. It talks to a local `rclone rcd` instance (or a selected extra RC backend) and persists app state under `~/.config/rclone-manager/`. The Rust backend remains in `src-tauri/`.
 
+**Desktop target is Linux only.** Windows NotifyIcon, macOS NSStatusItem, and Android share-intent are out of scope for this rewrite. Linux StatusNotifier tray (`ksni`) and `notify-rust` notifications stay in.
+
 ## Implemented
 
 - Workspaces: Main menu, Nautilus file browser, Flow
@@ -1225,3 +1227,7 @@ This client is the GTK 4 + libadwaita desktop UI. It talks to a local `rclone rc
 - Live GUI: `--browse testdrive:Photos` Ctrl+click **README.md** + **README.txt** then **F2** opens **Rename using a template** with Template `[Original file name]`, Original name / Counter / Date / Extension chips, Find text / Replace with, Case sensitive, preview **README.md** / **README.txt**; Escape cancels (files unchanged)
 - Live GUI: `--vfs testdrive` VFS Control shows Metadata / Upload Queue / Cache Information / Advanced Configuration plus **Refresh Metadata**, **Clear Metadata Cache**, and **Refresh All Data**; no `testdrive:[0]` instance so the indexed **VFS Controls Unavailable** banner was not shown
 - Live GUI: `--repair` **Configuration Password / Unlock** opens the password prompt; **Cancel** leaves `config_password` unset
+
+- Linux-only rewrite scope: no Windows / macOS / Android surfaces to implement or live-verify
+- After onboarding, blocking engine problems auto-open Repair or the password prompt once per session (`MissingBinary`, `PasswordRequired`, `AuthFailed`); version-too-old and missing FUSE stay banner-only
+

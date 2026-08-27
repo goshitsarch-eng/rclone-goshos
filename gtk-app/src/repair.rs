@@ -8,7 +8,7 @@ use std::path::{Path, PathBuf};
 /// Oldest rclone the GTK client expects (matches typical RC `options/info` surface).
 pub const MIN_RCLONE_VERSION: &str = "1.65.0";
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum RepairKind {
     MissingBinary,
     VersionTooOld,
@@ -290,6 +290,37 @@ pub fn banner_opens_password(issues: &[RepairIssue]) -> bool {
     banner_from_issues(issues).is_some_and(|issue| issue.kind == RepairKind::PasswordRequired)
 }
 
+/// Blocking engine problems that Angular's `SystemHealthService` auto-opens after
+/// onboarding. Version-too-old and missing FUSE stay banner-only: the engine still
+/// runs on Linux, and auto-opening Repair on every outdated-rclone launch is noise.
+pub fn auto_prompt_kind(onboarding_completed: bool, issues: &[RepairIssue]) -> Option<RepairKind> {
+    if !onboarding_completed {
+        return None;
+    }
+    const ORDER: &[RepairKind] = &[
+        RepairKind::MissingBinary,
+        RepairKind::PasswordRequired,
+        RepairKind::AuthFailed,
+    ];
+    for kind in ORDER {
+        if issues.iter().any(|issue| issue.kind == *kind) {
+            return Some(*kind);
+        }
+    }
+    None
+}
+
+/// Drop once-per-session auto-prompt flags when the blocking issue is gone
+/// (Angular closes those sheets on engine-ready).
+pub fn reset_auto_prompt_if_clear(
+    shown: &mut std::collections::HashSet<RepairKind>,
+    issues: &[RepairIssue],
+) {
+    if auto_prompt_kind(true, issues).is_none() {
+        shown.clear();
+    }
+}
+
 pub fn banner_from_issues(issues: &[RepairIssue]) -> Option<&RepairIssue> {
     const ORDER: &[RepairKind] = &[
         RepairKind::MissingBinary,
@@ -424,6 +455,78 @@ mod tests {
             detail: String::new(),
             action: String::new(),
         }]));
+        assert_eq!(
+            auto_prompt_kind(
+                true,
+                &[RepairIssue {
+                    kind: RepairKind::MissingBinary,
+                    title: "binary".into(),
+                    detail: String::new(),
+                    action: String::new(),
+                }]
+            ),
+            Some(RepairKind::MissingBinary)
+        );
+        assert_eq!(
+            auto_prompt_kind(
+                false,
+                &[RepairIssue {
+                    kind: RepairKind::MissingBinary,
+                    title: "binary".into(),
+                    detail: String::new(),
+                    action: String::new(),
+                }]
+            ),
+            None
+        );
+        assert_eq!(
+            auto_prompt_kind(
+                true,
+                &[RepairIssue {
+                    kind: RepairKind::VersionTooOld,
+                    title: "old".into(),
+                    detail: String::new(),
+                    action: String::new(),
+                }]
+            ),
+            None
+        );
+        assert_eq!(
+            auto_prompt_kind(
+                true,
+                &[
+                    RepairIssue {
+                        kind: RepairKind::VersionTooOld,
+                        title: "old".into(),
+                        detail: String::new(),
+                        action: String::new(),
+                    },
+                    RepairIssue {
+                        kind: RepairKind::PasswordRequired,
+                        title: "pw".into(),
+                        detail: String::new(),
+                        action: String::new(),
+                    },
+                ]
+            ),
+            Some(RepairKind::PasswordRequired)
+        );
+        assert_eq!(
+            auto_prompt_kind(
+                true,
+                &[RepairIssue {
+                    kind: RepairKind::FuseMissing,
+                    title: "fuse".into(),
+                    detail: String::new(),
+                    action: String::new(),
+                }]
+            ),
+            None
+        );
+        let mut shown = std::collections::HashSet::new();
+        shown.insert(RepairKind::MissingBinary);
+        reset_auto_prompt_if_clear(&mut shown, &[]);
+        assert!(shown.is_empty());
         assert!(engine_banner_keys(RepairKind::FuseMissing).is_none());
         assert_eq!(
             issue_i18n_keys(RepairKind::MissingBinary).0,
