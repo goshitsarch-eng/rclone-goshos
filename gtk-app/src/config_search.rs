@@ -83,6 +83,54 @@ pub fn filter_example_choices(query: &str, examples: &[(String, String)]) -> Vec
         .collect()
 }
 
+/// Angular uses a searchable provider-variant list for `provider` / `vendor`
+/// and for exclusive example lists that are too long for a ComboRow.
+pub fn should_search_examples(field_name: &str, example_count: usize) -> bool {
+    example_count > 0
+        && (field_name.eq_ignore_ascii_case("provider")
+            || field_name.eq_ignore_ascii_case("vendor")
+            || example_count >= 12)
+}
+
+pub fn example_choice_label(value: &str, help: &str) -> String {
+    if help.is_empty() {
+        value.to_string()
+    } else {
+        format!("{value} — {help}")
+    }
+}
+
+pub fn resolve_example_value(text: &str, examples: &[(String, String)]) -> String {
+    let trimmed = text.trim();
+    if trimmed.is_empty() {
+        return String::new();
+    }
+    if let Some((value, _)) = examples
+        .iter()
+        .find(|(value, _)| value == trimmed || value.eq_ignore_ascii_case(trimmed))
+    {
+        return value.clone();
+    }
+    if let Some((value, _)) = examples.iter().find(|(value, help)| {
+        example_choice_label(value, help) == trimmed
+            || example_choice_label(value, help).eq_ignore_ascii_case(trimmed)
+    }) {
+        return value.clone();
+    }
+    trimmed.to_string()
+}
+
+/// Keys in a JSON object that match Angular `matchesConfigSearch`.
+pub fn filter_json_keys(value: &serde_json::Value, query: &str) -> Vec<String> {
+    let Some(obj) = value.as_object() else {
+        return Vec::new();
+    };
+    obj.keys()
+        .filter(|key| matches_config_search(key, "", key, query))
+        .cloned()
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -134,5 +182,49 @@ mod tests {
         assert_eq!(filter_example_choices("aws", &examples), vec![0]);
         assert_eq!(filter_example_choices("cloud", &examples), vec![1]);
         assert_eq!(filter_example_choices("", &examples).len(), 3);
+    }
+
+    #[test]
+    fn searches_provider_vendor_and_long_lists() {
+        assert!(should_search_examples("provider", 3));
+        assert!(should_search_examples("vendor", 2));
+        assert!(should_search_examples("acl", 12));
+        assert!(!should_search_examples("acl", 3));
+        assert!(!should_search_examples("provider", 0));
+    }
+
+    #[test]
+    fn resolves_example_value_from_label_or_raw() {
+        let examples = vec![
+            ("AWS".into(), "Amazon Web Services".into()),
+            ("Minio".into(), "Minio object storage".into()),
+        ];
+        assert_eq!(resolve_example_value("AWS", &examples), "AWS");
+        assert_eq!(
+            resolve_example_value("AWS — Amazon Web Services", &examples),
+            "AWS"
+        );
+        assert_eq!(resolve_example_value("minio", &examples), "Minio");
+        assert_eq!(resolve_example_value("custom", &examples), "custom");
+        assert_eq!(
+            example_choice_label("AWS", "Amazon Web Services"),
+            "AWS — Amazon Web Services"
+        );
+    }
+
+    #[test]
+    fn filters_json_object_keys() {
+        let value = serde_json::json!({
+            "chunk_size": "5Mi",
+            "acl": "private",
+            "token": "secret"
+        });
+        assert_eq!(
+            filter_json_keys(&value, "chunk"),
+            vec!["chunk_size".to_string()]
+        );
+        assert_eq!(filter_json_keys(&value, "--acl").len(), 1);
+        assert!(filter_json_keys(&value, "").len() >= 3);
+        assert!(filter_json_keys(&serde_json::json!([]), "acl").is_empty());
     }
 }

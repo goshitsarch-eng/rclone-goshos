@@ -823,7 +823,11 @@ fn operation_page(
     ));
     auto_start.set_active(initial.app.auto_start);
     let cron_enabled = adw::SwitchRow::new();
-    cron_enabled.set_title(&ctx.t_or("remoteConfig.scheduledCron", "Scheduled (cron)"));
+    cron_enabled.set_title(&ctx.tf_or(
+        "wizards.appOperation.enableScheduled",
+        "Enable Scheduled {type}",
+        &[("type", &op_label)],
+    ));
     cron_enabled.set_active(initial.app.cron_enabled);
     cron_enabled.set_visible(op.is_automatable());
     let cron = adw::EntryRow::new();
@@ -1177,7 +1181,14 @@ fn operation_page(
             ctx.settings.borrow_mut().runtime.show_json_mode = on;
             ctx.persist();
             json_scroll.set_visible(on);
-            search.set_visible(!on);
+            search.set_title(&ctx.t_or(
+                if on {
+                    "remoteConfig.filterKeys"
+                } else {
+                    "remoteConfig.filterFlags"
+                },
+                if on { "Filter keys" } else { "Filter flags" },
+            ));
             for (_, widget, _) in flag_rows.borrow().iter() {
                 widget.set_visible(!on);
             }
@@ -1192,14 +1203,27 @@ fn operation_page(
         let serve_flag_rows = serve_flag_rows.clone();
         let serve = serve.clone();
         let serve_types = serve_types.clone();
+        let json_toggle = json_toggle.clone();
+        let json_view = json_view.clone();
         search.connect_changed(move |entry| {
-            let query = entry.text().to_ascii_lowercase();
+            let query = entry.text().to_string();
+            if json_toggle.is_active() {
+                highlight_json_keys(&json_view.buffer(), &query);
+                return;
+            }
             for (field, row, _) in flag_rows.borrow().iter() {
-                row.set_visible(query.is_empty() || field.to_ascii_lowercase().contains(&query));
+                let name = row.title().to_string();
+                let help = row.tooltip_text().unwrap_or_default().to_string();
+                row.set_visible(crate::config_search::matches_config_search(
+                    &name, &help, field, &query,
+                ));
             }
             let selected = crate::operations::selected_or(&serve_types, serve.selected(), "http");
             for (serve_type, field, row, _) in serve_flag_rows.borrow().iter() {
-                let matches = query.is_empty() || field.to_ascii_lowercase().contains(&query);
+                let name = row.title().to_string();
+                let help = row.tooltip_text().unwrap_or_default().to_string();
+                let matches =
+                    crate::config_search::matches_config_search(&name, &help, field, &query);
                 row.set_visible(serve_type == selected && matches);
             }
         });
@@ -1628,9 +1652,13 @@ fn helper_page(
     {
         let flag_rows = flag_rows.clone();
         search.connect_changed(move |entry| {
-            let query = entry.text().to_ascii_lowercase();
+            let query = entry.text().to_string();
             for (field, row, _) in flag_rows.borrow().iter() {
-                row.set_visible(query.is_empty() || field.to_ascii_lowercase().contains(&query));
+                let name = row.title().to_string();
+                let help = row.tooltip_text().unwrap_or_default().to_string();
+                row.set_visible(crate::config_search::matches_config_search(
+                    &name, &help, field, &query,
+                ));
             }
         });
     }
@@ -2184,6 +2212,41 @@ fn runtime_provider_flags(ctx: &AppCtx, remote: &str) -> Vec<FlagOption> {
         .map(|item| item.r#type.clone())
         .unwrap_or_default();
     runtime_flags_for_type(ctx, &remote_type)
+}
+
+fn highlight_json_keys(buffer: &gtk::TextBuffer, query: &str) {
+    let table = buffer.tag_table();
+    let tag = match table.lookup("json-search-hit") {
+        Some(tag) => tag,
+        None => {
+            let tag = gtk::TextTag::builder()
+                .name("json-search-hit")
+                .background("#f5c21133")
+                .build();
+            table.add(&tag);
+            tag
+        }
+    };
+    let start = buffer.start_iter();
+    let end = buffer.end_iter();
+    buffer.remove_tag(&tag, &start, &end);
+    if query.trim().is_empty() {
+        return;
+    }
+    let text = buffer.text(&start, &end, false).to_string();
+    let Ok(value) = serde_json::from_str::<Value>(&text) else {
+        return;
+    };
+    for key in crate::config_search::filter_json_keys(&value, query) {
+        let needle = format!("\"{key}\"");
+        if let Some(pos) = text.find(&needle) {
+            let mut hit_start = buffer.start_iter();
+            hit_start.set_offset(text[..pos].chars().count() as i32);
+            let mut hit_end = hit_start;
+            hit_end.forward_chars(needle.chars().count() as i32);
+            buffer.apply_tag(&tag, &hit_start, &hit_end);
+        }
+    }
 }
 
 fn flag_entry(ctx: &AppCtx, flag: &FlagOption, current: &Value) -> adw::EntryRow {

@@ -37,6 +37,12 @@ enum FieldWidget {
     Entry(adw::EntryRow),
     Switch(adw::SwitchRow),
     Combo(adw::ComboRow, Rc<Vec<String>>),
+    SearchCombo(
+        adw::EntryRow,
+        adw::ComboRow,
+        Rc<Vec<String>>,
+        Rc<Vec<String>>,
+    ),
     Spin(adw::SpinRow),
     Multi(adw::ExpanderRow, Rc<Vec<(String, gtk::CheckButton)>>),
 }
@@ -47,6 +53,10 @@ impl FieldWidget {
             Self::Entry(row) => group.add(row),
             Self::Switch(row) => group.add(row),
             Self::Combo(row, _) => group.add(row),
+            Self::SearchCombo(search, combo, _, _) => {
+                group.add(search);
+                group.add(combo);
+            }
             Self::Spin(row) => group.add(row),
             Self::Multi(row, _) => group.add(row),
         }
@@ -57,6 +67,10 @@ impl FieldWidget {
             Self::Entry(row) => group.remove(row),
             Self::Switch(row) => group.remove(row),
             Self::Combo(row, _) => group.remove(row),
+            Self::SearchCombo(search, combo, _, _) => {
+                group.remove(search);
+                group.remove(combo);
+            }
             Self::Spin(row) => group.remove(row),
             Self::Multi(row, _) => group.remove(row),
         }
@@ -67,6 +81,10 @@ impl FieldWidget {
             Self::Entry(row) => row.set_visible(visible),
             Self::Switch(row) => row.set_visible(visible),
             Self::Combo(row, _) => row.set_visible(visible),
+            Self::SearchCombo(search, combo, _, _) => {
+                search.set_visible(visible);
+                combo.set_visible(false);
+            }
             Self::Spin(row) => row.set_visible(visible),
             Self::Multi(row, _) => row.set_visible(visible),
         }
@@ -77,6 +95,7 @@ impl FieldWidget {
             Self::Entry(row) => row.tooltip_text().unwrap_or_default().to_string(),
             Self::Switch(row) => row.subtitle().unwrap_or_default().to_string(),
             Self::Combo(row, _) => row.subtitle().unwrap_or_default().to_string(),
+            Self::SearchCombo(_, combo, _, _) => combo.subtitle().unwrap_or_default().to_string(),
             Self::Spin(row) => row.subtitle().unwrap_or_default().to_string(),
             Self::Multi(row, _) => row.subtitle().to_string(),
         }
@@ -86,7 +105,7 @@ impl FieldWidget {
         match self {
             Self::Entry(row) => row.text().to_string(),
             Self::Switch(row) => row.is_active().to_string(),
-            Self::Combo(row, values) => values
+            Self::Combo(row, values) | Self::SearchCombo(_, row, values, _) => values
                 .get(row.selected() as usize)
                 .cloned()
                 .unwrap_or_default(),
@@ -118,7 +137,7 @@ impl FieldWidget {
                 let callback = callback.clone();
                 row.connect_active_notify(move |_| callback());
             }
-            Self::Combo(row, _) => {
+            Self::Combo(row, _) | Self::SearchCombo(_, row, _, _) => {
                 let callback = callback.clone();
                 row.connect_selected_notify(move |_| callback());
             }
@@ -142,6 +161,14 @@ impl FieldWidget {
             Self::Combo(row, values) => {
                 if let Some(idx) = values.iter().position(|v| v == text) {
                     row.set_selected(idx as u32);
+                }
+            }
+            Self::SearchCombo(search, row, values, labels) => {
+                if let Some(idx) = values.iter().position(|v| v == text) {
+                    row.set_selected(idx as u32);
+                    if let Some(label) = labels.get(idx) {
+                        search.set_text(label);
+                    }
                 }
             }
             Self::Spin(row) => {
@@ -2009,13 +2036,7 @@ fn option_row(
         ControlKind::Select => {
             let labels: Vec<String> = examples
                 .iter()
-                .map(|(v, h)| {
-                    if h.is_empty() {
-                        v.clone()
-                    } else {
-                        format!("{v} — {h}")
-                    }
-                })
+                .map(|(v, h)| crate::config_search::example_choice_label(v, h))
                 .collect();
             let values = Rc::new(examples.iter().map(|(v, _)| v.clone()).collect::<Vec<_>>());
             let row = adw::ComboRow::new();
@@ -2026,7 +2047,21 @@ fn option_row(
             if let Some(idx) = values.iter().position(|v| v == &initial) {
                 row.set_selected(idx as u32);
             }
-            FieldWidget::Combo(row, values)
+            if crate::config_search::should_search_examples(&option.name, examples.len()) {
+                let search = adw::EntryRow::new();
+                search.set_title(&title);
+                if !option.help.is_empty() {
+                    search.set_tooltip_text(Some(&option.help));
+                }
+                if let Some(label) = labels.get(row.selected() as usize) {
+                    search.set_text(label);
+                }
+                super::dialogs::attach_example_typeahead(ctx, &search, &row, &examples);
+                row.set_visible(false);
+                FieldWidget::SearchCombo(search, row, values, Rc::new(labels))
+            } else {
+                FieldWidget::Combo(row, values)
+            }
         }
         ControlKind::MultiSelect => {
             let row = adw::ExpanderRow::new();
@@ -2700,6 +2735,10 @@ fn attach_provider_typeahead(
             "No matching remote types",
         );
         Rc::new(move || {
+            if !search.has_focus() {
+                popover.popdown();
+                return;
+            }
             while let Some(child) = list.first_child() {
                 list.remove(&child);
             }
@@ -2736,6 +2775,14 @@ fn attach_provider_typeahead(
             popover.popup();
         })
     };
+    {
+        let fill = fill.clone();
+        search.connect_notify_local(Some("has-focus"), move |row, _| {
+            if row.has_focus() {
+                fill();
+            }
+        });
+    }
     {
         let fill = fill.clone();
         let applying = applying.clone();

@@ -3044,13 +3044,7 @@ fn add_flag_option_row(
             let labels: Vec<String> = option
                 .examples
                 .iter()
-                .map(|(value, help)| {
-                    if help.is_empty() {
-                        value.clone()
-                    } else {
-                        format!("{value} — {help}")
-                    }
-                })
+                .map(|(value, hint)| crate::config_search::example_choice_label(value, hint))
                 .collect();
             let values: Vec<String> = option.examples.iter().map(|(v, _)| v.clone()).collect();
             let row = adw::ComboRow::new();
@@ -3065,8 +3059,9 @@ fn add_flag_option_row(
             let block = block.to_string();
             let field = option.field_name.clone();
             let type_name = option.type_name.clone();
+            let values_cb = values.clone();
             row.connect_selected_notify(move |row| {
-                if let Some(text) = values.get(row.selected() as usize) {
+                if let Some(text) = values_cb.get(row.selected() as usize) {
                     push_flag_edit(
                         &edits,
                         &block,
@@ -3075,6 +3070,25 @@ fn add_flag_option_row(
                     );
                 }
             });
+            if crate::config_search::should_search_examples(
+                &option.field_name,
+                option.examples.len(),
+            ) || crate::config_search::should_search_examples(
+                &option.name,
+                option.examples.len(),
+            ) {
+                let search = adw::EntryRow::new();
+                search.set_title(&title);
+                if !help.is_empty() {
+                    search.set_tooltip_text(Some(&help));
+                }
+                if let Some(label) = labels.get(row.selected() as usize) {
+                    search.set_text(label);
+                }
+                attach_example_typeahead(ctx, &search, &row, &option.examples);
+                row.set_visible(false);
+                group.add(&search);
+            }
             group.add(&row);
         }
         crate::value_mapper::ControlKind::Numeric => {
@@ -13904,6 +13918,116 @@ pub(crate) fn attach_path_picker_with(
     attach_path_autocomplete(&auto_ctx, row, &auto_config);
 }
 
+pub(crate) fn attach_example_typeahead(
+    ctx: &AppCtx,
+    search: &adw::EntryRow,
+    combo: &adw::ComboRow,
+    examples: &[(String, String)],
+) {
+    let examples = examples.to_vec();
+    let popover = gtk::Popover::new();
+    popover.set_parent(search);
+    popover.set_autohide(true);
+    popover.set_has_arrow(false);
+    popover.set_position(gtk::PositionType::Bottom);
+    let list = gtk::ListBox::new();
+    list.add_css_class("boxed-list");
+    let scroll = gtk::ScrolledWindow::new();
+    scroll.set_min_content_height(80);
+    scroll.set_max_content_height(280);
+    scroll.set_propagate_natural_width(true);
+    scroll.set_child(Some(&list));
+    popover.set_child(Some(&scroll));
+    {
+        let popover = popover.clone();
+        search.connect_destroy(move |_| popover.unparent());
+    }
+    let applying = Rc::new(Cell::new(false));
+    let generation = Rc::new(Cell::new(0u32));
+    let fill = {
+        let search = search.clone();
+        let combo = combo.clone();
+        let list = list.clone();
+        let popover = popover.clone();
+        let applying = applying.clone();
+        let examples = examples.clone();
+        let empty_label = ctx.t_or(
+            "wizards.remoteConfig.noMatchingProviders",
+            "No matching providers",
+        );
+        Rc::new(move || {
+            if !search.has_focus() {
+                popover.popdown();
+                return;
+            }
+            while let Some(child) = list.first_child() {
+                list.remove(&child);
+            }
+            let hits = crate::config_search::filter_example_choices(&search.text(), &examples);
+            if hits.is_empty() {
+                let empty = adw::ActionRow::new();
+                empty.set_activatable(false);
+                empty.set_title(&empty_label);
+                list.append(&empty);
+            }
+            for idx in hits.into_iter().take(40) {
+                let Some((value, help)) = examples.get(idx) else {
+                    continue;
+                };
+                let item = adw::ActionRow::new();
+                let title = crate::config_search::example_choice_label(value, help);
+                item.set_title(&title);
+                if !help.is_empty() {
+                    item.set_subtitle(help);
+                }
+                item.set_activatable(true);
+                let search = search.clone();
+                let combo = combo.clone();
+                let applying = applying.clone();
+                let popover = popover.clone();
+                let selected = idx as u32;
+                item.connect_activated(move |_| {
+                    applying.set(true);
+                    search.set_text(&title);
+                    combo.set_selected(selected);
+                    applying.set(false);
+                    popover.popdown();
+                });
+                list.append(&item);
+            }
+            popover.popup();
+        })
+    };
+    {
+        let fill = fill.clone();
+        let applying = applying.clone();
+        let generation = generation.clone();
+        search.connect_changed(move |_| {
+            if applying.get() {
+                return;
+            }
+            let next = generation.get().wrapping_add(1);
+            generation.set(next);
+            let fill = fill.clone();
+            let generation = generation.clone();
+            glib::timeout_add_local(std::time::Duration::from_millis(160), move || {
+                if generation.get() == next {
+                    fill();
+                }
+                glib::ControlFlow::Break
+            });
+        });
+    }
+    {
+        let fill = fill.clone();
+        search.connect_notify_local(Some("has-focus"), move |row, _| {
+            if row.has_focus() {
+                fill();
+            }
+        });
+    }
+}
+
 fn attach_path_autocomplete(
     ctx: &AppCtx,
     row: &adw::EntryRow,
@@ -13944,6 +14068,10 @@ fn attach_path_autocomplete(
         let applying = applying.clone();
         let default_remote = default_remote.clone();
         Rc::new(move || {
+            if !row.has_focus() {
+                popover.popdown();
+                return;
+            }
             while let Some(child) = list.first_child() {
                 list.remove(&child);
             }
@@ -13958,13 +14086,9 @@ fn attach_path_autocomplete(
                 up.set_activatable(true);
                 let parent = query.parent_path.clone();
                 let row = row.clone();
-                let applying = applying.clone();
-                let popover = popover.clone();
                 up.connect_activated(move |_| {
-                    applying.set(true);
                     row.set_text(&parent);
-                    applying.set(false);
-                    popover.popdown();
+                    row.grab_focus();
                 });
                 list.append(&up);
             }
@@ -14019,7 +14143,13 @@ fn attach_path_autocomplete(
                 let applying = applying.clone();
                 let popover = popover.clone();
                 let path = entry.path.clone();
+                let is_dir = entry.is_dir;
                 item.connect_activated(move |_| {
+                    if is_dir {
+                        row.set_text(&path);
+                        row.grab_focus();
+                        return;
+                    }
                     applying.set(true);
                     row.set_text(&path);
                     applying.set(false);

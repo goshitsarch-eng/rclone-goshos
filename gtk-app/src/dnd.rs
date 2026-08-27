@@ -5,6 +5,24 @@ use crate::rclone::{join_remote_path, parent_remote_path, remote_fs, split_remot
 use serde::{Deserialize, Serialize};
 
 pub const PAYLOAD_KIND: &str = "rclone-manager-files";
+pub const TAB_PAYLOAD_PREFIX: &str = "rclone-manager-tab:";
+
+pub fn encode_tab_payload(id: u32) -> String {
+    format!("{TAB_PAYLOAD_PREFIX}{id}")
+}
+
+pub fn decode_tab_payload(text: &str) -> Option<u32> {
+    text.strip_prefix(TAB_PAYLOAD_PREFIX)?.parse().ok()
+}
+
+/// Angular CDK `moveItemInArray`.
+pub fn move_item_in_array<T>(items: &mut Vec<T>, from: usize, to: usize) {
+    if from == to || from >= items.len() || to >= items.len() {
+        return;
+    }
+    let item = items.remove(from);
+    items.insert(to, item);
+}
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct DragItem {
@@ -334,5 +352,23 @@ mod tests {
         let folder = vec![item("drive", "Photos", true)];
         assert_eq!(drag_ghost_icon(&folder), "folder-symbolic");
         assert!(drag_ghost_label(&[]).is_empty());
+    }
+
+    #[test]
+    fn tab_payload_round_trips() {
+        assert_eq!(decode_tab_payload(&encode_tab_payload(42)), Some(42));
+        assert_eq!(decode_tab_payload("rclone-manager-files"), None);
+        assert_eq!(decode_tab_payload("rclone-manager-tab:x"), None);
+    }
+
+    #[test]
+    fn move_item_in_array_matches_cdk() {
+        let mut items = vec!["A", "B", "C", "D"];
+        move_item_in_array(&mut items, 0, 2);
+        assert_eq!(items, vec!["B", "C", "A", "D"]);
+        move_item_in_array(&mut items, 3, 1);
+        assert_eq!(items, vec!["B", "D", "C", "A"]);
+        move_item_in_array(&mut items, 1, 1);
+        assert_eq!(items, vec!["B", "D", "C", "A"]);
     }
 }

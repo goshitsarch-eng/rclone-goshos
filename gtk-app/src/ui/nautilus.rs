@@ -1772,7 +1772,60 @@ impl NautilusView {
         }
     }
 
+    fn attach_tab_reorder(&self, widget: &impl IsA<gtk::Widget>, id: u32) {
+        let source = gtk::DragSource::new();
+        source.set_actions(gtk::gdk::DragAction::MOVE);
+        source.connect_prepare(move |_, _, _| {
+            Some(gtk::gdk::ContentProvider::for_value(
+                &crate::dnd::encode_tab_payload(id).to_value(),
+            ))
+        });
+        {
+            let view = self.clone();
+            source.connect_drag_begin(move |_, drag| {
+                let title = view
+                    .tabs
+                    .borrow()
+                    .iter()
+                    .find(|tab| tab.id == id)
+                    .map(|tab| tab.title.clone())
+                    .unwrap_or_else(|| format!("tab {id}"));
+                let icon = gtk::DragIcon::for_drag(drag);
+                let row = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+                row.add_css_class("card");
+                row.set_margin_start(8);
+                row.set_margin_end(8);
+                row.set_margin_top(6);
+                row.set_margin_bottom(6);
+                row.append(&gtk::Image::from_icon_name("folder-symbolic"));
+                row.append(&gtk::Label::new(Some(&title)));
+                icon.set_child(Some(&row));
+            });
+        }
+        widget.add_controller(source);
+    }
+
+    fn reorder_tab(&self, from_id: u32, to_id: u32) {
+        let mut tabs = self.tabs.borrow_mut();
+        let Some(from) = tabs.iter().position(|tab| tab.id == from_id) else {
+            return;
+        };
+        let Some(to) = tabs.iter().position(|tab| tab.id == to_id) else {
+            return;
+        };
+        crate::dnd::move_item_in_array(&mut tabs, from, to);
+        drop(tabs);
+        self.refresh_tabs();
+    }
+
     fn handle_internal_drop(&self, text: &str, dest: &InternalDrop) -> bool {
+        if let Some(from_id) = crate::dnd::decode_tab_payload(text) {
+            if let InternalDrop::Tab(to_id) = dest {
+                self.reorder_tab(from_id, *to_id);
+                return true;
+            }
+            return false;
+        }
         let Some(items) =
             crate::dnd::decode_payload(text).or_else(|| self.pending_drag.borrow().clone())
         else {
@@ -4286,6 +4339,7 @@ impl NautilusView {
                 });
             }
             btn.add_controller(gesture);
+            self.attach_tab_reorder(&btn, id);
             self.attach_internal_drop(&btn, InternalDrop::Tab(id));
             self.tab_bar.append(&btn);
         }
