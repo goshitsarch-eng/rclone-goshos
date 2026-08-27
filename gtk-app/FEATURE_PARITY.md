@@ -911,3 +911,8 @@ This client is the GTK 4 + libadwaita desktop UI. It talks to a local `rclone rc
 - Live GUI: Preferences search `bandwidth` shows an editable Bandwidth limit row; changing it to `3M` writes `core.bandwidth_limit` then restore to `2M`
 - Live GUI: `--quick-run-editor gui-qr-copy` Presets & Templates menu lists **QR Copy Paths** / **Parity Capture**; one-click apply shows `Template "QR Copy Paths" applied successfully` and Destination `testdrive:verify-qr-tmpl`
 - Live GUI: Files operations job `#42424` copy Failed expands to **Copied files** `ok.txt` and `bad.txt` with `permission denied`
+
+- Files split-view file viewer uses the secondary pane listing for prev/next (`last_listing_right`) instead of an empty sibling list
+- Files listings and the operations panel refresh when rclone jobs finish if the open folder is the job source/destination or its parent (Angular `refreshAffectedPaths`)
+- Directory list failures show **Failed to load directory** with a Retry button (list or grid)
+- Live GUI: testdrive:Photos split view, opening README.md from the right pane shows **1 / 6 · 191 B**; Next opens README.txt as **2 / 6 · 7 B**
