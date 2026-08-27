@@ -9786,6 +9786,7 @@ pub fn job_detail(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, job_id: u64) {
                 &toast,
                 &job.operation,
                 &job.remote,
+                job.id,
                 active_limit.get(),
                 {
                     let limit = active_limit.clone();
@@ -9805,6 +9806,7 @@ pub fn job_detail(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, job_id: u64) {
                 &toast,
                 &job.operation,
                 &job.remote,
+                job.id,
                 done_limit.get(),
                 {
                     let limit = done_limit.clone();
@@ -10028,6 +10030,7 @@ pub(crate) fn transfer_activity_row(
     job_type: &str,
     remote_name: &str,
     parent: &impl IsA<gtk::Widget>,
+    parent_job_id: u64,
 ) -> gtk::ListBoxRow {
     let wrap = gtk::Box::new(gtk::Orientation::Vertical, 4);
     wrap.set_margin_top(4);
@@ -10126,12 +10129,47 @@ pub(crate) fn transfer_activity_row(
         on_deleted,
         "",
     ));
+    let resolve_job = if crate::transfers::can_resolve_failed(completed, parsed) {
+        let snap = ctx.snapshot.borrow();
+        let meta = ctx.store.borrow();
+        crate::jobs::find_resolve_job(&snap.jobs, &meta.job_meta, &parsed.name)
+            .or_else(|| {
+                crate::jobs::find_resolve_job(&meta.job_history, &meta.job_meta, &parsed.name)
+            })
+            .cloned()
+    } else {
+        None
+    };
+    if crate::transfers::can_resolve_failed(completed, parsed) {
+        let resolve = gtk::Button::from_icon_name("go-next-symbolic");
+        resolve.set_valign(gtk::Align::Center);
+        resolve.add_css_class("flat");
+        resolve.set_tooltip_text(Some(&ctx.t_or(
+            "shared.transferActivity.actions.resolveToDst",
+            "Copy to Destination",
+        )));
+        if resolve_job
+            .as_ref()
+            .is_some_and(crate::jobs::job_is_running)
+        {
+            resolve.set_sensitive(false);
+        }
+        let ctx = ctx.clone();
+        let parsed = parsed.clone();
+        let parent = parent.upcast_ref::<gtk::Widget>().clone();
+        resolve.connect_clicked(move |_| {
+            resolve_failed_transfer(&ctx, &parsed, parent_job_id, &parent);
+        });
+        row.add_suffix(&resolve);
+    }
     wrap.append(&row);
     if !completed {
         let bar = gtk::ProgressBar::new();
         bar.set_fraction((parsed.percentage as f64 / 100.0).clamp(0.0, 1.0));
         bar.set_hexpand(true);
         wrap.append(&bar);
+    } else if let Some(job) = resolve_job {
+        append_resolve_progress(ctx, &wrap, &job);
     }
     let list_row = gtk::ListBoxRow::new();
     list_row.set_child(Some(&wrap));
@@ -10147,6 +10185,7 @@ fn append_transfer_rows(
     parent: &impl IsA<gtk::Widget>,
     job_type: &str,
     remote_name: &str,
+    parent_job_id: u64,
     limit: usize,
     on_more: Option<Rc<dyn Fn()>>,
 ) {
@@ -10206,6 +10245,7 @@ fn append_transfer_rows(
             job_type,
             remote_name,
             parent,
+            parent_job_id,
         ));
     }
     if remaining > 0 {
@@ -14321,35 +14361,110 @@ pub(super) fn check_result_row(
     ));
     wrap.append(&row);
     if let Some(job) = resolve_job {
-        if crate::jobs::job_is_running(&job) {
-            let bytes = crate::jobs::stats_i64(&job.stats, &["bytes"]);
-            let size = crate::jobs::stats_i64(&job.stats, &["totalBytes", "total_bytes"]);
-            let speed = crate::jobs::stats_f64(&job.stats, &["speed"]);
-            let eta = crate::jobs::stats_i64(&job.stats, &["eta"]);
-            let preparing = crate::checks::resolve_is_preparing(job.progress, bytes);
-            let bar = gtk::ProgressBar::new();
-            bar.set_show_text(true);
-            if preparing {
-                bar.pulse();
-                bar.set_text(Some(
-                    &ctx.t_or("shared.transferActivity.status.preparing", "Preparing"),
-                ));
-            } else {
-                bar.set_fraction(job.progress.clamp(0.0, 1.0));
-                bar.set_text(Some(&crate::checks::format_resolve_progress(
-                    bytes, size, speed, eta,
-                )));
-            }
-            wrap.append(&bar);
-        } else if job.status == "failed" || job.error.is_some() {
-            let err = gtk::Label::new(Some(&job.error.unwrap_or_else(|| job.status.clone())));
-            err.add_css_class("error");
-            err.set_xalign(0.0);
-            err.set_wrap(true);
-            wrap.append(&err);
-        }
+        append_resolve_progress(ctx, &wrap, &job);
     }
     wrap
+}
+
+fn append_resolve_progress(ctx: &AppCtx, wrap: &gtk::Box, job: &crate::store::JobInfo) {
+    if crate::jobs::job_is_running(job) {
+        let bytes = crate::jobs::stats_i64(&job.stats, &["bytes"]);
+        let size = crate::jobs::stats_i64(&job.stats, &["totalBytes", "total_bytes"]);
+        let speed = crate::jobs::stats_f64(&job.stats, &["speed"]);
+        let eta = crate::jobs::stats_i64(&job.stats, &["eta"]);
+        let preparing = crate::checks::resolve_is_preparing(job.progress, bytes);
+        let bar = gtk::ProgressBar::new();
+        bar.set_show_text(true);
+        if preparing {
+            bar.pulse();
+            bar.set_text(Some(
+                &ctx.t_or("shared.transferActivity.status.preparing", "Preparing"),
+            ));
+        } else {
+            bar.set_fraction(job.progress.clamp(0.0, 1.0));
+            bar.set_text(Some(&crate::checks::format_resolve_progress(
+                bytes, size, speed, eta,
+            )));
+        }
+        wrap.append(&bar);
+    } else if job.status == "failed" || job.error.is_some() {
+        let err = gtk::Label::new(Some(
+            &job.error.clone().unwrap_or_else(|| job.status.clone()),
+        ));
+        err.add_css_class("error");
+        err.set_xalign(0.0);
+        err.set_wrap(true);
+        wrap.append(&err);
+    }
+}
+
+fn resolve_failed_transfer(
+    ctx: &AppCtx,
+    parsed: &crate::transfers::TransferRow,
+    parent_job_id: u64,
+    parent: &impl IsA<gtk::Widget>,
+) {
+    let Some(client) = ctx.client() else {
+        return;
+    };
+    let Some((src_fs, src_remote, dst_fs, dst_remote)) =
+        crate::transfers::copyfile_sides(&parsed.src, &parsed.dst)
+    else {
+        add_action_toast(
+            parent,
+            &ctx.tf(
+                "shared.transferActivity.messages.resolveFailed",
+                &[("error", "missing source or destination")],
+            ),
+        );
+        return;
+    };
+    let payload = serde_json::json!({
+        "srcFs": src_fs,
+        "srcRemote": src_remote,
+        "dstFs": dst_fs,
+        "dstRemote": dst_remote,
+    });
+    match client.start_job("operations/copyfile", payload) {
+        Ok(id) => {
+            let (remote, _) = crate::rclone::split_remote_path(&src_fs);
+            crate::jobs::remember_started(
+                &mut ctx.store.borrow_mut().job_meta,
+                &format!("#{id}"),
+                crate::store::JobMeta {
+                    origin: "transfer-resolve".into(),
+                    profile: "default".into(),
+                    remote,
+                    backend: ctx.backend_key(),
+                    quick_run_id: String::new(),
+                    execute_id: uuid::Uuid::new_v4().to_string(),
+                    parent_job_id: if parent_job_id == 0 {
+                        None
+                    } else {
+                        Some(parent_job_id)
+                    },
+                    target: parsed.name.clone(),
+                    ..Default::default()
+                },
+            );
+            ctx.persist();
+            ctx.refresh_runtime();
+            add_action_toast(
+                parent,
+                &ctx.tf(
+                    "shared.transferActivity.messages.resolveStarted",
+                    &[("name", &parsed.name)],
+                ),
+            );
+        }
+        Err(e) => add_action_toast(
+            parent,
+            &ctx.tf(
+                "shared.transferActivity.messages.resolveFailed",
+                &[("error", &e.to_string())],
+            ),
+        ),
+    }
 }
 
 fn resolve_check_item(ctx: &AppCtx, item: &crate::checks::CheckResult, kind: &str) {

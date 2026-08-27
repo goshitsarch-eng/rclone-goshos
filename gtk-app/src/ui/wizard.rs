@@ -2192,29 +2192,13 @@ fn option_row(
 
 fn apply_path_usage(row: &adw::EntryRow, engine_os: &str, help: Option<&str>) {
     let text = row.text().to_string();
-    let mut parts = Vec::new();
-    if let Some(help) = help.filter(|s| !s.is_empty()) {
-        parts.push(help.to_string());
-    }
-    if engine_os.eq_ignore_ascii_case(std::env::consts::OS) {
-        if let Some(usage) = crate::media::local_path_usage(&text) {
-            parts.push(usage);
-        }
-        if let Some((free, total)) = crate::fileops::local_path_disk_usage(&text) {
-            parts.push(format!(
-                "{} / {}",
-                crate::rclone::format_bytes(free as i64),
-                crate::rclone::format_bytes(total as i64)
-            ));
-        }
-    }
-    if parts.is_empty() {
+    let Some(hint) = crate::media::local_path_field_hint(&text, engine_os, help) else {
         return;
-    }
+    };
     if text.is_empty() {
-        row.set_tooltip_text(Some(&parts.join(" · ")));
+        row.set_tooltip_text(Some(&hint));
     } else {
-        row.set_tooltip_text(Some(&format!("{} — {text}", parts.join(" · "))));
+        row.set_tooltip_text(Some(&format!("{hint} — {text}")));
     }
 }
 

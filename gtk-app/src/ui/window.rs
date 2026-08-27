@@ -305,6 +305,12 @@ fn present_main_with(app: &adw::Application, ctx: AppCtx, hidden: bool) {
     }
     header.pack_start(&home_btn);
 
+    let card_btn = gtk::Button::from_icon_name("view-list-symbolic");
+    card_btn.add_css_class("flat");
+    card_btn.set_action_name(Some("win.toggle-card-variant"));
+    sync_card_variant_button(&ctx, &card_btn);
+    header.pack_start(&card_btn);
+
     let menu_btn = gtk::MenuButton::builder()
         .icon_name("open-menu-symbolic")
         .tooltip_text(&ctx.t_or("titlebar.appMenu", "Application menu"))
@@ -465,6 +471,18 @@ fn present_main_with(app: &adw::Application, ctx: AppCtx, hidden: bool) {
         &flow,
         &banner,
     );
+    {
+        let ctx = ctx.clone();
+        let dash = dashboard.clone();
+        let card_btn = card_btn.clone();
+        let action = gio::SimpleAction::new("toggle-card-variant", None);
+        action.connect_activate(move |_, _| {
+            toggle_card_variant(&ctx);
+            sync_card_variant_button(&ctx, &card_btn);
+            dash.refresh();
+        });
+        window.add_action(&action);
+    }
     install_shortcuts(&window);
     install_debug_context_menu(&window, &ctx);
 
@@ -545,6 +563,7 @@ fn present_main_with(app: &adw::Application, ctx: AppCtx, hidden: bool) {
     let banner_kind_poll = banner_kind.clone();
     let conn_btn_poll = conn_btn.clone();
     let home_btn_poll = home_btn.clone();
+    let card_btn_poll = card_btn.clone();
     let notice_btn_poll = notice_btn.clone();
     let menu_badge_poll = menu_badge.clone();
     let menu_btn_poll = menu_btn.clone();
@@ -693,6 +712,7 @@ fn present_main_with(app: &adw::Application, ctx: AppCtx, hidden: bool) {
             }
             sync_connection_button(&ctx_poll, &conn_btn_poll);
             sync_home_button(&ctx_poll, &home_btn_poll);
+            sync_card_variant_button(&ctx_poll, &card_btn_poll);
             sync_notice_button(&ctx_poll, &notice_btn_poll);
             sync_menu_badge(&ctx_poll, &menu_badge_poll);
             let menu_sig = menu_signature(&ctx_poll);
@@ -761,6 +781,10 @@ fn app_menu(ctx: &AppCtx) -> gio::Menu {
         Some("win.theme::dark"),
     );
     menu.append_submenu(Some(&ctx.t_or("titlebar.menu.theme", "Theme")), &theme);
+    menu.append(
+        Some(&card_variant_menu_label(ctx)),
+        Some("win.toggle-card-variant"),
+    );
 
     let file = gio::Menu::new();
     file.append(
@@ -1737,6 +1761,12 @@ fn install_overlay_actions(
         window.add_action(&action);
     };
     install_theme_action(window, ctx);
+    {
+        let ctx = ctx.clone();
+        let action = gio::SimpleAction::new("toggle-card-variant", None);
+        action.connect_activate(move |_, _| toggle_card_variant(&ctx));
+        window.add_action(&action);
+    }
     let refresh = {
         let ctx = ctx.clone();
         Rc::new(move || ctx.refresh_runtime())
@@ -2612,14 +2642,43 @@ fn sync_home_button(ctx: &AppCtx, btn: &gtk::Button) {
     btn.set_visible(ctx.selected_remote.borrow().is_some());
 }
 
+fn toggle_card_variant(ctx: &AppCtx) {
+    let next = if ctx.settings.borrow().runtime.dashboard_card_variant == "detailed" {
+        "compact"
+    } else {
+        "detailed"
+    };
+    ctx.settings.borrow_mut().runtime.dashboard_card_variant = next.into();
+    ctx.persist();
+}
+
+fn card_variant_menu_label(ctx: &AppCtx) -> String {
+    if ctx.settings.borrow().runtime.dashboard_card_variant == "detailed" {
+        ctx.t_or("generalOverview.layout.showCompact", "Show Compact Cards")
+    } else {
+        ctx.t_or("generalOverview.layout.showDetailed", "Show Detailed Cards")
+    }
+}
+
+fn sync_card_variant_button(ctx: &AppCtx, btn: &gtk::Button) {
+    let detailed = ctx.settings.borrow().runtime.dashboard_card_variant == "detailed";
+    btn.set_icon_name(if detailed {
+        "view-grid-symbolic"
+    } else {
+        "view-list-symbolic"
+    });
+    btn.set_tooltip_text(Some(&card_variant_menu_label(ctx)));
+}
+
 fn menu_signature(ctx: &AppCtx) -> String {
     format!(
-        "{}|{}|{}|{}|{}",
+        "{}|{}|{}|{}|{}|{}",
         ctx.active_workspace.borrow(),
         menu_notice_text(ctx).unwrap_or_default(),
         ctx.store.borrow().unacknowledged_alerts(),
         u8::from(ctx.settings.borrow().runtime.rclone_restart_required),
         u8::from(ctx.settings.borrow().runtime.app_restart_required),
+        ctx.settings.borrow().runtime.dashboard_card_variant,
     )
 }
 

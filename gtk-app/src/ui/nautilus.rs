@@ -69,6 +69,7 @@ pub struct NautilusView {
     path_stack: gtk::Stack,
     crumbs: gtk::Box,
     search_entry: gtk::SearchEntry,
+    search_btn: gtk::ToggleButton,
     search_filter: Rc<RefCell<String>>,
     status: gtk::Label,
     tabs: Rc<RefCell<Vec<TabState>>>,
@@ -340,7 +341,11 @@ impl NautilusView {
             "nautilus.contextMenu.addToSendTo",
             "Add to File Manager Menu",
         )));
+        let search_btn = gtk::ToggleButton::new();
+        search_btn.set_icon_name("system-search-symbolic");
+        search_btn.set_tooltip_text(Some(&ctx.t_or("sidebar.toggleSearch", "Toggle search bar")));
         toolbar.append(&path_stack);
+        toolbar.append(&search_btn);
         toolbar.append(&path_menu);
         toolbar.append(&send_to_btn);
         toolbar.append(&new_folder);
@@ -635,6 +640,7 @@ impl NautilusView {
             path_stack,
             crumbs,
             search_entry,
+            search_btn,
             search_filter: Rc::new(RefCell::new(String::new())),
             status,
             tabs: Rc::new(RefCell::new(vec![initial.clone()])),
@@ -809,6 +815,16 @@ impl NautilusView {
             let view = view.clone();
             view.search_entry.clone().connect_stop_search(move |_| {
                 view.clear_search();
+            });
+        }
+        {
+            let view = view.clone();
+            view.search_btn.clone().connect_toggled(move |btn| {
+                if btn.is_active() {
+                    view.show_search();
+                } else if view.path_stack.visible_child_name().as_deref() == Some("search") {
+                    view.clear_search();
+                }
             });
         }
         {
@@ -2924,7 +2940,19 @@ impl NautilusView {
             &self.ctx.t_or("nautilus.titles.bookmarks", "Bookmarks"),
             Some(InternalDrop::BookmarkHeader),
         );
-        for mark in &self.ctx.settings.borrow().nautilus.bookmarks {
+        let bookmarks = self.ctx.settings.borrow().nautilus.bookmarks.clone();
+        if bookmarks.is_empty() {
+            let hint = adw::ActionRow::new();
+            hint.set_title(
+                &self
+                    .ctx
+                    .t_or("nautilus.bookmarks.emptyHint", "No bookmarks"),
+            );
+            hint.set_sensitive(false);
+            hint.add_css_class("dim-label");
+            self.sidebar.append(&hint);
+        }
+        for mark in &bookmarks {
             if let (Some(name), Some(path)) = (
                 mark.get("name").and_then(|x| x.as_str()),
                 mark.get("path").and_then(|x| x.as_str()),
@@ -3367,11 +3395,17 @@ impl NautilusView {
 
     fn show_search(&self) {
         self.path_stack.set_visible_child_name("search");
+        if !self.search_btn.is_active() {
+            self.search_btn.set_active(true);
+        }
         self.search_entry.grab_focus();
     }
 
     fn show_crumbs(&self) {
         self.path_stack.set_visible_child_name("crumbs");
+        if self.search_btn.is_active() {
+            self.search_btn.set_active(false);
+        }
     }
 
     fn refresh_crumbs(&self) {

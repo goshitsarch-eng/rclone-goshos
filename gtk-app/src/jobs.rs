@@ -2121,6 +2121,14 @@ pub fn path_has_leaf(path: &str, name: &str) -> bool {
     !name.is_empty() && crate::checks::leaf_name(path) == name
 }
 
+pub fn is_resolve_origin(origin: &str) -> bool {
+    matches!(origin, "check-resolve" | "transfer-resolve")
+}
+
+pub fn should_toast_job_failure(job: &JobInfo) -> bool {
+    is_managed_job(job)
+}
+
 pub fn find_resolve_job<'a>(
     jobs: &'a [JobInfo],
     meta: &HashMap<u64, JobMeta>,
@@ -2129,8 +2137,8 @@ pub fn find_resolve_job<'a>(
     let mut best = None;
     for job in jobs {
         let item = meta.get(&job.id);
-        let is_resolve = job.origin == "check-resolve"
-            || item.map(|m| m.origin == "check-resolve").unwrap_or(false);
+        let is_resolve = is_resolve_origin(&job.origin)
+            || item.map(|m| is_resolve_origin(&m.origin)).unwrap_or(false);
         if !is_resolve {
             continue;
         }
@@ -4163,6 +4171,30 @@ mod tests {
         let jobs = vec![resolve];
         assert!(find_resolve_job(&jobs, &map, "photo.jpg").is_some());
         assert!(find_resolve_job(&jobs, &map, "other.jpg").is_none());
+        map.insert(
+            22,
+            JobMeta {
+                origin: "transfer-resolve".into(),
+                target: "bad.txt".into(),
+                ..Default::default()
+            },
+        );
+        let mut retry = running_job(22, "testdrive", "copy", "default");
+        retry.origin = "transfer-resolve".into();
+        retry.src = "testdrive:Photos/bad.txt".into();
+        assert!(find_resolve_job(&[retry], &map, "bad.txt").is_some());
+        let mut noise = running_job(99, "", "job/99", "");
+        noise.src.clear();
+        noise.dst.clear();
+        noise.remote.clear();
+        noise.origin = "dashboard".into();
+        assert!(!should_toast_job_failure(&noise));
+        assert!(should_toast_job_failure(&running_job(
+            1,
+            "testdrive",
+            "copy",
+            "default"
+        )));
         assert!(path_has_leaf("drive:album/photo.jpg", "photo.jpg"));
         assert!(!path_has_leaf("drive:album/photo.jpg", "album"));
     }

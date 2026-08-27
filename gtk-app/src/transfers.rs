@@ -103,6 +103,28 @@ pub fn finalize_completed_row(row: &mut TransferRow) {
     }
 }
 
+pub fn can_resolve_failed(completed: bool, row: &TransferRow) -> bool {
+    completed && !row.error.is_empty() && !row.src.is_empty() && !row.dst.is_empty()
+}
+
+/// Split stored transfer paths into `operations/copyfile` sides.
+pub fn copyfile_sides(src: &str, dst: &str) -> Option<(String, String, String, String)> {
+    if src.is_empty() || dst.is_empty() {
+        return None;
+    }
+    let (src_remote, src_path) = crate::rclone::split_remote_path(src);
+    let (dst_remote, dst_path) = crate::rclone::split_remote_path(dst);
+    if src_path.is_empty() || dst_path.is_empty() {
+        return None;
+    }
+    Some((
+        crate::rclone::remote_fs(&src_remote, ""),
+        src_path,
+        crate::rclone::remote_fs(&dst_remote, ""),
+        dst_path,
+    ))
+}
+
 pub fn transfer_status(completed: bool, row: &TransferRow) -> TransferStatus {
     if !row.error.is_empty() {
         return TransferStatus::Error;
@@ -726,5 +748,34 @@ mod tests {
         }));
         assert_eq!(active.bytes, 0);
         assert_eq!(active.percentage, 0);
+        let failed = parse_completed_transfer_row(&json!({
+            "name": "bad.txt",
+            "srcFs": "testdrive:Photos",
+            "srcRemote": "bad.txt",
+            "dstFs": "testdrive:verify-ops",
+            "dstRemote": "bad.txt",
+            "error": "object not found"
+        }));
+        assert!(can_resolve_failed(true, &failed));
+        assert!(!can_resolve_failed(false, &failed));
+        assert_eq!(
+            copyfile_sides(&failed.src, &failed.dst),
+            Some((
+                "testdrive:".into(),
+                "Photos/bad.txt".into(),
+                "testdrive:".into(),
+                "verify-ops/bad.txt".into()
+            ))
+        );
+        assert!(copyfile_sides("", "testdrive:a").is_none());
+        assert_eq!(
+            copyfile_sides("/tmp/k.txt", "testdrive:k.txt"),
+            Some((
+                "/".into(),
+                "/tmp/k.txt".into(),
+                "testdrive:".into(),
+                "k.txt".into()
+            ))
+        );
     }
 }

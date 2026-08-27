@@ -1354,9 +1354,15 @@ fn notify_job_changes(
     for event in crate::alerts::job_events(previous, current, &|key, params| ctx.tf(key, params)) {
         if event.severity == crate::store::AlertSeverity::High {
             if let Some(id) = event.job_id {
-                ctx.pending_job_toasts
-                    .borrow_mut()
-                    .push((id, event.title.clone()));
+                if current
+                    .iter()
+                    .find(|job| job.id == id)
+                    .is_some_and(crate::jobs::should_toast_job_failure)
+                {
+                    ctx.pending_job_toasts
+                        .borrow_mut()
+                        .push((id, event.title.clone()));
+                }
             }
         }
         ctx.store.borrow_mut().record_event(event);

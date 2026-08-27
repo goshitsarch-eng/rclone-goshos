@@ -1304,6 +1304,9 @@ fn operation_page(
     dst.set_title(&dst_title);
     dst.set_text(&default_dest(remote, &rclone, op));
     dst.set_visible(op != OperationType::Delete);
+    let mount_usage = adw::ActionRow::new();
+    mount_usage.set_title(&ctx.t_or("dashboard.appDetail.mountDiskUsage", "Mount point usage"));
+    mount_usage.set_visible(op == OperationType::Mount);
     if op == OperationType::Mount {
         dialogs::attach_path_picker(
             &ctx,
@@ -1339,6 +1342,12 @@ fn operation_page(
         };
         refresh_status(&dst.text());
         dst.connect_changed(move |row| refresh_status(&row.text()));
+    }
+    if op == OperationType::Mount {
+        apply_mount_usage(&ctx, &dst, &mount_usage);
+        let ctx = ctx.clone();
+        let mount_usage = mount_usage.clone();
+        dst.connect_changed(move |row| apply_mount_usage(&ctx, row, &mount_usage));
     }
 
     let serve_types = Rc::new(ctx.serve_types());
@@ -1623,6 +1632,7 @@ fn operation_page(
         identity.add(kind);
     }
     identity.add(&dst);
+    identity.add(&mount_usage);
     identity.add(&dest_status);
     identity.add(&serve);
     identity.add(&mount_type);
@@ -3026,6 +3036,16 @@ fn sensitive_fields_for(ctx: &AppCtx, remote: &str) -> Vec<(String, String)> {
         .map(|value| crate::providers::parse_providers(&value))
         .unwrap_or_default();
     crate::providers::sensitive_field_labels(&providers, &type_name)
+}
+
+fn apply_mount_usage(ctx: &AppCtx, dest: &adw::EntryRow, usage: &adw::ActionRow) {
+    let text = dest.text().to_string();
+    let hint = crate::media::local_path_field_hint(&text, &ctx.engine_os(), None);
+    usage.set_subtitle(hint.as_deref().unwrap_or(""));
+    usage.set_visible(!text.trim().is_empty());
+    if let Some(hint) = hint {
+        dest.set_tooltip_text(Some(&format!("{hint} — {text}")));
+    }
 }
 
 fn update_cron_hint(ctx: &AppCtx, row: &adw::EntryRow, hint: &gtk::Label) {
