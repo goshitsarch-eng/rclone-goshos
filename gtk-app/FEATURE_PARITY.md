@@ -1164,3 +1164,6 @@ This client is the GTK 4 + libadwaita desktop UI. It talks to a local `rclone rc
 - Mount operation-control polls local disk usage on the live/configured mount point (alias dest fallback) and shows a LevelBar
 - Mount start/stop treats a resolved host FUSE point as active (`live_mount`) even when `profile_is_active` misses alias remotes
 - Alert rule rows append `fire_count` and `alerts.lastFired` when a rule has fired
+
+- Live GUI: `--remote testdrive --tab mount` expand default shows **Mount point usage** `/tmp/rclone-testdrive-mnt · 117.0 GiB used / 134.8 GiB free · 251.9 GiB` plus a LevelBar; Unmount is enabled for the host FUSE alias
+- Live GUI: `--alerts` Rules **Notify on events** subtitle **Info · 1 Actions · Enabled · 969 · Last Fired 08/27/26, 06:59 PM**
