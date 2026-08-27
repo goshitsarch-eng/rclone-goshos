@@ -925,3 +925,8 @@ This client is the GTK 4 + libadwaita desktop UI. It talks to a local `rclone rc
 
 - Files copy/move/upload/delete/rename undo tokens wait until rclone jobs complete (Angular `await transferItems`); failed or stopped jobs never become Undo
 - Files split-view job refresh reloads the secondary pane when only that folder is affected
+
+- Standalone Files overlays call `refresh_runtime` so job status (and pending undo) can settle without the main window
+- `select_job_ids` fetches jobs we started even when rclone 1.60 omits them from a huge leftover `job/list`
+- Known file-manager jobs stay in the live list when rclone returns empty `output` (copyfile), so completed status reaches undo
+- Live GUI: testdrive:Photos copy README.txt, Go Up, Paste to testdrive root; after the copy job finishes, Ctrl+Z removes `README.txt` and shows **Undo successful** (lowercase `readme.txt` stays)
