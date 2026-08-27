@@ -348,8 +348,12 @@ impl NautilusView {
         tab_bar.add_css_class("linked");
         tab_bar.set_margin_start(8);
         tab_bar.set_margin_end(8);
+        let tab_scroll = gtk::ScrolledWindow::new();
+        tab_scroll.set_policy(gtk::PolicyType::Automatic, gtk::PolicyType::Never);
+        tab_scroll.set_propagate_natural_height(true);
+        tab_scroll.set_child(Some(&tab_bar));
         let files_col = gtk::Box::new(gtk::Orientation::Vertical, 4);
-        files_col.append(&tab_bar);
+        files_col.append(&tab_scroll);
         files_col.append(&paned);
         split.set_content(Some(&files_col));
 
@@ -4339,6 +4343,17 @@ impl NautilusView {
                 });
             }
             btn.add_controller(gesture);
+            let middle = gtk::GestureClick::new();
+            middle.set_button(2);
+            {
+                let view = self.clone();
+                let id = tab.id;
+                middle.connect_pressed(move |g, _, _, _| {
+                    view.close_tab(id);
+                    g.set_state(gtk::EventSequenceState::Claimed);
+                });
+            }
+            btn.add_controller(middle);
             self.attach_tab_reorder(&btn, id);
             self.attach_internal_drop(&btn, InternalDrop::Tab(id));
             self.tab_bar.append(&btn);
@@ -4495,13 +4510,19 @@ impl NautilusView {
 
     fn close_current_tab(&self) {
         let id = self.current.borrow().id;
+        self.close_tab(id);
+    }
+
+    fn close_tab(&self, id: u32) {
         self.tabs.borrow_mut().retain(|t| t.id != id);
         if self.tabs.borrow().is_empty() {
             self.open_new_tab();
             return;
         }
-        if let Some(next) = self.tabs.borrow().first().cloned() {
-            *self.current.borrow_mut() = next;
+        if self.current.borrow().id == id {
+            if let Some(next) = self.tabs.borrow().first().cloned() {
+                *self.current.borrow_mut() = next;
+            }
         }
         self.reload();
     }

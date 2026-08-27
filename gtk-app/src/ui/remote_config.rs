@@ -435,7 +435,7 @@ fn remote_page(
     parent: &impl IsA<gtk::Widget>,
     ctx: AppCtx,
     remote: &str,
-    on_done: Rc<dyn Fn()>,
+    _on_done: Rc<dyn Fn()>,
 ) -> (gtk::Box, impl Fn() + 'static) {
     let meta = ctx
         .store
@@ -523,17 +523,6 @@ fn remote_page(
     }
     sync_row.add_suffix(&edit_sync);
 
-    let provider =
-        gtk::Button::with_label(&ctx.t_or("remoteConfig.editProvider", "Edit provider fields…"));
-    {
-        let ctx = ctx.clone();
-        let parent = parent.clone();
-        let remote = remote.to_string();
-        let on_done = on_done.clone();
-        provider.connect_clicked(move |_| {
-            super::wizard::present(&parent, ctx.clone(), Some(remote.clone()), on_done.clone());
-        });
-    }
     let reauth = gtk::Button::with_label(&ctx.t_or(
         "wizards.remoteConfig.authenticationMethod",
         "Re-authenticate…",
@@ -562,9 +551,6 @@ fn remote_page(
     group.add(&sync_row);
     let actions = adw::PreferencesGroup::new();
     actions.set_title(&ctx.t_or("remoteConfig.provider", "Provider"));
-    let provider_row = adw::ActionRow::new();
-    provider_row.set_title(&ctx.t_or("remoteConfig.rcloneDefinition", "Rclone remote definition"));
-    provider_row.add_suffix(&provider);
     let helper_row = adw::ActionRow::new();
     helper_row.set_title(&ctx.t_or("remoteConfig.namedHelpers", "Named helper profiles"));
     helper_row.add_suffix(&helpers);
@@ -578,7 +564,6 @@ fn remote_page(
         "Please check your credentials or configuration password",
     ));
     auth_row.add_suffix(&reauth);
-    actions.add(&provider_row);
     actions.add(&helper_row);
     actions.add(&auth_row);
 
@@ -619,11 +604,15 @@ fn remote_page(
         });
     }
 
+    let (provider_fields, save_provider) =
+        super::wizard::inline_provider_editor(parent, &ctx, remote);
+
     let page = adw::PreferencesPage::new();
     page.add(&group);
     page.add(&actions);
     let box_ = gtk::Box::new(gtk::Orientation::Vertical, 0);
     box_.append(&page);
+    box_.append(&provider_fields);
     box_.append(&panel.root);
 
     let saver = {
@@ -641,6 +630,7 @@ fn remote_page(
                 meta.sync_actions = sync_ids.borrow().clone();
             }
             ctx.persist();
+            save_provider();
         }
     };
     (box_, saver)
@@ -1640,19 +1630,56 @@ fn helper_page(
             .borrow_mut()
             .push((option.field_name.clone(), row, option.type_name.clone()));
     }
-    if flag_rows.borrow().is_empty() {
-        let json_row = adw::EntryRow::new();
-        json_row.set_title(&ctx.t_or("remoteConfig.jsonObject", "JSON object"));
-        json_row.set_text(&serde_json::to_string(&current).unwrap_or_else(|_| "{}".into()));
-        flags_group.add(&json_row);
-        flag_rows
-            .borrow_mut()
-            .push(("_json".into(), json_row, "string".into()));
+    let json_toggle = adw::SwitchRow::new();
+    json_toggle.set_title(&ctx.t_or("remoteConfig.jsonMode", "JSON mode"));
+    json_toggle.set_active(flag_rows.borrow().is_empty());
+    let json_view = gtk::TextView::new();
+    json_view.set_monospace(true);
+    json_view.set_wrap_mode(gtk::WrapMode::WordChar);
+    json_view
+        .buffer()
+        .set_text(&serde_json::to_string_pretty(&current).unwrap_or_else(|_| "{}".into()));
+    let json_scroll = gtk::ScrolledWindow::new();
+    json_scroll.set_min_content_height(160);
+    json_scroll.set_child(Some(&json_view));
+    json_scroll.set_visible(json_toggle.is_active());
+    flags_group.add(&json_toggle);
+    {
+        let json_scroll = json_scroll.clone();
+        let flag_rows = flag_rows.clone();
+        let search = search.clone();
+        let ctx = ctx.clone();
+        json_toggle.connect_active_notify(move |row| {
+            let on = row.is_active();
+            json_scroll.set_visible(on);
+            search.set_title(&ctx.t_or(
+                if on {
+                    "remoteConfig.filterKeys"
+                } else {
+                    "remoteConfig.filterFlags"
+                },
+                if on { "Filter keys" } else { "Filter flags" },
+            ));
+            for (_, widget, _) in flag_rows.borrow().iter() {
+                widget.set_visible(!on);
+            }
+        });
+    }
+    if json_toggle.is_active() {
+        for (_, widget, _) in flag_rows.borrow().iter() {
+            widget.set_visible(false);
+        }
     }
     {
         let flag_rows = flag_rows.clone();
+        let json_toggle = json_toggle.clone();
+        let json_view = json_view.clone();
         search.connect_changed(move |entry| {
             let query = entry.text().to_string();
+            if json_toggle.is_active() {
+                highlight_json_keys(&json_view.buffer(), &query);
+                return;
+            }
             for (field, row, _) in flag_rows.borrow().iter() {
                 let name = row.title().to_string();
                 let help = row.tooltip_text().unwrap_or_default().to_string();
@@ -1668,6 +1695,7 @@ fn helper_page(
     page.add(&flags_group);
     let box_ = gtk::Box::new(gtk::Orientation::Vertical, 0);
     box_.append(&page);
+    box_.append(&json_scroll);
 
     {
         let ctx = ctx.clone();
@@ -1676,6 +1704,7 @@ fn helper_page(
         let combo = switcher.combo.clone();
         let names = switcher.names.clone();
         let flag_rows = flag_rows.clone();
+        let json_view = json_view.clone();
         combo.connect_selected_notify(move |row| {
             let Some(name) = names.borrow().get(row.selected() as usize).cloned() else {
                 return;
@@ -1688,10 +1717,11 @@ fn helper_page(
                 .get(&remote)
                 .and_then(|m| m.helper_profile(kind, &name))
                 .unwrap_or_else(|| json!({}));
+            json_view
+                .buffer()
+                .set_text(&serde_json::to_string_pretty(&value).unwrap_or_else(|_| "{}".into()));
             for (field, row, _) in flag_rows.borrow().iter() {
-                if field == "_json" {
-                    row.set_text(&serde_json::to_string(&value).unwrap_or_else(|_| "{}".into()));
-                } else if let Some(v) = value.get(field) {
+                if let Some(v) = value.get(field) {
                     row.set_text(&value_to_text(v));
                 } else {
                     row.set_text("");
@@ -1714,36 +1744,37 @@ fn helper_page(
         let remote = remote.to_string();
         let selected = selected.clone();
         let flag_rows = flag_rows.clone();
+        let json_toggle = json_toggle.clone();
+        let json_view = json_view.clone();
         move || {
             let name = selected.borrow().clone();
             if name.is_empty() {
                 return;
             }
             let mut obj = Map::new();
-            if let Some((row, field, msg)) =
-                dialogs::first_invalid_flag(flag_rows.borrow().iter().filter_map(
-                    |(field, row, type_name)| {
-                        (field != "_json").then_some((
-                            field.clone(),
-                            row.clone(),
-                            type_name.clone(),
-                        ))
-                    },
-                ))
-            {
-                dialogs::toast_near(&row, &format!("{field}: {msg}"));
-                return;
-            }
-            for (field, row, type_name) in flag_rows.borrow().iter() {
-                let text = row.text().to_string();
-                if field == "_json" {
-                    if let Ok(Value::Object(map)) = serde_json::from_str::<Value>(&text) {
-                        obj = map;
-                    }
-                    break;
+            if json_toggle.is_active() {
+                let buffer = json_view.buffer();
+                let text = buffer.text(&buffer.start_iter(), &buffer.end_iter(), false);
+                if let Ok(Value::Object(map)) = serde_json::from_str::<Value>(&text) {
+                    obj = map;
+                } else if !text.trim().is_empty() {
+                    dialogs::toast_near(&json_view, "Invalid JSON");
+                    return;
                 }
-                if !text.is_empty() {
-                    obj.insert(field.clone(), parse_flag_value(type_name, &text));
+            } else {
+                if let Some((row, field, msg)) =
+                    dialogs::first_invalid_flag(flag_rows.borrow().iter().map(
+                        |(field, row, type_name)| (field.clone(), row.clone(), type_name.clone()),
+                    ))
+                {
+                    dialogs::toast_near(&row, &format!("{field}: {msg}"));
+                    return;
+                }
+                for (field, row, type_name) in flag_rows.borrow().iter() {
+                    let text = row.text().to_string();
+                    if !text.is_empty() {
+                        obj.insert(field.clone(), parse_flag_value(type_name, &text));
+                    }
                 }
             }
             if let Some(meta) = ctx.store.borrow_mut().remotes.get_mut(&remote) {

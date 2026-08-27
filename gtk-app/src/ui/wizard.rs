@@ -2810,3 +2810,299 @@ fn attach_provider_typeahead(
         });
     }
 }
+
+/// Angular remote-config edit: General / Auth / Advanced stay in the same dialog.
+pub(super) fn inline_provider_editor(
+    parent: &impl IsA<gtk::Widget>,
+    ctx: &AppCtx,
+    remote: &str,
+) -> (gtk::Box, Rc<dyn Fn()>) {
+    let providers = ctx
+        .client()
+        .and_then(|c| c.providers().ok())
+        .map(|v| parse_providers(&v))
+        .unwrap_or_default();
+    let existing_params = ctx
+        .client()
+        .and_then(|c| c.dump_config().ok())
+        .and_then(|dump| crate::providers::dump_remote_params(&dump, remote));
+    let type_name = existing_params
+        .as_ref()
+        .and_then(crate::providers::dump_provider_type)
+        .unwrap_or_default();
+    let provider_idx = crate::providers::provider_index_by_name(&providers, &type_name);
+    let provider = provider_idx.and_then(|idx| providers.get(idx)).cloned();
+
+    let identity = adw::PreferencesGroup::new();
+    identity.set_title(&ctx.t_or("remoteConfig.provider", "Provider"));
+    let type_row = adw::ActionRow::new();
+    type_row.set_title(&ctx.t_or("wizards.remoteConfig.remoteType", "Remote Type"));
+    let type_label = provider
+        .as_ref()
+        .map(|p| format!("{} — {}", p.name, p.description))
+        .filter(|s| !s.trim_end_matches('—').trim().is_empty())
+        .unwrap_or_else(|| {
+            if type_name.is_empty() {
+                ctx.t_or("common.unknown", "Unknown")
+            } else {
+                type_name.clone()
+            }
+        });
+    type_row.set_subtitle(&type_label);
+    identity.add(&type_row);
+
+    let fields_group = adw::PreferencesGroup::new();
+    fields_group.set_title(&ctx.t_or(
+        "wizards.remoteConfig.authenticationMethod",
+        "Authentication",
+    ));
+    let advanced_group = adw::PreferencesGroup::new();
+    advanced_group.set_title(&ctx.t_or("wizards.remoteConfig.advancedOptions", "Advanced options"));
+    let field_query = Rc::new(RefCell::new(String::new()));
+    let state = Rc::new(RefCell::new(WizardState {
+        providers: providers.clone(),
+        fields: HashMap::new(),
+        flow: InteractiveFlowState::default(),
+        parameters: json!({}),
+    }));
+    let rebuilding = Rc::new(Cell::new(false));
+    let show_advanced = Rc::new(Cell::new(false));
+    let json_mode = Rc::new(Cell::new(false));
+    let command_options = Rc::new(RefCell::new(
+        crate::command_options::initial_command_options(),
+    ));
+    let json_view = gtk::TextView::new();
+    json_view.set_wrap_mode(gtk::WrapMode::WordChar);
+    json_view.set_monospace(true);
+    json_view.set_left_margin(8);
+    json_view.set_right_margin(8);
+    json_view.set_top_margin(8);
+    json_view.set_bottom_margin(8);
+
+    rebuild_fields(
+        parent,
+        ctx,
+        &fields_group,
+        &advanced_group,
+        &state,
+        provider.as_ref(),
+        true,
+        &rebuilding,
+        &field_query.borrow(),
+    );
+    if let Some(params) = existing_params.as_ref() {
+        apply_dump_to_wizard_fields(&state, params);
+    }
+    fill_json_view(
+        &json_view,
+        &collect_params(&state),
+        ctx.settings.borrow().general.restrict,
+    );
+
+    let mode_group = adw::PreferencesGroup::new();
+    mode_group.set_title(&ctx.t_or("wizards.remoteConfig.fields", "Fields"));
+    let field_search = gtk::SearchEntry::new();
+    field_search.set_placeholder_text(Some(
+        &ctx.t_or("wizards.remoteConfig.searchFields", "Search fields"),
+    ));
+    field_search.set_hexpand(true);
+    {
+        let state = state.clone();
+        let field_query = field_query.clone();
+        field_search.connect_search_changed(move |entry| {
+            *field_query.borrow_mut() = entry.text().to_string();
+            apply_field_search(&state, &field_query.borrow());
+        });
+    }
+    let field_search_row = adw::ActionRow::new();
+    field_search_row.set_title(&ctx.t_or("wizards.remoteConfig.searchFields", "Search fields"));
+    field_search_row.add_suffix(&field_search);
+    mode_group.add(&field_search_row);
+    let adv_switch = adw::SwitchRow::new();
+    let adv_on = ctx.t_or("wizards.remoteConfig.hideAdvanced", "Hide Advanced Options");
+    let adv_off = ctx.t_or("wizards.remoteConfig.showAdvanced", "Show Advanced Options");
+    adv_switch.set_title(&adv_off);
+    let json_switch = adw::SwitchRow::new();
+    let json_on = ctx.t_or("wizards.remoteConfig.switchToForm", "Switch to Form Mode");
+    let json_off = ctx.t_or("wizards.remoteConfig.switchToJson", "Switch to JSON Mode");
+    json_switch.set_title(&json_off);
+    let cmd_switch = adw::SwitchRow::new();
+    cmd_switch.set_title(&ctx.t_or(
+        "wizards.remoteConfig.showCommandOptions",
+        "Show Command Options",
+    ));
+    mode_group.add(&adv_switch);
+    mode_group.add(&json_switch);
+    mode_group.add(&cmd_switch);
+
+    let cmd_group = adw::PreferencesGroup::new();
+    cmd_group.set_title(&ctx.t_or("wizards.remoteConfig.showCommandOptions", "Command options"));
+    cmd_group.set_visible(false);
+    for def in crate::command_options::PREDEFINED_OPTIONS {
+        let row = adw::SwitchRow::new();
+        row.set_title(&ctx.t_or(def.label_key, def.key));
+        row.set_subtitle(&ctx.t_or(def.description_key, ""));
+        row.set_active(crate::command_options::option_enabled(
+            &command_options.borrow(),
+            def.key,
+        ));
+        {
+            let command_options = command_options.clone();
+            let key = def.key;
+            row.connect_active_notify(move |row| {
+                crate::command_options::set_option(
+                    &mut command_options.borrow_mut(),
+                    key,
+                    row.is_active(),
+                );
+            });
+        }
+        cmd_group.add(&row);
+    }
+    {
+        let cmd_group = cmd_group.clone();
+        cmd_switch.connect_active_notify(move |row| {
+            cmd_group.set_visible(row.is_active());
+        });
+    }
+
+    advanced_group.set_visible(false);
+    let json_group = adw::PreferencesGroup::new();
+    json_group.set_title(&ctx.t_or("wizards.remoteConfig.switchToJson", "Parameters JSON"));
+    let json_scroll = gtk::ScrolledWindow::new();
+    json_scroll.set_min_content_height(180);
+    json_scroll.set_child(Some(&json_view));
+    json_group.add(&json_scroll);
+    json_group.set_visible(false);
+    {
+        let advanced_group = advanced_group.clone();
+        let adv_on = adv_on.clone();
+        let adv_off = adv_off.clone();
+        let json_mode = json_mode.clone();
+        let show_advanced = show_advanced.clone();
+        adv_switch.connect_active_notify(move |row| {
+            show_advanced.set(row.is_active());
+            row.set_title(if row.is_active() { &adv_on } else { &adv_off });
+            advanced_group.set_visible(row.is_active() && !json_mode.get());
+        });
+    }
+    {
+        let json_mode = json_mode.clone();
+        let ctx = ctx.clone();
+        let state = state.clone();
+        let json_view = json_view.clone();
+        let fields_group = fields_group.clone();
+        let advanced_group = advanced_group.clone();
+        let json_on = json_on.clone();
+        let json_off = json_off.clone();
+        let json_group = json_group.clone();
+        let show_advanced = show_advanced.clone();
+        json_switch.connect_active_notify(move |row| {
+            let next = row.is_active();
+            if next == json_mode.get() {
+                row.set_title(if next { &json_on } else { &json_off });
+                return;
+            }
+            if next {
+                fill_json_view(
+                    &json_view,
+                    &collect_params(&state),
+                    ctx.settings.borrow().general.restrict,
+                );
+                json_mode.set(true);
+            } else if let Err(e) = apply_json_to_form(&state, &json_view) {
+                row.set_active(true);
+                let err = adw::AlertDialog::new(
+                    Some(&ctx.t_or(
+                        "wizards.remoteConfig.unknownTopLevelProperty",
+                        "Invalid JSON",
+                    )),
+                    Some(&e),
+                );
+                err.add_response("ok", &ctx.t_or("common.ok", "OK"));
+                err.present(Some(row));
+                return;
+            } else {
+                json_mode.set(false);
+            }
+            row.set_title(if json_mode.get() { &json_on } else { &json_off });
+            fields_group.set_visible(!json_mode.get());
+            advanced_group.set_visible(show_advanced.get() && !json_mode.get());
+            json_group.set_visible(json_mode.get());
+        });
+    }
+
+    let page = adw::PreferencesPage::new();
+    page.add(&identity);
+    page.add(&mode_group);
+    page.add(&cmd_group);
+    page.add(&fields_group);
+    page.add(&advanced_group);
+    page.add(&json_group);
+    let root = gtk::Box::new(gtk::Orientation::Vertical, 0);
+    root.append(&page);
+
+    let saver = {
+        let ctx = ctx.clone();
+        let remote = remote.to_string();
+        let state = state.clone();
+        let json_mode = json_mode.clone();
+        let json_view = json_view.clone();
+        let command_options = command_options.clone();
+        let parent = parent.clone();
+        let provider = provider.clone();
+        Rc::new(move || {
+            let mut params = match collect_wizard_params(&state, &json_mode, &json_view) {
+                Ok(value) => value,
+                Err(e) => {
+                    super::dialogs::toast_near(&parent, &e);
+                    return;
+                }
+            };
+            if let Some(provider) = &provider {
+                for option in provider.options.iter().filter(|o| o.required) {
+                    let value = state
+                        .borrow()
+                        .fields
+                        .get(&option.name)
+                        .map(|w| w.display_text())
+                        .unwrap_or_default();
+                    if let Err(e) = crate::validators::validate_option(option, &value) {
+                        super::dialogs::toast_near(&parent, &e);
+                        return;
+                    }
+                }
+            }
+            let Some(client) = ctx.client() else {
+                super::dialogs::toast_near(
+                    &parent,
+                    &ctx.t_or(
+                        "notification.title.engineConnectionFailed",
+                        "Engine Connection Error",
+                    ),
+                );
+                return;
+            };
+            let selected = command_options.borrow().clone();
+            let opt = Some(crate::command_options::build_opt(&selected));
+            if !crate::command_options::option_enabled(&selected, "noObscure") {
+                if let Some(obj) = params.as_object_mut() {
+                    for (key, value) in obj.iter_mut() {
+                        if let Some(s) = value.as_str() {
+                            if looks_secret(key) && !s.is_empty() {
+                                if let Ok(obscured) = client.obscure(s) {
+                                    *value = json!(obscured);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            match client.update_remote(&remote, params, opt) {
+                Ok(_) => ctx.refresh_runtime(),
+                Err(e) => super::dialogs::toast_near(&parent, &e.to_string()),
+            }
+        }) as Rc<dyn Fn()>
+    };
+    (root, saver)
+}
