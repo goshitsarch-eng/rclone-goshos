@@ -1906,14 +1906,27 @@ fn transfer_row_bytes(item: &Value) -> u64 {
         .unwrap_or(0)
 }
 
+fn transfer_row_has_error(item: &Value) -> bool {
+    item.get("error")
+        .or_else(|| item.get("lastError"))
+        .and_then(|value| value.as_str())
+        .is_some_and(|error| !error.is_empty())
+}
+
 fn completed_needs_sizes(value: &Value) -> bool {
     value.as_array().is_some_and(|arr| {
-        arr.iter()
-            .any(|item| transfer_row_size(item) > 0 && transfer_row_bytes(item) == 0)
+        arr.iter().any(|item| {
+            !transfer_row_has_error(item)
+                && transfer_row_size(item) > 0
+                && transfer_row_bytes(item) == 0
+        })
     })
 }
 
 fn finalize_completed_item(item: &Value) -> Value {
+    if transfer_row_has_error(item) {
+        return item.clone();
+    }
     let size = transfer_row_size(item);
     let bytes = transfer_row_bytes(item);
     let mut item = item.clone();
@@ -5824,6 +5837,11 @@ mod tests {
         let stored = find_stored_job(&[snap], &[history], &Default::default(), 42424).unwrap();
         assert_eq!(stored.completed.as_array().unwrap().len(), 2);
         assert_eq!(stored.completed[0]["name"], "ok.txt");
+        let mut decorated = stored.clone();
+        decorate_job_transfers(&mut decorated, &Default::default(), &[]);
+        assert_eq!(decorated.completed.as_array().unwrap().len(), 2);
+        assert_eq!(decorated.completed[0]["name"], "ok.txt");
+        assert_eq!(decorated.completed[1]["name"], "bad.txt");
     }
 
     #[test]
