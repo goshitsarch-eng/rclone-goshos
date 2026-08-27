@@ -2507,181 +2507,202 @@ impl NautilusView {
     }
 
     fn install_keybinds(&self) {
-        let controller = gtk::EventControllerKey::new();
+        self.attach_file_keybinds(&self.root, false);
         let view = self.clone();
-        controller.connect_key_pressed(move |_, key, _, modifier| {
-            let ctrl = modifier.contains(gtk::gdk::ModifierType::CONTROL_MASK);
-            let shift = modifier.contains(gtk::gdk::ModifierType::SHIFT_MASK);
-            if files_keys_should_yield(&view, key, ctrl) {
-                return glib::Propagation::Proceed;
+        self.root.connect_realize(move |widget| {
+            if let Some(win) = widget.root().and_downcast::<gtk::Window>() {
+                view.attach_file_keybinds(&win, true);
             }
-            if ctrl && key == gtk::gdk::Key::l {
-                view.show_path_entry();
-                return glib::Propagation::Stop;
-            }
-            if ctrl && key == gtk::gdk::Key::f {
-                view.show_search();
-                return glib::Propagation::Stop;
-            }
-            if key == gtk::gdk::Key::Escape {
-                if view.listing_menu_open.get() {
-                    view.listing_popover.popdown();
-                    view.listing_menu_open.set(false);
-                    return glib::Propagation::Stop;
-                }
-                view.handle_escape();
-                return glib::Propagation::Stop;
-            }
-            if key == gtk::gdk::Key::F5 || (ctrl && key == gtk::gdk::Key::r) {
-                view.reload();
-                return glib::Propagation::Stop;
-            }
-            if key == gtk::gdk::Key::F2 {
-                view.rename_selected();
-                return glib::Propagation::Stop;
-            }
-            if key == gtk::gdk::Key::Menu || (shift && key == gtk::gdk::Key::F10) {
-                view.popup_context();
-                return glib::Propagation::Stop;
-            }
-            if key == gtk::gdk::Key::space {
-                if let Some(name) = view.selected_names().first().cloned() {
-                    view.open_viewer(&name);
-                    return glib::Propagation::Stop;
-                }
-            }
-            if key == gtk::gdk::Key::Return || key == gtk::gdk::Key::KP_Enter {
-                if modifier.contains(gtk::gdk::ModifierType::ALT_MASK) {
-                    view.properties_selected();
-                    return glib::Propagation::Stop;
-                }
-                if ctrl {
-                    view.open_selected_in_new_tab();
-                    return glib::Propagation::Stop;
-                }
-                if shift {
-                    view.open_selected_in_new_window();
-                    return glib::Propagation::Stop;
-                }
-                if let Some(name) = view.selected_name() {
-                    view.open_name(&name);
-                    return glib::Propagation::Stop;
-                }
-            }
-            if key == gtk::gdk::Key::Delete {
-                view.delete_selected();
-                return glib::Propagation::Stop;
-            }
-            if ctrl && key == gtk::gdk::Key::c {
-                view.cut_or_copy(false);
-                return glib::Propagation::Stop;
-            }
-            if ctrl && key == gtk::gdk::Key::x {
-                view.cut_or_copy(true);
-                return glib::Propagation::Stop;
-            }
-            if ctrl && key == gtk::gdk::Key::v {
-                view.paste();
-                return glib::Propagation::Stop;
-            }
-            if ctrl && shift && key == gtk::gdk::Key::N {
-                view.mkdir_prompt();
-                return glib::Propagation::Stop;
-            }
-            if ctrl && shift && key == gtk::gdk::Key::d {
-                view.detach_current_tab();
-                return glib::Propagation::Stop;
-            }
-            if ctrl && shift && key == gtk::gdk::Key::T {
-                let id = view.current.borrow().id;
-                view.duplicate_tab(id);
-                return glib::Propagation::Stop;
-            }
-            if modifier.contains(gtk::gdk::ModifierType::ALT_MASK)
-                && (key == gtk::gdk::Key::Left || key == gtk::gdk::Key::KP_Left)
-            {
-                view.go_back();
-                return glib::Propagation::Stop;
-            }
-            if modifier.contains(gtk::gdk::ModifierType::ALT_MASK)
-                && (key == gtk::gdk::Key::Right || key == gtk::gdk::Key::KP_Right)
-            {
-                view.go_forward();
-                return glib::Propagation::Stop;
-            }
-            if ctrl && key == gtk::gdk::Key::t {
-                view.open_new_tab();
-                return glib::Propagation::Stop;
-            }
-            if ctrl && key == gtk::gdk::Key::w {
-                view.close_current_tab();
-                return glib::Propagation::Stop;
-            }
-            if ctrl && key == gtk::gdk::Key::slash {
-                view.toggle_split();
-                return glib::Propagation::Stop;
-            }
-            if ctrl && key == gtk::gdk::Key::i {
-                view.switch_pane();
-                return glib::Propagation::Stop;
-            }
-            if ctrl && shift && key == gtk::gdk::Key::z {
-                view.redo_last();
-                return glib::Propagation::Stop;
-            }
-            if ctrl && key == gtk::gdk::Key::z {
-                view.undo_last();
-                return glib::Propagation::Stop;
-            }
-            if ctrl && key == gtk::gdk::Key::y {
-                view.redo_last();
-                return glib::Propagation::Stop;
-            }
-            if ctrl && key == gtk::gdk::Key::a {
-                if view.is_grid() {
-                    view.grid.select_all();
-                    if *view.split_enabled.borrow() {
-                        view.grid_right.select_all();
-                    }
-                } else {
-                    view.list.select_all();
-                    if *view.split_enabled.borrow() {
-                        view.list_right.select_all();
-                    }
-                }
-                return glib::Propagation::Stop;
-            }
-            if ctrl && key == gtk::gdk::Key::h {
-                let hidden = !view.ctx.settings.borrow().nautilus.show_hidden;
-                view.ctx.settings.borrow_mut().nautilus.show_hidden = hidden;
-                view.ctx.persist();
-                view.reload();
-                return glib::Propagation::Stop;
-            }
-            if key == gtk::gdk::Key::BackSpace {
-                view.go_up();
-                return glib::Propagation::Stop;
-            }
-            if modifier.contains(gtk::gdk::ModifierType::ALT_MASK)
-                && (key == gtk::gdk::Key::Up || key == gtk::gdk::Key::KP_Up)
-            {
-                view.go_up();
-                return glib::Propagation::Stop;
-            }
-            if ctrl
-                && (key == gtk::gdk::Key::Tab
-                    || key == gtk::gdk::Key::ISO_Left_Tab
-                    || key == gtk::gdk::Key::Page_Down
-                    || key == gtk::gdk::Key::Page_Up)
-            {
-                view.cycle_tab(
-                    shift || key == gtk::gdk::Key::ISO_Left_Tab || key == gtk::gdk::Key::Page_Up,
-                );
-                return glib::Propagation::Stop;
-            }
-            glib::Propagation::Proceed
         });
-        self.root.add_controller(controller);
+    }
+
+    fn attach_file_keybinds(&self, widget: &impl IsA<gtk::Widget>, capture: bool) {
+        let controller = gtk::EventControllerKey::new();
+        if capture {
+            controller.set_propagation_phase(gtk::PropagationPhase::Capture);
+        }
+        let view = self.clone();
+        controller
+            .connect_key_pressed(move |_, key, _, modifier| view.handle_file_key(key, modifier));
+        widget.add_controller(controller);
+    }
+
+    fn handle_file_key(
+        &self,
+        key: gtk::gdk::Key,
+        modifier: gtk::gdk::ModifierType,
+    ) -> glib::Propagation {
+        let view = self;
+        let ctrl = modifier.contains(gtk::gdk::ModifierType::CONTROL_MASK);
+        let shift = modifier.contains(gtk::gdk::ModifierType::SHIFT_MASK);
+        if files_keys_should_yield(view, key, ctrl) {
+            return glib::Propagation::Proceed;
+        }
+        if ctrl && key == gtk::gdk::Key::l {
+            view.show_path_entry();
+            return glib::Propagation::Stop;
+        }
+        if ctrl && key == gtk::gdk::Key::f {
+            view.show_search();
+            return glib::Propagation::Stop;
+        }
+        if key == gtk::gdk::Key::Escape {
+            if view.listing_menu_open.get() {
+                view.listing_popover.popdown();
+                view.listing_menu_open.set(false);
+                return glib::Propagation::Stop;
+            }
+            view.handle_escape();
+            return glib::Propagation::Stop;
+        }
+        if key == gtk::gdk::Key::F5 || (ctrl && key == gtk::gdk::Key::r) {
+            view.reload();
+            return glib::Propagation::Stop;
+        }
+        if key == gtk::gdk::Key::F2 {
+            view.rename_selected();
+            return glib::Propagation::Stop;
+        }
+        if key == gtk::gdk::Key::Menu || (shift && key == gtk::gdk::Key::F10) {
+            view.popup_context();
+            return glib::Propagation::Stop;
+        }
+        if key == gtk::gdk::Key::space {
+            if let Some(name) = view.selected_names().first().cloned() {
+                view.open_viewer(&name);
+                return glib::Propagation::Stop;
+            }
+        }
+        if key == gtk::gdk::Key::Return || key == gtk::gdk::Key::KP_Enter {
+            if modifier.contains(gtk::gdk::ModifierType::ALT_MASK) {
+                view.properties_selected();
+                return glib::Propagation::Stop;
+            }
+            if ctrl {
+                view.open_selected_in_new_tab();
+                return glib::Propagation::Stop;
+            }
+            if shift {
+                view.open_selected_in_new_window();
+                return glib::Propagation::Stop;
+            }
+            if let Some(name) = view.selected_name() {
+                view.open_name(&name);
+                return glib::Propagation::Stop;
+            }
+        }
+        if key == gtk::gdk::Key::Delete {
+            view.delete_selected();
+            return glib::Propagation::Stop;
+        }
+        if ctrl && key == gtk::gdk::Key::c {
+            view.cut_or_copy(false);
+            return glib::Propagation::Stop;
+        }
+        if ctrl && key == gtk::gdk::Key::x {
+            view.cut_or_copy(true);
+            return glib::Propagation::Stop;
+        }
+        if ctrl && key == gtk::gdk::Key::v {
+            view.paste();
+            return glib::Propagation::Stop;
+        }
+        if ctrl && shift && key == gtk::gdk::Key::N {
+            view.mkdir_prompt();
+            return glib::Propagation::Stop;
+        }
+        if ctrl && shift && key == gtk::gdk::Key::d {
+            view.detach_current_tab();
+            return glib::Propagation::Stop;
+        }
+        if ctrl && shift && key == gtk::gdk::Key::T {
+            let id = view.current.borrow().id;
+            view.duplicate_tab(id);
+            return glib::Propagation::Stop;
+        }
+        if modifier.contains(gtk::gdk::ModifierType::ALT_MASK)
+            && (key == gtk::gdk::Key::Left || key == gtk::gdk::Key::KP_Left)
+        {
+            view.go_back();
+            return glib::Propagation::Stop;
+        }
+        if modifier.contains(gtk::gdk::ModifierType::ALT_MASK)
+            && (key == gtk::gdk::Key::Right || key == gtk::gdk::Key::KP_Right)
+        {
+            view.go_forward();
+            return glib::Propagation::Stop;
+        }
+        if ctrl && key == gtk::gdk::Key::t {
+            view.open_new_tab();
+            return glib::Propagation::Stop;
+        }
+        if ctrl && key == gtk::gdk::Key::w {
+            view.close_current_tab();
+            return glib::Propagation::Stop;
+        }
+        if ctrl && key == gtk::gdk::Key::slash {
+            view.toggle_split();
+            return glib::Propagation::Stop;
+        }
+        if ctrl && key == gtk::gdk::Key::i {
+            view.switch_pane();
+            return glib::Propagation::Stop;
+        }
+        if ctrl && shift && key == gtk::gdk::Key::z {
+            view.redo_last();
+            return glib::Propagation::Stop;
+        }
+        if ctrl && key == gtk::gdk::Key::z {
+            view.undo_last();
+            return glib::Propagation::Stop;
+        }
+        if ctrl && key == gtk::gdk::Key::y {
+            view.redo_last();
+            return glib::Propagation::Stop;
+        }
+        if ctrl && key == gtk::gdk::Key::a {
+            if view.is_grid() {
+                view.grid.select_all();
+                if *view.split_enabled.borrow() {
+                    view.grid_right.select_all();
+                }
+            } else {
+                view.list.select_all();
+                if *view.split_enabled.borrow() {
+                    view.list_right.select_all();
+                }
+            }
+            return glib::Propagation::Stop;
+        }
+        if ctrl && key == gtk::gdk::Key::h {
+            let hidden = !view.ctx.settings.borrow().nautilus.show_hidden;
+            view.ctx.settings.borrow_mut().nautilus.show_hidden = hidden;
+            view.ctx.persist();
+            view.reload();
+            return glib::Propagation::Stop;
+        }
+        if key == gtk::gdk::Key::BackSpace {
+            view.go_up();
+            return glib::Propagation::Stop;
+        }
+        if modifier.contains(gtk::gdk::ModifierType::ALT_MASK)
+            && (key == gtk::gdk::Key::Up || key == gtk::gdk::Key::KP_Up)
+        {
+            view.go_up();
+            return glib::Propagation::Stop;
+        }
+        if ctrl
+            && (key == gtk::gdk::Key::Tab
+                || key == gtk::gdk::Key::ISO_Left_Tab
+                || key == gtk::gdk::Key::Page_Down
+                || key == gtk::gdk::Key::Page_Up)
+        {
+            view.cycle_tab(
+                shift || key == gtk::gdk::Key::ISO_Left_Tab || key == gtk::gdk::Key::Page_Up,
+            );
+            return glib::Propagation::Stop;
+        }
+        glib::Propagation::Proceed
     }
 
     fn refresh_share_banner(&self) {
