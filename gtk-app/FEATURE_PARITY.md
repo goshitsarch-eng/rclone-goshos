@@ -1081,3 +1081,17 @@ This client is the GTK 4 + libadwaita desktop UI. It talks to a local `rclone rc
 
 - Live GUI: testdrive Photos New Folder shows toast **New Folder** with **Undo**; Undo removes the folder
 - Live GUI: `--tray-action browse|testdrive` opens Files at testdrive (**28 items**, batch250 / Photos)
+
+- Job Detail completed transfers with an error expose Copy to Destination (`operations/copyfile`, origin `transfer-resolve`)
+- Leaf-only transfer names are joined onto the parent job src/dst before resolve
+- In-app job-fail toasts only fire for managed jobs
+- Files toolbar search toggle (`sidebar.toggleSearch`) opens the path-stack search field
+- Empty Files bookmarks list shows `nautilus.bookmarks.emptyHint`
+- Remote-config mount dest shows local disk usage (`items · free / total`)
+- Compact/detailed remote cards toggle from the header and the dashboard layout bar (not only Edit Layout)
+
+- Live GUI: `--job 42424` Recent lists **ok.txt** (completed) and **bad.txt** (Transfer error) with **Copy to Destination** on bad.txt
+- Live GUI: Copy to Destination toasts **File mismatch resolution started** and writes `verify-ops/bad.txt`; job_meta origin `transfer-resolve` parent **42424**
+- Live GUI: `--browse testdrive:Photos` toolbar magnifying glass opens **Search files...**; Escape restores **testdrive » Photos**; sidebar Bookmarks shows **No bookmarks**
+- Live GUI: `--remote-config testdrive --step mount` Mount point usage **29 items · 148.3 GiB / 251.9 GiB**
+- Live GUI: Remotes toolbar **Show Detailed Cards** expands cards and becomes **Show Compact Cards**; header list/grid icon toggles the same setting
