@@ -205,6 +205,11 @@ pub fn transfer_speed_class(speed: f64) -> &'static str {
     }
 }
 
+/// Angular only renders the footer speed-dot when `transfer.speed > 0`.
+pub fn transfer_speed_dot_visible(speed: f64) -> bool {
+    speed > 0.0
+}
+
 pub fn transfer_size_caption(row: &TransferRow) -> String {
     if row.size > 0 {
         format!(
@@ -817,6 +822,9 @@ mod tests {
         assert_eq!(transfer_speed_class(512.0), "speed-slow");
         assert_eq!(transfer_speed_class(2_000_000.0), "speed-medium");
         assert_eq!(transfer_speed_class(12_000_000.0), "speed-fast");
+        assert!(transfer_speed_dot_visible(512.0));
+        assert!(!transfer_speed_dot_visible(0.0));
+        assert!(!transfer_speed_dot_visible(-1.0));
         assert_eq!(transfer_path_display(""), "—");
         assert_eq!(transfer_path_display("testdrive:a"), "testdrive:a");
         let leaf_only = parse_completed_transfer_row(&json!({

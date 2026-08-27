@@ -10190,6 +10190,24 @@ fn job_path_row(ctx: &AppCtx, dialog: &adw::Dialog, title: &str, value: &str) ->
     row
 }
 
+/// Angular transfer-activity footer: colored speed-dot + `N MiB/s`.
+fn transfer_speed_indicator(speed: f64, caption: &str) -> gtk::Box {
+    let row = gtk::Box::new(gtk::Orientation::Horizontal, 4);
+    row.set_valign(gtk::Align::Center);
+    let dot = gtk::Box::new(gtk::Orientation::Horizontal, 0);
+    dot.set_size_request(8, 8);
+    dot.set_valign(gtk::Align::Center);
+    dot.set_halign(gtk::Align::Center);
+    dot.add_css_class("speed-dot");
+    dot.add_css_class(crate::transfers::transfer_speed_class(speed));
+    row.append(&dot);
+    let label = gtk::Label::new(Some(caption));
+    label.add_css_class("caption");
+    label.add_css_class("monospace");
+    row.append(&label);
+    row
+}
+
 pub(crate) fn transfer_activity_row(
     ctx: &AppCtx,
     parsed: &crate::transfers::TransferRow,
@@ -10355,10 +10373,19 @@ pub(crate) fn transfer_activity_row(
         left.add_css_class("dim-label");
         footer.append(&left);
     }
+    let right = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+    right.set_halign(gtk::Align::End);
+    right.set_hexpand(true);
+    let speed = crate::transfers::transfer_speed_caption(parsed);
+    if crate::transfers::transfer_speed_dot_visible(parsed.speed) && !speed.is_empty() {
+        right.append(&transfer_speed_indicator(parsed.speed, &speed));
+    }
     let mut right_parts = Vec::new();
-    let speed = crate::transfers::transfer_footer_right(parsed, completed);
-    if !speed.is_empty() {
-        right_parts.push(speed);
+    if !completed {
+        let eta = crate::transfers::transfer_eta_caption(parsed);
+        if !eta.is_empty() {
+            right_parts.push(eta);
+        }
     }
     if let Some(at) = parsed.completed_at {
         let (key, count) = crate::checks::relative_time_parts(at, chrono::Utc::now());
@@ -10375,11 +10402,13 @@ pub(crate) fn transfer_activity_row(
         }
     }
     if !right_parts.is_empty() {
-        let right = gtk::Label::new(Some(&right_parts.join(" · ")));
-        right.set_xalign(1.0);
-        right.set_hexpand(size.is_empty());
-        right.add_css_class("caption");
-        right.add_css_class(crate::transfers::transfer_speed_class(parsed.speed));
+        let extra = gtk::Label::new(Some(&right_parts.join(" · ")));
+        extra.set_xalign(1.0);
+        extra.add_css_class("caption");
+        extra.add_css_class("dim-label");
+        right.append(&extra);
+    }
+    if right.first_child().is_some() {
         footer.append(&right);
     }
     if footer.first_child().is_some() {
@@ -14802,6 +14831,10 @@ fn append_resolve_progress(ctx: &AppCtx, wrap: &gtk::Box, job: &crate::store::Jo
             )));
         }
         wrap.append(&bar);
+        if crate::transfers::transfer_speed_dot_visible(speed) {
+            let caption = format!("{}/s", crate::rclone::format_bytes(speed.round() as i64));
+            wrap.append(&transfer_speed_indicator(speed, &caption));
+        }
     } else if job.status == "failed" || job.error.is_some() {
         let err = gtk::Label::new(Some(
             &job.error.clone().unwrap_or_else(|| job.status.clone()),

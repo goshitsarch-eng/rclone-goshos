@@ -2839,7 +2839,16 @@ fn apply_startup_css() {
            border-radius: 8px;\n\
          }\n\
          .nautilus-toolbar-scroll { min-width: 0; }\n\
-         .nautilus-toolbar { min-width: 0; }",
+         .nautilus-toolbar { min-width: 0; }\n\
+         .speed-dot {\n\
+           min-width: 8px;\n\
+           min-height: 8px;\n\
+           border-radius: 999px;\n\
+           background-color: @warning_color;\n\
+         }\n\
+         .speed-dot.speed-fast { background-color: @success_color; }\n\
+         .speed-dot.speed-medium { background-color: @accent_color; }\n\
+         .speed-dot.speed-slow { background-color: @warning_color; }",
     );
     if let Some(display) = gtk::gdk::Display::default() {
         gtk::style_context_add_provider_for_display(
