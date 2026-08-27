@@ -3114,12 +3114,12 @@ impl NautilusView {
                 format_relative_mod_time(&entry.mod_time)
             )
         });
-        let icon = gtk::Image::from_icon_name(&crate::mime::icon_for_entry(
-            &entry.name,
-            entry.is_dir,
-            &entry.mime,
-        ));
+        let icon = self.entry_icon(&entry, tab);
         row.add_prefix(&icon);
+        if self.entry_is_cut(tab, &entry.name) {
+            row.add_css_class("cut-item");
+            row.set_opacity(0.5);
+        }
         let size = gtk::Label::new(Some(&if entry.is_dir {
             String::new()
         } else {
@@ -3150,12 +3150,12 @@ impl NautilusView {
         tile.set_margin_start(8);
         tile.set_margin_end(8);
         tile.set_widget_name(&entry.name);
-        let icon = gtk::Image::from_icon_name(&crate::mime::icon_for_entry(
-            &entry.name,
-            entry.is_dir,
-            &entry.mime,
-        ));
+        let icon = self.entry_icon(&entry, tab);
         icon.set_pixel_size(self.current_icon_size().max(48));
+        if self.entry_is_cut(tab, &entry.name) {
+            tile.add_css_class("cut-item");
+            tile.set_opacity(0.5);
+        }
         let label = gtk::Label::new(Some(&entry.name));
         label.set_ellipsize(gtk::pango::EllipsizeMode::End);
         label.set_max_width_chars(14);
@@ -4570,6 +4570,43 @@ impl NautilusView {
         } else {
             self.ctx.t_or("common.copy", "Copied")
         }));
+        self.restyle_listings();
+    }
+
+    fn entry_is_cut(&self, tab: &TabState, name: &str) -> bool {
+        crate::fileops::clipboard_marks_cut(
+            &self.clipboard.borrow(),
+            &tab.remote,
+            &join_remote_path(&tab.path, name),
+        )
+    }
+
+    fn entry_icon(&self, entry: &DirEntry, tab: &TabState) -> gtk::Image {
+        let cut = self.entry_is_cut(tab, &entry.name);
+        let icon = gtk::Image::from_icon_name(&if cut {
+            "edit-cut-symbolic".to_string()
+        } else {
+            crate::mime::icon_for_entry(&entry.name, entry.is_dir, &entry.mime)
+        });
+        if cut {
+            icon.add_css_class("cut-icon");
+        }
+        icon
+    }
+
+    fn restyle_listings(&self) {
+        let left = self.last_listing.borrow().clone();
+        clear_list(&self.list);
+        clear_flow(&self.grid);
+        self.listing_shown.set(0);
+        self.populate_entries(&left, true);
+        if *self.split_enabled.borrow() {
+            let right = self.last_listing_right.borrow().clone();
+            clear_list(&self.list_right);
+            clear_flow(&self.grid_right);
+            self.listing_shown_right.set(0);
+            self.populate_entries(&right, false);
+        }
     }
 
     fn paste(&self) {

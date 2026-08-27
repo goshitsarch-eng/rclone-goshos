@@ -2696,6 +2696,12 @@ fn apply_startup_css() {
          .path-fade-end {\n\
            min-width: 28px;\n\
            background-image: linear-gradient(to left, @window_bg_color, transparent);\n\
+         }\n\
+         .cut-item { opacity: 0.5; }\n\
+         .cut-icon {\n\
+           outline: 2px dashed alpha(@window_fg_color, 0.45);\n\
+           outline-offset: -2px;\n\
+           border-radius: 8px;\n\
          }",
     );
     if let Some(display) = gtk::gdk::Display::default() {

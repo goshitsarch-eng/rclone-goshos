@@ -3,7 +3,7 @@
 use crate::rclone::{remote_fs, RcClient};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -406,6 +406,36 @@ pub fn start_grouped_transfers(
 }
 
 const MANAGER_CLIPBOARD_MARK: &str = "rclone-manager-clipboard";
+
+/// Clipboard key used by Angular `cutItemPaths` (`remote:path`).
+pub fn clipboard_item_key(remote: &str, path: &str) -> String {
+    format!("{remote}:{path}")
+}
+
+/// Paths currently marked for move (cut), not copy.
+pub fn cut_item_keys(items: &[(String, String, bool, bool)]) -> HashSet<String> {
+    items
+        .iter()
+        .filter(|(_, _, cut, _)| *cut)
+        .map(|(remote, path, _, _)| clipboard_item_key(remote, path))
+        .collect()
+}
+
+pub fn clipboard_marks_cut(
+    items: &[(String, String, bool, bool)],
+    remote: &str,
+    path: &str,
+) -> bool {
+    if remote.is_empty() || path.is_empty() {
+        return false;
+    }
+    let key = clipboard_item_key(remote, path);
+    items
+        .iter()
+        .any(|(item_remote, item_path, cut, _)| {
+            *cut && clipboard_item_key(item_remote, item_path) == key
+        })
+}
 
 /// Encode Files copy/cut items so paste still works after a view rebuild.
 pub fn encode_manager_clipboard(items: &[(String, String, bool, bool)]) -> String {
@@ -1299,6 +1329,30 @@ mod tests {
         assert_eq!(parse_manager_clipboard(&encoded).as_ref(), Some(&items));
         assert!(parse_manager_clipboard("Photos\n/tmp/a.txt").is_none());
         assert!(parse_manager_clipboard("").is_none());
+    }
+
+    #[test]
+    fn cut_item_keys_ignore_copies_and_empty_paths() {
+        let items = vec![
+            ("testdrive".into(), "Photos/a.txt".into(), false, false),
+            ("testdrive".into(), "Photos/b.txt".into(), true, false),
+            ("other".into(), "b.txt".into(), true, false),
+            ("testdrive".into(), String::new(), true, false),
+        ];
+        let keys = cut_item_keys(&items);
+        assert_eq!(keys.len(), 3);
+        assert!(keys.contains("testdrive:Photos/b.txt"));
+        assert!(keys.contains("other:b.txt"));
+        assert!(keys.contains("testdrive:"));
+        assert!(!keys.contains("testdrive:Photos/a.txt"));
+        assert!(clipboard_marks_cut(&items, "testdrive", "Photos/b.txt"));
+        assert!(!clipboard_marks_cut(&items, "testdrive", "Photos/a.txt"));
+        assert!(!clipboard_marks_cut(&items, "testdrive", ""));
+        assert!(!clipboard_marks_cut(&[], "testdrive", "Photos/b.txt"));
+        assert_eq!(
+            clipboard_item_key("testdrive", "Photos/b.txt"),
+            "testdrive:Photos/b.txt"
+        );
     }
 
     #[test]

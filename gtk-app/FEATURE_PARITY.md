@@ -946,3 +946,6 @@ This client is the GTK 4 + libadwaita desktop UI. It talks to a local `rclone rc
 - Files folder open (double-click / Enter) and Go Up push Back history like Angular `navigate(..., newHistory: true)`
 - Each Files tab keeps its own Back/Forward stack; switching tabs restores that tab's history
 - Finished jobs refresh every matching open listing (active tab, split pane, and other tab paths)
+
+- Live GUI: `--browse testdrive` double-click **Photos** then toolbar Back (`<`, not Alt+Left) returns to testdrive root (batch250 / Docs / Photos) without aborting; toolbar Forward returns to Photos (`photo1.jpg`, README.md)
+- Files cut items dim to 50% opacity and swap the file icon for `edit-cut-symbolic` (Angular `cut-item` / scissors); copy restyles so cut marks clear
