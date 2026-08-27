@@ -1202,3 +1202,6 @@ This client is the GTK 4 + libadwaita desktop UI. It talks to a local `rclone rc
 - rclone 1.60 leftover jobs stored as `job/<id>` still match the selected operation when their profile matches, so latest Transfer Activity is not stuck on an older `copy`-labeled leftover
 
 - Transfer Activity prefers a running/pending job, then the newest matching job that has transfer rows, so empty rclone leftover stubs do not hide the latest real copy
+
+- Live GUI: `--remote testdrive --tab operations` Transfer Activity for **gui-copy-test** shows **blob.bin** (not leftover **ok.txt** / **bad.txt** from copy #42424); Jobs list still lists **copy #42424**
+- Live GUI: testdrive Operations **Start** on **gui-copy-test** Transfer Activity shows live **blob.bin** **22%** `17.9 MiB / 80.0 MiB` with a speed-medium dot and **2.0 MiB/s**; Jobs list shows **copy #12376** Starting plus leftover **#42424**
