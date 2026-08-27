@@ -1042,3 +1042,18 @@ This client is the GTK 4 + libadwaita desktop UI. It talks to a local `rclone rc
 - Live GUI: `--job 42424` shows Paths **testdrive:Photos** → **testdrive:verify-ops** and tabs Active (0) / Recent (2) / Checked (0); Recent lists ok.txt and bad.txt
 
 - Live GUI: file viewer Edit then Save shows toast **File saved successfully**
+
+- Job-detail Active/Recent/Checked lists paginate (50) with a `nautilus.loadMore` row
+- Deleting a transfer hides it for the session (`hidden_transfer_ids`)
+- Completed transfers append relative time and elapsed duration when rclone provides start/end timestamps
+- Transfer and check filenames are click-to-copy
+- Job Paths rows have folder-open (Browse) plus Copy; Group, Backend, and Execute ID also copy
+- Properties Location uses `format_location` and a Copy suffix
+- VFS indexed warning includes a `#9120` link (rclone/rclone#9120)
+- Dashboard Edit Layout remotes can drag-reorder via `move_remote_before` (up/down buttons remain)
+- Alert History shows dismissible filter pills and Reset when more than one filter is active
+
+- Live GUI: `--job 42424` Paths Source **testdrive:Photos** / Destination **testdrive:verify-ops** with Browse + Copy; Group **job/42424** Copy; Backend **local** Copy; Recent lists **ok.txt** and **bad.txt**
+- Live GUI: job Source Browse opens Files at **testdrive » Photos** (**7 items**)
+- Live GUI: `--properties testdrive:Photos` Location **testdrive:Photos**; Copy puts `testdrive:Photos` on the clipboard
+- Live GUI: `--alerts` Jobs & File Operations + testdrive filters show pills **testdrive ×** and **Jobs & File Operations ×** plus **Reset**; Reset clears the chips
