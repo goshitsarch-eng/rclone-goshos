@@ -53,10 +53,7 @@ impl FieldWidget {
             Self::Entry(row) => group.add(row),
             Self::Switch(row) => group.add(row),
             Self::Combo(row, _) => group.add(row),
-            Self::SearchCombo(search, combo, _, _) => {
-                group.add(search);
-                group.add(combo);
-            }
+            Self::SearchCombo(search, _, _, _) => group.add(search),
             Self::Spin(row) => group.add(row),
             Self::Multi(row, _) => group.add(row),
         }
@@ -64,15 +61,18 @@ impl FieldWidget {
 
     fn remove_from(&self, group: &adw::PreferencesGroup) {
         match self {
-            Self::Entry(row) => group.remove(row),
-            Self::Switch(row) => group.remove(row),
-            Self::Combo(row, _) => group.remove(row),
-            Self::SearchCombo(search, combo, _, _) => {
-                group.remove(search);
-                group.remove(combo);
-            }
-            Self::Spin(row) => group.remove(row),
-            Self::Multi(row, _) => group.remove(row),
+            Self::Entry(row) => Self::remove_child(group, row),
+            Self::Switch(row) => Self::remove_child(group, row),
+            Self::Combo(row, _) => Self::remove_child(group, row),
+            Self::SearchCombo(search, _, _, _) => Self::remove_child(group, search),
+            Self::Spin(row) => Self::remove_child(group, row),
+            Self::Multi(row, _) => Self::remove_child(group, row),
+        }
+    }
+
+    fn remove_child(group: &adw::PreferencesGroup, child: &impl IsA<gtk::Widget>) {
+        if child.parent().is_some_and(|parent| parent == *group) {
+            group.remove(child);
         }
     }
 
@@ -2216,14 +2216,20 @@ fn apply_dump_to_wizard_fields(state: &Rc<RefCell<WizardState>>, params: &Value)
                 .map(|o| (o.name.clone(), o.type_name.clone()))
         })
         .collect();
-    for (name, row) in state.borrow().fields.iter() {
-        if let Some(raw) = params.get(name) {
+    let rows: Vec<(String, FieldWidget)> = state
+        .borrow()
+        .fields
+        .iter()
+        .map(|(name, row)| (name.clone(), row.clone()))
+        .collect();
+    for (name, row) in rows {
+        if let Some(raw) = params.get(&name) {
             let type_name = type_by_name
-                .get(name)
+                .get(&name)
                 .map(String::as_str)
                 .unwrap_or("string");
             row.set_display_text(&machine_to_human(raw, type_name, ""));
-        } else if let Some(text) = crate::providers::dump_field_text(params, name) {
+        } else if let Some(text) = crate::providers::dump_field_text(params, &name) {
             row.set_display_text(&text);
         }
     }

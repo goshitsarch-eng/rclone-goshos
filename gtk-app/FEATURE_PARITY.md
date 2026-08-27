@@ -855,3 +855,11 @@ This client is the GTK 4 + libadwaita desktop UI. It talks to a local `rclone rc
 - VFS advanced config is searchable and grouped (Booleans / Durations / Sizes / …)
 - Live GUI: testdrive Mount shows **Enable Auto-Mount on Startup**
 - Live GUI: Quick Add provider `drive` lists **drive — Google Drive** and **onedrive — Microsoft OneDrive**
+
+- Provider/vendor exclusive example lists use Angular `filteredProvidersView` type-ahead (`filter_example_choices`) instead of a long ComboRow
+- `enableScheduled` interpolates `{{type}}` (Copy → Enable Scheduled Copy)
+- Remote-config flag search uses `matchesConfigSearch` (name / help / `--flag` flex keys); JSON mode keeps the search box and highlights matching keys
+- Path and provider typeahead only open while the EntryRow is being edited (child-focus aware) and folder picks keep listing the next segment
+- Files tabs can be drag-reordered (`moveItemInArray` / `rclone-manager-tab:` payload)
+- Live GUI: testdrive Copy shows **Enable Scheduled Copy**
+- Live GUI: Add Remote type `s3` lists **s3 — Amazon S3 Compliant Storage Providers…**; selecting it shows a searchable **provider** field defaulting to **AWS**
