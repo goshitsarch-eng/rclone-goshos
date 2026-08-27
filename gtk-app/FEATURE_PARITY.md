@@ -1148,3 +1148,10 @@ This client is the GTK 4 + libadwaita desktop UI. It talks to a local `rclone rc
 - Live GUI: `--browse testdrive:Photos` New Folder placeholder **Enter folder name**; Rename confirm **Rename** (Cancel)
 - Live GUI: `--file-viewer testdrive:Photos/preview.pdf` **Close viewer** and Open in External App tooltip **Open in default external application**
 - Live GUI: `--job 42424` Job Information **Remote Source** testdrive; Paths Source testdrive:Photos / Destination testdrive:verify-ops
+
+- Job Detail / operation controls overlay the live FUSE mount point over a stale configured dest
+- Sync-op picker tooltips use `dashboard.appDetail.*Desc` (Copy URL uses camelCase `copyUrlDesc`)
+
+- Live GUI: `--job 55555` (mount, stored dest `/mnt/unused`) Paths **Mount Point** `/tmp/rclone-testdrive-mnt`
+- Live GUI: `--job 42424` copy Paths Destination remains `testdrive:verify-ops` (no mount overlay)
+- Live GUI: `--remote testdrive --tab operations` Sync/Bisync/Copy tooltips **One-way synchronization** / **Bidirectional sync** / **Copy files (keep source)**; More items include **Generate public download URLs for files**
