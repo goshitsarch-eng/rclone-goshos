@@ -1179,3 +1179,8 @@ This client is the GTK 4 + libadwaita desktop UI. It talks to a local `rclone rc
 
 - Live GUI: testdrive Operations Transfer Activity for **copy #42424** shows **ok.txt** **Transfer completed** path pills `testdrive:Photos/ok.txt` → `testdrive:verify-ops/ok.txt` footer `3 B / 3 B`, and **bad.txt** **Transfer error** pills `testdrive:Photos/bad.txt` → `testdrive:verify-ops/bad.txt` plus **Copy to Destination**
 - Live GUI: `--job 42424` Job Detail transfer tabs **Recent (2)** after merging history (ok.txt + bad.txt)
+
+- Job/serve stop failures toast `backendErrors.job.executionFailed` / `serve.failedStop` (translated); Nautilus `{{error}}` params go through `translate_error`
+- Start-profile / start-request missing paths and stop_profile idle/unmount messages use localized JSON keys (`operations.failedStart`, `mount.notMounted`, `mount.successUnmount`)
+
+- Live GUI: `--job 42424` Stop job toasts **Job execution failed: HTTP 500: job not found** (OK); history job 42424 remains
