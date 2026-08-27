@@ -975,3 +975,10 @@ This client is the GTK 4 + libadwaita desktop UI. It talks to a local `rclone rc
 - The active Files tab scrolls into the tab strip viewport
 - Live GUI: `--browse testdrive:batch250` Operations lists compact `job/4896 · Failed` rows; click opens a popover with Speed, Start time, and Processed files
 - Live GUI: at 640px the bottom bar exposes **Open in New Window**, **Toggle Layout**, and **View Options** (Icon Size / Sort / Hidden)
+
+- Starred grid/list items have a per-item Unstar button (Angular `starredMode` star column / overlay)
+- Internal file drags highlight drop targets with `.file-drag-over` (tabs, sidebar, folders, breadcrumbs)
+- Remote/mount disk-usage LevelBars use Angular severity thresholds (60% warning, 80% high, 90% critical)
+- Files tab reorder applies Angular `getTabTransform` slide offsets while dragging; dragging outside scales the source tab to 0
+- Folder context-menu Open submenu uses a 200ms left/right GtkStack slide (Angular `slide-menu`)
+- Dashboard Status overview row includes a LevelBar for active/total remotes
