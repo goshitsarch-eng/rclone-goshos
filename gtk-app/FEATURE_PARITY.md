@@ -891,3 +891,12 @@ This client is the GTK 4 + libadwaita desktop UI. It talks to a local `rclone rc
 - Files tabs detach like Angular `onNativeDragEnd` / `detachTabAction`: drop on the listing or drag outside the window (or more than 70px vertically) opens `Files — {title}` and closes the source tab when more than one remains
 - Upload undo tokens keep the local source path so redo re-copies the file (`FileOp::Upload.source`); undo still deletes the destination
 - Live GUI: Files at testdrive:Photos with two **Photos** tabs; dragging the second tab onto the listing opens **Files — Photos**
+
+- Quick Run / remote-config template Apply looks up the ComboRow label by name (not store index) and refreshes the combo after Manage Templates / Save as Template
+- Remote-config Apply matches Angular scope: vfs / mount / backend / filter / remote only (does not write operation profiles)
+- `apply_to_meta_with_target` can patch a named helper or operation profile instead of always using the first/default
+- Live GUI: `--quick-run-editor gui-qr-copy` Apply of **QR Copy Paths** shows `Template "QR Copy Paths" applied successfully` and Destination becomes `testdrive:verify-qr-tmpl`
+
+- Files copy/upload/delete/paste push one undo token per batch (Angular `UndoEntry`); stack capped at 20
+- Files Back exits search first (`effectiveCanGoBack`): clears the filter and restores path crumbs before popping folder history
+- Live GUI: Files at testdrive:Photos filtered to README.md / README.txt; Back restores photo1.jpg, photo2.jpg, preview.pdf, and path crumbs
