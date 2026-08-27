@@ -5,7 +5,7 @@ use crate::rclone::{
     format_bytes, format_relative_mod_time, join_remote_path, parent_remote_path, remote_fs,
     split_remote_path, DirEntry,
 };
-use crate::store::{apply_sort_option, sort_entries, sort_option_key, Bookmark};
+use crate::store::{apply_sort_option, sort_entries, sort_option_key, Bookmark, JobInfo};
 use adw::prelude::*;
 use gtk::prelude::*;
 use gtk::{gio, glib};
@@ -90,6 +90,8 @@ pub struct NautilusView {
     actions_btn: gtk::MenuButton,
     send_to_btn: gtk::Button,
     split: adw::OverlaySplitView,
+    last_poll_jobs: Rc<RefCell<Vec<JobInfo>>>,
+    ops_sig: Rc<RefCell<String>>,
 }
 
 fn picker_result_from_selection(
@@ -494,6 +496,8 @@ impl NautilusView {
             actions_btn: actions_btn.clone(),
             send_to_btn: send_to_btn.clone(),
             split: split.clone(),
+            last_poll_jobs: Rc::new(RefCell::new(Vec::new())),
+            ops_sig: Rc::new(RefCell::new(String::new())),
         };
         view.refresh_type_filters();
         {
@@ -2919,8 +2923,8 @@ impl NautilusView {
                 }
             }
             Err(err) => {
-                self.status.set_text(&err.to_string());
                 self.toast.add_toast(adw::Toast::new(&err.to_string()));
+                self.show_listing_error(&err.to_string(), true);
             }
         }
     }
@@ -3330,12 +3334,11 @@ impl NautilusView {
             return;
         }
         if let Some(win) = self.root.root().and_downcast::<gtk::Window>() {
-            let is_dir = self
-                .last_listing
-                .borrow()
+            let siblings = self.pane_siblings(false);
+            let is_dir = siblings
                 .iter()
-                .find(|e| e.name == name)
-                .map(|e| e.is_dir)
+                .find(|(n, _)| n == name)
+                .map(|(_, d)| *d)
                 .unwrap_or(false);
             dialogs::file_viewer(
                 &win,
@@ -3344,9 +3347,21 @@ impl NautilusView {
                 &next,
                 name,
                 is_dir,
-                &[],
+                &siblings,
             );
         }
+    }
+
+    fn pane_siblings(&self, primary: bool) -> Vec<(String, bool)> {
+        let listing = if primary {
+            self.last_listing.borrow()
+        } else {
+            self.last_listing_right.borrow()
+        };
+        listing
+            .iter()
+            .map(|entry| (entry.name.clone(), entry.is_dir))
+            .collect()
     }
 
     fn open_name(&self, name: &str) {
@@ -3399,12 +3414,7 @@ impl NautilusView {
         let current = self.current.borrow().clone();
         let path = join_remote_path(&current.path, name);
         if let Some(win) = self.root.root().and_downcast::<gtk::Window>() {
-            let siblings: Vec<(String, bool)> = self
-                .last_listing
-                .borrow()
-                .iter()
-                .map(|e| (e.name.clone(), e.is_dir))
-                .collect();
+            let siblings = self.pane_siblings(true);
             let is_dir = siblings
                 .iter()
                 .find(|(n, _)| n == name)
@@ -3767,18 +3777,114 @@ impl NautilusView {
         } else {
             tab.path.clone()
         };
-        if let Ok(mut entries) = client.list_dir(&fs, &remote_path) {
-            if !self.ctx.settings.borrow().nautilus.show_hidden {
-                entries.retain(|e| !e.name.starts_with('.'));
+        match client.list_dir(&fs, &remote_path) {
+            Ok(mut entries) => {
+                if !self.ctx.settings.borrow().nautilus.show_hidden {
+                    entries.retain(|e| !e.name.starts_with('.'));
+                }
+                let type_filter = self.ctx.settings.borrow().nautilus.file_type_filter.clone();
+                if !type_filter.is_empty() && type_filter != "all" {
+                    entries.retain(|e| {
+                        crate::mime::category_for_entry(&e.name, e.is_dir, &e.mime)
+                            .matches_filter(&type_filter)
+                    });
+                }
+                self.populate_entries(&entries, false);
             }
-            let type_filter = self.ctx.settings.borrow().nautilus.file_type_filter.clone();
-            if !type_filter.is_empty() && type_filter != "all" {
-                entries.retain(|e| {
-                    crate::mime::category_for_entry(&e.name, e.is_dir, &e.mime)
-                        .matches_filter(&type_filter)
-                });
+            Err(err) => self.show_listing_error(&err.to_string(), false),
+        }
+    }
+
+    fn show_listing_error(&self, message: &str, primary: bool) {
+        let title = self
+            .ctx
+            .t_or("fileBrowser.errors.loadFailed", "Failed to load directory");
+        let retry_label = self.ctx.t_or("common.retry", "Retry");
+        let retry = gtk::Button::with_label(&retry_label);
+        retry.add_css_class("suggested-action");
+        retry.set_valign(gtk::Align::Center);
+        {
+            let view = self.clone();
+            retry.connect_clicked(move |_| {
+                if primary {
+                    view.reload();
+                } else {
+                    let tab = view.secondary.borrow().clone();
+                    view.reload_pane(&tab);
+                }
+            });
+        }
+        if self.is_grid() {
+            let box_ = gtk::Box::new(gtk::Orientation::Vertical, 8);
+            box_.set_widget_name("listing-error");
+            box_.set_margin_top(16);
+            box_.set_margin_start(16);
+            box_.set_margin_end(16);
+            let label = gtk::Label::new(Some(&format!("{title}\n{message}")));
+            label.set_wrap(true);
+            label.set_xalign(0.0);
+            box_.append(&label);
+            box_.append(&retry);
+            let grid = if primary {
+                &self.grid
+            } else {
+                &self.grid_right
+            };
+            grid.insert(&box_, -1);
+        } else {
+            let row = adw::ActionRow::new();
+            row.set_title(&title);
+            row.set_subtitle(message);
+            row.add_suffix(&retry);
+            let list = if primary {
+                &self.list
+            } else {
+                &self.list_right
+            };
+            list.append(&row);
+        }
+        self.status.set_text(message);
+    }
+
+    pub fn poll_refresh(&self) {
+        if self.listing_menu_open.get() {
+            return;
+        }
+        let jobs = self.ctx.snapshot.borrow().jobs.clone();
+        let history = {
+            let store = self.ctx.store.borrow();
+            crate::jobs::history_with_meta(&store.job_history, &store.job_meta)
+        };
+        let sig = crate::jobs::ops_panel_signature(&jobs, &history);
+        if *self.ops_sig.borrow() != sig {
+            *self.ops_sig.borrow_mut() = sig;
+            self.reload_ops();
+        }
+        let previous = self.last_poll_jobs.borrow().clone();
+        let finished = crate::jobs::terminal_job_transitions(&previous, &jobs);
+        *self.last_poll_jobs.borrow_mut() = jobs;
+        if finished.is_empty() {
+            return;
+        }
+        let affected: Vec<crate::jobs::AffectedListing> = finished
+            .iter()
+            .flat_map(crate::jobs::job_affected_listings)
+            .collect();
+        if affected.is_empty() {
+            return;
+        }
+        let current = self.current.borrow().clone();
+        if !current.starred
+            && crate::jobs::listing_is_affected(&current.remote, &current.path, &affected)
+        {
+            self.reload();
+            return;
+        }
+        if *self.split_enabled.borrow() {
+            let secondary = self.secondary.borrow().clone();
+            if crate::jobs::listing_is_affected(&secondary.remote, &secondary.path, &affected) {
+                self.reload_pane(&secondary);
             }
-            self.populate_entries(&entries, false);
         }
     }
 

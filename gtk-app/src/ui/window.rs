@@ -527,6 +527,7 @@ fn present_main_with(app: &adw::Application, ctx: AppCtx, hidden: bool) {
     let ctx_poll = ctx.clone();
     let dash_poll = dashboard.clone();
     let flow_poll = flow.clone();
+    let nautilus_poll = nautilus.clone();
     let banner_poll = banner.clone();
     let banner_kind_poll = banner_kind.clone();
     let conn_btn_poll = conn_btn.clone();
@@ -639,6 +640,7 @@ fn present_main_with(app: &adw::Application, ctx: AppCtx, hidden: bool) {
             ctx_poll.refresh_runtime();
             dash_poll.poll_refresh();
             flow_poll.poll_refresh();
+            nautilus_poll.poll_refresh();
             if !first_refresh_done.get() {
                 first_refresh_done.set(true);
                 loading_poll.set_visible(false);
@@ -1660,9 +1662,19 @@ fn present_overlay_window(
     window.set_default_width(1100);
     window.set_default_height(760);
     window.set_content(Some(&toolbar));
-    install_overlay_actions(&window, ctx, &toast, spec.clone(), files);
+    install_overlay_actions(&window, ctx, &toast, spec.clone(), files.clone());
     install_shortcuts(&window);
     install_debug_context_menu(&window, ctx);
+    if let Some(files) = files {
+        let window_poll = window.clone();
+        glib::timeout_add_local(crate::refresh::BUSY_POLL, move || {
+            if !window_poll.is_visible() {
+                return glib::ControlFlow::Break;
+            }
+            files.poll_refresh();
+            glib::ControlFlow::Continue
+        });
+    }
     window.present();
     if register {
         ctx.register_overlay(&window, spec);

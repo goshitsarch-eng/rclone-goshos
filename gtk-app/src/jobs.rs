@@ -2,7 +2,10 @@
 //! `start_profile_batch` / `parse_common_config`.
 
 use crate::operations::OperationType;
-use crate::rclone::{format_bytes, remote_fs, MountedRemote, RcClient, RcError, ServeItem};
+use crate::rclone::{
+    format_bytes, parent_remote_path, remote_fs, split_remote_path, MountedRemote, RcClient,
+    RcError, ServeItem,
+};
 use crate::store::{quick_run_paths, JobInfo, JobMeta, ProfileConfig, QuickRun, RemoteMeta};
 use chrono::{DateTime, Utc};
 use serde_json::{json, Map, Value};
@@ -1485,6 +1488,113 @@ pub fn job_completed_previews(job: &JobInfo, limit: usize) -> Vec<JobCompletedPr
             }
         })
         .collect()
+}
+
+pub fn is_terminal_job_status(status: &str) -> bool {
+    matches!(
+        status.to_ascii_lowercase().as_str(),
+        "completed" | "failed" | "stopped"
+    )
+}
+
+/// Jobs that just entered a terminal status (Angular `listenToJobCacheChanged`).
+pub fn terminal_job_transitions(previous: &[JobInfo], current: &[JobInfo]) -> Vec<JobInfo> {
+    if previous.is_empty() {
+        return Vec::new();
+    }
+    let mut out = Vec::new();
+    for job in current {
+        if !is_terminal_job_status(&job.status) {
+            continue;
+        }
+        let prev = previous
+            .iter()
+            .find(|item| item.id == job.id)
+            .map(|item| item.status.as_str())
+            .unwrap_or("");
+        if !is_terminal_job_status(prev) {
+            out.push(job.clone());
+        }
+    }
+    for job in previous {
+        if current.iter().all(|item| item.id != job.id) {
+            out.push(finalize_dropped_job(job));
+        }
+    }
+    out
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AffectedListing {
+    pub remote: String,
+    pub path: String,
+}
+
+fn normalize_listing_remote(remote: &str) -> String {
+    let trimmed = remote.trim();
+    if trimmed.is_empty() || trimmed == "/" {
+        "local".into()
+    } else {
+        trimmed.to_string()
+    }
+}
+
+fn normalize_listing_path(path: &str) -> String {
+    path.trim().trim_matches('/').to_string()
+}
+
+fn parse_job_listing_path(raw: &str, fallback_remote: &str) -> Option<(String, String)> {
+    let raw = raw.trim();
+    if raw.is_empty() {
+        return None;
+    }
+    if !raw.contains(':') && !raw.starts_with('/') {
+        return Some((normalize_listing_remote(fallback_remote), raw.to_string()));
+    }
+    let (remote, path) = split_remote_path(raw);
+    Some((normalize_listing_remote(&remote), path))
+}
+
+/// Destination/source folder plus its parent (Angular `addAffected`).
+pub fn job_affected_listings(job: &JobInfo) -> Vec<AffectedListing> {
+    let mut out = Vec::new();
+    let mut push = |raw: &str| {
+        let Some((remote, path)) = parse_job_listing_path(raw, &job.remote) else {
+            return;
+        };
+        let parent = parent_remote_path(&path);
+        out.push(AffectedListing {
+            remote: remote.clone(),
+            path,
+        });
+        out.push(AffectedListing {
+            remote,
+            path: parent,
+        });
+    };
+    push(&job.src);
+    push(&job.dst);
+    out
+}
+
+pub fn listing_is_affected(remote: &str, path: &str, affected: &[AffectedListing]) -> bool {
+    let remote = normalize_listing_remote(remote);
+    let path = normalize_listing_path(path);
+    affected.iter().any(|item| {
+        normalize_listing_remote(&item.remote) == remote
+            && normalize_listing_path(&item.path) == path
+    })
+}
+
+pub fn ops_panel_signature(jobs: &[JobInfo], history: &[JobInfo]) -> String {
+    let mut parts = Vec::with_capacity(jobs.len() + history.len().min(12));
+    for job in jobs {
+        parts.push(format!("{}:{}", job.id, job.status));
+    }
+    for job in history.iter().take(12) {
+        parts.push(format!("h{}:{}", job.id, job.status));
+    }
+    parts.join(",")
 }
 
 pub fn job_status_key(status: &str) -> &'static str {
@@ -5158,6 +5268,36 @@ mod tests {
             job_origin_key("filemanager"),
             "generalOverview.jobs.originFiles"
         );
+    }
+
+    #[test]
+    fn terminal_jobs_refresh_listing_parents() {
+        let running = running_job(9, "testdrive", "copy", "default");
+        let mut done = running.clone();
+        done.status = "completed".into();
+        done.src = "testdrive:Photos/README.md".into();
+        done.dst = "testdrive:verify-ops/README.md".into();
+        assert!(terminal_job_transitions(&[], &[done.clone()]).is_empty());
+        let finished = terminal_job_transitions(&[running], &[done.clone()]);
+        assert_eq!(finished.len(), 1);
+        assert_eq!(finished[0].id, 9);
+        let affected = job_affected_listings(&done);
+        assert!(listing_is_affected("testdrive", "Photos", &affected));
+        assert!(listing_is_affected("testdrive", "verify-ops", &affected));
+        assert!(!listing_is_affected("testdrive", "other", &affected));
+        let upload = JobInfo {
+            src: "/tmp/rclone-upload-undo.txt".into(),
+            dst: "testdrive:Photos/rclone-upload-undo.txt".into(),
+            remote: "testdrive".into(),
+            status: "completed".into(),
+            ..running_job(10, "testdrive", "upload", "default")
+        };
+        let upload_affected = job_affected_listings(&upload);
+        assert!(listing_is_affected("local", "/tmp", &upload_affected));
+        assert!(listing_is_affected("testdrive", "Photos", &upload_affected));
+        assert_eq!(ops_panel_signature(&[done.clone()], &[]), "9:completed");
+        assert!(is_terminal_job_status("Failed"));
+        assert!(!is_terminal_job_status("running"));
     }
 
     #[test]
