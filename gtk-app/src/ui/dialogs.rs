@@ -284,21 +284,52 @@ fn standalone_window_title(ctx: &AppCtx, kind: &str) -> String {
     }
 }
 
+pub(super) fn drag_handle_button(ctx: &AppCtx) -> gtk::Button {
+    drag_handle_button_with_tip(&ctx.t_or("common.dragToReorder", "Drag to reorder"))
+}
+
+pub(super) fn drag_handle_button_with_tip(tip: &str) -> gtk::Button {
+    let handle = gtk::Button::from_icon_name("list-drag-handle-symbolic");
+    handle.set_valign(gtk::Align::Center);
+    handle.add_css_class("flat");
+    handle.set_has_frame(false);
+    handle.set_can_focus(false);
+    handle.set_focus_on_click(false);
+    handle.set_tooltip_text(Some(tip));
+    handle
+}
+
 pub(super) fn attach_id_drag_drop(
     widget: &impl IsA<gtk::Widget>,
     id: String,
     on_drop: Rc<dyn Fn(String, String)>,
 ) {
+    attach_id_drag_drop_on(widget, widget, id, on_drop);
+}
+
+pub(super) fn attach_id_drag_drop_on(
+    handle: &impl IsA<gtk::Widget>,
+    target: &impl IsA<gtk::Widget>,
+    id: String,
+    on_drop: Rc<dyn Fn(String, String)>,
+) {
     let source = gtk::DragSource::new();
     source.set_actions(gtk::gdk::DragAction::MOVE);
+    source.set_propagation_phase(gtk::PropagationPhase::Capture);
     {
         let id = id.clone();
         source.connect_prepare(move |_, _, _| {
             Some(gtk::gdk::ContentProvider::for_value(&id.to_value()))
         });
     }
-    widget.add_controller(source);
+    source.connect_drag_begin(|src, _| {
+        if let Some(widget) = src.widget() {
+            src.set_icon(Some(&gtk::WidgetPaintable::new(Some(&widget))), 12, 12);
+        }
+    });
+    handle.add_controller(source);
     let drop = gtk::DropTarget::new(String::static_type(), gtk::gdk::DragAction::MOVE);
+    drop.set_preload(true);
     {
         let to = id;
         drop.connect_drop(move |_, value, _, _| {
@@ -312,7 +343,7 @@ pub(super) fn attach_id_drag_drop(
             true
         });
     }
-    widget.add_controller(drop);
+    target.add_controller(drop);
 }
 
 pub fn present_standalone(
@@ -3843,10 +3874,23 @@ pub fn action_order(
                 row.add_suffix(&up);
                 row.add_suffix(&down);
                 row.add_suffix(&visible);
+                if item.visible {
+                    if max_visible.is_some() {
+                        let rank = snapshot.iter().take(idx + 1).filter(|i| i.visible).count();
+                        let badge = gtk::Label::new(Some(&rank.to_string()));
+                        badge.add_css_class("numeric");
+                        badge.add_css_class("dim-label");
+                        badge.set_width_chars(1);
+                        row.add_prefix(&badge);
+                    }
+                }
+                let handle = drag_handle_button(&ctx);
+                row.add_prefix(&handle);
                 {
                     let items = items.clone();
                     let rebuild = rebuild.clone();
-                    attach_id_drag_drop(
+                    attach_id_drag_drop_on(
+                        &handle,
                         &row,
                         item.id.clone(),
                         Rc::new(move |from, to| {
@@ -13050,6 +13094,7 @@ pub fn item_order(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, on_done: Rc<dyn F
         names: &Rc<RefCell<Vec<String>>>,
         hidden: &Rc<RefCell<Vec<String>>>,
         subtitle: &str,
+        drag_tip: &str,
     ) {
         while let Some(child) = list.first_child() {
             list.remove(&child);
@@ -13082,6 +13127,7 @@ pub fn item_order(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, on_done: Rc<dyn F
                 let hidden = hidden.clone();
                 let list = list.clone();
                 let subtitle = subtitle.to_string();
+                let drag_tip = drag_tip.to_string();
                 let idx = idx;
                 up.connect_clicked(move |_| {
                     {
@@ -13090,7 +13136,7 @@ pub fn item_order(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, on_done: Rc<dyn F
                             names.swap(idx, idx - 1);
                         }
                     }
-                    refill(&list, &names, &hidden, &subtitle);
+                    refill(&list, &names, &hidden, &subtitle, &drag_tip);
                 });
             }
             {
@@ -13098,6 +13144,7 @@ pub fn item_order(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, on_done: Rc<dyn F
                 let hidden = hidden.clone();
                 let list = list.clone();
                 let subtitle = subtitle.to_string();
+                let drag_tip = drag_tip.to_string();
                 let idx = idx;
                 down.connect_clicked(move |_| {
                     {
@@ -13106,17 +13153,21 @@ pub fn item_order(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, on_done: Rc<dyn F
                             names.swap(idx, idx + 1);
                         }
                     }
-                    refill(&list, &names, &hidden, &subtitle);
+                    refill(&list, &names, &hidden, &subtitle, &drag_tip);
                 });
             }
             row.add_suffix(&up);
             row.add_suffix(&down);
+            let handle = drag_handle_button_with_tip(drag_tip);
+            row.add_prefix(&handle);
             {
                 let names = names.clone();
                 let hidden = hidden.clone();
                 let list = list.clone();
                 let subtitle = subtitle.to_string();
-                attach_id_drag_drop(
+                let drag_tip = drag_tip.to_string();
+                attach_id_drag_drop_on(
+                    &handle,
                     &row,
                     name.clone(),
                     Rc::new(move |from, to| {
@@ -13130,7 +13181,7 @@ pub fn item_order(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, on_done: Rc<dyn F
                             };
                             crate::action_order::move_index(&mut names, from_idx, to_idx);
                         }
-                        refill(&list, &names, &hidden, &subtitle);
+                        refill(&list, &names, &hidden, &subtitle, &drag_tip);
                     }),
                 );
             }
@@ -13141,7 +13192,22 @@ pub fn item_order(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, on_done: Rc<dyn F
         "titlebar.menu.remoteVisible",
         "Visible in sidebar and overview",
     );
-    refill(&list, &names, &hidden, &visible_subtitle);
+    let drag_tip = ctx.t_or("common.dragToReorder", "Drag to reorder");
+    refill(&list, &names, &hidden, &visible_subtitle, &drag_tip);
+    let reset = gtk::Button::with_label(&ctx.t("common.reset"));
+    {
+        let names = names.clone();
+        let hidden = hidden.clone();
+        let list = list.clone();
+        let visible_subtitle = visible_subtitle.clone();
+        let drag_tip = drag_tip.clone();
+        let defaults = all_names.clone();
+        reset.connect_clicked(move |_| {
+            *names.borrow_mut() = defaults.clone();
+            hidden.borrow_mut().clear();
+            refill(&list, &names, &hidden, &visible_subtitle, &drag_tip);
+        });
+    }
     let save = gtk::Button::with_label(&ctx.t("common.save"));
     save.add_css_class("suggested-action");
     {
@@ -13159,8 +13225,12 @@ pub fn item_order(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, on_done: Rc<dyn F
         });
     }
     let box_ = gtk::Box::new(gtk::Orientation::Vertical, 8);
+    let bar = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+    bar.set_halign(gtk::Align::End);
+    bar.append(&reset);
+    bar.append(&save);
     box_.append(&scrolled_list(&list));
-    box_.append(&save);
+    box_.append(&bar);
     dialog.set_child(Some(&box_));
     dialog.present(Some(parent));
 }

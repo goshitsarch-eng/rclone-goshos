@@ -11,6 +11,7 @@ use crate::rclone::{format_bytes, remote_fs};
 use adw::prelude::*;
 use gtk::prelude::*;
 use std::cell::{Cell, RefCell};
+use std::collections::HashMap;
 use std::rc::Rc;
 
 #[derive(Clone)]
@@ -40,6 +41,8 @@ pub struct Dashboard {
     overview_sig: Rc<RefCell<String>>,
     bandwidth_draft: Rc<RefCell<Option<String>>>,
     overview_live: Rc<RefCell<Option<OverviewLive>>>,
+    disk_usage: Rc<RefCell<HashMap<String, crate::store::DiskUsageState>>>,
+    disk_usage_epoch: Rc<RefCell<HashMap<String, u64>>>,
     split: adw::OverlaySplitView,
 }
 
@@ -156,6 +159,8 @@ impl Dashboard {
             overview_sig: Rc::new(RefCell::new(String::new())),
             bandwidth_draft: Rc::new(RefCell::new(None)),
             overview_live: Rc::new(RefCell::new(None)),
+            disk_usage: Rc::new(RefCell::new(HashMap::new())),
+            disk_usage_epoch: Rc::new(RefCell::new(HashMap::new())),
             split,
         };
         {
@@ -1341,8 +1346,11 @@ impl Dashboard {
                 row.add_suffix(&hide);
                 row.add_suffix(&up);
                 row.add_suffix(&down);
+                let handle = super::dialogs::drag_handle_button(&self.ctx);
+                row.add_prefix(&handle);
                 let dash = self.clone();
-                super::dialogs::attach_id_drag_drop(
+                super::dialogs::attach_id_drag_drop_on(
+                    &handle,
                     &row,
                     remote.name.clone(),
                     Rc::new(move |from, to| {
@@ -3434,43 +3442,185 @@ impl Dashboard {
     fn append_disk_usage(&self, name: &str) {
         let box_ = gtk::Box::new(gtk::Orientation::Vertical, 6);
         let usage = adw::ActionRow::new();
-        usage.set_title(&self.ctx.t_or("remote.diskUsage", "Disk usage"));
+        usage.set_title(&self.ctx.t_or("detailShared.diskUsage.title", "Disk Usage"));
+        let spinner = gtk::Spinner::new();
+        spinner.set_valign(gtk::Align::Center);
+        usage.add_prefix(&spinner);
         let retry = gtk::Button::from_icon_name("view-refresh-symbolic");
         retry.set_valign(gtk::Align::Center);
-        retry.set_tooltip_text(Some(&self.ctx.t_or("common.retry", "Retry")));
+        retry.set_tooltip_text(Some(
+            &self
+                .ctx
+                .t_or("detailShared.diskUsage.retry", "Retry loading disk usage"),
+        ));
         {
             let dash = self.clone();
-            retry.connect_clicked(move |_| dash.refresh());
+            let name = name.to_string();
+            let usage = usage.clone();
+            let box_ = box_.clone();
+            let spinner = spinner.clone();
+            retry.connect_clicked(move |_| {
+                dash.disk_usage
+                    .borrow_mut()
+                    .insert(name.clone(), crate::store::DiskUsageState::Loading);
+                dash.fill_disk_usage_row(&name, &usage, &box_, &spinner);
+                dash.fetch_disk_usage(&name, &usage, &box_, &spinner);
+            });
         }
         usage.add_suffix(&retry);
-        if let Some(client) = self.ctx.client() {
-            match client.about(&remote_fs(name, "")) {
-                Ok(about) => {
-                    usage.set_subtitle(&crate::store::disk_label_from_about(&about));
-                    box_.append(&usage);
-                    if let Some(ratio) = crate::store::disk_usage_ratio(&about) {
-                        let bar = gtk::LevelBar::new();
-                        bar.set_min_value(0.0);
-                        bar.set_max_value(1.0);
-                        bar.set_value(ratio);
-                        bar.set_hexpand(true);
-                        bar.add_css_class(crate::store::disk_usage_severity_css(ratio));
-                        box_.append(&bar);
-                    }
-                }
-                Err(err) => {
-                    usage.set_subtitle(&err.to_string());
-                    box_.append(&usage);
-                }
-            }
-        } else {
-            usage.set_subtitle(&self.ctx.t_or(
-                "notification.title.engineConnectionFailed",
-                "Engine Connection Error",
-            ));
-            box_.append(&usage);
+        box_.append(&usage);
+        if !self.disk_usage.borrow().contains_key(name) {
+            self.disk_usage
+                .borrow_mut()
+                .insert(name.to_string(), crate::store::DiskUsageState::Loading);
+        }
+        self.fill_disk_usage_row(name, &usage, &box_, &spinner);
+        let should_fetch = !matches!(
+            self.disk_usage.borrow().get(name),
+            Some(crate::store::DiskUsageState::Ready { .. })
+                | Some(crate::store::DiskUsageState::Unsupported)
+        );
+        if should_fetch {
+            self.fetch_disk_usage(name, &usage, &box_, &spinner);
         }
         self.detail_box().append(&box_);
+    }
+
+    fn fill_disk_usage_row(
+        &self,
+        name: &str,
+        usage: &adw::ActionRow,
+        box_: &gtk::Box,
+        spinner: &gtk::Spinner,
+    ) {
+        let state = self
+            .disk_usage
+            .borrow()
+            .get(name)
+            .cloned()
+            .unwrap_or(crate::store::DiskUsageState::Loading);
+        while let Some(widget) = usage.next_sibling() {
+            box_.remove(&widget);
+        }
+        usage.set_tooltip_text(None);
+        match state {
+            crate::store::DiskUsageState::Loading => {
+                spinner.set_visible(true);
+                spinner.start();
+                usage.set_subtitle(
+                    &self
+                        .ctx
+                        .t_or("detailShared.diskUsage.loading", "Loading..."),
+                );
+            }
+            crate::store::DiskUsageState::Unsupported => {
+                spinner.stop();
+                spinner.set_visible(false);
+                usage.set_subtitle(
+                    &self
+                        .ctx
+                        .t_or("detailShared.diskUsage.notSupported", "Not Supported"),
+                );
+            }
+            crate::store::DiskUsageState::Error(err) => {
+                spinner.stop();
+                spinner.set_visible(false);
+                usage.set_subtitle(&self.ctx.t_or(
+                    "detailShared.diskUsage.errorLoading",
+                    "Problem loading disk usage",
+                ));
+                usage.set_tooltip_text(Some(&err));
+            }
+            crate::store::DiskUsageState::Ready { used, free, total } => {
+                spinner.stop();
+                spinner.set_visible(false);
+                usage.set_subtitle(&format!(
+                    "{} · {} / {}",
+                    self.ctx.t_or("detailShared.diskUsage.used", "Used:"),
+                    crate::rclone::format_bytes(used),
+                    crate::rclone::format_bytes(total)
+                ));
+                let legend = gtk::Box::new(gtk::Orientation::Horizontal, 12);
+                legend.set_margin_start(12);
+                legend.set_margin_end(12);
+                for (key, fallback, value) in [
+                    ("detailShared.diskUsage.used", "Used:", used),
+                    ("detailShared.diskUsage.free", "Free:", free),
+                    ("detailShared.diskUsage.total", "Total:", total),
+                ] {
+                    let label = gtk::Label::new(Some(&format!(
+                        "{} {}",
+                        self.ctx.t_or(key, fallback),
+                        crate::rclone::format_bytes(value)
+                    )));
+                    label.add_css_class("dim-label");
+                    label.set_xalign(0.0);
+                    legend.append(&label);
+                }
+                box_.append(&legend);
+                if total > 0 && used >= 0 {
+                    let ratio = (used as f64 / total as f64).clamp(0.0, 1.0);
+                    let bar = gtk::LevelBar::new();
+                    bar.set_min_value(0.0);
+                    bar.set_max_value(1.0);
+                    bar.set_value(ratio);
+                    bar.set_hexpand(true);
+                    bar.add_css_class(crate::store::disk_usage_severity_css(ratio));
+                    box_.append(&bar);
+                }
+            }
+        }
+    }
+
+    fn fetch_disk_usage(
+        &self,
+        name: &str,
+        usage: &adw::ActionRow,
+        box_: &gtk::Box,
+        spinner: &gtk::Spinner,
+    ) {
+        let epoch = {
+            let mut map = self.disk_usage_epoch.borrow_mut();
+            let next = map.get(name).copied().unwrap_or(0) + 1;
+            map.insert(name.to_string(), next);
+            next
+        };
+        let Some(client) = self.ctx.client() else {
+            self.disk_usage.borrow_mut().insert(
+                name.to_string(),
+                crate::store::DiskUsageState::Error(self.ctx.t_or(
+                    "notification.title.engineConnectionFailed",
+                    "Engine Connection Error",
+                )),
+            );
+            self.fill_disk_usage_row(name, usage, box_, spinner);
+            return;
+        };
+        let fs = remote_fs(name, "");
+        let dash = self.clone();
+        let name = name.to_string();
+        let usage = usage.clone();
+        let box_ = box_.clone();
+        let spinner = spinner.clone();
+        glib::idle_add_local_once(move || {
+            let current = dash
+                .disk_usage_epoch
+                .borrow()
+                .get(&name)
+                .copied()
+                .unwrap_or(0);
+            if current != epoch {
+                return;
+            }
+            let state = match client.about(&fs) {
+                Ok(about) => crate::store::disk_usage_from_about(&about),
+                Err(err) => crate::store::DiskUsageState::Error(err.to_string()),
+            };
+            dash.disk_usage.borrow_mut().insert(name.clone(), state);
+            if usage.is_mapped() {
+                dash.fill_disk_usage_row(&name, &usage, &box_, &spinner);
+            }
+        });
     }
 
     fn append_transfer_activity(

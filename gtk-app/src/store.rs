@@ -1206,6 +1206,12 @@ impl AppStore {
         true
     }
 
+    /// Restore overview order to the live remote list and show every remote.
+    pub fn reset_remote_layout(&mut self, names: &[String]) {
+        self.remote_order = names.to_vec();
+        self.hidden_remotes.clear();
+    }
+
     pub fn set_remote_hidden(&mut self, name: &str, hidden: bool) {
         if hidden {
             if !self.hidden_remotes.iter().any(|n| n == name) {
@@ -2076,19 +2082,36 @@ pub fn build_remote_infos(
     remotes
 }
 
-pub fn disk_label_from_about(about: &Value) -> String {
+#[derive(Debug, Clone, PartialEq)]
+pub enum DiskUsageState {
+    Loading,
+    Unsupported,
+    Error(String),
+    Ready { used: i64, free: i64, total: i64 },
+}
+
+pub fn disk_usage_from_about(about: &Value) -> DiskUsageState {
     let total = about.get("total").and_then(|x| x.as_i64()).unwrap_or(-1);
     let used = about.get("used").and_then(|x| x.as_i64()).unwrap_or(-1);
     let free = about.get("free").and_then(|x| x.as_i64()).unwrap_or(-1);
     if total < 0 && used < 0 && free < 0 {
-        return "Not supported".into();
+        DiskUsageState::Unsupported
+    } else {
+        DiskUsageState::Ready { used, free, total }
     }
-    format!(
-        "{} used / {} free of {}",
-        format_bytes(used),
-        format_bytes(free),
-        format_bytes(total)
-    )
+}
+
+pub fn disk_label_from_about(about: &Value) -> String {
+    match disk_usage_from_about(about) {
+        DiskUsageState::Unsupported => "Not supported".into(),
+        DiskUsageState::Ready { used, free, total } => format!(
+            "{} used / {} free of {}",
+            format_bytes(used),
+            format_bytes(free),
+            format_bytes(total)
+        ),
+        DiskUsageState::Loading | DiskUsageState::Error(_) => "Not supported".into(),
+    }
 }
 
 pub fn disk_usage_ratio(about: &Value) -> Option<f64> {
@@ -2317,6 +2340,9 @@ mod tests {
         assert!(store.move_remote_before("d", "b"));
         assert_eq!(store.remote_order, ["a", "d", "b", "c"]);
         assert!(!store.move_remote_before("a", "a"));
+        store.reset_remote_layout(&["b".into(), "a".into(), "c".into(), "d".into()]);
+        assert_eq!(store.remote_order, ["b", "a", "c", "d"]);
+        assert!(store.hidden_remotes.is_empty());
         assert!(store.toggle_remote_hidden("c"));
         assert_eq!(store.hidden_remotes, ["c"]);
         assert!(!store.toggle_remote_hidden("c"));
@@ -2357,6 +2383,18 @@ mod tests {
         assert_eq!(disk_usage_ratio(&json!({"total": 0, "used": 1})), None);
         assert_eq!(disk_usage_ratio(&json!({})), None);
         assert_eq!(disk_label_from_about(&json!({})), "Not supported");
+        assert_eq!(
+            disk_usage_from_about(&json!({})),
+            DiskUsageState::Unsupported
+        );
+        assert_eq!(
+            disk_usage_from_about(&json!({"used": 10, "free": 90, "total": 100})),
+            DiskUsageState::Ready {
+                used: 10,
+                free: 90,
+                total: 100
+            }
+        );
     }
 
     #[test]
