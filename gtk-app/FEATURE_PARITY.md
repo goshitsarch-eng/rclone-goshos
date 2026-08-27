@@ -887,3 +887,7 @@ This client is the GTK 4 + libadwaita desktop UI. It talks to a local `rclone rc
 - Quick Run editor has a Presets & Templates bar that patches form values (vfs/backend/runtime/operation flags and src/dst) instead of remote metadata
 - `--quick-run-editor <name>` opens the saved run by name as well as UUID
 - Live GUI: `--quick-run-editor gui-qr-copy` shows **Presets & Templates** and Runtime Remote **remote** + **JSON** for testdrive alias; Apply Default Presets reports success; Save persists `runtimeRemote.remote: /tmp/rclone-test-remote`
+
+- Files tabs detach like Angular `onNativeDragEnd` / `detachTabAction`: drop on the listing or drag outside the window (or more than 70px vertically) opens `Files — {title}` and closes the source tab when more than one remains
+- Upload undo tokens keep the local source path so redo re-copies the file (`FileOp::Upload.source`); undo still deletes the destination
+- Live GUI: Files at testdrive:Photos with two **Photos** tabs; dragging the second tab onto the listing opens **Files — Photos**
