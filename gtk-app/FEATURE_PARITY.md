@@ -961,3 +961,6 @@ This client is the GTK 4 + libadwaita desktop UI. It talks to a local `rclone rc
 - File-manager ops history is no longer capped at 12 finished jobs
 
 - Live GUI: `--browse testdrive:batch250` first paint is **Showing 200 of 250**; collapsing **Operations** persists `ops_panel_expanded: false`; scrolling the grid reaches `file-250.txt` and the status becomes **250 items**
+
+- Files lasso updates the selection while dragging and auto-scrolls near the listing edges (Angular `_handleAutoScroll`, 40px / 15px)
+- Files windows under 680px use Angular mobile chrome: overlay sidebar, single-tap open, and a bottom bar (sidebar / Open / layout)

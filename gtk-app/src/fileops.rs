@@ -553,6 +553,42 @@ where
         .count()
 }
 
+/// Angular Files `isMobile` breakpoint (`< 680`).
+pub const NAUTILUS_MOBILE_WIDTH: i32 = 680;
+
+pub fn is_narrow_files_width(width: i32) -> bool {
+    width > 0 && width < NAUTILUS_MOBILE_WIDTH
+}
+
+/// Angular lasso `_handleAutoScroll` edge band and per-tick step.
+pub const LASSO_EDGE_PX: f64 = 40.0;
+pub const LASSO_SCROLL_STEP: f64 = 15.0;
+
+/// Negative scrolls up, positive scrolls down; `0.0` when the pointer is inside the band.
+pub fn lasso_edge_scroll(
+    pointer_y: f64,
+    viewport_top: f64,
+    viewport_bottom: f64,
+    threshold: f64,
+    step: f64,
+) -> f64 {
+    if viewport_bottom <= viewport_top || step == 0.0 {
+        return 0.0;
+    }
+    if pointer_y < viewport_top + threshold {
+        -step.abs()
+    } else if pointer_y > viewport_bottom - threshold {
+        step.abs()
+    } else {
+        0.0
+    }
+}
+
+pub fn clamp_scroll_value(value: f64, page_size: f64, upper: f64) -> f64 {
+    let max = (upper - page_size).max(0.0);
+    value.clamp(0.0, max)
+}
+
 pub fn ops_panel_title(base: &str, active: usize) -> String {
     if active == 0 {
         base.to_string()
@@ -2010,6 +2046,16 @@ mod tests {
         assert_eq!(active_ops_count(std::iter::empty::<&str>()), 0);
         assert_eq!(ops_panel_title("Operations", 0), "Operations");
         assert_eq!(ops_panel_title("Operations", 2), "Operations (2)");
+        assert!(is_narrow_files_width(679));
+        assert!(!is_narrow_files_width(680));
+        assert!(!is_narrow_files_width(0));
+        assert_eq!(lasso_edge_scroll(10.0, 0.0, 400.0, 40.0, 15.0), -15.0);
+        assert_eq!(lasso_edge_scroll(390.0, 0.0, 400.0, 40.0, 15.0), 15.0);
+        assert_eq!(lasso_edge_scroll(200.0, 0.0, 400.0, 40.0, 15.0), 0.0);
+        assert_eq!(lasso_edge_scroll(0.0, 0.0, 0.0, 40.0, 15.0), 0.0);
+        assert_eq!(clamp_scroll_value(50.0, 400.0, 400.0), 0.0);
+        assert_eq!(clamp_scroll_value(900.0, 400.0, 1200.0), 800.0);
+        assert_eq!(clamp_scroll_value(-10.0, 400.0, 1200.0), 0.0);
     }
 
     #[test]

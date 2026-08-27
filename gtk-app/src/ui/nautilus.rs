@@ -13,6 +13,16 @@ use gtk::{gio, glib};
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
+#[derive(Clone, Copy)]
+struct LassoDrag {
+    x1: f64,
+    y1: f64,
+    x2: f64,
+    y2: f64,
+    grid: bool,
+    primary: bool,
+}
+
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum SideKind {
     Star,
@@ -68,6 +78,9 @@ pub struct NautilusView {
     clipboard: Rc<RefCell<Vec<(String, String, bool, bool)>>>,
     pending_drag: Rc<RefCell<Option<Vec<crate::dnd::DragItem>>>>,
     skip_lasso: Rc<Cell<bool>>,
+    lasso_drag: Rc<RefCell<Option<LassoDrag>>>,
+    lasso_tick: Rc<Cell<bool>>,
+    is_narrow: Rc<Cell<bool>>,
     ignore_activate: Rc<Cell<bool>>,
     listing_menu_open: Rc<Cell<bool>>,
     listing_popover: gtk::Popover,
@@ -84,8 +97,12 @@ pub struct NautilusView {
     last_listing_right: Rc<RefCell<Vec<DirEntry>>>,
     listing_shown: Rc<Cell<usize>>,
     listing_shown_right: Rc<Cell<usize>>,
+    files_scroll: gtk::ScrolledWindow,
+    right_scroll: gtk::ScrolledWindow,
     picker_bar: gtk::Box,
     picker_label: gtk::Label,
+    bottom_bar: gtk::Box,
+    bottom_confirm: gtk::Button,
     share_bar: gtk::Box,
     share_label: gtk::Label,
     filter_bar: gtk::Box,
@@ -477,6 +494,28 @@ impl NautilusView {
         filter_bar.set_margin_bottom(4);
         filter_bar.set_halign(gtk::Align::Start);
 
+        let bottom_bar = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+        bottom_bar.add_css_class("toolbar");
+        bottom_bar.set_margin_start(8);
+        bottom_bar.set_margin_end(8);
+        bottom_bar.set_margin_top(4);
+        bottom_bar.set_margin_bottom(4);
+        bottom_bar.set_visible(false);
+        let bottom_sidebar = gtk::Button::from_icon_name("sidebar-show-symbolic");
+        bottom_sidebar.set_tooltip_text(Some(&ctx.t_or("sidebar.toggleSidebar", "Toggle Sidebar")));
+        let bottom_confirm =
+            gtk::Button::with_label(&ctx.t_or("nautilus.contextMenu.open", "Open"));
+        bottom_confirm.add_css_class("suggested-action");
+        bottom_confirm.set_hexpand(true);
+        bottom_confirm.set_visible(false);
+        let bottom_layout = gtk::Button::from_icon_name("view-list-symbolic");
+        bottom_layout.set_tooltip_text(Some(
+            &ctx.t_or("nautilus.view.toggleLayout", "Toggle list / grid"),
+        ));
+        bottom_bar.append(&bottom_sidebar);
+        bottom_bar.append(&bottom_confirm);
+        bottom_bar.append(&bottom_layout);
+
         root.append(&toolbar);
         root.append(&filter_bar);
         root.append(&picker_bar);
@@ -484,6 +523,7 @@ impl NautilusView {
         root.append(&split);
         root.append(&ops_expander);
         root.append(&status);
+        root.append(&bottom_bar);
 
         let initial = TabState {
             id: 1,
@@ -537,6 +577,9 @@ impl NautilusView {
             clipboard: Rc::new(RefCell::new(Vec::new())),
             pending_drag: Rc::new(RefCell::new(None)),
             skip_lasso: Rc::new(Cell::new(false)),
+            lasso_drag: Rc::new(RefCell::new(None)),
+            lasso_tick: Rc::new(Cell::new(false)),
+            is_narrow: Rc::new(Cell::new(false)),
             ignore_activate: Rc::new(Cell::new(false)),
             listing_menu_open: Rc::new(Cell::new(false)),
             listing_popover,
@@ -553,8 +596,12 @@ impl NautilusView {
             last_listing_right: Rc::new(RefCell::new(Vec::new())),
             listing_shown: Rc::new(Cell::new(0)),
             listing_shown_right: Rc::new(Cell::new(0)),
+            files_scroll: files_scroll.clone(),
+            right_scroll: right_scroll.clone(),
             picker_bar,
             picker_label,
+            bottom_bar,
+            bottom_confirm: bottom_confirm.clone(),
             share_bar,
             share_label,
             filter_bar,
@@ -836,6 +883,31 @@ impl NautilusView {
         {
             let view = view.clone();
             picker_select.connect_clicked(move |_| view.finish_picker(false));
+        }
+        {
+            let view = view.clone();
+            bottom_confirm.connect_clicked(move |_| view.finish_picker(false));
+        }
+        {
+            let view = view.clone();
+            bottom_sidebar.connect_clicked(move |_| view.toggle_sidebar());
+        }
+        {
+            let view = view.clone();
+            bottom_layout.connect_clicked(move |_| {
+                let next = if view.is_grid() { "list" } else { "grid" };
+                view.ctx.settings.borrow_mut().nautilus.layout = next.into();
+                view.ctx.persist();
+                view.sync_layout();
+                view.reload();
+            });
+        }
+        {
+            let view = view.clone();
+            view.root.clone().connect_map(move |widget| {
+                view.hook_narrow_resize(widget);
+                view.sync_narrow_from_widget(widget);
+            });
         }
         {
             let view = view.clone();
@@ -1445,6 +1517,7 @@ impl NautilusView {
     }
 
     fn show_starred(&self) {
+        self.close_sidebar_if_narrow();
         let current = self.current.borrow().clone();
         if !current.starred {
             self.history
@@ -1576,17 +1649,34 @@ impl NautilusView {
         drag.set_button(1);
         {
             let view = self.clone();
-            drag.connect_drag_end(move |g, _, _| {
+            drag.connect_drag_update(move |g, ox, oy| {
                 if view.skip_lasso.get() {
                     return;
                 }
                 let Some((x, y)) = g.start_point() else {
                     return;
                 };
+                view.update_lasso_drag(x, y, x + ox, y + oy, grid, primary);
+            });
+        }
+        {
+            let view = self.clone();
+            drag.connect_drag_end(move |g, _, _| {
+                view.lasso_tick.set(false);
+                if view.skip_lasso.get() {
+                    view.lasso_drag.borrow_mut().take();
+                    return;
+                }
+                let Some((x, y)) = g.start_point() else {
+                    view.lasso_drag.borrow_mut().take();
+                    return;
+                };
                 let Some((ox, oy)) = g.offset() else {
+                    view.lasso_drag.borrow_mut().take();
                     return;
                 };
                 view.apply_lasso(x, y, x + ox, y + oy, grid);
+                view.lasso_drag.borrow_mut().take();
             });
         }
         widget.add_controller(drag);
@@ -2116,6 +2206,86 @@ impl NautilusView {
                 }
             }
         }
+    }
+
+    fn update_lasso_drag(&self, x1: f64, y1: f64, x2: f64, y2: f64, grid: bool, primary: bool) {
+        *self.lasso_drag.borrow_mut() = Some(LassoDrag {
+            x1,
+            y1,
+            x2,
+            y2,
+            grid,
+            primary,
+        });
+        self.apply_lasso(x1, y1, x2, y2, grid);
+        self.maybe_lasso_scroll();
+    }
+
+    fn maybe_lasso_scroll(&self) {
+        let Some(drag) = *self.lasso_drag.borrow() else {
+            return;
+        };
+        let scroll = if drag.primary {
+            &self.files_scroll
+        } else {
+            &self.right_scroll
+        };
+        let height = f64::from(scroll.height());
+        let viewport_y = drag.y2 - scroll.vadjustment().value();
+        let delta = crate::fileops::lasso_edge_scroll(
+            viewport_y,
+            0.0,
+            height,
+            crate::fileops::LASSO_EDGE_PX,
+            crate::fileops::LASSO_SCROLL_STEP,
+        );
+        if delta == 0.0 || height <= 0.0 {
+            return;
+        }
+        if self.lasso_tick.get() {
+            return;
+        }
+        self.lasso_tick.set(true);
+        let view = self.clone();
+        glib::timeout_add_local(std::time::Duration::from_millis(16), move || {
+            if !view.lasso_tick.get() {
+                return glib::ControlFlow::Break;
+            }
+            let Some(mut drag) = view.lasso_drag.borrow().as_ref().copied() else {
+                view.lasso_tick.set(false);
+                return glib::ControlFlow::Break;
+            };
+            let scroll = if drag.primary {
+                &view.files_scroll
+            } else {
+                &view.right_scroll
+            };
+            let height = f64::from(scroll.height());
+            let delta = crate::fileops::lasso_edge_scroll(
+                drag.y2 - scroll.vadjustment().value(),
+                0.0,
+                height,
+                crate::fileops::LASSO_EDGE_PX,
+                crate::fileops::LASSO_SCROLL_STEP,
+            );
+            if delta == 0.0 {
+                return glib::ControlFlow::Continue;
+            }
+            let adj = scroll.vadjustment();
+            let next = crate::fileops::clamp_scroll_value(
+                adj.value() + delta,
+                adj.page_size(),
+                adj.upper(),
+            );
+            if (next - adj.value()).abs() < f64::EPSILON {
+                return glib::ControlFlow::Continue;
+            }
+            adj.set_value(next);
+            drag.y2 += delta;
+            *view.lasso_drag.borrow_mut() = Some(drag);
+            view.apply_lasso(drag.x1, drag.y1, drag.x2, drag.y2, drag.grid);
+            glib::ControlFlow::Continue
+        });
     }
 
     fn apply_lasso(&self, x1: f64, y1: f64, x2: f64, y2: f64, grid: bool) {
@@ -2808,6 +2978,7 @@ impl NautilusView {
         self.current.borrow_mut().path = path;
         self.current.borrow_mut().starred = false;
         self.sync_current_tab();
+        self.close_sidebar_if_narrow();
         self.reload();
     }
 
@@ -2887,8 +3058,9 @@ impl NautilusView {
 
     pub fn apply_pending_picker(&self) {
         let active = self.ctx.pending_picker.borrow().is_some();
-        if active != self.picker_bar.is_visible() {
-            self.picker_bar.set_visible(active);
+        let showing = self.picker_bar.is_visible() || self.bottom_confirm.is_visible();
+        self.sync_narrow_chrome();
+        if active != showing {
             self.reload_sidebar();
             self.reload();
         }
@@ -2905,6 +3077,7 @@ impl NautilusView {
         let Some(req) = self.ctx.pending_picker.borrow_mut().take() else {
             return;
         };
+        self.sync_narrow_chrome();
         let current = self.current.borrow().clone();
         let listing = self.last_listing.borrow().clone();
         let result = if cancelled {
@@ -3855,8 +4028,79 @@ impl NautilusView {
     fn toggle_sidebar(&self) {
         let next = !self.split.shows_sidebar();
         self.split.set_show_sidebar(next);
-        self.ctx.settings.borrow_mut().nautilus.sidebar_visible = next;
-        self.ctx.persist();
+        if !self.is_narrow.get() {
+            self.ctx.settings.borrow_mut().nautilus.sidebar_visible = next;
+            self.ctx.persist();
+        }
+    }
+
+    fn close_sidebar_if_narrow(&self) {
+        if self.is_narrow.get() {
+            self.split.set_show_sidebar(false);
+        }
+    }
+
+    fn hook_narrow_resize(&self, widget: &impl IsA<gtk::Widget>) {
+        let Some(root) = widget.root() else {
+            return;
+        };
+        if let Some(surface) = root.surface() {
+            let view = self.clone();
+            surface.connect_notify_local(Some("width"), move |surface, _| {
+                view.sync_narrow_layout(surface.width());
+            });
+        }
+        if let Ok(win) = root.downcast::<gtk::Window>() {
+            let view = self.clone();
+            win.connect_notify_local(Some("default-width"), move |win, _| {
+                view.sync_narrow_layout(win.width());
+            });
+            let view = self.clone();
+            win.connect_notify_local(Some("maximized"), move |win, _| {
+                view.sync_narrow_layout(win.width());
+            });
+        }
+    }
+
+    fn sync_narrow_from_widget(&self, widget: &impl IsA<gtk::Widget>) {
+        let width = widget
+            .root()
+            .map(|root| root.width())
+            .filter(|w| *w > 0)
+            .unwrap_or_else(|| widget.width());
+        self.sync_narrow_layout(width);
+    }
+
+    fn sync_narrow_layout(&self, width: i32) {
+        let narrow = crate::fileops::is_narrow_files_width(width);
+        if narrow == self.is_narrow.get() && self.bottom_bar.is_visible() == narrow {
+            return;
+        }
+        self.is_narrow.set(narrow);
+        self.split.set_collapsed(narrow);
+        self.list.set_activate_on_single_click(narrow);
+        self.list_right.set_activate_on_single_click(narrow);
+        self.grid.set_activate_on_single_click(narrow);
+        self.grid_right.set_activate_on_single_click(narrow);
+        if narrow {
+            self.split.set_show_sidebar(false);
+        } else {
+            self.split
+                .set_show_sidebar(self.ctx.settings.borrow().nautilus.sidebar_visible);
+        }
+        self.sync_narrow_chrome();
+    }
+
+    fn sync_narrow_chrome(&self) {
+        let picker = self.ctx.pending_picker.borrow().is_some();
+        let narrow = self.is_narrow.get();
+        self.bottom_bar.set_visible(narrow);
+        self.bottom_confirm.set_visible(picker && narrow);
+        if picker {
+            self.picker_bar.set_visible(!narrow);
+        } else {
+            self.picker_bar.set_visible(false);
+        }
     }
 
     fn toggle_split(&self) {
