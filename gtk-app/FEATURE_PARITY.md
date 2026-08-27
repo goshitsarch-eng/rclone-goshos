@@ -1213,3 +1213,5 @@ This client is the GTK 4 + libadwaita desktop UI. It talks to a local `rclone rc
 
 - Live GUI: `--remote testdrive --tab operations` Job Information shows **Job Type** `copy`, **Job ID** `#4814`, **Job Status** `running` (not empty stats); copy Statistics includes **Progress** and **2.0 MiB/s**
 - Live GUI: Operations Jobs list includes **copy #4814** gui-copy-test plus leftover **#12376** / **#7888** / **#42424**; Transfer Activity shows a single **blob.bin** row (not leftover ok.txt)
+
+- Repair always offers Configuration Password / Unlock when diagnose does not already report PasswordRequired, so the shared password prompt is reachable without encrypting rclone.conf

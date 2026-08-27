@@ -18507,6 +18507,27 @@ pub fn repair(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, toast: adw::ToastOver
         row.add_suffix(&btn);
         list.append(&row);
     }
+    if !needs_config {
+        let row = adw::ActionRow::new();
+        row.set_title(&ctx.t_or("shared.passwordManager.label", "Configuration Password"));
+        row.set_subtitle(&ctx.t_or(
+            "repair.passwordPrompt",
+            "Enter the rclone.conf password to unlock the engine.",
+        ));
+        let btn = gtk::Button::with_label(&ctx.t_or("repair.unlock", "Unlock"));
+        btn.set_valign(gtk::Align::Center);
+        btn.add_css_class("suggested-action");
+        {
+            let ctx = ctx.clone();
+            let toast = toast.clone();
+            let parent = parent.clone();
+            btn.connect_clicked(move |_| {
+                password_prompt(&parent, ctx.clone(), toast.clone());
+            });
+        }
+        row.add_suffix(&btn);
+        list.append(&row);
+    }
     let box_ = gtk::Box::new(gtk::Orientation::Vertical, 8);
     box_.set_margin_top(16);
     box_.set_margin_start(16);
