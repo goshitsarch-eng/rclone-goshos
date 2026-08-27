@@ -1095,3 +1095,15 @@ This client is the GTK 4 + libadwaita desktop UI. It talks to a local `rclone rc
 - Live GUI: `--browse testdrive:Photos` toolbar magnifying glass opens **Search files...**; Escape restores **testdrive » Photos**; sidebar Bookmarks shows **No bookmarks**
 - Live GUI: `--remote-config testdrive --step mount` Mount point usage **29 items · 148.3 GiB / 251.9 GiB**
 - Live GUI: Remotes toolbar **Show Detailed Cards** expands cards and becomes **Show Compact Cards**; header list/grid icon toggles the same setting
+
+- Dashboard System panel shows engine status, version, platform, Go runtime, remotes, PID, uptime, heap memory
+- Detailed remote cards show empty-state title plus message
+- Remote Serve monitoring lists an Active Serves heading
+- VFS Advanced Configuration groups options by category with search empty-state and poll-interval unsupported
+- Files copy/move/mkdir/undo/redo/rmdirs/upload errors use `nautilus.errors.*`
+- File viewer labels audio, downloading, load, and download failures
+- Remote wizard header shows `Configuration Steps · current / total`; OAuth cancel sets cleanup status
+
+- Live GUI: `--dashboard` System Information **Engine Status: Active**, **Engine Version: v1.60.1-DEV**, **Platform: linux/amd64**, **Go Runtime: go1.22.2**, **Total Remotes: 5**, **Process ID**, **Engine Uptime**, **Heap Memory**
+- Live GUI: `--quick-add` wizard header **Configuration Steps · 1 / 2** (Create not clicked)
+- Live GUI: `--remote testdrive --tab mount` Monitoring shows VFS panel (Advanced Configuration + Poll Interval; alias mount has no VFS instance)
