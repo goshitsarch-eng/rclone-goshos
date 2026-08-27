@@ -4038,7 +4038,7 @@ impl NautilusView {
     fn toggle_sidebar(&self) {
         let next = !self.split.shows_sidebar();
         self.split.set_show_sidebar(next);
-        if !self.is_narrow.get() {
+        if !self.split.is_collapsed() {
             self.ctx.settings.borrow_mut().nautilus.sidebar_visible = next;
             self.ctx.persist();
         }
@@ -4083,16 +4083,20 @@ impl NautilusView {
 
     fn sync_narrow_layout(&self, width: i32) {
         let narrow = crate::fileops::is_narrow_files_width(width);
-        if narrow == self.is_narrow.get() && self.bottom_bar.is_visible() == narrow {
+        let overlay = crate::fileops::is_overlay_sidebar_width(width);
+        if narrow == self.is_narrow.get()
+            && self.bottom_bar.is_visible() == narrow
+            && self.split.is_collapsed() == overlay
+        {
             return;
         }
         self.is_narrow.set(narrow);
-        self.split.set_collapsed(narrow);
+        self.split.set_collapsed(overlay);
         self.list.set_activate_on_single_click(narrow);
         self.list_right.set_activate_on_single_click(narrow);
         self.grid.set_activate_on_single_click(narrow);
         self.grid_right.set_activate_on_single_click(narrow);
-        if narrow {
+        if overlay {
             self.split.set_show_sidebar(false);
         } else {
             self.split

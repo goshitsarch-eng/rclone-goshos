@@ -556,8 +556,16 @@ where
 /// Angular Files `isMobile` breakpoint (`< 680`).
 pub const NAUTILUS_MOBILE_WIDTH: i32 = 680;
 
+/// Overlay the sidebar before the reserved 220px rail can block shrinking
+/// under the mobile breakpoint (`680 + 220`).
+pub const NAUTILUS_COLLAPSE_SIDEBAR_WIDTH: i32 = NAUTILUS_MOBILE_WIDTH + 220;
+
 pub fn is_narrow_files_width(width: i32) -> bool {
     width > 0 && width < NAUTILUS_MOBILE_WIDTH
+}
+
+pub fn is_overlay_sidebar_width(width: i32) -> bool {
+    width > 0 && width < NAUTILUS_COLLAPSE_SIDEBAR_WIDTH
 }
 
 /// Angular lasso `_handleAutoScroll` edge band and per-tick step.
@@ -2049,6 +2057,9 @@ mod tests {
         assert!(is_narrow_files_width(679));
         assert!(!is_narrow_files_width(680));
         assert!(!is_narrow_files_width(0));
+        assert!(is_overlay_sidebar_width(899));
+        assert!(!is_overlay_sidebar_width(900));
+        assert!(is_overlay_sidebar_width(754));
         assert_eq!(lasso_edge_scroll(10.0, 0.0, 400.0, 40.0, 15.0), -15.0);
         assert_eq!(lasso_edge_scroll(390.0, 0.0, 400.0, 40.0, 15.0), 15.0);
         assert_eq!(lasso_edge_scroll(200.0, 0.0, 400.0, 40.0, 15.0), 0.0);
