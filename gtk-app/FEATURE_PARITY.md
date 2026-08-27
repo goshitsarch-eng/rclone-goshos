@@ -919,3 +919,6 @@ This client is the GTK 4 + libadwaita desktop UI. It talks to a local `rclone rc
 
 - Files directory listing uses cancellable rclone `operations/list` jobs with Angular `ui/nautilus/list-left-*` / `list-right-*` groups, a Loading overlay, and Cancel (`job/stopgroup`); immediate list responses still populate without a job
 - File viewer prev/next selects the new name in the Files listing (`ensure_name_selected`); `--file-viewer` and standalone viewers list the parent folder when siblings are empty
+
+- Live GUI: testdrive:Photos lists 6 items after an async `operations/list` job; rclone 1.60 returns a `jobid` then `output.list`
+- Live GUI: opening README.md shows **5 / 6 · 191 B**; Next opens README.txt as **6 / 6 · 7 B** and the status bar reads **"README.txt" selected (7 B)**
