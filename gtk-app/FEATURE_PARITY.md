@@ -933,3 +933,7 @@ This client is the GTK 4 + libadwaita desktop UI. It talks to a local `rclone rc
 
 - Remote-config has an Angular-style page search overlay (toolbar toggle / Ctrl+F) that filters current-step preference rows via `matchesConfigSearch`
 - Live GUI: `--remote-config testdrive --step copy` Toggle Search shows a content search bar; typing `path` keeps Path type / Path check rows
+
+- Remote-config edit sidebar matches Angular: Remote shows General / Auth / Advanced section jump; operations show profile rows plus shared VFS/filter/backend/runtime (VFS only from mount/serve/filter/backend)
+- `navigateToShared` / `returnFromShared` keep a Back stack and hide shared rows while stacked
+- Live GUI: `--remote-config testdrive --step copy` lists **Copy Profiles** (`gui-copy-multi` / `gui-copy-nightly` / `gui-copy-test`) and **Shared** Filter / Backend / Runtime Remote (no VFS); Filter opens **Filter Profiles** with Back **Copy** and hides Shared; Remote page lists **Sections** General / Authentication / Advanced
