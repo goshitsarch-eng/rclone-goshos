@@ -70,6 +70,7 @@ pub struct AppCtx {
     pub check_status_overrides: Rc<RefCell<HashMap<String, String>>>,
     pub hidden_check_ids: Rc<RefCell<HashSet<String>>>,
     pub hidden_transfer_ids: Rc<RefCell<HashSet<String>>>,
+    pub pending_job_toasts: Rc<RefCell<Vec<(u64, String)>>>,
     dump_cache: Rc<RefCell<Option<(std::time::Instant, serde_json::Value)>>>,
     pub overlay_windows: Rc<RefCell<Vec<OverlayEntry>>>,
     pub on_overlays_changed: Rc<RefCell<Option<Rc<dyn Fn()>>>>,
@@ -132,6 +133,7 @@ impl AppCtx {
             check_status_overrides: Rc::new(RefCell::new(HashMap::new())),
             hidden_check_ids: Rc::new(RefCell::new(HashSet::new())),
             hidden_transfer_ids: Rc::new(RefCell::new(HashSet::new())),
+            pending_job_toasts: Rc::new(RefCell::new(Vec::new())),
             dump_cache: Rc::new(RefCell::new(None)),
             overlay_windows: Rc::new(RefCell::new(Vec::new())),
             on_overlays_changed: Rc::new(RefCell::new(None)),
@@ -1206,13 +1208,42 @@ impl AppCtx {
     }
 
     pub fn toast(&self, overlay: &adw::ToastOverlay, message: impl AsRef<str>) {
-        overlay.add_toast(adw::Toast::new(message.as_ref()));
+        let toast = adw::Toast::new(message.as_ref());
+        toast.set_button_label(Some(&self.t_or("common.ok", "OK")));
+        overlay.add_toast(toast);
+    }
+
+    pub fn toast_action(
+        &self,
+        overlay: &adw::ToastOverlay,
+        message: impl AsRef<str>,
+        button: impl AsRef<str>,
+        on_click: impl Fn() + 'static,
+    ) {
+        let toast = adw::Toast::new(message.as_ref());
+        toast.set_timeout(5);
+        toast.set_button_label(Some(button.as_ref()));
+        toast.connect_button_clicked(move |_| on_click());
+        overlay.add_toast(toast);
     }
 
     pub fn notify(&self, title: &str, body: &str) {
+        self.notify_target(title, body, crate::platform::NotificationTarget::ShowWindow);
+    }
+
+    pub fn notify_target(
+        &self,
+        title: &str,
+        body: &str,
+        target: crate::platform::NotificationTarget,
+    ) {
         if self.settings.borrow().general.notifications {
-            let _ = crate::platform::show_os_notification(title, body);
+            let _ = crate::platform::show_os_notification_target(title, body, target);
         }
+    }
+
+    pub fn take_job_toasts(&self) -> Vec<(u64, String)> {
+        self.pending_job_toasts.borrow_mut().drain(..).collect()
     }
 
     pub fn apply_theme(&self) {
@@ -1321,6 +1352,13 @@ fn notify_job_changes(
         dirty = true;
     }
     for event in crate::alerts::job_events(previous, current, &|key, params| ctx.tf(key, params)) {
+        if event.severity == crate::store::AlertSeverity::High {
+            if let Some(id) = event.job_id {
+                ctx.pending_job_toasts
+                    .borrow_mut()
+                    .push((id, event.title.clone()));
+            }
+        }
         ctx.store.borrow_mut().record_event(event);
         dirty = true;
     }

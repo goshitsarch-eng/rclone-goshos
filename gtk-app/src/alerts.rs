@@ -13,6 +13,7 @@ pub fn job_event(
     event.remote = job.remote.clone();
     event.origin = job.origin.clone();
     event.profile = job.profile.clone();
+    event.job_id = Some(job.id);
     event
 }
 
@@ -297,6 +298,13 @@ mod tests {
         let events = job_events(&prev, &curr, &tf);
         assert_eq!(events.len(), 2);
         assert!(events.iter().any(|e| e.severity == AlertSeverity::High));
+        assert_eq!(
+            events
+                .iter()
+                .find(|e| e.severity == AlertSeverity::High)
+                .and_then(|e| e.job_id),
+            Some(1)
+        );
         assert!(events
             .iter()
             .any(|e| e.title.contains("notification.title.jobCompleted")));

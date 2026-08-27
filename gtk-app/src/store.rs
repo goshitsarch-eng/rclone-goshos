@@ -898,6 +898,8 @@ pub struct AlertEvent {
     pub profile: String,
     #[serde(default)]
     pub rule_id: String,
+    #[serde(default)]
+    pub job_id: Option<u64>,
     pub created_at: DateTime<Utc>,
     pub acknowledged: bool,
 }
@@ -915,6 +917,7 @@ impl AlertEvent {
             backend: String::new(),
             profile: String::new(),
             rule_id: String::new(),
+            job_id: None,
             created_at: Utc::now(),
             acknowledged: false,
         }
@@ -1658,6 +1661,13 @@ pub fn dispatch_action(action: &AlertAction, event: &AlertEvent) {
     }
 }
 
+fn os_toast_target(event: &AlertEvent) -> crate::os_notify::NotificationTarget {
+    match event.job_id {
+        Some(id) => crate::os_notify::NotificationTarget::Job(id),
+        None => crate::os_notify::NotificationTarget::Alerts,
+    }
+}
+
 fn dispatch_action_once(action: &AlertAction, event: &AlertEvent) -> bool {
     let body = render_template(
         action
@@ -1668,13 +1678,11 @@ fn dispatch_action_once(action: &AlertAction, event: &AlertEvent) -> bool {
         event,
     );
     match action.kind.as_str() {
-        "os_toast" => notify_rust::Notification::new()
-            .appname("Rclone Manager")
-            .summary(&event.title)
-            .body(&event.body)
-            .icon("folder-remote")
-            .show()
-            .is_ok(),
+        "os_toast" => crate::os_notify::show_os_notification_target(
+            &event.title,
+            &event.body,
+            os_toast_target(event),
+        ),
         "webhook" => {
             let Some(url) = action.config.get("url").and_then(|x| x.as_str()) else {
                 return false;
@@ -2747,6 +2755,26 @@ mod tests {
         assert!(alert_rule_matches(&store.alert_rules[0], ""));
         assert!(!alert_rule_matches(&store.alert_rules[0], "webhook"));
         assert!(alert_action_matches(&store.alert_actions[0], "toast"));
+        let mut job_event = AlertEvent::new(
+            AlertEventKind::Job,
+            AlertSeverity::High,
+            "failed".into(),
+            "boom".into(),
+        );
+        job_event.job_id = Some(9);
+        assert_eq!(
+            os_toast_target(&job_event),
+            crate::os_notify::NotificationTarget::Job(9)
+        );
+        assert_eq!(
+            os_toast_target(&AlertEvent::new(
+                AlertEventKind::System,
+                AlertSeverity::Info,
+                "hi".into(),
+                "there".into(),
+            )),
+            crate::os_notify::NotificationTarget::Alerts
+        );
         assert!(alert_action_matches(&store.alert_actions[0], "enabled"));
         store.remove_alert_action(&store.alert_actions[0].id.clone());
         assert!(store.alert_actions.is_empty());

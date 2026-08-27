@@ -582,6 +582,33 @@ fn present_main_with(app: &adw::Application, ctx: AppCtx, hidden: bool) {
                 }
                 return glib::ControlFlow::Break;
             }
+            for target in crate::platform::drain_notification_clicks() {
+                ctx_nav.request_show();
+                match target {
+                    crate::platform::NotificationTarget::ShowWindow => {}
+                    crate::platform::NotificationTarget::Job(id) => {
+                        ctx_nav.request_nav(crate::navigation::NavTarget::Job { id });
+                    }
+                    crate::platform::NotificationTarget::Alerts => {
+                        ctx_nav.request_nav(crate::navigation::NavTarget::Alerts);
+                    }
+                    crate::platform::NotificationTarget::Repair => {
+                        ctx_nav.request_nav(crate::navigation::NavTarget::Repair);
+                    }
+                }
+            }
+            for (id, title) in ctx_nav.take_job_toasts() {
+                let ctx = ctx_nav.clone();
+                ctx_nav.toast_action(
+                    &toast_nav,
+                    &title,
+                    &ctx_nav.t_or("common.viewDetails", "View Details"),
+                    move || {
+                        ctx.request_show();
+                        ctx.request_nav(crate::navigation::NavTarget::Job { id });
+                    },
+                );
+            }
             if ctx_nav.take_show() {
                 window_nav.set_visible(true);
                 window_nav.present();

@@ -10485,6 +10485,7 @@ pub(crate) fn confirm_delete_path(
 
 fn add_action_toast(parent: &impl IsA<gtk::Widget>, message: &str) {
     let toast = adw::Toast::new(message);
+    toast.set_button_label(Some("OK"));
     if let Some(overlay) = parent
         .ancestor(adw::ToastOverlay::static_type())
         .and_downcast::<adw::ToastOverlay>()

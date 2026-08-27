@@ -22,7 +22,10 @@ pub enum TrayAction {
         remote: String,
         profile: String,
     },
-    BrowseRemote(String),
+    BrowseRemote {
+        remote: String,
+        profile: String,
+    },
     BrowseInApp(String),
     StartProfile {
         remote: String,
@@ -54,7 +57,13 @@ pub fn encode_tray_action(action: &TrayAction) -> String {
         TrayAction::UnmountRemote { remote, profile } => {
             format!("unmount|{remote}|{profile}")
         }
-        TrayAction::BrowseRemote(remote) => format!("browse|{remote}"),
+        TrayAction::BrowseRemote { remote, profile } => {
+            if profile.is_empty() {
+                format!("browse|{remote}")
+            } else {
+                format!("browse|{remote}|{profile}")
+            }
+        }
         TrayAction::BrowseInApp(remote) => format!("browse-in|{remote}"),
         TrayAction::StartProfile {
             remote,
@@ -94,7 +103,10 @@ pub fn parse_tray_action(token: &str) -> Option<TrayAction> {
             remote: parts.next()?.into(),
             profile: parts.next()?.into(),
         }),
-        "browse" => Some(TrayAction::BrowseRemote(parts.next()?.into())),
+        "browse" => Some(TrayAction::BrowseRemote {
+            remote: parts.next()?.into(),
+            profile: parts.next().unwrap_or("").into(),
+        }),
         "browse-in" => Some(TrayAction::BrowseInApp(parts.next()?.into())),
         "start" => Some(TrayAction::StartProfile {
             remote: parts.next()?.into(),
@@ -500,10 +512,7 @@ fn remote_submenu(
 
     children.push(TrayMenuItem::separator());
     if mounted {
-        children.push(TrayMenuItem::action(
-            "Browse",
-            TrayAction::BrowseRemote(name.clone()),
-        ));
+        children.extend(browse_menu_items(&name, mounts));
     } else {
         children.push(TrayMenuItem::action(
             "Browse in app",
@@ -511,8 +520,91 @@ fn remote_submenu(
         ));
     }
 
-    let label = if mounted { format!("● {name}") } else { name };
+    let serving = !remote_serves_for(&name, serves).is_empty();
+    let label = remote_tray_label(&name, mounted, active_jobs, serving);
     TrayMenuItem::submenu(label, children)
+}
+
+pub fn remote_belongs(fs: &str, name: &str) -> bool {
+    fs == name || fs.starts_with(&format!("{name}:"))
+}
+
+pub fn remote_mounts_for<'a>(name: &str, mounts: &'a [MountedRemote]) -> Vec<&'a MountedRemote> {
+    mounts
+        .iter()
+        .filter(|mount| remote_belongs(&mount.fs, name))
+        .collect()
+}
+
+pub fn remote_serves_for<'a>(name: &str, serves: &'a [ServeItem]) -> Vec<&'a ServeItem> {
+    serves
+        .iter()
+        .filter(|serve| remote_belongs(&serve.fs, name))
+        .collect()
+}
+
+pub fn remote_tray_label(name: &str, mounted: bool, jobs: usize, serving: bool) -> String {
+    let mut extras = Vec::new();
+    if jobs > 0 {
+        extras.push(jobs.to_string());
+    }
+    if serving {
+        extras.push("serve".into());
+    }
+    let base = if mounted {
+        format!("● {name}")
+    } else {
+        name.to_string()
+    };
+    if extras.is_empty() {
+        base
+    } else {
+        format!("{base} · {}", extras.join(" · "))
+    }
+}
+
+fn browse_key(mount: &MountedRemote) -> String {
+    if !mount.profile.is_empty() {
+        mount.profile.clone()
+    } else {
+        mount.mount_point.clone()
+    }
+}
+
+fn browse_menu_items(name: &str, mounts: &[MountedRemote]) -> Vec<TrayMenuItem> {
+    let points = remote_mounts_for(name, mounts);
+    if points.len() <= 1 {
+        let profile = points
+            .first()
+            .map(|mount| mount.profile.clone())
+            .unwrap_or_default();
+        return vec![TrayMenuItem::action(
+            "Browse",
+            TrayAction::BrowseRemote {
+                remote: name.to_string(),
+                profile,
+            },
+        )];
+    }
+    let children = points
+        .iter()
+        .map(|mount| {
+            let key = browse_key(mount);
+            let suffix = if !mount.profile.is_empty() {
+                mount.profile.as_str()
+            } else {
+                mount.mount_point.as_str()
+            };
+            TrayMenuItem::action(
+                format!("Browse · {suffix}"),
+                TrayAction::BrowseRemote {
+                    remote: name.to_string(),
+                    profile: key,
+                },
+            )
+        })
+        .collect();
+    vec![TrayMenuItem::submenu("Browse", children)]
 }
 
 fn op_submenu(
@@ -798,6 +890,10 @@ mod tests {
                 profile: "default".into(),
             },
             TrayAction::StartQuickRun("qr-1".into()),
+            TrayAction::BrowseRemote {
+                remote: "testdrive".into(),
+                profile: "home".into(),
+            },
         ];
         for action in actions {
             let token = encode_tray_action(&action);
@@ -809,7 +905,24 @@ mod tests {
                 "--tray-action".into(),
                 "browse|testdrive".into()
             ]),
-            Some(TrayAction::BrowseRemote("testdrive".into()))
+            Some(TrayAction::BrowseRemote {
+                remote: "testdrive".into(),
+                profile: String::new(),
+            })
+        );
+        assert_eq!(
+            parse_tray_action("browse|testdrive|home"),
+            Some(TrayAction::BrowseRemote {
+                remote: "testdrive".into(),
+                profile: "home".into(),
+            })
+        );
+        assert_eq!(
+            encode_tray_action(&TrayAction::BrowseRemote {
+                remote: "testdrive".into(),
+                profile: "home".into(),
+            }),
+            "browse|testdrive|home"
         );
         assert_eq!(
             parse_tray_action_args(&["app".into(), "--tray-action=quit".into()]),
@@ -867,6 +980,12 @@ mod tests {
         let swift = crate::platform::macos_status_item_swift("/opt/app", &flat);
         assert!(swift.contains("mount|drive|media"));
         assert!(swift.contains("qr-start|"));
+        assert_eq!(remote_tray_label("drive", true, 0, false), "● drive");
+        assert_eq!(
+            remote_tray_label("drive", true, 2, true),
+            "● drive · 2 · serve"
+        );
+        assert_eq!(remote_tray_label("drive", false, 1, false), "drive · 1");
 
         let nodes = helper_menu_nodes(&plan);
         assert!(nodes.iter().any(|node| matches!(
@@ -892,5 +1011,69 @@ mod tests {
         assert!(nested_swift.contains(".submenu"));
         assert!(nested_swift.contains("mount|drive|media"));
         assert!(nested_swift.contains("qr-start|"));
+    }
+
+    #[test]
+    fn browse_submenu_lists_each_mount_profile() {
+        let remotes = vec![drive_remote(true)];
+        let mut store = AppStore::default();
+        let mut meta = RemoteMeta {
+            show_on_tray: true,
+            primary_actions: vec!["mount".into()],
+            ..RemoteMeta::default()
+        };
+        meta.upsert_profile(
+            OperationType::Mount,
+            ProfileConfig {
+                name: "home".into(),
+                app: Default::default(),
+                rclone: json!({ "mountPoint": "/mnt/home" }),
+            },
+        );
+        meta.upsert_profile(
+            OperationType::Mount,
+            ProfileConfig {
+                name: "media".into(),
+                app: Default::default(),
+                rclone: json!({ "mountPoint": "/mnt/media" }),
+            },
+        );
+        store.remotes.insert("drive".into(), meta);
+        let mut home = MountedRemote::new("drive:", "/mnt/home");
+        home.profile = "home".into();
+        let mut media = MountedRemote::new("drive:", "/mnt/media");
+        media.profile = "media".into();
+        let plan = plan_tray(&remotes, &store, &[], &[home, media], &[], 4);
+        let remote = plan
+            .iter()
+            .find(|item| item.label.contains("drive"))
+            .expect("remote submenu");
+        assert!(remote.label.starts_with('●'), "{}", remote.label);
+        let browse = remote
+            .children
+            .iter()
+            .find(|child| child.label == "Browse" && !child.children.is_empty())
+            .expect("browse submenu");
+        assert!(browse.children.iter().any(|child| {
+            child.action
+                == Some(TrayAction::BrowseRemote {
+                    remote: "drive".into(),
+                    profile: "home".into(),
+                })
+        }));
+        assert!(browse.children.iter().any(|child| {
+            child.action
+                == Some(TrayAction::BrowseRemote {
+                    remote: "drive".into(),
+                    profile: "media".into(),
+                })
+        }));
+        let flat = flatten_tray_menu(&plan);
+        assert!(flat
+            .iter()
+            .any(|(_, action)| action.as_deref() == Some("browse|drive|home")));
+        assert!(flat
+            .iter()
+            .any(|(_, action)| action.as_deref() == Some("browse|drive|media")));
     }
 }

@@ -192,15 +192,10 @@ pub fn install_user_metainfo() -> Result<PathBuf, String> {
     Ok(path)
 }
 
-pub fn show_os_notification(title: &str, body: &str) -> bool {
-    notify_rust::Notification::new()
-        .appname("Rclone Manager")
-        .summary(title)
-        .body(body)
-        .icon("folder-remote")
-        .show()
-        .is_ok()
-}
+pub use crate::os_notify::{
+    drain_notification_clicks, show_os_notification, show_os_notification_target,
+    NotificationTarget,
+};
 
 /// XDG autostart entry. `--tray` matches Tauri `tauri_plugin_autostart`.
 pub fn autostart_desktop_entry(exec: &str) -> String {

@@ -2401,7 +2401,7 @@ impl NautilusView {
                         );
                         self.ctx.refresh_runtime();
                         self.reload();
-                        self.toast.add_toast(adw::Toast::new(&format!(
+                        self.toast_with_undo(&format!(
                             "{} · {group} · {} job(s)",
                             if move_items {
                                 self.ctx.t_or("nautilus.contextMenu.move", "Move")
@@ -2409,7 +2409,7 @@ impl NautilusView {
                                 self.ctx.t_or("nautilus.contextMenu.copy", "Copy")
                             },
                             ids.len()
-                        )));
+                        ));
                         true
                     }
                     Err(e) => {
@@ -4268,10 +4268,7 @@ impl NautilusView {
                 }
                 view.push_undo_ops(ops);
                 view.reload();
-                view.toast.add_toast(adw::Toast::new(&format!(
-                    "Moved {} items into {name}",
-                    names.len()
-                )));
+                view.toast_with_undo(&format!("Moved {} items into {name}", names.len()));
             },
         );
     }
@@ -4326,6 +4323,11 @@ impl NautilusView {
                                     crate::fileops::FileOp::Mkdir { fs, path: remote }.encode(),
                                 );
                                 view.reload();
+                                view.toast_with_undo(
+                                    &view
+                                        .ctx
+                                        .t_or("nautilus.contextMenu.newFolder", "New folder"),
+                                );
                             }
                             Err(e) => view.toast.add_toast(adw::Toast::new(&e.to_string())),
                         }
@@ -4461,10 +4463,10 @@ impl NautilusView {
                 );
                 self.ctx.refresh_runtime();
                 self.reload();
-                self.toast.add_toast(adw::Toast::new(&self.ctx.tf(
+                self.toast_with_undo(&self.ctx.tf(
                     "nautilus.notifications.uploadStarted",
                     &[("count", &items.len().to_string())],
-                )));
+                ));
             }
             Err(e) => self.toast.add_toast(adw::Toast::new(&e)),
         }
@@ -5004,6 +5006,16 @@ impl NautilusView {
         if let Some(token) = crate::fileops::encode_undo(&ops) {
             self.push_undo(token);
         }
+    }
+
+    fn toast_with_undo(&self, message: impl AsRef<str>) {
+        let view = self.clone();
+        self.ctx.toast_action(
+            &self.toast,
+            message,
+            &self.ctx.t_or("nautilus.contextMenu.undo", "Undo"),
+            move || view.undo_last(),
+        );
     }
 
     fn undo_last(&self) {
@@ -5581,10 +5593,7 @@ impl NautilusView {
                 self.queue_job_undo(&ids, transfers.iter().map(|item| item.file_op()).collect());
                 self.ctx.refresh_runtime();
                 self.reload();
-                self.toast.add_toast(adw::Toast::new(&format!(
-                    "Transfer group {group} · {} job(s)",
-                    ids.len()
-                )));
+                self.toast_with_undo(&format!("Transfer group {group} · {} job(s)", ids.len()));
             }
             Err(e) => self.toast.add_toast(adw::Toast::new(&e)),
         }

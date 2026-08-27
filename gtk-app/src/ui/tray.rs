@@ -271,14 +271,24 @@ fn plan_status(ctx: &AppCtx) -> (Vec<TrayMenuItem>, String, String, String, bool
 }
 
 fn remote_mounts(ctx: &AppCtx, name: &str) -> Vec<String> {
-    let prefix = format!("{name}:");
-    ctx.snapshot
-        .borrow()
-        .mounts
-        .iter()
-        .filter(|m| m.fs == name || m.fs.starts_with(&prefix))
-        .map(|m| m.mount_point.clone())
+    crate::tray_menu::remote_mounts_for(name, &ctx.snapshot.borrow().mounts)
+        .into_iter()
+        .map(|mount| mount.mount_point.clone())
         .collect()
+}
+
+fn browse_mount_point(ctx: &AppCtx, remote: &str, profile: &str) -> Option<String> {
+    let mounts = ctx.snapshot.borrow();
+    let points = crate::tray_menu::remote_mounts_for(remote, &mounts.mounts);
+    if profile.is_empty() {
+        return points.first().map(|mount| mount.mount_point.clone());
+    }
+    points
+        .iter()
+        .find(|mount| mount.profile == profile)
+        .or_else(|| points.iter().find(|mount| mount.mount_point == profile))
+        .or_else(|| points.first())
+        .map(|mount| mount.mount_point.clone())
 }
 
 fn localize_plan(ctx: &AppCtx, items: &mut [TrayMenuItem]) {
@@ -336,7 +346,13 @@ fn localize_plan(ctx: &AppCtx, items: &mut [TrayMenuItem]) {
                 TrayAction::UnmountRemote { profile, .. } => {
                     format!("{} · {profile}", ctx.t_or("tray.unmount", "Unmount"))
                 }
-                TrayAction::BrowseRemote(_) => ctx.t_or("tray.browse", "Browse"),
+                TrayAction::BrowseRemote { profile, .. } => {
+                    if profile.is_empty() {
+                        ctx.t_or("tray.browse", "Browse")
+                    } else {
+                        format!("{} · {profile}", ctx.t_or("tray.browse", "Browse"))
+                    }
+                }
                 TrayAction::BrowseInApp(_) => ctx.t_or("tray.browseInApp", "Browse (In App)"),
                 TrayAction::StartProfile { op, profile, .. } => {
                     format!("{} {op} · {profile}", ctx.t_or("tray.start", "Start"))
@@ -606,12 +622,12 @@ pub fn handle(ctx: &AppCtx, cmd: TrayAction) {
             }
             ctx.refresh_runtime();
         }
-        TrayAction::BrowseRemote(name) => {
-            if let Some(point) = remote_mounts(ctx, &name).into_iter().next() {
+        TrayAction::BrowseRemote { remote, profile } => {
+            if let Some(point) = browse_mount_point(ctx, &remote, &profile) {
                 let _ = open::that(point);
             } else {
                 ctx.request_show();
-                ctx.request_browse(&name, "");
+                ctx.request_browse(&remote, "");
             }
         }
         TrayAction::BrowseInApp(name) => {
