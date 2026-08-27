@@ -3357,6 +3357,13 @@ impl Dashboard {
             &snap.jobs,
             self.ctx.is_busy(name, op.as_str(), profile),
         );
+        let mount_usage = operation_control::mount_usage_pairs(
+            &self.ctx,
+            name,
+            &alias,
+            &snap,
+            paths.destination.as_deref(),
+        );
         let spec = operation_control::OperationControlSpec {
             title: if profile.is_empty() {
                 "default".into()
@@ -3371,9 +3378,9 @@ impl Dashboard {
             dest_browseable: paths.dest_browseable,
             dry_run: dry_on,
             resync: resync_on,
-            active,
+            active: active || live_mount.is_some(),
             busy,
-            mount_usage: operation_control::mount_usage_pairs(&self.ctx, name, &snap),
+            mount_usage,
         };
         let toast = self.toast.clone();
         let dry = self.dry_run.clone();

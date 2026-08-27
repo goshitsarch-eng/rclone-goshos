@@ -1630,6 +1630,35 @@ impl AppStore {
     }
 }
 
+/// Angular alert-rules fire badge + `alerts.lastFired` short date.
+pub fn format_alert_last_fired(ts: DateTime<Utc>) -> String {
+    ts.with_timezone(&chrono::Local)
+        .format("%m/%d/%y, %I:%M %p")
+        .to_string()
+}
+
+pub fn alert_rule_fire_suffix(
+    fire_count: u64,
+    last_fired: Option<DateTime<Utc>>,
+    last_fired_label: &str,
+) -> Option<String> {
+    let mut parts = Vec::new();
+    if fire_count > 0 {
+        parts.push(fire_count.to_string());
+    }
+    if let Some(ts) = last_fired {
+        parts.push(format!(
+            "{last_fired_label} {}",
+            format_alert_last_fired(ts)
+        ));
+    }
+    if parts.is_empty() {
+        None
+    } else {
+        Some(parts.join(" · "))
+    }
+}
+
 pub fn alert_rule_matches(rule: &AlertRule, query: &str) -> bool {
     let severity = rule.severity_min.as_str();
     let state = if rule.enabled {
@@ -2754,6 +2783,17 @@ mod tests {
         assert!(alert_rule_matches(&store.alert_rules[0], "default"));
         assert!(alert_rule_matches(&store.alert_rules[0], ""));
         assert!(!alert_rule_matches(&store.alert_rules[0], "webhook"));
+        assert_eq!(alert_rule_fire_suffix(0, None, "Last Fired"), None);
+        assert_eq!(
+            alert_rule_fire_suffix(3, None, "Last Fired").as_deref(),
+            Some("3")
+        );
+        let fired = DateTime::parse_from_rfc3339("2026-08-27T18:44:00Z")
+            .unwrap()
+            .with_timezone(&Utc);
+        let suffix = alert_rule_fire_suffix(2, Some(fired), "Last Fired").unwrap();
+        assert!(suffix.starts_with("2 · Last Fired "), "{suffix}");
+        assert!(suffix.contains("26"), "{suffix}");
         assert!(alert_action_matches(&store.alert_actions[0], "toast"));
         let mut job_event = AlertEvent::new(
             AlertEventKind::Job,

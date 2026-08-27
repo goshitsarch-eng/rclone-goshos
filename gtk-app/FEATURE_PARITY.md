@@ -1160,3 +1160,7 @@ This client is the GTK 4 + libadwaita desktop UI. It talks to a local `rclone rc
 - Manual job stop / remove-from-history toast `backendSuccess.job.stopped` / `backendSuccess.job.deleted`
 
 - Live GUI: `--job 55559` Remove closes Job Detail; window toast **Job deleted successfully** (OK)
+
+- Mount operation-control polls local disk usage on the live/configured mount point (alias dest fallback) and shows a LevelBar
+- Mount start/stop treats a resolved host FUSE point as active (`live_mount`) even when `profile_is_active` misses alias remotes
+- Alert rule rows append `fire_count` and `alerts.lastFired` when a rule has fired

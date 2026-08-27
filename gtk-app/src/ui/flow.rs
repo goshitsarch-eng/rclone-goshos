@@ -1601,10 +1601,21 @@ impl FlowView {
             live,
             live_mount.as_deref(),
         );
-        let active = live.is_some();
+        let active = if qr.operation_type == crate::operations::OperationType::Mount {
+            live.is_some() || live_mount.is_some()
+        } else {
+            live.is_some()
+        };
         let busy = self
             .ctx
             .is_busy(&qr.remote_name, qr.operation_type.as_str(), &qr.id);
+        let mount_usage = operation_control::mount_usage_pairs(
+            &self.ctx,
+            &qr.remote_name,
+            &alias,
+            &snap,
+            paths.destination.as_deref(),
+        );
         let spec = operation_control::OperationControlSpec {
             title: qr.name.clone(),
             operation: qr.operation_type,
@@ -1617,7 +1628,7 @@ impl FlowView {
             resync: crate::jobs::is_resync(&qr.config.rclone),
             active,
             busy,
-            mount_usage: operation_control::mount_usage_pairs(&self.ctx, &qr.remote_name, &snap),
+            mount_usage,
         };
         {
             let view = self.clone();

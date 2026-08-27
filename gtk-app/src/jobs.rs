@@ -2917,6 +2917,51 @@ pub fn operation_shows_mount_usage(op: OperationType, active: bool, destination:
     op == OperationType::Mount && active && !destination.trim().is_empty()
 }
 
+/// Local `df` used/free/total for a FUSE or host mount point (Angular `getLocalDiskUsage`).
+pub fn mount_point_usage(path: &str) -> Option<(u64, u64, u64)> {
+    let (free, total) = crate::fileops::local_path_disk_usage(path)?;
+    Some((total.saturating_sub(free), free, total))
+}
+
+pub fn mount_usage_ratio(used: u64, total: u64) -> f64 {
+    if total == 0 {
+        0.0
+    } else {
+        (used as f64 / total as f64).clamp(0.0, 1.0)
+    }
+}
+
+pub fn format_mount_usage_subtitle(point: &str, used: u64, free: u64, total: u64) -> String {
+    format!(
+        "{} · {} used / {} free · {}",
+        point,
+        crate::rclone::format_bytes(used as i64),
+        crate::rclone::format_bytes(free as i64),
+        crate::rclone::format_bytes(total as i64),
+    )
+}
+
+/// RC/host mounts matching remote+alias, else the configured destination (alias remotes).
+pub fn mount_usage_candidates<'a>(
+    mounts: &'a [MountedRemote],
+    name: &str,
+    alias: &str,
+    destination: Option<&'a str>,
+) -> Vec<(&'a str, &'a str)> {
+    let matched: Vec<_> = mounts
+        .iter()
+        .filter(|item| crate::store::mount_matches_remote(&item.fs, &item.mount_point, name, alias))
+        .map(|item| (item.profile.as_str(), item.mount_point.as_str()))
+        .collect();
+    if !matched.is_empty() {
+        return matched;
+    }
+    match destination.map(str::trim).filter(|s| !s.is_empty()) {
+        Some(dest) => vec![("", dest)],
+        None => Vec::new(),
+    }
+}
+
 pub fn operation_control_action_kind(op: OperationType, active: bool) -> &'static str {
     match (op == OperationType::Mount, active) {
         (true, false) => "mount",
@@ -5750,6 +5795,39 @@ mod tests {
             false,
             "/tmp/mnt"
         ));
+        assert_eq!(mount_usage_ratio(50, 100), 0.5);
+        assert_eq!(mount_usage_ratio(0, 0), 0.0);
+        assert_eq!(
+            format_mount_usage_subtitle("/tmp/mnt", 1024, 2048, 3072),
+            "/tmp/mnt · 1.0 KiB used / 2.0 KiB free · 3.0 KiB"
+        );
+        assert!(mount_point_usage("/").is_some() || mount_point_usage("/tmp").is_some());
+        let alias_mount =
+            MountedRemote::new("/tmp/rclone-test-remote", "/tmp/rclone-testdrive-mnt");
+        assert_eq!(
+            mount_usage_candidates(
+                std::slice::from_ref(&alias_mount),
+                "testdrive",
+                "/tmp/rclone-test-remote",
+                Some("/mnt/unused")
+            ),
+            vec![("", "/tmp/rclone-testdrive-mnt")]
+        );
+        assert_eq!(
+            mount_usage_candidates(&[], "testdrive", "", Some("/tmp/rclone-testdrive-mnt")),
+            vec![("", "/tmp/rclone-testdrive-mnt")]
+        );
+        assert_eq!(
+            mount_usage_candidates(
+                std::slice::from_ref(&alias_mount),
+                "testdrive",
+                "",
+                Some("/tmp/rclone-testdrive-mnt")
+            ),
+            vec![("", "/tmp/rclone-testdrive-mnt")]
+        );
+        assert!(mount_usage_candidates(&[], "testdrive", "", None).is_empty());
+        assert!(mount_usage_candidates(&[], "testdrive", "", Some("  ")).is_empty());
         assert_eq!(
             operation_control_action_kind(OperationType::Mount, false),
             "mount"

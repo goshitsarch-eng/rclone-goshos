@@ -5259,6 +5259,7 @@ pub fn alerts(parent: &impl IsA<gtk::Widget>, ctx: AppCtx) {
             let query = rules_search.text().to_string();
             let enabled_lbl = ctx.t_or("alerts.enabled", "Enabled");
             let disabled_lbl = ctx.t_or("common.off", "Disabled");
+            let last_fired_lbl = ctx.t_or("alerts.lastFired", "Last Fired");
             let mut shown = 0;
             for rule in ctx.store.borrow().alert_rules.clone() {
                 if !crate::store::alert_rule_matches(&rule, &query) {
@@ -5272,7 +5273,7 @@ pub fn alerts(parent: &impl IsA<gtk::Widget>, ctx: AppCtx) {
                 } else {
                     disabled_lbl.as_str()
                 };
-                row.set_subtitle(&format!(
+                let mut subtitle = format!(
                     "{} · {} {} · {state}",
                     ctx.t_or(
                         &format!("alerts.severityLevels.{}", rule.severity_min.as_str()),
@@ -5280,7 +5281,16 @@ pub fn alerts(parent: &impl IsA<gtk::Widget>, ctx: AppCtx) {
                     ),
                     rule.action_ids.len(),
                     ctx.t_or("alerts.actions", "actions"),
-                ));
+                );
+                if let Some(suffix) = crate::store::alert_rule_fire_suffix(
+                    rule.fire_count,
+                    rule.last_fired,
+                    &last_fired_lbl,
+                ) {
+                    subtitle.push_str(" · ");
+                    subtitle.push_str(&suffix);
+                }
+                row.set_subtitle(&subtitle);
                 let enabled = gtk::Switch::new();
                 enabled.set_valign(gtk::Align::Center);
                 enabled.set_active(rule.enabled);

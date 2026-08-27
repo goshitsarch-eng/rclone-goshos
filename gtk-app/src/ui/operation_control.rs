@@ -2,14 +2,23 @@
 
 use super::AppCtx;
 use crate::jobs::{
+    format_mount_usage_subtitle, mount_point_usage, mount_usage_ratio,
     operation_control_action_kind, operation_control_subtitle, operation_shows_mount_usage,
     operation_shows_session_flags,
 };
 use crate::operations::OperationType;
 use crate::store::RuntimeSnapshot;
 use adw::prelude::*;
+use gtk::glib;
 use gtk::prelude::*;
 use std::rc::Rc;
+
+pub struct MountUsageView {
+    pub title: String,
+    pub subtitle: String,
+    pub ratio: f64,
+    pub path: String,
+}
 
 pub struct OperationControlSpec {
     pub title: String,
@@ -23,7 +32,7 @@ pub struct OperationControlSpec {
     pub resync: bool,
     pub active: bool,
     pub busy: bool,
-    pub mount_usage: Vec<(String, String)>,
+    pub mount_usage: Vec<MountUsageView>,
 }
 
 pub struct OperationControlHandlers {
@@ -36,35 +45,30 @@ pub struct OperationControlHandlers {
 pub fn mount_usage_pairs(
     ctx: &AppCtx,
     name: &str,
+    alias: &str,
     snap: &RuntimeSnapshot,
-) -> Vec<(String, String)> {
-    let Some(client) = ctx.client() else {
-        return Vec::new();
-    };
-    snap.mounts
-        .iter()
-        .filter(|item| crate::jobs::fs_belongs_to_remote(&item.fs, name))
-        .filter_map(|mount| {
-            let usage = client.du(Some(&mount.mount_point)).ok()?;
-            let title = if mount.profile.is_empty() {
-                ctx.t_or("dashboard.appDetail.mountDiskUsage", "Mount point usage")
-            } else {
-                format!(
-                    "{} · {}",
-                    ctx.t_or("dashboard.appDetail.mountDiskUsage", "Mount point usage"),
-                    mount.profile
-                )
-            };
-            let subtitle = format!(
-                "{} · {} used / {} free · {}",
-                mount.mount_point,
-                crate::rclone::format_bytes(usage.used),
-                crate::rclone::format_bytes(usage.free),
-                crate::rclone::format_bytes(usage.total)
-            );
-            Some((title, subtitle))
-        })
+    destination: Option<&str>,
+) -> Vec<MountUsageView> {
+    let title_base = ctx.t_or("dashboard.appDetail.mountDiskUsage", "Mount point usage");
+    crate::jobs::mount_usage_candidates(&snap.mounts, name, alias, destination)
+        .into_iter()
+        .filter_map(|(profile, path)| usage_view_for(&title_base, profile, path))
         .collect()
+}
+
+fn usage_view_for(title_base: &str, profile: &str, path: &str) -> Option<MountUsageView> {
+    let (used, free, total) = mount_point_usage(path)?;
+    let title = if profile.is_empty() {
+        title_base.to_string()
+    } else {
+        format!("{title_base} · {profile}")
+    };
+    Some(MountUsageView {
+        title,
+        subtitle: format_mount_usage_subtitle(path, used, free, total),
+        ratio: mount_usage_ratio(used, total),
+        path: path.to_string(),
+    })
 }
 
 pub fn operation_control(
@@ -130,11 +134,46 @@ pub fn operation_control(
         spec.active,
         spec.destination.as_deref().unwrap_or(""),
     ) {
-        for (title, subtitle) in &spec.mount_usage {
+        for view in &spec.mount_usage {
             let usage = adw::ActionRow::new();
-            usage.set_title(title);
-            usage.set_subtitle(subtitle);
+            usage.set_title(&view.title);
+            usage.set_subtitle(&view.subtitle);
             row.add_row(&usage);
+            let bar = gtk::LevelBar::new();
+            bar.set_min_value(0.0);
+            bar.set_max_value(1.0);
+            bar.set_value(view.ratio);
+            bar.set_hexpand(true);
+            bar.add_css_class(crate::store::disk_usage_severity_css(view.ratio));
+            let bar_row = gtk::ListBoxRow::new();
+            bar_row.set_activatable(false);
+            bar_row.set_child(Some(&bar));
+            row.add_row(&bar_row);
+            if spec.active && !view.path.is_empty() {
+                let path = view.path.clone();
+                let usage = usage.clone();
+                let bar = bar.clone();
+                glib::timeout_add_seconds_local(5, move || {
+                    if !usage.is_mapped() {
+                        return glib::ControlFlow::Break;
+                    }
+                    if let Some((used, free, total)) = mount_point_usage(&path) {
+                        usage.set_subtitle(&format_mount_usage_subtitle(&path, used, free, total));
+                        let ratio = mount_usage_ratio(used, total);
+                        bar.set_value(ratio);
+                        for class in [
+                            "disk-usage-critical",
+                            "disk-usage-high",
+                            "disk-usage-warning",
+                            "disk-usage-healthy",
+                        ] {
+                            bar.remove_css_class(class);
+                        }
+                        bar.add_css_class(crate::store::disk_usage_severity_css(ratio));
+                    }
+                    glib::ControlFlow::Continue
+                });
+            }
         }
     }
 
