@@ -904,3 +904,10 @@ This client is the GTK 4 + libadwaita desktop UI. It talks to a local `rclone rc
 - Backend editor matches Angular Connection/Security tabs: Enable Auth switch, Copy Backend Settings vs Copy Remotes, duplicate name/host/port checks, and Remove Stored Password
 - App menu includes **Import rclone.conf** (`win.import-config`) beside settings-backup import
 - Live GUI: `--backends` Add Backend shows Connection (Customize Authentication, Copy Backend/Remote Settings) and Security (No Password Stored); Save with an empty name reports **Name exists**
+
+- Files operations panel lists `stats.completed` files with sizes and failed-row errors (Angular `getTransferredFiles` / `transferredLabel`); delete/cleanup/rmdirs use an indeterminate progress pulse
+- Preset/template bar is a MenuButton (Angular CDK menu): Apply Default Presets, one-click template-by-name, Save as Template (remote-config), Manage Templates
+- Preferences Search Results render live setting widgets (same Switch/Combo/Entry/Spin as the tab pages), not jump-only rows; security still opens the Security tab
+- Live GUI: Preferences search `bandwidth` shows an editable Bandwidth limit row; changing it to `3M` writes `core.bandwidth_limit` then restore to `2M`
+- Live GUI: `--quick-run-editor gui-qr-copy` Presets & Templates menu lists **QR Copy Paths** / **Parity Capture**; one-click apply shows `Template "QR Copy Paths" applied successfully` and Destination `testdrive:verify-qr-tmpl`
+- Live GUI: Files operations job `#42424` copy Failed expands to **Copied files** `ok.txt` and `bad.txt` with `permission denied`
