@@ -1020,3 +1020,4 @@ This client is the GTK 4 + libadwaita desktop UI. It talks to a local `rclone rc
 - Bookmarks header accepts internal folder drops and toggles bookmarks (`dropToLocal`)
 - Embedded file picker honors Angular `FilePickerConfig.minSelection` (confirm disabled / `nautilus.errors.minSelection`)
 - Properties size and hashsum run as grouped `_async` jobs (`filemanager/properties/...`) and `job/stopgroup` on close
+- Live GUI: `--properties testdrive:Photos` opens immediately; Contained Files **292** and Total Size fill from the async `operations/size` job
