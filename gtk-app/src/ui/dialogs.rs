@@ -3282,7 +3282,8 @@ fn flags_category_page(
     json_toggle.set_active(ctx.settings.borrow().runtime.show_json_mode);
     let json_group = adw::PreferencesGroup::new();
     json_group.add(&json_toggle);
-    page_box.append(&json_group);
+    let prefs = adw::PreferencesPage::new();
+    prefs.add(&json_group);
     let flags_group = adw::PreferencesGroup::new();
     flags_group.set_title(category);
     let mut flag_rows = Vec::new();
@@ -3300,7 +3301,7 @@ fn flags_category_page(
         }
         flag_rows.push((option.clone(), added));
     }
-    page_box.append(&flags_group);
+    prefs.add(&flags_group);
     let editor = super::json_editor::JsonEditor::new(ctx);
     editor.set_fields(
         options
@@ -3318,11 +3319,30 @@ fn flags_category_page(
     editor.set_value(&serde_json::Value::Object(json_map));
     editor.root.set_visible(json_toggle.is_active());
     flags_group.set_visible(!json_toggle.is_active());
-    page_box.append(&editor.root);
+    let json_holder = adw::PreferencesGroup::new();
+    json_holder.set_title(&ctx.t_or("remoteConfig.jsonPayload", "Raw options/set payload"));
+    json_holder.add(&{
+        let row = adw::ActionRow::new();
+        row.set_title(&ctx.t_or("remoteConfig.jsonMode", "JSON"));
+        row.set_activatable(false);
+        row.set_child(Some(&editor.root));
+        row
+    });
+    json_holder.set_visible(json_toggle.is_active());
+    prefs.add(&json_holder);
     let apply = gtk::Button::with_label(&ctx.t_or("common.apply", "Apply changes"));
     apply.add_css_class("suggested-action");
     apply.set_halign(gtk::Align::End);
-    page_box.append(&apply);
+    let apply_group = adw::PreferencesGroup::new();
+    let apply_row = adw::ActionRow::new();
+    apply_row.set_title(&ctx.t_or(
+        "remoteConfig.flagsWriteEngine",
+        "Write flags to the running engine",
+    ));
+    apply_row.add_suffix(&apply);
+    apply_group.add(&apply_row);
+    prefs.add(&apply_group);
+    page_box.append(&prefs);
     {
         let ctx = ctx.clone();
         let toast = toast.clone();
@@ -3353,11 +3373,13 @@ fn flags_category_page(
         let ctx = ctx.clone();
         let editor_root = editor.root.clone();
         let flags_group = flags_group.clone();
+        let json_holder = json_holder.clone();
         json_toggle.connect_active_notify(move |row| {
             let on = row.is_active();
             ctx.settings.borrow_mut().runtime.show_json_mode = on;
             ctx.persist();
             editor_root.set_visible(on);
+            json_holder.set_visible(on);
             flags_group.set_visible(!on);
         });
     }
@@ -3426,6 +3448,8 @@ fn fill_flags_home(
     while let Some(child) = body.first_child() {
         body.remove(&child);
     }
+    let page = adw::PreferencesPage::new();
+    let mut added = false;
     let q = query.trim();
     if !q.is_empty() {
         let hits = crate::flags::search_grouped_flags(services, q);
@@ -3467,7 +3491,9 @@ fn fill_flags_home(
             });
             group.add(&row);
         }
-        body.append(&group);
+        page.add(&group);
+        added = true;
+        body.append(&page);
         return;
     }
     for main in crate::flags::MAIN_CATEGORY_KEYS {
@@ -3539,8 +3565,20 @@ fn fill_flags_home(
             }
             group.add(&expander);
         }
-        body.append(&group);
+        page.add(&group);
+        added = true;
     }
+    if !added {
+        let empty = adw::PreferencesGroup::new();
+        let row = adw::ActionRow::new();
+        row.set_title(&ctx.t_or(
+            "modals.rcloneFlags.search.emptyResult",
+            "No Rclone flags found",
+        ));
+        empty.add(&row);
+        page.add(&empty);
+    }
+    body.append(&page);
 }
 
 fn titlecase_service(name: &str) -> String {
@@ -3605,8 +3643,7 @@ pub fn rclone_flags(parent: &impl IsA<gtk::Widget>, ctx: AppCtx) {
         return;
     };
     let current = client.options_get().unwrap_or(serde_json::json!({}));
-    let mut blocks = client.option_flag_blocks();
-    crate::flags::merge_current_values(&mut blocks, &current);
+    let blocks = crate::flags::blocks_for_flags_ui(client.option_flag_blocks(), &current);
     let services = crate::flags::group_blocks_by_service(&blocks);
     let edits: Rc<RefCell<Vec<(String, String, serde_json::Value)>>> =
         Rc::new(RefCell::new(Vec::new()));

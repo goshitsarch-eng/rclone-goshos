@@ -877,3 +877,8 @@ This client is the GTK 4 + libadwaita desktop UI. It talks to a local `rclone rc
 
 - Operation, helper, start-operation, Quick Run, and wizard runtime flag rows use typed `FlagWidget` controls (Switch / Combo / SearchCombo / MultiSelect / Spin / Duration-Size Entry) instead of plain `AdwEntryRow` text
 - Live GUI: testdrive Copy `gui-copy-test` shows **Create Empty Src Dirs** as a switch; toggling ON then Save persists `createEmptySrcDirs: true`; toggling OFF then Save restores `false`
+
+- Rclone Flags home navigates like Angular: General Settings / File System & Storage / Network & Servers, then service expanders and category pages (not coarse backend/vfs/mount tabs)
+- Home search lists matching flags (`service › category`) and opens that category; category pages keep typed FlagWidgets, JSON mode, Apply, and Reset All
+- When rclone has no `options/info` (1.60), flags are synthesized from `options/get` so services still appear
+- Live GUI: `--rclone-flags` home shows General Settings (Log, Main, Rc), File System (Filter, Mount, Vfs), and Network (Dlna, Http, Sftp); Main › General shows **Ask Password** switch, **Buffer Size** spin `16777216`, and `Showing 91 of 91 flags`; home search `buffer` opens Main › General filtered to Buffer Size

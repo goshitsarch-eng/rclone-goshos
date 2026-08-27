@@ -223,6 +223,78 @@ fn parse_flag_option(value: &Value) -> Option<FlagOption> {
     })
 }
 
+fn inferred_flag_type(value: &Value) -> &'static str {
+    match value {
+        Value::Bool(_) => "bool",
+        Value::Number(n) if n.is_i64() || n.is_u64() => "int",
+        Value::Number(_) => "float",
+        _ => "string",
+    }
+}
+
+fn flatten_current_options(value: &Value, prefix: &str) -> Vec<FlagOption> {
+    let Some(obj) = value.as_object() else {
+        return Vec::new();
+    };
+    let mut out = Vec::new();
+    for (key, val) in obj {
+        let field = if prefix.is_empty() {
+            key.clone()
+        } else {
+            format!("{prefix}.{key}")
+        };
+        if val.is_object() {
+            out.extend(flatten_current_options(val, &field));
+            continue;
+        }
+        let name = field.rsplit('.').next().unwrap_or(key).to_string();
+        let default_str = crate::value_mapper::machine_to_human(val, inferred_flag_type(val), "");
+        out.push(FlagOption {
+            name,
+            field_name: field,
+            help: String::new(),
+            type_name: inferred_flag_type(val).to_string(),
+            advanced: false,
+            groups: String::new(),
+            default_str,
+            value: val.clone(),
+            examples: Vec::new(),
+            exclusive: false,
+        });
+    }
+    out
+}
+
+/// rclone 1.60 has no `options/info` — build editors from `options/get`.
+pub fn synthesize_blocks_from_current(current: &Value) -> Vec<FlagBlock> {
+    let Some(obj) = current.as_object() else {
+        return Vec::new();
+    };
+    let mut blocks = Vec::new();
+    for (name, value) in obj {
+        let options = flatten_current_options(value, "");
+        if options.is_empty() {
+            continue;
+        }
+        blocks.push(FlagBlock {
+            name: name.clone(),
+            options,
+        });
+    }
+    blocks.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
+    blocks
+}
+
+pub fn blocks_for_flags_ui(info_blocks: Vec<FlagBlock>, current: &Value) -> Vec<FlagBlock> {
+    if info_blocks.iter().any(|block| !block.options.is_empty()) {
+        let mut blocks = info_blocks;
+        merge_current_values(&mut blocks, current);
+        blocks
+    } else {
+        synthesize_blocks_from_current(current)
+    }
+}
+
 pub fn merge_current_values(blocks: &mut [FlagBlock], current: &Value) {
     for block in blocks.iter_mut() {
         let Some(current_block) = current.get(&block.name) else {
@@ -972,6 +1044,35 @@ mod tests {
         assert_eq!(parse_flag_value("Duration", "30s"), json!("30s"));
         assert_eq!(parse_flag_value("SizeSuffix", "1Gi"), json!("1Gi"));
         assert_eq!(parse_flag_value("Tristate", "unset"), json!(null));
+    }
+
+    #[test]
+    fn synthesizes_blocks_from_options_get() {
+        let current = json!({
+            "main": { "transfers": 8, "DryRun": false },
+            "rc": { "HTTPOptions": { "ListenAddr": ":5572" } }
+        });
+        let blocks = synthesize_blocks_from_current(&current);
+        assert_eq!(
+            blocks.iter().map(|b| b.name.as_str()).collect::<Vec<_>>(),
+            vec!["main", "rc"]
+        );
+        assert!(blocks[0]
+            .options
+            .iter()
+            .any(|o| o.field_name == "transfers" && o.type_name == "int"));
+        let listen = blocks[1]
+            .options
+            .iter()
+            .find(|o| o.field_name == "HTTPOptions.ListenAddr")
+            .unwrap();
+        assert_eq!(option_field_category(&listen.field_name), "HTTPOptions");
+        let empty_info = vec![FlagBlock {
+            name: "main".into(),
+            options: vec![],
+        }];
+        let ui = blocks_for_flags_ui(empty_info, &current);
+        assert!(ui.iter().any(|b| b.name == "main" && !b.options.is_empty()));
     }
 
     #[test]
