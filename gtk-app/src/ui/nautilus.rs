@@ -37,6 +37,7 @@ enum InternalDrop {
     SecondaryPane,
     Location { location: String, secondary: bool },
     Starred,
+    BookmarkHeader,
     Tab(u32),
 }
 
@@ -104,6 +105,7 @@ pub struct NautilusView {
     right_scroll: gtk::ScrolledWindow,
     picker_bar: gtk::Box,
     picker_label: gtk::Label,
+    picker_select: gtk::Button,
     bottom_bar: gtk::Box,
     bottom_confirm: gtk::Button,
     share_bar: gtk::Box,
@@ -669,6 +671,7 @@ impl NautilusView {
             right_scroll: right_scroll.clone(),
             picker_bar,
             picker_label,
+            picker_select: picker_select.clone(),
             bottom_bar,
             bottom_confirm: bottom_confirm.clone(),
             share_bar,
@@ -1453,6 +1456,38 @@ impl NautilusView {
                 self.picker_label.set_text(&label);
             }
         }
+        self.sync_picker_confirm();
+    }
+
+    fn sync_picker_confirm(&self) {
+        let pending = self.ctx.pending_picker.borrow();
+        let Some(req) = pending.as_ref() else {
+            return;
+        };
+        let names = self.selected_names();
+        let listing = self.last_listing.borrow();
+        let is_dir_of = |name: &str| {
+            listing
+                .iter()
+                .find(|entry| entry.name == name)
+                .map(|entry| entry.is_dir)
+                .unwrap_or(true)
+        };
+        let mut dirs = 0;
+        let mut files = 0;
+        for name in &names {
+            if !crate::picker::is_entry_allowed(name, is_dir_of(name), &req.config) {
+                continue;
+            }
+            if is_dir_of(name) {
+                dirs += 1;
+            } else {
+                files += 1;
+            }
+        }
+        let ok = crate::picker::can_confirm_selection(dirs, files, &req.config);
+        self.picker_select.set_sensitive(ok);
+        self.bottom_confirm.set_sensitive(ok);
     }
 
     fn maybe_scroll_load(&self, primary: bool, adj: &gtk::Adjustment) {
@@ -2001,6 +2036,7 @@ impl NautilusView {
                 format!("loc:{secondary}:{location}")
             }
             InternalDrop::Starred => "starred".into(),
+            InternalDrop::BookmarkHeader => "bookmarks-header".into(),
             InternalDrop::Tab(id) => format!("tab:{id}"),
         }
     }
@@ -2062,7 +2098,9 @@ impl NautilusView {
                     self.show_starred();
                 }
             }
-            InternalDrop::CurrentPane | InternalDrop::SecondaryPane => {}
+            InternalDrop::CurrentPane
+            | InternalDrop::SecondaryPane
+            | InternalDrop::BookmarkHeader => {}
         }
     }
 
@@ -2271,6 +2309,10 @@ impl NautilusView {
         match dest {
             InternalDrop::Starred => {
                 self.star_drag_items(&items);
+                true
+            }
+            InternalDrop::BookmarkHeader => {
+                self.toggle_bookmark_drag_folders(&items);
                 true
             }
             InternalDrop::CurrentPane => {
@@ -2877,7 +2919,10 @@ impl NautilusView {
                 }
             }
         }
-        self.add_side_header(&self.ctx.t_or("nautilus.titles.bookmarks", "Bookmarks"));
+        self.add_side_header_drop(
+            &self.ctx.t_or("nautilus.titles.bookmarks", "Bookmarks"),
+            Some(InternalDrop::BookmarkHeader),
+        );
         for mark in &self.ctx.settings.borrow().nautilus.bookmarks {
             if let (Some(name), Some(path)) = (
                 mark.get("name").and_then(|x| x.as_str()),
@@ -2948,9 +2993,20 @@ impl NautilusView {
     }
 
     fn add_side_header(&self, title: &str) {
+        self.add_side_header_drop(title, None);
+    }
+
+    fn add_side_header_drop(&self, title: &str, dest: Option<InternalDrop>) {
         let row = adw::ActionRow::new();
         row.set_title(title);
-        row.set_sensitive(false);
+        if dest.is_some() {
+            row.set_activatable(false);
+        } else {
+            row.set_sensitive(false);
+        }
+        if let Some(dest) = dest {
+            self.attach_internal_drop(&row, dest);
+        }
         self.sidebar.append(&row);
     }
 
@@ -3000,7 +3056,39 @@ impl NautilusView {
                 secondary: false,
             },
         );
+        if matches!(
+            kind,
+            SideKind::Bookmark | SideKind::Local | SideKind::Remote
+        ) {
+            self.attach_os_file_drop(&row, target);
+        }
         self.sidebar.append(&row);
+    }
+
+    fn attach_os_file_drop(&self, widget: &impl IsA<gtk::Widget>, location: &str) {
+        let drop = gtk::DropTarget::new(
+            gtk::gdk::FileList::static_type(),
+            gtk::gdk::DragAction::COPY,
+        );
+        let dest = crate::dnd::dest_from_location(location);
+        {
+            let view = self.clone();
+            drop.connect_drop(move |_, value, _, _| {
+                if let Ok(list) = value.get::<gtk::gdk::FileList>() {
+                    let paths: Vec<std::path::PathBuf> = list
+                        .files()
+                        .into_iter()
+                        .filter_map(|file| file.path())
+                        .collect();
+                    if !paths.is_empty() {
+                        view.upload_local_paths_to(&dest.remote, &dest.path, &paths);
+                        return true;
+                    }
+                }
+                false
+            });
+        }
+        widget.add_controller(drop);
     }
 
     fn popup_side_menu(&self, row: &adw::ActionRow, title: &str, target: &str, kind: SideKind) {
@@ -3344,6 +3432,7 @@ impl NautilusView {
         self.sync_narrow_chrome();
         let current = self.current.borrow().clone();
         let listing = self.last_listing.borrow().clone();
+        let forced_is_dir = forced.as_ref().map(|(_, is_dir)| *is_dir);
         let result = if cancelled {
             crate::picker::PickerResult {
                 cancelled: true,
@@ -3366,15 +3455,56 @@ impl NautilusView {
                 &req.config,
             )
         };
-        let dirs = usize::from(result.is_dir);
-        let files = usize::from(!result.is_dir);
+        let (dirs, files) = if let Some(is_dir) = forced_is_dir {
+            if is_dir {
+                (1, 0)
+            } else {
+                (0, 1)
+            }
+        } else {
+            let names = self.selected_names();
+            let listing = self.last_listing.borrow();
+            let is_dir_of = |name: &str| {
+                listing
+                    .iter()
+                    .find(|entry| entry.name == name)
+                    .map(|entry| entry.is_dir)
+                    .unwrap_or(true)
+            };
+            let mut dirs = 0;
+            let mut files = 0;
+            for name in &names {
+                if !crate::picker::is_entry_allowed(name, is_dir_of(name), &req.config) {
+                    continue;
+                }
+                if is_dir_of(name) {
+                    dirs += 1;
+                } else {
+                    files += 1;
+                }
+            }
+            (dirs, files)
+        };
         if !cancelled && !crate::picker::can_confirm_selection(dirs, files, &req.config) {
+            let min = req.config.min_selection;
             *self.ctx.pending_picker.borrow_mut() = Some(req);
             self.picker_bar.set_visible(true);
-            self.toast.add_toast(adw::Toast::new(&self.ctx.t_or(
-                "nautilus.notifications.selectValid",
-                "Select a valid item to continue",
-            )));
+            let message = if min > 0 && dirs + files < min {
+                self.ctx.tf_or(
+                    "nautilus.errors.minSelection",
+                    "Please select at least {{min}} item{{s}}.",
+                    &[
+                        ("min", &min.to_string()),
+                        ("s", if min > 1 { "s" } else { "" }),
+                    ],
+                )
+            } else {
+                self.ctx.t_or(
+                    "nautilus.notifications.selectValid",
+                    "Select a valid item to continue",
+                )
+            };
+            self.toast.add_toast(adw::Toast::new(&message));
             return;
         }
         self.picker_bar.set_visible(false);
@@ -4207,14 +4337,18 @@ impl NautilusView {
     }
 
     fn upload_local_paths(&self, paths: &[std::path::PathBuf]) {
+        let current = self.current.borrow().clone();
+        self.upload_local_paths_to(&current.remote, &current.path, paths);
+    }
+
+    fn upload_local_paths_to(&self, remote: &str, path: &str, paths: &[std::path::PathBuf]) {
         if paths.is_empty() {
             return;
         }
         let Some(client) = self.ctx.client() else {
             return;
         };
-        let current = self.current.borrow().clone();
-        let (dest_fs, dest_dir) = fs_remote(&current.remote, &current.path);
+        let (dest_fs, dest_dir) = fs_remote(remote, path);
         let items = match crate::fileops::collect_local_upload_items(paths, &dest_fs, &dest_dir) {
             Ok(items) => items,
             Err(e) => {
@@ -4243,12 +4377,12 @@ impl NautilusView {
                         .sum();
                     let preparing = crate::jobs::preparing_job(
                         id,
-                        &current.remote,
+                        remote,
                         &items
                             .first()
                             .map(|item| item.src.clone())
                             .unwrap_or_default(),
-                        &current.path,
+                        path,
                         items.len() as u64,
                         bytes,
                     );
@@ -5448,6 +5582,26 @@ impl NautilusView {
         self.ctx.persist();
         self.reload_sidebar();
         let _ = Bookmark::default();
+    }
+
+    fn toggle_bookmark_drag_folders(&self, items: &[crate::dnd::DragItem]) {
+        let dirs = crate::dnd::bookmark_header_dirs(items);
+        if dirs.is_empty() {
+            return;
+        }
+        {
+            let mut settings = self.ctx.settings.borrow_mut();
+            for item in dirs {
+                let location = crate::dnd::location_string(&item.remote, &item.path);
+                crate::settings::toggle_collection(
+                    &mut settings.nautilus.bookmarks,
+                    &location,
+                    &item.name,
+                );
+            }
+        }
+        self.ctx.persist();
+        self.reload_sidebar();
     }
 
     fn sync_current_tab(&self) {

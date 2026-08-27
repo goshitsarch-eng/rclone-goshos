@@ -1015,3 +1015,8 @@ This client is the GTK 4 + libadwaita desktop UI. It talks to a local `rclone rc
 - Navigating to a file (`--browse remote:dir/file`) lists the parent and opens the viewer (`pendingPreviewFilePath`)
 - Files context / path menus show Paste when the OS clipboard has uri-list paths (`menu_has_paste`)
 - Live GUI: `--browse testdrive:Photos/README.md` opens Photos with **README.md selected (191 B)** and the file viewer (**6 / 7 · 191 B**, markdown preview)
+
+- Files sidebar remotes, local disks, and bookmarks accept OS `FileList` drops (`upload_local_paths_to`) matching Angular `dropToRemote` / `dropToBookmark`
+- Bookmarks header accepts internal folder drops and toggles bookmarks (`dropToLocal`)
+- Embedded file picker honors Angular `FilePickerConfig.minSelection` (confirm disabled / `nautilus.errors.minSelection`)
+- Properties size and hashsum run as grouped `_async` jobs (`filemanager/properties/...`) and `job/stopgroup` on close

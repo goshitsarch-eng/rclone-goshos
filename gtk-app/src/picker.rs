@@ -33,6 +33,8 @@ pub struct FilePickerConfig {
     pub require_empty: bool,
     /// Remote used for relative typed paths (`Photos` → `remote:Photos`).
     pub default_remote: String,
+    /// Angular `FilePickerConfig.minSelection` (0 = no minimum).
+    pub min_selection: usize,
 }
 
 impl Default for FilePickerConfig {
@@ -46,6 +48,7 @@ impl Default for FilePickerConfig {
             initial_location: None,
             require_empty: false,
             default_remote: String::new(),
+            min_selection: 0,
         }
     }
 }
@@ -248,15 +251,36 @@ pub fn is_windows_drive_root(path: &std::path::Path) -> bool {
     bytes.len() == 2 && bytes[0].is_ascii_alphabetic() && bytes[1] == b':'
 }
 
+/// Counts selected dirs/files the same way Angular `isConfirmDisabled` does.
+/// An empty listing selection is the current folder (except `selection: files`).
+pub fn picker_confirm_counts(
+    selected_dirs: usize,
+    selected_files: usize,
+    cfg: &FilePickerConfig,
+) -> (usize, usize) {
+    if selected_dirs + selected_files == 0 {
+        return match cfg.selection {
+            PickerSelection::Files => (0, 0),
+            PickerSelection::Folders | PickerSelection::Both => (1, 0),
+        };
+    }
+    (selected_dirs, selected_files)
+}
+
 pub fn can_confirm_selection(
     selected_dirs: usize,
     selected_files: usize,
     cfg: &FilePickerConfig,
 ) -> bool {
+    let (dirs, files) = picker_confirm_counts(selected_dirs, selected_files, cfg);
+    let total = dirs + files;
+    if cfg.min_selection > 0 && total < cfg.min_selection {
+        return false;
+    }
     match cfg.selection {
-        PickerSelection::Folders => selected_dirs > 0 || selected_files == 0,
-        PickerSelection::Files => selected_files > 0,
-        PickerSelection::Both => selected_dirs + selected_files > 0 || true,
+        PickerSelection::Folders => files == 0,
+        PickerSelection::Files => files > 0,
+        PickerSelection::Both => true,
     }
 }
 
@@ -376,5 +400,36 @@ mod tests {
         let missing = dir.join("does-not-exist");
         assert_eq!(local_folder_pick_error(&missing, true), None);
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn min_selection_matches_angular() {
+        let both = FilePickerConfig::default();
+        assert_eq!(both.min_selection, 0);
+        assert!(can_confirm_selection(0, 0, &both));
+        let min2 = FilePickerConfig {
+            min_selection: 2,
+            ..FilePickerConfig::default()
+        };
+        assert!(!can_confirm_selection(0, 0, &min2));
+        assert!(!can_confirm_selection(1, 0, &min2));
+        assert!(can_confirm_selection(1, 1, &min2));
+        assert_eq!(picker_confirm_counts(0, 0, &both), (1, 0));
+        let files = FilePickerConfig {
+            selection: PickerSelection::Files,
+            min_selection: 1,
+            ..FilePickerConfig::default()
+        };
+        assert_eq!(picker_confirm_counts(0, 0, &files), (0, 0));
+        assert!(!can_confirm_selection(0, 0, &files));
+        assert!(can_confirm_selection(0, 1, &files));
+        let folders = FilePickerConfig {
+            selection: PickerSelection::Folders,
+            min_selection: 2,
+            ..FilePickerConfig::folders()
+        };
+        assert!(!can_confirm_selection(0, 0, &folders));
+        assert!(can_confirm_selection(2, 0, &folders));
+        assert!(!can_confirm_selection(0, 2, &folders));
     }
 }

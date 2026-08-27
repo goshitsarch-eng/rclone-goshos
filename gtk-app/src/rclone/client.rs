@@ -675,6 +675,21 @@ impl RcClient {
             .ok_or_else(|| RcError::message("rclone did not return a jobid"))
     }
 
+    /// Start an RC call as `_async` + `_group`. Sync responses (no `jobid`) are `Ready`.
+    pub fn start_grouped_call(
+        &self,
+        endpoint: &str,
+        mut params: Value,
+        group: &str,
+    ) -> Result<RcJobStart, RcError> {
+        if let Some(obj) = params.as_object_mut() {
+            obj.insert("_async".into(), json!(true));
+            obj.insert("_group".into(), json!(group));
+        }
+        let value = self.call(endpoint, params)?;
+        Ok(classify_job_start(&value))
+    }
+
     pub fn job_status(&self, jobid: u64) -> Result<Value, RcError> {
         self.call("job/status", json!({ "jobid": jobid }))
     }
@@ -1697,6 +1712,62 @@ pub struct DiskUsage {
     pub used: i64,
 }
 
+/// Async RC start: either a `jobid` or the finished payload (rclone ignored `_async`).
+#[derive(Debug, Clone, PartialEq)]
+pub enum RcJobStart {
+    Job(u64),
+    Ready(Value),
+}
+
+/// Angular `filemanager/properties/{remote}/{path}-{token}` read-job group.
+pub fn properties_read_group(remote: &str, path: &str, token: &str) -> String {
+    let path = if path.is_empty() { "/" } else { path };
+    format!("filemanager/properties/{remote}/{path}-{token}")
+}
+
+pub fn classify_job_start(value: &Value) -> RcJobStart {
+    if let Some(id) = value.get("jobid").and_then(|x| x.as_u64()) {
+        RcJobStart::Job(id)
+    } else {
+        RcJobStart::Ready(value.clone())
+    }
+}
+
+pub fn job_is_finished(status: &Value) -> bool {
+    status
+        .get("finished")
+        .and_then(|x| x.as_bool())
+        .unwrap_or(false)
+}
+
+pub fn job_output(status: &Value) -> Option<&Value> {
+    status.get("output").or_else(|| status.get("result"))
+}
+
+pub fn job_error_message(status: &Value) -> Option<String> {
+    if !job_is_finished(status) {
+        return None;
+    }
+    let success = status
+        .get("success")
+        .and_then(|x| x.as_bool())
+        .unwrap_or(true);
+    let err = status
+        .get("error")
+        .and_then(|x| x.as_str())
+        .unwrap_or("")
+        .trim();
+    if !success || !err.is_empty() {
+        Some(if err.is_empty() {
+            "job failed".into()
+        } else {
+            err.to_string()
+        })
+    } else {
+        None
+    }
+}
+
 /// Object count and byte total from `operations/size`.
 pub fn parse_object_size(value: &Value) -> (i64, i64) {
     let count = value.get("count").and_then(|v| v.as_i64()).unwrap_or(0);
@@ -2684,6 +2755,50 @@ mod tests {
         assert_eq!(
             config_unlock_payload("secret"),
             json!({ "configPassword": "secret" })
+        );
+    }
+
+    #[test]
+    fn properties_jobs_classify_async_and_errors() {
+        assert_eq!(
+            properties_read_group("testdrive", "Photos", "ab12cd34"),
+            "filemanager/properties/testdrive/Photos-ab12cd34"
+        );
+        assert_eq!(
+            properties_read_group("testdrive", "", "token"),
+            "filemanager/properties/testdrive//-token"
+        );
+        assert_eq!(
+            classify_job_start(&json!({ "jobid": 42 })),
+            RcJobStart::Job(42)
+        );
+        assert_eq!(
+            classify_job_start(&json!({ "count": 3, "bytes": 12 })),
+            RcJobStart::Ready(json!({ "count": 3, "bytes": 12 }))
+        );
+        let running = json!({ "finished": false, "success": true });
+        assert!(!job_is_finished(&running));
+        assert!(job_error_message(&running).is_none());
+        let done = json!({
+            "finished": true,
+            "success": true,
+            "output": { "count": 2, "bytes": 8 }
+        });
+        assert!(job_is_finished(&done));
+        assert_eq!(job_output(&done), Some(&json!({ "count": 2, "bytes": 8 })));
+        assert!(job_error_message(&done).is_none());
+        assert_eq!(
+            job_error_message(&json!({
+                "finished": true,
+                "success": false,
+                "error": "size failed"
+            }))
+            .as_deref(),
+            Some("size failed")
+        );
+        assert_eq!(
+            job_error_message(&json!({ "finished": true, "success": false })).as_deref(),
+            Some("job failed")
         );
     }
 }

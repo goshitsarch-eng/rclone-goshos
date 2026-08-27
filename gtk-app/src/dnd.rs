@@ -164,6 +164,11 @@ pub fn dest_from_location(input: &str) -> DropDest {
     DropDest { remote, path }
 }
 
+/// Angular `dropToLocal` on the Bookmarks header: only folders toggle a bookmark.
+pub fn bookmark_header_dirs(items: &[DragItem]) -> Vec<&DragItem> {
+    items.iter().filter(|item| item.is_dir).collect()
+}
+
 pub fn fs_and_remote(remote: &str, path: &str) -> (String, String) {
     if remote == "local" {
         ("/".into(), path.trim_start_matches('/').to_string())
@@ -497,5 +502,19 @@ mod tests {
         assert_eq!(tab_slide_offset_px(0, 2, 0, 80.0, true), 0.0);
         assert_eq!(tab_slide_scale(0, 0, true), 0.0);
         assert_eq!(tab_slide_scale(0, 1, true), 1.0);
+    }
+
+    #[test]
+    fn bookmark_header_drop_keeps_folders_only() {
+        let items = vec![
+            item("drive", "Photos", true),
+            item("drive", "Photos/README.md", false),
+            item("local", "/tmp/docs", true),
+        ];
+        let dirs = bookmark_header_dirs(&items);
+        assert_eq!(dirs.len(), 2);
+        assert_eq!(dirs[0].path, "Photos");
+        assert_eq!(dirs[1].path, "/tmp/docs");
+        assert!(bookmark_header_dirs(&[item("drive", "a.txt", false)]).is_empty());
     }
 }

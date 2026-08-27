@@ -15,8 +15,9 @@ use crate::jobs::{
 };
 use crate::operations::OperationType;
 use crate::rclone::{
-    browse_target, describe_cron_i18n, group_metadata_info, nanoseconds_to_duration, parse_hashsum,
-    parse_hashsum_list, public_link_expiry_value, remote_fs, validate_cron,
+    browse_target, describe_cron_i18n, group_metadata_info, job_error_message, job_is_finished,
+    job_output, nanoseconds_to_duration, parse_hashsum, parse_hashsum_list, properties_read_group,
+    public_link_expiry_value, remote_fs, validate_cron, RcJobStart,
 };
 use crate::rename::{preview as rename_preview, RenameMode, RenamePlan};
 use crate::store::{
@@ -8397,6 +8398,51 @@ pub fn restore_preview(
     dialog.present(Some(&parent));
 }
 
+fn poll_properties_job(
+    ctx: AppCtx,
+    jobid: u64,
+    alive: Rc<Cell<bool>>,
+    on_done: impl Fn(Result<serde_json::Value, String>) + 'static,
+) {
+    let on_done = Rc::new(on_done);
+    glib::timeout_add_local(std::time::Duration::from_millis(250), move || {
+        if !alive.get() {
+            return glib::ControlFlow::Break;
+        }
+        let Some(client) = ctx.client() else {
+            return glib::ControlFlow::Continue;
+        };
+        match client.job_status(jobid) {
+            Ok(status) if job_is_finished(&status) => {
+                if let Some(err) = job_error_message(&status) {
+                    on_done(Err(err));
+                } else {
+                    let output = job_output(&status).cloned().unwrap_or(status);
+                    on_done(Ok(output));
+                }
+                glib::ControlFlow::Break
+            }
+            Ok(_) => glib::ControlFlow::Continue,
+            Err(e) => {
+                on_done(Err(e.to_string()));
+                glib::ControlFlow::Break
+            }
+        }
+    });
+}
+
+fn start_or_poll_properties_job(
+    ctx: AppCtx,
+    start: RcJobStart,
+    alive: Rc<Cell<bool>>,
+    on_done: impl Fn(Result<serde_json::Value, String>) + 'static,
+) {
+    match start {
+        RcJobStart::Ready(value) => on_done(Ok(value)),
+        RcJobStart::Job(id) => poll_properties_job(ctx, id, alive, on_done),
+    }
+}
+
 pub fn properties(
     parent: &impl IsA<gtk::Widget>,
     ctx: AppCtx,
@@ -8411,6 +8457,9 @@ pub fn properties(
     ) {
         return;
     }
+    let token = uuid::Uuid::new_v4().as_simple().to_string();
+    let read_group = properties_read_group(remote, path, &token[..8]);
+    let jobs_alive = Rc::new(Cell::new(true));
     let dialog = adw::Dialog::new();
     dialog.set_title(&ctx.t_or("fileBrowser.properties.title", "Properties"));
     dialog.set_content_width(520);
@@ -8554,17 +8603,51 @@ pub fn properties(
                 }
             }
         }
-        if let Ok(size) = client.size(&fs, path) {
-            let (count, bytes) = crate::rclone::parse_object_size(&size);
+        if is_dir {
+            let calculating = ctx.t_or(
+                "fileBrowser.properties.calculating",
+                "Calculating folder size...",
+            );
             let count_row = adw::ActionRow::new();
             count_row
                 .set_title(&ctx.t_or("fileBrowser.properties.containedFiles", "Contained files"));
-            count_row.set_subtitle(&count.to_string());
+            count_row.set_subtitle(&calculating);
             list.append(&count_row);
-            let row = adw::ActionRow::new();
-            row.set_title(&ctx.t_or("fileBrowser.properties.totalSize", "Total size"));
-            row.set_subtitle(&crate::rclone::format_bytes(bytes));
-            list.append(&row);
+            let size_row = adw::ActionRow::new();
+            size_row.set_title(&ctx.t_or("fileBrowser.properties.totalSize", "Total size"));
+            size_row.set_subtitle(&calculating);
+            list.append(&size_row);
+            match client.start_grouped_call(
+                "operations/size",
+                serde_json::json!({ "fs": fs, "remote": path }),
+                &read_group,
+            ) {
+                Ok(start) => {
+                    let ctx = ctx.clone();
+                    let count_row = count_row.clone();
+                    let size_row = size_row.clone();
+                    start_or_poll_properties_job(
+                        ctx.clone(),
+                        start,
+                        jobs_alive.clone(),
+                        move |result| match result {
+                            Ok(value) => {
+                                let (count, bytes) = crate::rclone::parse_object_size(&value);
+                                count_row.set_subtitle(&count.to_string());
+                                size_row.set_subtitle(&crate::rclone::format_bytes(bytes));
+                            }
+                            Err(e) => {
+                                count_row.set_subtitle(&e);
+                                size_row.set_subtitle(&e);
+                            }
+                        },
+                    );
+                }
+                Err(e) => {
+                    count_row.set_subtitle(&e.to_string());
+                    size_row.set_subtitle(&e.to_string());
+                }
+            }
         }
         let hashes = info
             .as_ref()
@@ -8658,6 +8741,7 @@ pub fn properties(
                 calc.set_valign(gtk::Align::Center);
                 {
                     let row = row.clone();
+                    let calc_btn = calc.clone();
                     let ctx = ctx.clone();
                     let fs = fs.clone();
                     let path = path.to_string();
@@ -8665,27 +8749,68 @@ pub fn properties(
                     let result_view = result_view.clone();
                     let result_row = result_row.clone();
                     let result_actions = result_actions.clone();
+                    let read_group = read_group.clone();
+                    let jobs_alive = jobs_alive.clone();
                     calc.connect_clicked(move |_| {
-                        if let Some(client) = ctx.client() {
-                            match client.hashsum(&fs, &path, &hash_type) {
-                                Ok(value) => match parse_hashsum_list(&value) {
-                                    Some(text) => {
-                                        result_view.buffer().set_text(&text);
-                                        result_row.set_visible(true);
-                                        result_actions.set_visible(true);
-                                        result_actions
-                                            .set_subtitle(&hash_type.to_ascii_uppercase());
-                                        row.set_subtitle(&ctx.t_or(
-                                            "fileBrowser.properties.generatedChecksums",
-                                            "Generated Checksums",
-                                        ));
-                                    }
-                                    None => row.set_subtitle(&ctx.t_or(
-                                        "fileBrowser.properties.noHashesFound",
-                                        "No hashes returned",
-                                    )),
-                                },
-                                Err(e) => row.set_subtitle(&e.to_string()),
+                        calc_btn.set_sensitive(false);
+                        row.set_subtitle(&ctx.t_or(
+                            "fileBrowser.properties.calculating",
+                            "Calculating folder size...",
+                        ));
+                        let Some(client) = ctx.client() else {
+                            calc_btn.set_sensitive(true);
+                            return;
+                        };
+                        match client.start_grouped_call(
+                            "operations/hashsum",
+                            serde_json::json!({
+                                "fs": fs,
+                                "remote": path,
+                                "hashType": hash_type
+                            }),
+                            &read_group,
+                        ) {
+                            Ok(start) => {
+                                let row = row.clone();
+                                let calc_btn = calc_btn.clone();
+                                let ctx = ctx.clone();
+                                let hash_type = hash_type.clone();
+                                let result_view = result_view.clone();
+                                let result_row = result_row.clone();
+                                let result_actions = result_actions.clone();
+                                start_or_poll_properties_job(
+                                    ctx.clone(),
+                                    start,
+                                    jobs_alive.clone(),
+                                    move |result| {
+                                        calc_btn.set_sensitive(true);
+                                        match result {
+                                            Ok(value) => match parse_hashsum_list(&value) {
+                                                Some(text) => {
+                                                    result_view.buffer().set_text(&text);
+                                                    result_row.set_visible(true);
+                                                    result_actions.set_visible(true);
+                                                    result_actions.set_subtitle(
+                                                        &hash_type.to_ascii_uppercase(),
+                                                    );
+                                                    row.set_subtitle(&ctx.t_or(
+                                                        "fileBrowser.properties.generatedChecksums",
+                                                        "Generated Checksums",
+                                                    ));
+                                                }
+                                                None => row.set_subtitle(&ctx.t_or(
+                                                    "fileBrowser.properties.noHashesFound",
+                                                    "No hashes returned",
+                                                )),
+                                            },
+                                            Err(e) => row.set_subtitle(&e),
+                                        }
+                                    },
+                                );
+                            }
+                            Err(e) => {
+                                calc_btn.set_sensitive(true);
+                                row.set_subtitle(&e.to_string());
                             }
                         }
                     });
@@ -8709,19 +8834,62 @@ pub fn properties(
                     let fs = fs.clone();
                     let path = path.to_string();
                     let hash_type = hash_type.clone();
+                    let read_group = read_group.clone();
+                    let jobs_alive = jobs_alive.clone();
                     calc.connect_clicked(move |_| {
-                        if let Some(client) = ctx.client() {
-                            let value = client
-                                .hashsum_file(&fs, &path, &hash_type)
-                                .or_else(|_| client.hashsum(&fs, &path, &hash_type));
-                            match value {
-                                Ok(value) => {
-                                    row.set_subtitle(
-                                        &parse_hashsum(&value).unwrap_or_else(|| value.to_string()),
-                                    );
-                                    calc_btn.set_sensitive(false);
-                                }
-                                Err(e) => row.set_subtitle(&e.to_string()),
+                        calc_btn.set_sensitive(false);
+                        row.set_subtitle(&ctx.t_or(
+                            "fileBrowser.properties.calculating",
+                            "Calculating folder size...",
+                        ));
+                        let Some(client) = ctx.client() else {
+                            calc_btn.set_sensitive(true);
+                            return;
+                        };
+                        let payload = serde_json::json!({
+                            "fs": fs,
+                            "remote": path,
+                            "hashType": hash_type
+                        });
+                        let start = client
+                            .start_grouped_call(
+                                "operations/hashsumfile",
+                                payload.clone(),
+                                &read_group,
+                            )
+                            .or_else(|_| {
+                                client.start_grouped_call(
+                                    "operations/hashsum",
+                                    payload,
+                                    &read_group,
+                                )
+                            });
+                        match start {
+                            Ok(start) => {
+                                let row = row.clone();
+                                let calc_btn = calc_btn.clone();
+                                start_or_poll_properties_job(
+                                    ctx.clone(),
+                                    start,
+                                    jobs_alive.clone(),
+                                    move |result| match result {
+                                        Ok(value) => {
+                                            row.set_subtitle(
+                                                &parse_hashsum(&value)
+                                                    .unwrap_or_else(|| value.to_string()),
+                                            );
+                                            calc_btn.set_sensitive(false);
+                                        }
+                                        Err(e) => {
+                                            calc_btn.set_sensitive(true);
+                                            row.set_subtitle(&e);
+                                        }
+                                    },
+                                );
+                            }
+                            Err(e) => {
+                                calc_btn.set_sensitive(true);
+                                row.set_subtitle(&e.to_string());
                             }
                         }
                     });
@@ -8856,6 +9024,17 @@ pub fn properties(
     scroll.set_vexpand(true);
     scroll.set_child(Some(&box_));
     dialog.set_child(Some(&scroll));
+    {
+        let ctx = ctx.clone();
+        let read_group = read_group.clone();
+        let jobs_alive = jobs_alive.clone();
+        dialog.connect_closed(move |_| {
+            jobs_alive.set(false);
+            if let Some(client) = ctx.client() {
+                let _ = client.job_stop_group(&read_group);
+            }
+        });
+    }
     dialog.present(Some(parent));
 }
 
