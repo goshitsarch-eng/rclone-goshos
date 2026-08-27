@@ -5,7 +5,10 @@ use super::dialogs;
 use super::flag_widget::{FlagRow, FlagWidget, ServeFlagRow};
 use super::interactive::InteractivePanel;
 use super::AppCtx;
-use crate::config_steps::{editor_steps, parse_open_step, EditorStep};
+use crate::config_steps::{
+    edit_profile_names, editor_steps, navigate_to_shared, parse_open_step, return_from_shared,
+    shared_sidebar_types, show_shared_sidebar, EditorStep, REMOTE_EDIT_SECTIONS,
+};
 use crate::flags::{
     flag_category_for_op, options_for_category, parse_flag_value, static_flags_for, FlagBlock,
     FlagOption,
@@ -165,44 +168,16 @@ pub fn present_with(
     );
 
     let current = Rc::new(RefCell::new(EditorStep::Remote));
+    let edit_stack: Rc<RefCell<Vec<EditorStep>>> = Rc::new(RefCell::new(Vec::new()));
     let persist_step: Rc<RefCell<Box<dyn Fn()>>> = Rc::new(RefCell::new(Box::new(|| {})));
     let preferred_profile = Rc::new(RefCell::new(open.profile.clone()));
     let auto_add = Rc::new(Cell::new(open.auto_add));
-
-    let steps = editor_steps();
-    for step in &steps {
-        let row = adw::ActionRow::new();
-        row.set_title(&step_label(&ctx, *step));
-        row.set_activatable(true);
-        let icon = gtk::Image::from_icon_name(step_icon(*step));
-        row.add_prefix(&icon);
-        sidebar.append(&row);
-    }
     let initial_step = parse_open_step(open.initial.as_deref());
     *current.borrow_mut() = initial_step;
-    if let Some(idx) = editor_steps().iter().position(|step| *step == initial_step) {
-        if let Some(row) = sidebar.row_at_index(idx as i32) {
-            sidebar.select_row(Some(&row));
-        }
-    } else if let Some(first) = sidebar.row_at_index(0) {
-        sidebar.select_row(Some(&first));
-    }
     {
         let sidebar = sidebar.clone();
-        let ctx = ctx.clone();
         search.connect_search_changed(move |entry| {
-            let query = entry.text().to_string();
-            for (idx, step) in editor_steps().into_iter().enumerate() {
-                let Some(row) = sidebar.row_at_index(idx as i32) else {
-                    continue;
-                };
-                let label = step_label(&ctx, step);
-                let alias = step.alias();
-                row.set_visible(crate::pref_search::any_field_matches(
-                    &[&label, alias],
-                    &query,
-                ));
-            }
+            filter_sidebar_rows(&sidebar, &entry.text());
         });
     }
 
@@ -247,8 +222,15 @@ pub fn present_with(
                     *persist_step.borrow_mut() = Box::new(saver);
                 }
                 EditorStep::Helper(kind) => {
-                    let (page, saver) =
-                        helper_page(&parent, ctx.clone(), &remote, kind, flag_blocks.as_ref());
+                    let profile = preferred_profile.borrow().clone();
+                    let (page, saver) = helper_page(
+                        &parent,
+                        ctx.clone(),
+                        &remote,
+                        kind,
+                        flag_blocks.as_ref(),
+                        profile.as_deref(),
+                    );
                     body.append(&page);
                     *persist_step.borrow_mut() = Box::new(saver);
                 }
@@ -260,9 +242,23 @@ pub fn present_with(
         let inner = rebuild;
         let body = body.clone();
         let page_query = page_query.clone();
+        let ctx = ctx.clone();
+        let remote = remote.clone();
+        let sidebar = sidebar.clone();
+        let current = current.clone();
+        let edit_stack = edit_stack.clone();
+        let preferred_profile = preferred_profile.clone();
         Rc::new(move || {
             inner();
             apply_page_search(&body, &page_query.borrow());
+            fill_edit_sidebar(
+                &ctx,
+                &remote,
+                &sidebar,
+                *current.borrow(),
+                &edit_stack.borrow(),
+                preferred_profile.borrow().as_deref(),
+            );
         }) as Rc<dyn Fn()>
     };
     {
@@ -321,19 +317,21 @@ pub fn present_with(
 
     {
         let current = current.clone();
+        let edit_stack = edit_stack.clone();
+        let preferred_profile = preferred_profile.clone();
         let rebuild = rebuild.clone();
-        sidebar.connect_row_selected(move |_, row| {
-            let Some(row) = row else {
-                return;
-            };
-            let idx = row.index();
-            if idx < 0 {
-                return;
-            }
-            if let Some(step) = editor_steps().get(idx as usize).copied() {
-                *current.borrow_mut() = step;
-                rebuild();
-            }
+        let body = body.clone();
+        let body_scroll = body_scroll.clone();
+        sidebar.connect_row_activated(move |_, row| {
+            handle_sidebar_nav(
+                row,
+                &current,
+                &edit_stack,
+                &preferred_profile,
+                &rebuild,
+                &body_scroll,
+                &body,
+            );
         });
     }
     {
@@ -445,6 +443,208 @@ fn preset_bar(
 
 fn step_icon(step: EditorStep) -> &'static str {
     step.icon_name()
+}
+
+fn nav_row(title: &str, icon: &str, name: &str, subtitle: Option<&str>) -> adw::ActionRow {
+    let row = adw::ActionRow::new();
+    row.set_title(title);
+    row.set_activatable(true);
+    row.set_widget_name(name);
+    if let Some(subtitle) = subtitle {
+        row.set_subtitle(subtitle);
+    }
+    row.add_prefix(&gtk::Image::from_icon_name(icon));
+    row
+}
+
+fn header_row(title: &str, name: &str) -> adw::ActionRow {
+    let row = adw::ActionRow::new();
+    row.set_title(title);
+    row.set_sensitive(false);
+    row.set_activatable(false);
+    row.set_widget_name(name);
+    row
+}
+
+fn fill_edit_sidebar(
+    ctx: &AppCtx,
+    remote: &str,
+    sidebar: &gtk::ListBox,
+    current: EditorStep,
+    stack: &[EditorStep],
+    selected_profile: Option<&str>,
+) {
+    while let Some(child) = sidebar.first_child() {
+        sidebar.remove(&child);
+    }
+    let meta = ctx
+        .store
+        .borrow()
+        .remotes
+        .get(remote)
+        .cloned()
+        .unwrap_or_default();
+    if current.is_remote() {
+        sidebar.append(&header_row(
+            &ctx.t_or("modals.remoteConfig.editMode.sections.label", "Sections"),
+            "header-sections",
+        ));
+        for section in REMOTE_EDIT_SECTIONS {
+            sidebar.append(&nav_row(
+                &ctx.t_or(section.i18n_key, section.fallback),
+                section.icon,
+                section.id,
+                None,
+            ));
+        }
+    } else {
+        let type_label = step_label(ctx, current);
+        sidebar.append(&header_row(
+            &ctx.tf_or(
+                "modals.remoteConfig.editMode.profiles",
+                &format!("{type_label} profiles"),
+                &[("type", &type_label)],
+            ),
+            "header-profiles",
+        ));
+        if let Some(prev) = stack.last() {
+            sidebar.append(&nav_row(
+                &step_label(ctx, *prev),
+                "go-previous-symbolic",
+                "nav-back",
+                None,
+            ));
+        }
+        let names = edit_profile_names(&meta, current);
+        let active = selected_profile
+            .map(|s| s.to_string())
+            .or_else(|| names.first().cloned());
+        for name in &names {
+            let row = nav_row(name, step_icon(current), &format!("profile:{name}"), None);
+            if active.as_deref() == Some(name.as_str()) {
+                row.add_css_class("success");
+            }
+            sidebar.append(&row);
+        }
+        if show_shared_sidebar(stack) {
+            sidebar.append(&header_row(
+                &ctx.t_or(
+                    "modals.remoteConfig.editMode.sharedProfiles",
+                    "Shared profiles",
+                ),
+                "header-shared",
+            ));
+            for item in shared_sidebar_types(current) {
+                let count = edit_profile_names(&meta, item).len();
+                sidebar.append(&nav_row(
+                    &step_label(ctx, item),
+                    step_icon(item),
+                    &format!("shared:{}", item.alias()),
+                    Some(&count.to_string()),
+                ));
+            }
+        }
+    }
+    sidebar.append(&header_row(
+        &ctx.t_or("modals.remoteConfig.search", "All pages"),
+        "header-all",
+    ));
+    for step in editor_steps() {
+        sidebar.append(&nav_row(
+            &step_label(ctx, step),
+            step_icon(step),
+            &format!("step:{}", step.alias()),
+            None,
+        ));
+    }
+}
+
+fn filter_sidebar_rows(sidebar: &gtk::ListBox, query: &str) {
+    let mut child = sidebar.first_child();
+    while let Some(row) = child {
+        let next = row.next_sibling();
+        let name = row.widget_name();
+        let title = row
+            .downcast_ref::<adw::ActionRow>()
+            .map(|r| r.title().to_string())
+            .unwrap_or_default();
+        let visible = name.starts_with("header-")
+            || crate::pref_search::any_field_matches(&[&title, &name], query);
+        row.set_visible(visible);
+        child = next;
+    }
+}
+
+fn handle_sidebar_nav(
+    row: &gtk::ListBoxRow,
+    current: &Rc<RefCell<EditorStep>>,
+    edit_stack: &Rc<RefCell<Vec<EditorStep>>>,
+    preferred_profile: &Rc<RefCell<Option<String>>>,
+    rebuild: &Rc<dyn Fn()>,
+    body_scroll: &gtk::ScrolledWindow,
+    body: &gtk::Box,
+) {
+    let name = row.widget_name().to_string();
+    if name.starts_with("header-") {
+        return;
+    }
+    if name == "nav-back" {
+        if let Some(prev) = return_from_shared(&mut edit_stack.borrow_mut()) {
+            *current.borrow_mut() = prev;
+            preferred_profile.borrow_mut().take();
+            rebuild();
+        }
+        return;
+    }
+    if name.starts_with("section-") {
+        scroll_to_named(body_scroll, body, &name);
+        return;
+    }
+    if let Some(profile) = name.strip_prefix("profile:") {
+        *preferred_profile.borrow_mut() = Some(profile.to_string());
+        rebuild();
+        return;
+    }
+    if let Some(alias) = name.strip_prefix("shared:") {
+        let next = parse_open_step(Some(alias));
+        let curr = *current.borrow();
+        *current.borrow_mut() = navigate_to_shared(&mut edit_stack.borrow_mut(), curr, next);
+        preferred_profile.borrow_mut().take();
+        rebuild();
+        return;
+    }
+    if let Some(alias) = name.strip_prefix("step:") {
+        *current.borrow_mut() = parse_open_step(Some(alias));
+        edit_stack.borrow_mut().clear();
+        preferred_profile.borrow_mut().take();
+        rebuild();
+    }
+}
+
+fn scroll_to_named(scroll: &gtk::ScrolledWindow, root: &impl IsA<gtk::Widget>, name: &str) {
+    if let Some(target) = find_named(root.upcast_ref(), name) {
+        if let Some((_, y)) = target.translate_coordinates(root, 0.0, 0.0) {
+            let adj = scroll.vadjustment();
+            let value = y
+                .max(adj.lower())
+                .min((adj.upper() - adj.page_size()).max(0.0));
+            adj.set_value(value);
+        }
+    }
+}
+
+fn find_named(widget: &gtk::Widget, name: &str) -> Option<gtk::Widget> {
+    if widget.widget_name() == name {
+        return Some(widget.clone());
+    }
+    let mut child = widget.first_child();
+    while let Some(next) = child {
+        if let Some(found) = find_named(&next, name) {
+            return Some(found);
+        }
+        child = next.next_sibling();
+    }
+    None
 }
 
 fn apply_page_search(root: &impl IsA<gtk::Widget>, query: &str) {
@@ -588,12 +788,14 @@ fn remote_page(
     }
 
     let group = adw::PreferencesGroup::new();
+    group.set_widget_name("section-general");
     group.set_title(&ctx.t_or("remoteConfig.metadata", "Remote metadata"));
     group.add(&tray);
     group.add(&hidden);
     group.add(&primary_row);
     group.add(&sync_row);
     let actions = adw::PreferencesGroup::new();
+    actions.set_widget_name("section-auth");
     actions.set_title(&ctx.t_or("remoteConfig.provider", "Provider"));
     let helper_row = adw::ActionRow::new();
     helper_row.set_title(&ctx.t_or("remoteConfig.namedHelpers", "Named helper profiles"));
@@ -1680,6 +1882,7 @@ fn helper_page(
     remote: &str,
     kind: &'static str,
     blocks: &[FlagBlock],
+    preferred_profile: Option<&str>,
 ) -> (gtk::Box, impl Fn() + 'static) {
     let names = {
         let mut names = ctx
@@ -1694,15 +1897,19 @@ fn helper_page(
         }
         names
     };
-    let selected = Rc::new(RefCell::new(names[0].clone()));
+    let selected_name = preferred_profile
+        .filter(|name| names.iter().any(|n| n == *name))
+        .unwrap_or(&names[0])
+        .to_string();
+    let selected = Rc::new(RefCell::new(selected_name.clone()));
     let current = ctx
         .store
         .borrow()
         .remotes
         .get(remote)
-        .and_then(|m| m.helper_profile(kind, &names[0]))
+        .and_then(|m| m.helper_profile(kind, &selected_name))
         .unwrap_or_else(|| json!({}));
-    let switcher = profile_switcher(&ctx, &names, &names[0]);
+    let switcher = profile_switcher(&ctx, &names, &selected_name);
     let flags_group = adw::PreferencesGroup::new();
     flags_group.set_title(&ctx.t_or("remoteConfig.options", "Options"));
     let search = adw::EntryRow::new();

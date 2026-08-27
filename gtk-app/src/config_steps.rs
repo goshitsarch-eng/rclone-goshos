@@ -159,6 +159,103 @@ pub fn prev_step_index(current: usize) -> Option<usize> {
     current.checked_sub(1)
 }
 
+/// Angular `remoteEditCategories` for remote-edit section jump.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct RemoteEditSection {
+    pub id: &'static str,
+    pub i18n_key: &'static str,
+    pub fallback: &'static str,
+    pub icon: &'static str,
+}
+
+pub const REMOTE_EDIT_SECTIONS: &[RemoteEditSection] = &[
+    RemoteEditSection {
+        id: "section-general",
+        i18n_key: "modals.remoteConfig.editMode.sections.general",
+        fallback: "General",
+        icon: "emblem-system-symbolic",
+    },
+    RemoteEditSection {
+        id: "section-auth",
+        i18n_key: "modals.remoteConfig.editMode.sections.auth",
+        fallback: "Auth",
+        icon: "dialog-password-symbolic",
+    },
+    RemoteEditSection {
+        id: "section-advanced",
+        i18n_key: "modals.remoteConfig.editMode.sections.advanced",
+        fallback: "Advanced",
+        icon: "preferences-other-symbolic",
+    },
+];
+
+/// Angular `sharedSidebarTypes`: VFS / filter / backend / runtime, minus current.
+/// VFS is only offered from mount, serve, filter, or backend.
+pub fn shared_sidebar_types(current: EditorStep) -> Vec<EditorStep> {
+    if matches!(current, EditorStep::Remote | EditorStep::QuickOps) {
+        return Vec::new();
+    }
+    [
+        EditorStep::Helper("vfs"),
+        EditorStep::Helper("filter"),
+        EditorStep::Helper("backend"),
+        EditorStep::Helper("runtime"),
+    ]
+    .into_iter()
+    .filter(|item| {
+        if *item == current {
+            return false;
+        }
+        if *item == EditorStep::Helper("vfs") {
+            matches!(
+                current,
+                EditorStep::Op(OperationType::Mount)
+                    | EditorStep::Op(OperationType::Serve)
+                    | EditorStep::Helper("filter")
+                    | EditorStep::Helper("backend")
+            )
+        } else {
+            true
+        }
+    })
+    .collect()
+}
+
+/// Angular `navigateToShared`: push the current target, then switch.
+pub fn navigate_to_shared(
+    stack: &mut Vec<EditorStep>,
+    current: EditorStep,
+    next: EditorStep,
+) -> EditorStep {
+    if current != next {
+        stack.push(current);
+    }
+    next
+}
+
+/// Angular `returnFromShared`: pop the previous target.
+pub fn return_from_shared(stack: &mut Vec<EditorStep>) -> Option<EditorStep> {
+    stack.pop()
+}
+
+/// Shared helper rows are hidden while the return stack is non-empty.
+pub fn show_shared_sidebar(stack: &[EditorStep]) -> bool {
+    stack.is_empty()
+}
+
+/// Sidebar profile names for an operation or helper step (`default` when empty).
+pub fn edit_profile_names(meta: &crate::store::RemoteMeta, step: EditorStep) -> Vec<String> {
+    let mut names = match step {
+        EditorStep::Op(op) => meta.profile_names(op),
+        EditorStep::Helper(kind) => meta.helper_names(kind),
+        _ => Vec::new(),
+    };
+    if names.is_empty() && !matches!(step, EditorStep::Remote | EditorStep::QuickOps) {
+        names.push("default".into());
+    }
+    names
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -222,5 +319,57 @@ mod tests {
         assert_eq!(next_step_index(15, 16), None);
         assert_eq!(prev_step_index(0), None);
         assert_eq!(prev_step_index(4), Some(3));
+    }
+
+    #[test]
+    fn shared_sidebar_matches_angular_vfs_rule() {
+        let copy = shared_sidebar_types(EditorStep::Op(OperationType::Copy));
+        assert_eq!(
+            copy,
+            vec![
+                EditorStep::Helper("filter"),
+                EditorStep::Helper("backend"),
+                EditorStep::Helper("runtime"),
+            ]
+        );
+        let mount = shared_sidebar_types(EditorStep::Op(OperationType::Mount));
+        assert!(mount.contains(&EditorStep::Helper("vfs")));
+        assert!(!mount.contains(&EditorStep::Op(OperationType::Mount)));
+        assert!(shared_sidebar_types(EditorStep::Remote).is_empty());
+        assert!(
+            !shared_sidebar_types(EditorStep::Helper("vfs")).contains(&EditorStep::Helper("vfs"))
+        );
+    }
+
+    #[test]
+    fn shared_helper_stack_pushes_and_pops() {
+        let mut stack = Vec::new();
+        let next = navigate_to_shared(
+            &mut stack,
+            EditorStep::Op(OperationType::Copy),
+            EditorStep::Helper("filter"),
+        );
+        assert_eq!(next, EditorStep::Helper("filter"));
+        assert_eq!(stack, vec![EditorStep::Op(OperationType::Copy)]);
+        assert!(!show_shared_sidebar(&stack));
+        assert_eq!(
+            return_from_shared(&mut stack),
+            Some(EditorStep::Op(OperationType::Copy))
+        );
+        assert!(stack.is_empty());
+        assert!(show_shared_sidebar(&stack));
+        assert_eq!(return_from_shared(&mut stack), None);
+    }
+
+    #[test]
+    fn edit_profile_names_default_when_empty() {
+        let meta = crate::store::RemoteMeta::default();
+        assert_eq!(
+            edit_profile_names(&meta, EditorStep::Op(OperationType::Copy)),
+            vec!["default".to_string()]
+        );
+        assert!(edit_profile_names(&meta, EditorStep::Remote).is_empty());
+        assert_eq!(REMOTE_EDIT_SECTIONS[0].id, "section-general");
+        assert_eq!(REMOTE_EDIT_SECTIONS[2].id, "section-advanced");
     }
 }

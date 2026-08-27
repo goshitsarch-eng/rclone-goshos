@@ -2830,6 +2830,7 @@ pub(super) fn inline_provider_editor(
     let provider = provider_idx.and_then(|idx| providers.get(idx)).cloned();
 
     let identity = adw::PreferencesGroup::new();
+    identity.set_widget_name("section-general");
     identity.set_title(&ctx.t_or("remoteConfig.provider", "Provider"));
     let type_row = adw::ActionRow::new();
     type_row.set_title(&ctx.t_or("wizards.remoteConfig.remoteType", "Remote Type"));
@@ -2848,11 +2849,13 @@ pub(super) fn inline_provider_editor(
     identity.add(&type_row);
 
     let fields_group = adw::PreferencesGroup::new();
+    fields_group.set_widget_name("section-auth");
     fields_group.set_title(&ctx.t_or(
         "wizards.remoteConfig.authenticationMethod",
         "Authentication",
     ));
     let advanced_group = adw::PreferencesGroup::new();
+    advanced_group.set_widget_name("section-advanced");
     advanced_group.set_title(&ctx.t_or("wizards.remoteConfig.advancedOptions", "Advanced options"));
     let field_query = Rc::new(RefCell::new(String::new()));
     let state = Rc::new(RefCell::new(WizardState {
