@@ -6031,6 +6031,7 @@ pub fn start_operation(
         let names = names.clone();
         let src = src.clone();
         let dst = dst.clone();
+        let extra_sources = extra_sources.clone();
         let remote = remote.to_string();
         profile_row.connect_selected_notify(move |row| {
             let Some(name) = names.get(row.selected() as usize) else {
@@ -6042,6 +6043,10 @@ pub fn start_operation(
             let rclone = flatten_rclone(&profile.rclone);
             src.set_text(&default_source(&remote, &rclone));
             dst.set_text(&default_dest(&remote, &rclone, op));
+            let extras = crate::jobs::path_list(&rclone, crate::jobs::SOURCE_KEYS);
+            for (idx, row) in extra_sources.borrow().iter().enumerate() {
+                row.set_text(extras.get(idx + 1).map(String::as_str).unwrap_or(""));
+            }
         });
     }
 
