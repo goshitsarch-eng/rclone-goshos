@@ -35,8 +35,11 @@ pub fn export_categories() -> Vec<(&'static str, &'static str)> {
         ("FullBackup", "Full backup"),
         ("settings", "App settings"),
         ("alerts", "Alert rules and actions"),
+        ("templates", "User templates"),
+        ("quick_runs", "Quick runs"),
         ("rclone", "Rclone remotes"),
         ("connections", "Saved remote connections"),
+        ("nautilus", "Files preferences"),
         ("backend", "Backend"),
     ]
 }
@@ -49,10 +52,14 @@ pub fn export_category_label(id: &str, i18n: &crate::i18n::I18n) -> String {
             "Application Settings",
         ),
         "alerts" | "store" => i18n.t_or("modals.export.categories.alerts.label", "Alerts"),
+        "templates" => i18n.t_or("templates.title", "Templates"),
+        "quick_runs" => i18n.t_or("modals.export.categories.quickRuns.label", "Quick Runs"),
         "rclone" => i18n.t_or("modals.export.categories.remotes.label", "Remotes"),
-        "connections" | "nautilus" => {
-            i18n.t_or("modals.export.categories.connections.label", "Connections")
-        }
+        "connections" => i18n.t_or("modals.export.categories.connections.label", "Connections"),
+        "nautilus" => i18n.t_or(
+            "settings.general.default_view.options.nautilus",
+            "Files preferences",
+        ),
         "backend" => i18n.t_or("modals.export.categories.backend.label", "Backend"),
         _ => id.to_string(),
     }
@@ -63,15 +70,19 @@ impl BackupAnalysis {
         let mut rows = Vec::new();
         if self.has_settings {
             rows.push(match self.manifest.export_type.as_str() {
-                "connections" | "nautilus" => {
-                    ("modals.export.categories.connections.label", "Connections")
-                }
+                "connections" => ("modals.export.categories.connections.label", "Connections"),
+                "nautilus" => (
+                    "settings.general.default_view.options.nautilus",
+                    "Files preferences",
+                ),
                 _ => ("backup.restore.settings.title", "Application Settings"),
             });
         }
         if self.has_store {
             rows.push(match self.manifest.export_type.as_str() {
                 "alerts" | "store" => ("modals.export.categories.alerts.label", "Alerts"),
+                "templates" => ("templates.title", "Templates"),
+                "quick_runs" => ("modals.export.categories.quickRuns.label", "Quick Runs"),
                 _ => ("backup.restore.profiles.title", "Profiles"),
             });
         }
@@ -93,7 +104,7 @@ pub fn includes_file(export_type: &str, file: &str) -> bool {
         "" | "FullBackup" | "All" | "full" => true,
         "settings" | "Settings" | "connections" | "nautilus" => file == "settings.json",
         "backend" => file == "settings.json" || file == "backend.json",
-        "store" | "alerts" => file == "store.json",
+        "store" | "alerts" | "templates" | "quick_runs" => file == "store.json",
         "rclone" | "remotes" => file == "rclone.json",
         other if other.starts_with("remote:") => file == "rclone.json",
         _ => true,
@@ -107,6 +118,16 @@ pub fn filter_store_category(store: &AppStore, export_type: &str) -> AppStore {
             scoped.alert_rules = store.alert_rules.clone();
             scoped.alert_actions = store.alert_actions.clone();
             scoped.alert_history = store.alert_history.clone();
+            scoped
+        }
+        "templates" => {
+            let mut scoped = AppStore::default();
+            scoped.templates = store.templates.clone();
+            scoped
+        }
+        "quick_runs" => {
+            let mut scoped = AppStore::default();
+            scoped.quick_runs = store.quick_runs.clone();
             scoped
         }
         _ => store.clone(),
@@ -144,6 +165,9 @@ pub fn merge_store(current: &AppStore, incoming: &AppStore, export_type: &str) -
     match export_type {
         "alerts" => merge_store_alerts(current, incoming),
         "store" if incoming.remotes.is_empty() => merge_store_alerts(current, incoming),
+        "templates" => merge_store_templates(current, incoming),
+        "quick_runs" => merge_store_quick_runs(current, incoming),
+        "rcman" => merge_store_rcman(current, incoming),
         "settings" | "connections" | "nautilus" | "rclone" | "remotes" => current.clone(),
         "remote" | "profile" => merge_store_remotes(current, incoming),
         _ => incoming.clone(),
@@ -175,6 +199,49 @@ fn merge_store_alerts(current: &AppStore, incoming: &AppStore) -> AppStore {
     out
 }
 
+fn upsert_by_id<T, F>(dest: &mut Vec<T>, incoming: &[T], id: F)
+where
+    T: Clone,
+    F: Fn(&T) -> &str,
+{
+    for item in incoming {
+        if let Some(existing) = dest.iter_mut().find(|existing| id(existing) == id(item)) {
+            *existing = item.clone();
+        } else {
+            dest.push(item.clone());
+        }
+    }
+}
+
+fn merge_store_templates(current: &AppStore, incoming: &AppStore) -> AppStore {
+    let mut out = current.clone();
+    upsert_by_id(&mut out.templates, &incoming.templates, |t| t.id.as_str());
+    out
+}
+
+fn merge_store_quick_runs(current: &AppStore, incoming: &AppStore) -> AppStore {
+    let mut out = current.clone();
+    upsert_by_id(&mut out.quick_runs, &incoming.quick_runs, |q| q.id.as_str());
+    out
+}
+
+fn merge_store_rcman(current: &AppStore, incoming: &AppStore) -> AppStore {
+    let mut out = merge_store_remotes(current, incoming);
+    upsert_by_id(&mut out.templates, &incoming.templates, |t| t.id.as_str());
+    upsert_by_id(&mut out.quick_runs, &incoming.quick_runs, |q| q.id.as_str());
+    for rule in &incoming.alert_rules {
+        if !out.alert_rules.iter().any(|r| r.id == rule.id) {
+            out.alert_rules.push(rule.clone());
+        }
+    }
+    for action in &incoming.alert_actions {
+        if !out.alert_actions.iter().any(|a| a.id == action.id) {
+            out.alert_actions.push(action.clone());
+        }
+    }
+    out
+}
+
 pub fn merge_settings(
     current: &AppSettings,
     incoming: &AppSettings,
@@ -202,7 +269,15 @@ pub fn merge_settings(
             out.core.connection_check_urls = incoming.core.connection_check_urls.clone();
             out
         }
-        "alerts" | "store" | "rclone" | "remotes" | "remote" | "profile" => current.clone(),
+        "alerts" | "store" | "rclone" | "remotes" | "remote" | "profile" | "templates"
+        | "quick_runs" => current.clone(),
+        "rcman" => {
+            let mut out = current.clone();
+            if !incoming.core.extra_backends.is_empty() {
+                out.core.extra_backends = incoming.core.extra_backends.clone();
+            }
+            out
+        }
         _ => incoming.clone(),
     }
 }
@@ -411,10 +486,12 @@ pub fn analyze_backup_with_password(
             manifest.remotes = store_remote_names(&store);
         }
     }
+    let gtk_layout = is_gtk_backup_layout(&names);
+    if !gtk_layout && looks_like_rcman_archive(path, &names) {
+        return analyze_rcman_backup(path, password, names);
+    }
     Ok(BackupAnalysis {
-        valid: names
-            .iter()
-            .any(|n| n == "settings.json" || n == "store.json" || n == "backend.json"),
+        valid: gtk_layout,
         has_settings: names.iter().any(|n| n == "settings.json"),
         has_store: names.iter().any(|n| n == "store.json"),
         has_rclone_config: names.iter().any(|n| n == "rclone.json"),
@@ -529,6 +606,16 @@ pub fn restore_backup_contents(
 ) -> Result<RestoredBackup, String> {
     let file = File::open(path).map_err(|e| e.to_string())?;
     let mut archive = ZipArchive::new(file).map_err(|e| e.to_string())?;
+    let mut names = Vec::new();
+    for i in 0..archive.len() {
+        if let Ok(entry) = zip_entry(&mut archive, i, password) {
+            names.push(entry.name().to_string());
+        }
+    }
+    if !is_gtk_backup_layout(&names) && looks_like_rcman_archive(path, &names) {
+        drop(archive);
+        return restore_rcman_contents(path, password, profile, restore_as);
+    }
     let settings = read_zip_json::<AppSettings>(&mut archive, "settings.json", password);
     let store = read_zip_json::<AppStore>(&mut archive, "store.json", password)
         .map(|s| scoped_store(s, profile, restore_as));
@@ -540,6 +627,162 @@ pub fn restore_backup_contents(
         store,
         rclone,
         backend,
+    })
+}
+
+fn is_gtk_backup_layout(names: &[String]) -> bool {
+    names.iter().any(|n| {
+        let n = n.replace('\\', "/");
+        n == "settings.json" || n == "store.json" || n == "backend.json" || n == "rclone.json"
+    })
+}
+
+fn looks_like_rcman_archive(path: &Path, names: &[String]) -> bool {
+    let ext = path
+        .extension()
+        .and_then(|e| e.to_str())
+        .unwrap_or("")
+        .eq_ignore_ascii_case("rcman");
+    ext || names.iter().any(|n| {
+        let n = n.replace('\\', "/");
+        n.contains("/remotes/") && n.ends_with(".json")
+            || n.starts_with("remotes/") && n.ends_with(".json")
+            || n.ends_with("quick_runs.json")
+            || n.ends_with("connections.json")
+            || n.ends_with("templates.json")
+            || n.contains("alerts/rules")
+            || n.contains("sub_settings/")
+    })
+}
+
+fn map_rcman_zip_entry(name: &str) -> Option<PathBuf> {
+    let name = name.replace('\\', "/");
+    let name = name.trim_start_matches("./");
+    let file = name.rsplit('/').next().unwrap_or(name);
+    if (name.contains("/remotes/") || name.starts_with("remotes/")) && file.ends_with(".json") {
+        return Some(PathBuf::from("remotes").join(file));
+    }
+    match file {
+        "quick_runs.json" | "connections.json" | "templates.json" | "rclone.conf" => {
+            Some(PathBuf::from(file))
+        }
+        "rules.json" if name.contains("alerts") => Some(PathBuf::from("alerts").join("rules.json")),
+        "actions.json" if name.contains("alerts") => {
+            Some(PathBuf::from("alerts").join("actions.json"))
+        }
+        _ => None,
+    }
+}
+
+fn extract_rcman_layout(
+    path: &Path,
+    password: Option<&str>,
+    dest: &Path,
+) -> Result<Vec<String>, String> {
+    let file = File::open(path).map_err(|e| e.to_string())?;
+    let mut archive = ZipArchive::new(file).map_err(|e| e.to_string())?;
+    let mut mapped = Vec::new();
+    for i in 0..archive.len() {
+        let mut entry = match zip_entry(&mut archive, i, password) {
+            Ok(entry) => entry,
+            Err(_) => continue,
+        };
+        if entry.is_dir() {
+            continue;
+        }
+        let Some(rel) = map_rcman_zip_entry(entry.name()) else {
+            continue;
+        };
+        let out = dest.join(&rel);
+        if let Some(parent) = out.parent() {
+            std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+        }
+        let mut out_file = File::create(&out).map_err(|e| e.to_string())?;
+        std::io::copy(&mut entry, &mut out_file).map_err(|e| e.to_string())?;
+        mapped.push(rel.to_string_lossy().replace('\\', "/"));
+    }
+    Ok(mapped)
+}
+
+fn load_rcman_from_zip(
+    path: &Path,
+    password: Option<&str>,
+) -> Result<(AppSettings, AppStore, Option<Value>, Vec<String>), String> {
+    let dir = std::env::temp_dir().join(format!(
+        "rclone-manager-rcman-{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_nanos())
+            .unwrap_or(0)
+    ));
+    std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    let result = (|| {
+        let mapped = extract_rcman_layout(path, password, &dir)?;
+        let mut store = AppStore::default();
+        let mut settings = AppSettings::default();
+        crate::migrate::import_rcman(&dir, &mut store, &mut settings);
+        let rclone = std::fs::read_to_string(dir.join("rclone.conf"))
+            .ok()
+            .and_then(|text| crate::config_import::parse_rclone_conf(&text).ok());
+        Ok((settings, store, rclone, mapped))
+    })();
+    let _ = std::fs::remove_dir_all(&dir);
+    result
+}
+
+fn analyze_rcman_backup(
+    path: &Path,
+    password: Option<&str>,
+    names: Vec<String>,
+) -> Result<BackupAnalysis, String> {
+    let (settings, store, rclone, mapped) = load_rcman_from_zip(path, password)?;
+    let remotes = {
+        let mut names = store_remote_names(&store);
+        if names.is_empty() {
+            if let Some(dump) = &rclone {
+                if let Some(obj) = dump.as_object() {
+                    names = obj.keys().cloned().collect();
+                    names.sort();
+                }
+            }
+        }
+        names
+    };
+    Ok(BackupAnalysis {
+        valid: !mapped.is_empty(),
+        has_settings: !settings.core.extra_backends.is_empty(),
+        has_store: !store.remotes.is_empty()
+            || !store.quick_runs.is_empty()
+            || !store.alert_rules.is_empty()
+            || !store.templates.is_empty(),
+        has_rclone_config: rclone.is_some(),
+        has_backend: false,
+        categories: names,
+        manifest: BackupManifest {
+            version: "rcman".into(),
+            created_at: String::new(),
+            note: String::new(),
+            export_type: "rcman".into(),
+            encrypted: password.is_some(),
+            remotes,
+        },
+    })
+}
+
+fn restore_rcman_contents(
+    path: &Path,
+    password: Option<&str>,
+    profile: Option<&str>,
+    restore_as: Option<&str>,
+) -> Result<RestoredBackup, String> {
+    let (settings, store, rclone, _) = load_rcman_from_zip(path, password)?;
+    let has_settings = !settings.core.extra_backends.is_empty();
+    Ok(RestoredBackup {
+        settings: has_settings.then_some(settings),
+        store: Some(scoped_store(store, profile, restore_as)),
+        rclone: rclone.map(|d| scoped_rclone(d, profile, restore_as)),
+        backend: None,
     })
 }
 
@@ -961,5 +1204,146 @@ mod tests {
         let analysis = analyze_backup_with_password(&dest, Some("correct-horse")).unwrap();
         assert!(analysis.manifest.encrypted);
         assert_eq!(analysis.manifest.note, "secret note");
+    }
+
+    #[test]
+    fn export_categories_include_templates_quick_runs_and_nautilus() {
+        let ids: Vec<&str> = export_categories().into_iter().map(|(id, _)| id).collect();
+        assert!(ids.contains(&"templates"));
+        assert!(ids.contains(&"quick_runs"));
+        assert!(ids.contains(&"nautilus"));
+        assert!(includes_file("templates", "store.json"));
+        assert!(!includes_file("templates", "settings.json"));
+        assert!(includes_file("quick_runs", "store.json"));
+        assert!(includes_file("nautilus", "settings.json"));
+        assert!(!includes_file("nautilus", "store.json"));
+    }
+
+    #[test]
+    fn templates_and_quick_runs_backups_round_trip() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut store = AppStore::default();
+        store
+            .remotes
+            .insert("drive".into(), crate::store::RemoteMeta::default());
+        store.templates.push(crate::store::UserTemplate {
+            id: "tpl-1".into(),
+            name: "Fast".into(),
+            description: String::new(),
+            icon: String::new(),
+            created_at: String::new(),
+            updated_at: String::new(),
+            values: serde_json::json!({ "vfs": { "CacheMode": "full" } }),
+        });
+        store.quick_runs.push(crate::store::QuickRun::new(
+            "Nightly".into(),
+            crate::operations::OperationType::Sync,
+            "drive".into(),
+        ));
+        let templates_dest = dir.path().join("templates.zip");
+        create_backup(
+            &templates_dest,
+            &AppSettings::default(),
+            &store,
+            &serde_json::json!({}),
+            "templates",
+            "templates only",
+            None,
+        )
+        .unwrap();
+        let analysis = analyze_backup(&templates_dest).unwrap();
+        assert!(analysis.has_store);
+        assert!(!analysis.has_settings);
+        assert_eq!(analysis.manifest.export_type, "templates");
+        assert!(analysis
+            .content_rows()
+            .iter()
+            .any(|(key, _)| *key == "templates.title"));
+        let (_, restored, _) = restore_backup(&templates_dest).unwrap();
+        let restored = restored.expect("store");
+        assert!(restored.remotes.is_empty());
+        assert_eq!(restored.templates.len(), 1);
+        assert_eq!(restored.templates[0].id, "tpl-1");
+        assert!(restored.quick_runs.is_empty());
+        let merged = merge_store(&store, &restored, "templates");
+        assert!(merged.remotes.contains_key("drive"));
+        assert_eq!(merged.templates[0].name, "Fast");
+
+        let qr_dest = dir.path().join("quick_runs.zip");
+        create_backup(
+            &qr_dest,
+            &AppSettings::default(),
+            &store,
+            &serde_json::json!({}),
+            "quick_runs",
+            "",
+            None,
+        )
+        .unwrap();
+        let qr = restore_backup(&qr_dest).unwrap().1.expect("store");
+        assert_eq!(qr.quick_runs.len(), 1);
+        assert!(qr.templates.is_empty());
+        assert!(qr.remotes.is_empty());
+    }
+
+    #[test]
+    fn restores_rcman_zip_layout_and_rclone_conf() {
+        let dir = tempfile::tempdir().unwrap();
+        let dest = dir.path().join("legacy.rcman");
+        let file = File::create(&dest).unwrap();
+        let mut zip = ZipWriter::new(file);
+        let options = zip::write::SimpleFileOptions::default();
+        zip.start_file("sub_settings/remotes/photos.json", options)
+            .unwrap();
+        zip.write_all(
+            serde_json::json!({
+                "name": "photos",
+                "showOnTray": true,
+                "syncConfigs": { "default": { "rclone": { "srcFs": "photos:" } } }
+            })
+            .to_string()
+            .as_bytes(),
+        )
+        .unwrap();
+        zip.start_file("quick_runs.json", options).unwrap();
+        zip.write_all(
+            serde_json::json!([{
+                "id": "qr-rcman",
+                "name": "Photos sync",
+                "operationType": "sync",
+                "remoteName": "photos"
+            }])
+            .to_string()
+            .as_bytes(),
+        )
+        .unwrap();
+        zip.start_file("external/rclone.conf", options).unwrap();
+        zip.write_all(b"[photos]\ntype = alias\nremote = /tmp/photos\n")
+            .unwrap();
+        zip.finish().unwrap();
+
+        assert!(looks_like_rcman_archive(
+            &dest,
+            &[
+                "sub_settings/remotes/photos.json".into(),
+                "quick_runs.json".into(),
+                "external/rclone.conf".into()
+            ]
+        ));
+        let analysis = analyze_backup(&dest).unwrap();
+        assert!(analysis.valid);
+        assert_eq!(analysis.manifest.export_type, "rcman");
+        assert!(analysis.manifest.remotes.contains(&"photos".into()));
+        assert!(analysis.has_store);
+        assert!(analysis.has_rclone_config);
+
+        let restored = restore_backup_contents(&dest, None, None, None).unwrap();
+        let store = restored.store.expect("store");
+        assert!(store.remotes.contains_key("photos"));
+        assert_eq!(store.quick_runs[0].id, "qr-rcman");
+        assert_eq!(restored.rclone.as_ref().unwrap()["photos"]["type"], "alias");
+        let current = AppStore::default();
+        let merged = merge_store(&current, &store, "rcman");
+        assert!(merged.remotes.contains_key("photos"));
     }
 }
