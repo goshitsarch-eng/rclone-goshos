@@ -1128,3 +1128,7 @@ This client is the GTK 4 + libadwaita desktop UI. It talks to a local `rclone rc
 - Remote About shows Type / Root Path / Object Count, Reload Usage, and Features empty-state
 - Files operations panel uses Cancel / Cancelled / Files / Speed / ETA i18n keys
 - Password prompt uses `shared.passwordManager.*`; multi-rename uses title, original/newName, and duplicateOrInvalid
+
+- Live GUI: `--alerts` Clear History opens confirm **Clear History** / Are you sure you want to clear all alert history? This action cannot be undone. Cancel leaves 500 history events
+- Live GUI: `--remote-about testdrive` Overview shows Reload Usage, Total/Used/Free Space, **Object Count** `293 · 20.0 MiB`, **Type** Alias, **Root Path** `/tmp/rclone-test-remote`, Time Precision, hashes, features
+- Live GUI: Files Operations job popover shows **Files**, **Speed**, **ETA** (finished jobs use `0 / 0` and `—`)
