@@ -1215,3 +1215,13 @@ This client is the GTK 4 + libadwaita desktop UI. It talks to a local `rclone rc
 - Live GUI: Operations Jobs list includes **copy #4814** gui-copy-test plus leftover **#12376** / **#7888** / **#42424**; Transfer Activity shows a single **blob.bin** row (not leftover ok.txt)
 
 - Repair always offers Configuration Password / Unlock when diagnose does not already report PasswordRequired, so the shared password prompt is reachable without encrypting rclone.conf
+
+- File viewer Download uses `gtk::FileDialog::save` then `operations/copyfile`; start toast `fileBrowser.fileViewer.downloading` and success/fail `shared.transferActivity.actions.successDownload` / `failDownload` after the job finishes
+- File-viewer download toasts host on the dialog `ToastOverlay` (the viewer button), not the main window under the AdwDialog
+- Multi-rename (`F2` with multiple selection) shows template/replace, Original name / New name preview, and placeholder chips; Escape closes without applying
+- VFS dialog for testdrive on rclone 1.60 shows **No VFS Found** (`vfs/list` empty); indexed `:[n]` **VFS Controls Unavailable** banner (rclone #9120) cannot be live-clicked here
+
+- Live GUI: `--file-viewer testdrive:Photos/README.md` **Download README.md** opens **Save a File**; dest `/tmp/rclone-dl-readme-ok.md` toasts **Downloading rclone-dl-readme-ok.md** then **File downloaded successfully**; 191 B matches `testdrive:Photos/README.md`
+- Live GUI: `--browse testdrive:Photos` Ctrl+click **README.md** + **README.txt** then **F2** opens **Rename using a template** with Template `[Original file name]`, Original name / Counter / Date / Extension chips, Find text / Replace with, Case sensitive, preview **README.md** / **README.txt**; Escape cancels (files unchanged)
+- Live GUI: `--vfs testdrive` **No VFS Found** — No VFS instances are running for this remote (testdrive is FUSE-mounted; rclone 1.60 `vfs/list` is empty)
+- Live GUI: `--repair` **Configuration Password / Unlock** opens the password prompt; **Cancel** leaves `config_password` unset
