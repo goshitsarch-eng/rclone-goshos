@@ -996,3 +996,12 @@ This client is the GTK 4 + libadwaita desktop UI. It talks to a local `rclone rc
 
 - Live GUI: `--starred` shows only the Starred collection (**2 items**, two Home tiles with Unstar) instead of a stale local listing
 - Live GUI: `--dashboard` remotes panel **Status overview** reads `3 / 5 active · 60%` with a LevelBar
+
+- Standalone `--browse` / `--starred` / `--flow` / `--dashboard` skip driving the hidden main window nav stack, so they do not spawn a second Files overlay at `local:`
+- `--browse` / `--starred` together with `--dashboard` or `--flow` keep that workspace and still open Files as an overlay (`launch_overlay_files`)
+- `--starred` after `--dashboard` / `--flow` does not overwrite the workspace target
+
+- Live GUI: `--starred` opens a single Files window on the Starred collection (2 Home tiles, Unstar, **2 items**)
+- Live GUI: `--browse testdrive` opens a single Files window at testdrive (batch250 / Docs / Photos, **28 items**)
+- Live GUI: `--browse testdrive --dashboard` opens Remotes (Status overview **3 / 5 active · 60%**) plus one testdrive Files overlay
+- Live GUI: testdrive folder Actions → **Open** slides to Back / Open / Open in New Tab / Open in New Window; New Tab adds a **Photos** tab
