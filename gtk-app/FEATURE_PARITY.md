@@ -964,3 +964,8 @@ This client is the GTK 4 + libadwaita desktop UI. It talks to a local `rclone rc
 
 - Files lasso updates the selection while dragging and auto-scrolls near the listing edges (Angular `_handleAutoScroll`, 40px / 15px)
 - Files windows under 680px use Angular mobile chrome: overlay sidebar, single-tap open, and a bottom bar (sidebar / Open / layout)
+
+- Live GUI: `xdotool windowsize` on `--browse testdrive:batch250` now reaches **640×880** (toolbar + filter chips scroll instead of locking ~1280px)
+- Live GUI: at 640px the bottom bar shows **Toggle Sidebar** / **Toggle Layout**; sidebar is an overlay (Configure Sidebar Items / Starred / Home)
+- Live GUI: single-tap opens a folder (`Docs` → `note.txt`, **1 item**)
+- Live GUI: lasso hold at the listing bottom edge scrolls from `file-001` to `file-032+` and grows the selection to **42 items selected (327 B)**
