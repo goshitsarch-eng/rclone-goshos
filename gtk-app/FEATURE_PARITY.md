@@ -863,3 +863,8 @@ This client is the GTK 4 + libadwaita desktop UI. It talks to a local `rclone rc
 - Files tabs can be drag-reordered (`moveItemInArray` / `rclone-manager-tab:` payload)
 - Live GUI: testdrive Copy shows **Enable Scheduled Copy**
 - Live GUI: Add Remote type `s3` lists **s3 — Amazon S3 Compliant Storage Providers…**; selecting it shows a searchable **provider** field defaulting to **AWS**
+
+- Remote-config Remote step edits provider fields inline (type + Auth/Advanced/search/JSON/command options) instead of opening the create wizard
+- Helper sidebar pages have JSON mode with key highlight, matching operation-profile JSON search
+- Files tab strip scrolls when tabs overflow; middle-click closes a tab
+- Live GUI: testdrive Remote step shows **alias — Alias for an existing remote**, Search fields, Show Advanced Options, and **remote (Required)**
