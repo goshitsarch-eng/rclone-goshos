@@ -4646,16 +4646,8 @@ fn backend_editor(
     security.set_title(&ctx.t_or("modals.backend.securityTab", "Security"));
     security.add(&config_path);
     security.add(&config_pass);
+    stored.add_suffix(&remove_pass);
     security.add(&stored);
-    security.add(&{
-        let row = adw::ActionRow::new();
-        row.set_title(&ctx.t_or(
-            "modals.backend.remoteSecurity.removePassword",
-            "Remove Stored Password",
-        ));
-        row.add_suffix(&remove_pass);
-        row
-    });
     if existing.is_none() {
         connection.add(&copy_options_row);
         connection.add(&copy_remotes_row);
