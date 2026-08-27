@@ -1,5 +1,6 @@
 use super::dialogs;
 use super::AppCtx;
+use crate::listing::{self, ListJobState, ListStart};
 use crate::operations::FileTypeCategory;
 use crate::rclone::{
     format_bytes, format_relative_mod_time, join_remote_path, parent_remote_path, remote_fs,
@@ -75,7 +76,6 @@ pub struct NautilusView {
     next_tab_id: Rc<RefCell<u32>>,
     split_enabled: Rc<RefCell<bool>>,
     paned: gtk::Paned,
-    right_scroll: gtk::ScrolledWindow,
     ops: gtk::ListBox,
     last_listing: Rc<RefCell<Vec<DirEntry>>>,
     last_listing_right: Rc<RefCell<Vec<DirEntry>>>,
@@ -92,6 +92,15 @@ pub struct NautilusView {
     split: adw::OverlaySplitView,
     last_poll_jobs: Rc<RefCell<Vec<JobInfo>>>,
     ops_sig: Rc<RefCell<String>>,
+    list_group_left: String,
+    list_group_right: String,
+    list_job_left: Rc<Cell<Option<u64>>>,
+    list_job_right: Rc<Cell<Option<u64>>>,
+    list_gen_left: Rc<Cell<u64>>,
+    list_gen_right: Rc<Cell<u64>>,
+    loading_left: gtk::Box,
+    loading_right: gtk::Box,
+    right_host: gtk::Overlay,
 }
 
 fn picker_result_from_selection(
@@ -138,6 +147,31 @@ fn picker_result_from_selection(
         cancelled: false,
         extra_paths,
     }
+}
+
+fn listing_loading_box(ctx: &AppCtx) -> (gtk::Box, gtk::Button) {
+    let box_ = gtk::Box::new(gtk::Orientation::Vertical, 8);
+    box_.set_widget_name("listing-loading");
+    box_.add_css_class("osd");
+    box_.set_halign(gtk::Align::Center);
+    box_.set_valign(gtk::Align::Center);
+    box_.set_margin_top(24);
+    box_.set_margin_bottom(24);
+    box_.set_margin_start(24);
+    box_.set_margin_end(24);
+    let spinner = gtk::Spinner::new();
+    spinner.set_spinning(true);
+    spinner.set_size_request(32, 32);
+    let label = gtk::Label::new(Some(&ctx.t_or("common.loading", "Loading...")));
+    let cancel = gtk::Button::from_icon_name("window-close-symbolic");
+    cancel.set_tooltip_text(Some(&ctx.t("common.cancel")));
+    cancel.add_css_class("circular");
+    cancel.set_halign(gtk::Align::Center);
+    box_.append(&spinner);
+    box_.append(&label);
+    box_.append(&cancel);
+    box_.set_visible(false);
+    (box_, cancel)
 }
 
 impl NautilusView {
@@ -323,6 +357,12 @@ impl NautilusView {
         let files_scroll = gtk::ScrolledWindow::new();
         files_scroll.set_vexpand(true);
         files_scroll.set_child(Some(&left_stack));
+        let (loading_left, cancel_left) = listing_loading_box(&ctx);
+        let left_host = gtk::Overlay::new();
+        left_host.set_hexpand(true);
+        left_host.set_vexpand(true);
+        left_host.set_child(Some(&files_scroll));
+        left_host.add_overlay(&loading_left);
         let list_right = gtk::ListBox::new();
         list_right.add_css_class("boxed-list");
         list_right.set_selection_mode(gtk::SelectionMode::Multiple);
@@ -334,11 +374,17 @@ impl NautilusView {
         let right_scroll = gtk::ScrolledWindow::new();
         right_scroll.set_vexpand(true);
         right_scroll.set_child(Some(&right_stack));
+        let (loading_right, cancel_right) = listing_loading_box(&ctx);
+        let right_host = gtk::Overlay::new();
+        right_host.set_hexpand(true);
+        right_host.set_vexpand(true);
+        right_host.set_child(Some(&right_scroll));
+        right_host.add_overlay(&loading_right);
         let split_on = ctx.settings.borrow().nautilus.split_enabled;
-        right_scroll.set_visible(split_on);
+        right_host.set_visible(split_on);
         let paned = gtk::Paned::new(gtk::Orientation::Horizontal);
-        paned.set_start_child(Some(&files_scroll));
-        paned.set_end_child(Some(&right_scroll));
+        paned.set_start_child(Some(&left_host));
+        paned.set_end_child(Some(&right_host));
         paned.set_resize_start_child(true);
         paned.set_resize_end_child(true);
         paned.set_wide_handle(true);
@@ -481,7 +527,6 @@ impl NautilusView {
             next_tab_id: Rc::new(RefCell::new(2)),
             split_enabled: Rc::new(RefCell::new(split_on)),
             paned,
-            right_scroll,
             ops,
             last_listing: Rc::new(RefCell::new(Vec::new())),
             last_listing_right: Rc::new(RefCell::new(Vec::new())),
@@ -498,8 +543,25 @@ impl NautilusView {
             split: split.clone(),
             last_poll_jobs: Rc::new(RefCell::new(Vec::new())),
             ops_sig: Rc::new(RefCell::new(String::new())),
+            list_group_left: listing::list_read_group(true),
+            list_group_right: listing::list_read_group(false),
+            list_job_left: Rc::new(Cell::new(None)),
+            list_job_right: Rc::new(Cell::new(None)),
+            list_gen_left: Rc::new(Cell::new(0)),
+            list_gen_right: Rc::new(Cell::new(0)),
+            loading_left,
+            loading_right,
+            right_host,
         };
         view.refresh_type_filters();
+        {
+            let view = view.clone();
+            cancel_left.connect_clicked(move |_| view.cancel_listing(true));
+        }
+        {
+            let view = view.clone();
+            cancel_right.connect_clicked(move |_| view.cancel_listing(false));
+        }
         {
             let view = view.clone();
             view.listing_popover.connect_closed(move |_| {
@@ -2867,65 +2929,17 @@ impl NautilusView {
         self.sync_send_to_button();
         self.reload_ops();
 
-        let Some(client) = self.ctx.client() else {
+        if self.ctx.client().is_none() {
             self.status.set_text(
                 &self
                     .ctx
                     .t_or("fileBrowser.errors.connectionFailed", "Connection Failed"),
             );
             return;
-        };
-        let fs = if current.remote == "local" {
-            "/".to_string()
-        } else {
-            remote_fs(&current.remote, "")
-        };
-        let remote_path = if current.remote == "local" {
-            current.path.trim_start_matches('/').to_string()
-        } else {
-            current.path.clone()
-        };
-        match client.list_dir(&fs, &remote_path) {
-            Ok(mut entries) => {
-                let show_hidden = self.ctx.settings.borrow().nautilus.show_hidden;
-                if !show_hidden {
-                    entries.retain(|e| !e.name.starts_with('.'));
-                }
-                if let Some(req) = self.ctx.pending_picker.borrow().as_ref() {
-                    entries.retain(|e| {
-                        e.is_dir || crate::picker::is_entry_allowed(&e.name, e.is_dir, &req.config)
-                    });
-                    if req.config.selection == crate::picker::PickerSelection::Folders {
-                        entries.retain(|e| e.is_dir);
-                    }
-                }
-                let query = self.search_filter.borrow().to_lowercase();
-                if !query.is_empty() {
-                    entries.retain(|e| e.name.to_lowercase().contains(&query));
-                }
-                let type_filter = self.ctx.settings.borrow().nautilus.file_type_filter.clone();
-                if !type_filter.is_empty() && type_filter != "all" {
-                    entries.retain(|e| {
-                        crate::mime::category_for_entry(&e.name, e.is_dir, &e.mime)
-                            .matches_filter(&type_filter)
-                    });
-                }
-                sort_entries(
-                    &mut entries,
-                    &self.ctx.settings.borrow().nautilus.sort_by,
-                    self.ctx.settings.borrow().nautilus.sort_desc,
-                );
-                self.status
-                    .set_text(&self.listing_count_label(entries.len()));
-                self.populate_entries(&entries, true);
-                if *self.split_enabled.borrow() {
-                    self.reload_pane(&self.secondary.borrow());
-                }
-            }
-            Err(err) => {
-                self.toast.add_toast(adw::Toast::new(&err.to_string()));
-                self.show_listing_error(&err.to_string(), true);
-            }
+        }
+        self.begin_listing(true);
+        if *self.split_enabled.borrow() {
+            self.begin_listing(false);
         }
     }
 
@@ -3340,6 +3354,7 @@ impl NautilusView {
                 .find(|(n, _)| n == name)
                 .map(|(_, d)| *d)
                 .unwrap_or(false);
+            let view = self.clone();
             dialogs::file_viewer(
                 &win,
                 self.ctx.clone(),
@@ -3348,6 +3363,9 @@ impl NautilusView {
                 name,
                 is_dir,
                 &siblings,
+                Some(Rc::new(move |next_name: &str| {
+                    view.ensure_name_selected(next_name, false);
+                })),
             );
         }
     }
@@ -3358,10 +3376,7 @@ impl NautilusView {
         } else {
             self.last_listing_right.borrow()
         };
-        listing
-            .iter()
-            .map(|entry| (entry.name.clone(), entry.is_dir))
-            .collect()
+        listing::listing_siblings(&listing)
     }
 
     fn open_name(&self, name: &str) {
@@ -3420,6 +3435,7 @@ impl NautilusView {
                 .find(|(n, _)| n == name)
                 .map(|(_, d)| *d)
                 .unwrap_or(false);
+            let view = self.clone();
             dialogs::file_viewer(
                 &win,
                 self.ctx.clone(),
@@ -3428,6 +3444,9 @@ impl NautilusView {
                 name,
                 is_dir,
                 &siblings,
+                Some(Rc::new(move |next_name: &str| {
+                    view.ensure_name_selected(next_name, true);
+                })),
             );
         }
     }
@@ -3725,7 +3744,7 @@ impl NautilusView {
         *self.split_enabled.borrow_mut() = next;
         self.ctx.settings.borrow_mut().nautilus.split_enabled = next;
         self.ctx.persist();
-        self.right_scroll.set_visible(next);
+        self.right_host.set_visible(next);
         if next {
             let saved_remote = self
                 .ctx
@@ -3761,38 +3780,224 @@ impl NautilusView {
         let _ = &self.paned;
     }
 
-    fn reload_pane(&self, tab: &TabState) {
-        clear_list(&self.list_right);
-        clear_flow(&self.grid_right);
+    fn reload_pane(&self, _tab: &TabState) {
+        self.begin_listing(false);
+    }
+
+    fn list_group(&self, primary: bool) -> &str {
+        if primary {
+            &self.list_group_left
+        } else {
+            &self.list_group_right
+        }
+    }
+
+    fn listing_generation(&self, primary: bool) -> u64 {
+        if primary {
+            self.list_gen_left.get()
+        } else {
+            self.list_gen_right.get()
+        }
+    }
+
+    fn bump_listing_generation(&self, primary: bool) -> u64 {
+        let cell = if primary {
+            &self.list_gen_left
+        } else {
+            &self.list_gen_right
+        };
+        let next = cell.get().wrapping_add(1);
+        cell.set(next);
+        next
+    }
+
+    fn set_list_job(&self, primary: bool, jobid: Option<u64>) {
+        if primary {
+            self.list_job_left.set(jobid);
+        } else {
+            self.list_job_right.set(jobid);
+        }
+    }
+
+    fn stop_list_group(&self, primary: bool) {
+        self.bump_listing_generation(primary);
+        self.set_list_job(primary, None);
+        if let Some(client) = self.ctx.client() {
+            let _ = client.job_stop_group(self.list_group(primary));
+        }
+    }
+
+    fn set_listing_loading(&self, primary: bool, loading: bool) {
+        let overlay = if primary {
+            &self.loading_left
+        } else {
+            &self.loading_right
+        };
+        overlay.set_visible(loading);
+        if let Some(spinner) = overlay
+            .first_child()
+            .and_then(|child| child.downcast::<gtk::Spinner>().ok())
+        {
+            spinner.set_spinning(loading);
+        }
+    }
+
+    fn cancel_listing(&self, primary: bool) {
+        self.stop_list_group(primary);
+        self.set_listing_loading(primary, false);
+        self.status.set_text(
+            &self
+                .ctx
+                .t_or("provision.stages.cancelled", "Operation cancelled"),
+        );
+    }
+
+    fn pane_list_target(&self, primary: bool) -> (String, String) {
+        let tab = if primary {
+            self.current.borrow().clone()
+        } else {
+            self.secondary.borrow().clone()
+        };
+        listing::list_target(&tab.remote, &tab.path)
+    }
+
+    fn begin_listing(&self, primary: bool) {
+        if primary {
+            clear_list(&self.list);
+            clear_flow(&self.grid);
+        } else {
+            clear_list(&self.list_right);
+            clear_flow(&self.grid_right);
+        }
+        let gen = {
+            self.stop_list_group(primary);
+            self.listing_generation(primary)
+        };
+        self.set_listing_loading(primary, true);
         let Some(client) = self.ctx.client() else {
+            self.finish_listing_error(
+                primary,
+                &self
+                    .ctx
+                    .t_or("fileBrowser.errors.connectionFailed", "Connection Failed"),
+            );
             return;
         };
-        let fs = if tab.remote == "local" {
-            "/".to_string()
-        } else {
-            remote_fs(&tab.remote, "")
-        };
-        let remote_path = if tab.remote == "local" {
-            tab.path.trim_start_matches('/').to_string()
-        } else {
-            tab.path.clone()
-        };
-        match client.list_dir(&fs, &remote_path) {
-            Ok(mut entries) => {
-                if !self.ctx.settings.borrow().nautilus.show_hidden {
-                    entries.retain(|e| !e.name.starts_with('.'));
-                }
-                let type_filter = self.ctx.settings.borrow().nautilus.file_type_filter.clone();
-                if !type_filter.is_empty() && type_filter != "all" {
-                    entries.retain(|e| {
-                        crate::mime::category_for_entry(&e.name, e.is_dir, &e.mime)
-                            .matches_filter(&type_filter)
-                    });
-                }
-                self.populate_entries(&entries, false);
+        let (fs, remote_path) = self.pane_list_target(primary);
+        match listing::start_list_dir(&client, &fs, &remote_path, self.list_group(primary)) {
+            Ok(ListStart::Ready(entries)) => self.finish_listing_ok(primary, entries),
+            Ok(ListStart::Job(jobid)) => {
+                self.set_list_job(primary, Some(jobid));
+                self.schedule_list_poll(primary, gen);
             }
-            Err(err) => self.show_listing_error(&err.to_string(), false),
+            Err(err) => {
+                self.toast.add_toast(adw::Toast::new(&err.to_string()));
+                self.finish_listing_error(primary, &err.to_string());
+            }
         }
+    }
+
+    fn schedule_list_poll(&self, primary: bool, gen: u64) {
+        let view = self.clone();
+        glib::timeout_add_local(std::time::Duration::from_millis(200), move || {
+            if view.listing_generation(primary) != gen {
+                return glib::ControlFlow::Break;
+            }
+            let Some(jobid) = (if primary {
+                view.list_job_left.get()
+            } else {
+                view.list_job_right.get()
+            }) else {
+                return glib::ControlFlow::Break;
+            };
+            let Some(client) = view.ctx.client() else {
+                view.finish_listing_error(
+                    primary,
+                    &view
+                        .ctx
+                        .t_or("fileBrowser.errors.connectionFailed", "Connection Failed"),
+                );
+                return glib::ControlFlow::Break;
+            };
+            match listing::poll_list_job(&client, jobid) {
+                ListJobState::Running => glib::ControlFlow::Continue,
+                ListJobState::Finished(entries) => {
+                    if view.listing_generation(primary) == gen {
+                        view.finish_listing_ok(primary, entries);
+                    }
+                    glib::ControlFlow::Break
+                }
+                ListJobState::Cancelled => {
+                    if view.listing_generation(primary) == gen {
+                        view.set_listing_loading(primary, false);
+                        view.set_list_job(primary, None);
+                        view.status.set_text(
+                            &view
+                                .ctx
+                                .t_or("provision.stages.cancelled", "Operation cancelled"),
+                        );
+                    }
+                    glib::ControlFlow::Break
+                }
+                ListJobState::Failed(err) => {
+                    if view.listing_generation(primary) == gen {
+                        view.toast.add_toast(adw::Toast::new(&err));
+                        view.finish_listing_error(primary, &err);
+                    }
+                    glib::ControlFlow::Break
+                }
+            }
+        });
+    }
+
+    fn filter_listing_entries(&self, mut entries: Vec<DirEntry>, primary: bool) -> Vec<DirEntry> {
+        if !self.ctx.settings.borrow().nautilus.show_hidden {
+            entries.retain(|e| !e.name.starts_with('.'));
+        }
+        if primary {
+            if let Some(req) = self.ctx.pending_picker.borrow().as_ref() {
+                entries.retain(|e| {
+                    e.is_dir || crate::picker::is_entry_allowed(&e.name, e.is_dir, &req.config)
+                });
+                if req.config.selection == crate::picker::PickerSelection::Folders {
+                    entries.retain(|e| e.is_dir);
+                }
+            }
+            let query = self.search_filter.borrow().to_lowercase();
+            if !query.is_empty() {
+                entries.retain(|e| e.name.to_lowercase().contains(&query));
+            }
+        }
+        let type_filter = self.ctx.settings.borrow().nautilus.file_type_filter.clone();
+        if !type_filter.is_empty() && type_filter != "all" {
+            entries.retain(|e| {
+                crate::mime::category_for_entry(&e.name, e.is_dir, &e.mime)
+                    .matches_filter(&type_filter)
+            });
+        }
+        sort_entries(
+            &mut entries,
+            &self.ctx.settings.borrow().nautilus.sort_by,
+            self.ctx.settings.borrow().nautilus.sort_desc,
+        );
+        entries
+    }
+
+    fn finish_listing_ok(&self, primary: bool, entries: Vec<DirEntry>) {
+        self.set_list_job(primary, None);
+        self.set_listing_loading(primary, false);
+        let entries = self.filter_listing_entries(entries, primary);
+        if primary {
+            self.status
+                .set_text(&self.listing_count_label(entries.len()));
+        }
+        self.populate_entries(&entries, primary);
+    }
+
+    fn finish_listing_error(&self, primary: bool, message: &str) {
+        self.set_list_job(primary, None);
+        self.set_listing_loading(primary, false);
+        self.show_listing_error(message, primary);
     }
 
     fn show_listing_error(&self, message: &str, primary: bool) {

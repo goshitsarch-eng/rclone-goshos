@@ -26,6 +26,7 @@ pub mod jobs;
 pub mod json_editor;
 pub mod keyring;
 pub mod layout;
+pub mod listing;
 pub mod logs;
 pub mod markdown;
 pub mod media;

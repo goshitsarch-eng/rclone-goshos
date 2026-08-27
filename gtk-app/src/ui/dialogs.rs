@@ -465,6 +465,7 @@ pub fn present_standalone(
                 .and_then(|v| v.as_bool())
                 .unwrap_or(false),
             &[],
+            None,
         ),
         "quick-add-remote" => quick_add_remote(&window, ctx.clone(), noop),
         "restore-preview" => {
@@ -10350,6 +10351,7 @@ fn append_markdown_targets(
                     &file_name,
                     false,
                     &[],
+                    None,
                 );
             });
             row.add_suffix(&open);
@@ -10520,6 +10522,7 @@ pub fn file_viewer(
     name: &str,
     is_dir: bool,
     siblings: &[(String, bool)],
+    on_navigate: Option<Rc<dyn Fn(&str)>>,
 ) {
     if try_spawn_standalone(
         &ctx,
@@ -10533,6 +10536,7 @@ pub fn file_viewer(
     ) {
         return;
     }
+    let siblings = crate::listing::resolve_siblings(ctx.client().as_ref(), remote, path, siblings);
     let dialog = adw::Dialog::new();
     dialog.set_title(name);
     dialog.set_content_width(720);
@@ -10584,8 +10588,9 @@ pub fn file_viewer(
         let remote = remote.to_string();
         let path = path.to_string();
         let name = name.to_string();
-        let siblings = siblings.to_vec();
+        let siblings = siblings.clone();
         let dialog = dialog.clone();
+        let on_navigate = on_navigate.clone();
         prev.connect_clicked(move |_| {
             let Some(i) = siblings.iter().position(|(n, _)| n == name.as_str()) else {
                 return;
@@ -10596,6 +10601,9 @@ pub fn file_viewer(
             let (prev_name, prev_dir) = siblings[i - 1].clone();
             let parent_path = crate::rclone::parent_remote_path(&path);
             let next_path = crate::rclone::join_remote_path(&parent_path, &prev_name);
+            if let Some(cb) = on_navigate.as_ref() {
+                cb(&prev_name);
+            }
             dialog.close();
             file_viewer(
                 &parent,
@@ -10605,6 +10613,7 @@ pub fn file_viewer(
                 &prev_name,
                 prev_dir,
                 &siblings,
+                on_navigate.clone(),
             );
         });
     }
@@ -10614,8 +10623,9 @@ pub fn file_viewer(
         let remote = remote.to_string();
         let path = path.to_string();
         let name = name.to_string();
-        let siblings = siblings.to_vec();
+        let siblings = siblings.clone();
         let dialog = dialog.clone();
+        let on_navigate = on_navigate.clone();
         next.connect_clicked(move |_| {
             let Some(i) = siblings.iter().position(|(n, _)| n == name.as_str()) else {
                 return;
@@ -10626,6 +10636,9 @@ pub fn file_viewer(
             let (next_name, next_dir) = siblings[i + 1].clone();
             let parent_path = crate::rclone::parent_remote_path(&path);
             let next_path = crate::rclone::join_remote_path(&parent_path, &next_name);
+            if let Some(cb) = on_navigate.as_ref() {
+                cb(&next_name);
+            }
             dialog.close();
             file_viewer(
                 &parent,
@@ -10635,6 +10648,7 @@ pub fn file_viewer(
                 &next_name,
                 next_dir,
                 &siblings,
+                on_navigate.clone(),
             );
         });
     }

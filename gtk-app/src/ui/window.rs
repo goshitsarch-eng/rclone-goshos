@@ -2389,7 +2389,16 @@ fn apply_nav(
             path,
             name,
             is_dir,
-        } => dialogs::file_viewer(window, ctx.clone(), &remote, &path, &name, is_dir, &[]),
+        } => dialogs::file_viewer(
+            window,
+            ctx.clone(),
+            &remote,
+            &path,
+            &name,
+            is_dir,
+            &[],
+            None,
+        ),
         NavTarget::StartOperation { remote, operation } => {
             let op = crate::operations::OperationType::parse(&operation)
                 .unwrap_or(crate::operations::OperationType::Copy);

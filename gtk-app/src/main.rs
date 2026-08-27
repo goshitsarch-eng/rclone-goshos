@@ -24,6 +24,7 @@ mod jobs;
 mod json_editor;
 mod keyring;
 mod layout;
+mod listing;
 mod logs;
 mod markdown;
 mod media;

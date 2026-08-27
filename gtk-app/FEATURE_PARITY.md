@@ -916,3 +916,6 @@ This client is the GTK 4 + libadwaita desktop UI. It talks to a local `rclone rc
 - Files listings and the operations panel refresh when rclone jobs finish if the open folder is the job source/destination or its parent (Angular `refreshAffectedPaths`)
 - Directory list failures show **Failed to load directory** with a Retry button (list or grid)
 - Live GUI: testdrive:Photos split view, opening README.md from the right pane shows **1 / 6 · 191 B**; Next opens README.txt as **2 / 6 · 7 B**
+
+- Files directory listing uses cancellable rclone `operations/list` jobs with Angular `ui/nautilus/list-left-*` / `list-right-*` groups, a Loading overlay, and Cancel (`job/stopgroup`); immediate list responses still populate without a job
+- File viewer prev/next selects the new name in the Files listing (`ensure_name_selected`); `--file-viewer` and standalone viewers list the parent folder when siblings are empty
