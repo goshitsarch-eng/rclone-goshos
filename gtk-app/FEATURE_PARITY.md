@@ -1173,3 +1173,9 @@ This client is the GTK 4 + libadwaita desktop UI. It talks to a local `rclone rc
 - Remote stream file-viewer video/audio uses `fileBrowser.fileViewer.videoLabel` / `audioLabel`
 
 - Live GUI: `--dashboard` Bandwidth Limit **Saved limit** `2M`, **Live limit** `2Mi`, **Upload:** / **Download:** / **Total:** `2.0 MiB/s`
+
+- Job/remotes/Flow transfer rows use Angular transfer-activity cards: icon + name + status badge, src→dst path pills, size/speed/ETA footer
+- Leaf-only rclone completed transfers are qualified with the parent job src/dst; finished Job Detail keeps the richer stored transfer list (failed rows are not treated as missing sizes)
+
+- Live GUI: testdrive Operations Transfer Activity for **copy #42424** shows **ok.txt** **Transfer completed** path pills `testdrive:Photos/ok.txt` → `testdrive:verify-ops/ok.txt` footer `3 B / 3 B`, and **bad.txt** **Transfer error** pills `testdrive:Photos/bad.txt` → `testdrive:verify-ops/bad.txt` plus **Copy to Destination**
+- Live GUI: `--job 42424` Job Detail transfer tabs **Recent (2)** after merging history (ok.txt + bad.txt)
