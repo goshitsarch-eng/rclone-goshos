@@ -6211,9 +6211,10 @@ pub fn start_operation(
                 }
             }
             if let Some(e) = error {
+                let translated = ctx.translate_error(&e);
                 let err = adw::AlertDialog::new(
                     Some(&ctx.t_or("remoteConfig.startFailed", "Start failed")),
-                    Some(&e),
+                    Some(&translated),
                 );
                 err.add_response("ok", &ctx.t_or("common.ok", "OK"));
                 err.present(Some(&dialog));
@@ -9406,15 +9407,7 @@ pub fn job_detail(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, job_id: u64) {
         let ctx = ctx.clone();
         stop.connect_clicked(move |btn| {
             if let Some(client) = ctx.client() {
-                if client.job_stop(job_id).is_ok() {
-                    ctx.toast_near(
-                        btn,
-                        ctx.t_or(
-                            crate::jobs::job_stopped_toast_key(),
-                            "Job stopped successfully",
-                        ),
-                    );
-                }
+                ctx.toast_job_stop_result(btn, client.job_stop(job_id));
                 ctx.refresh_runtime();
             }
         });
@@ -14908,7 +14901,7 @@ fn toast_check_resolve(parent: &impl IsA<gtk::Widget>, ctx: &AppCtx, result: Res
             parent,
             &ctx.tf(
                 crate::checks::resolve_sync_toast_key(false),
-                &[("error", &e)],
+                &[("error", &ctx.translate_error(&e))],
             ),
         ),
     }

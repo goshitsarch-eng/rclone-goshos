@@ -2037,9 +2037,7 @@ impl FlowView {
                 self.ctx.persist();
                 self.refresh();
             }
-            Err(e) => self
-                .toast
-                .add_toast(adw::Toast::new(&self.ctx.translate_error(&e))),
+            Err(e) => self.ctx.toast_error(&self.toast, &e),
         }
     }
 
@@ -2066,7 +2064,8 @@ impl FlowView {
             run.status = "stopping".into();
         }
         if let (Some(client), Some(jobid)) = (self.ctx.client(), qr.last_job_id) {
-            let _ = client.job_stop(jobid);
+            self.ctx
+                .toast_job_stop_result(&self.toast, client.job_stop(jobid));
         }
         self.set_status(&qr.id, "stopped");
     }

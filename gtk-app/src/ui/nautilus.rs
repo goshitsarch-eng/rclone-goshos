@@ -5128,8 +5128,13 @@ impl NautilusView {
     }
 
     fn toast_error(&self, key: &str, fallback: &str, params: &[(&str, &str)]) {
+        let translated = crate::i18n::translate_named_error_params(&self.ctx.i18n.borrow(), params);
+        let refs: Vec<(&str, &str)> = translated
+            .iter()
+            .map(|(name, value)| (name.as_str(), value.as_str()))
+            .collect();
         self.toast
-            .add_toast(adw::Toast::new(&self.ctx.tf_or(key, fallback, params)));
+            .add_toast(adw::Toast::new(&self.ctx.tf_or(key, fallback, &refs)));
     }
 
     fn toast_with_undo(&self, message: impl AsRef<str>) {
@@ -7001,14 +7006,9 @@ impl NautilusView {
             let ctx = self.ctx.clone();
             let id = job.id;
             let view = self.clone();
-            stop.connect_clicked(move |_| {
+            stop.connect_clicked(move |btn| {
                 if let Some(client) = ctx.client() {
-                    if client.job_stop(id).is_ok() {
-                        view.toast.add_toast(adw::Toast::new(&ctx.t_or(
-                            crate::jobs::job_stopped_toast_key(),
-                            "Job stopped successfully",
-                        )));
-                    }
+                    ctx.toast_job_stop_result(btn, client.job_stop(id));
                     ctx.refresh_runtime();
                     view.reload_ops();
                 }

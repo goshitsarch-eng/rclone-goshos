@@ -708,10 +708,10 @@ pub fn build_job_params_ex(
         }
         other => {
             if source.is_empty() {
-                return Err(format!("{other} requires a source path"));
+                return Err(start_failed_error(other, "", "source path required"));
             }
             if dest.is_empty() && other != OperationType::Delete {
-                return Err(format!("{other} requires a destination path"));
+                return Err(start_failed_error(other, "", "destination path required"));
             }
             if !is_dir && matches!(other, OperationType::Copy | OperationType::Move) {
                 return file_transfer_request(other, source, dest, body);
@@ -1127,7 +1127,7 @@ pub fn start_profile_ex(
         }
     }
     if sources.is_empty() && !matches!(op, OperationType::Mount | OperationType::Serve) {
-        return Err(format!("{op} requires a source path"));
+        return Err(start_failed_error(op, remote, "source path required"));
     }
     if sources.is_empty() {
         sources.push(String::new());
@@ -2345,6 +2345,22 @@ pub fn job_stopped_toast_key() -> &'static str {
     "backendSuccess.job.stopped"
 }
 
+/// Failed `job/stop` (Angular `backendErrors.job.executionFailed`).
+pub fn job_stop_failed_toast_key() -> &'static str {
+    "backendErrors.job.executionFailed"
+}
+
+fn start_failed_error(op: OperationType, remote: &str, error: &str) -> String {
+    crate::i18n::localized_message(
+        "operations.failedStart",
+        &[
+            ("type", op.api_label()),
+            ("remote", remote),
+            ("error", error),
+        ],
+    )
+}
+
 /// Remove-from-history confirmation (Angular `backendSuccess.job.deleted`).
 pub fn job_deleted_toast_key() -> &'static str {
     "backendSuccess.job.deleted"
@@ -2673,27 +2689,48 @@ pub fn stop_profile_ex(
     match op {
         OperationType::Mount => {
             let point = resolve_unmount_point(mounts, remote, alias, fallbacks)
-                .ok_or_else(|| format!("{remote} is not mounted"))?;
+                .ok_or_else(|| crate::i18n::localized_message("mount.notMounted", &[]))?;
             client
                 .unmount(&point)
-                .map(|_| format!("Unmounted {point}"))
-                .map_err(|e| e.to_string())
+                .map(|_| {
+                    crate::i18n::localized_message("mount.successUnmount", &[("remote", remote)])
+                })
+                .map_err(|e| {
+                    crate::i18n::localized_message(
+                        job_stop_failed_toast_key(),
+                        &[("error", &e.to_string())],
+                    )
+                })
         }
         OperationType::Serve => {
             let serve = find_active_serve(serves, remote)
-                .ok_or_else(|| format!("{remote} is not serving"))?;
+                .ok_or_else(|| crate::i18n::localized_message("serve.noActive", &[]))?;
             client
                 .serve_stop(&serve.id)
-                .map(|_| format!("Stopped serve {}", serve.addr))
-                .map_err(|e| e.to_string())
+                .map(|_| crate::i18n::localized_message("serve.successStop", &[("id", &serve.id)]))
+                .map_err(|e| {
+                    crate::i18n::localized_message(
+                        "serve.failedStop",
+                        &[("id", &serve.id), ("error", &e.to_string())],
+                    )
+                })
         }
         _ => {
-            let job = find_active_job(jobs, remote, op, profile)
-                .ok_or_else(|| format!("No running {op} for {remote}/{profile}"))?;
+            let job = find_active_job(jobs, remote, op, profile).ok_or_else(|| {
+                crate::i18n::localized_message(
+                    job_stop_failed_toast_key(),
+                    &[("error", &format!("No running {op} for {remote}/{profile}"))],
+                )
+            })?;
             client
                 .job_stop(job.id)
-                .map(|_| format!("Stopped job #{}", job.id))
-                .map_err(|e| e.to_string())
+                .map(|_| crate::i18n::localized_message(job_stopped_toast_key(), &[]))
+                .map_err(|e| {
+                    crate::i18n::localized_message(
+                        job_stop_failed_toast_key(),
+                        &[("error", &e.to_string())],
+                    )
+                })
         }
     }
 }
@@ -5586,7 +5623,23 @@ mod tests {
             "generalOverview.jobs.originFiles"
         );
         assert_eq!(job_stopped_toast_key(), "backendSuccess.job.stopped");
+        assert_eq!(
+            job_stop_failed_toast_key(),
+            "backendErrors.job.executionFailed"
+        );
         assert_eq!(job_deleted_toast_key(), "backendSuccess.job.deleted");
+        let missing = start_failed_error(OperationType::Sync, "testdrive", "source path required");
+        assert!(missing.contains("operations.failedStart"));
+        assert!(missing.contains("testdrive"));
+        assert_eq!(
+            crate::i18n::I18n::default().translate_backend(&missing),
+            "Failed to start Sync for testdrive: source path required"
+        );
+        let idle = crate::i18n::localized_message("mount.notMounted", &[]);
+        assert_eq!(
+            crate::i18n::I18n::default().translate_backend(&idle),
+            "Not Mounted"
+        );
     }
 
     #[test]

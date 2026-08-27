@@ -4108,12 +4108,13 @@ impl Dashboard {
                         }),
                         on_stop: Rc::new({
                             let ctx = ctx.clone();
+                            let toast = toast.clone();
                             let dash = dash.clone();
                             let run = run.clone();
                             move || {
                                 if let (Some(client), Some(jobid)) = (ctx.client(), run.last_job_id)
                                 {
-                                    let _ = client.job_stop(jobid);
+                                    ctx.toast_job_stop_result(&toast, client.job_stop(jobid));
                                 }
                                 if let Some(item) = ctx
                                     .store
@@ -4381,7 +4382,7 @@ fn toggle_mount(ctx: &AppCtx, name: &str, mounted: bool, toast: &adw::ToastOverl
             &alias,
             &fallbacks,
         ) {
-            Ok(msg) => toast.add_toast(adw::Toast::new(&msg)),
+            Ok(msg) => ctx.toast(toast, ctx.translate_error(&msg)),
             Err(e) => ctx.toast_error(toast, &e),
         }
         ctx.refresh_runtime();
@@ -4499,7 +4500,7 @@ fn toggle_profile(
             &alias,
             &fallbacks,
         ) {
-            Ok(msg) => toast.add_toast(adw::Toast::new(&msg)),
+            Ok(msg) => ctx.toast(toast, ctx.translate_error(&msg)),
             Err(e) => ctx.toast_error(toast, &e),
         }
         ctx.refresh_runtime();
@@ -4880,9 +4881,9 @@ pub(super) fn serve_card_row(
     {
         let ctx = ctx.clone();
         let id = serve.id.clone();
-        stop.connect_clicked(move |_| {
+        stop.connect_clicked(move |btn| {
             if let Some(client) = ctx.client() {
-                let _ = client.serve_stop(&id);
+                ctx.toast_serve_stop_result(btn, &id, client.serve_stop(&id));
                 ctx.refresh_runtime();
                 on_changed();
             }

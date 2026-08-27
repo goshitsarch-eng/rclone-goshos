@@ -153,6 +153,35 @@ pub fn normalize_option_name(name: &str) -> String {
     out
 }
 
+/// Angular `localized_error!` JSON payload so GTK never pre-translates.
+pub fn localized_message(key: &str, params: &[(&str, &str)]) -> String {
+    let mut map = serde_json::Map::new();
+    map.insert("key".into(), Value::String(key.to_string()));
+    if !params.is_empty() {
+        let mut object = serde_json::Map::new();
+        for (name, value) in params {
+            object.insert((*name).into(), Value::String((*value).to_string()));
+        }
+        map.insert("params".into(), Value::Object(object));
+    }
+    Value::Object(map).to_string()
+}
+
+/// Translate `error` params the way Angular `NotificationService` does.
+pub fn translate_named_error_params(i18n: &I18n, params: &[(&str, &str)]) -> Vec<(String, String)> {
+    params
+        .iter()
+        .map(|(name, value)| {
+            let text = if *name == "error" {
+                i18n.translate_backend(value)
+            } else {
+                (*value).to_string()
+            };
+            ((*name).to_string(), text)
+        })
+        .collect()
+}
+
 pub fn translate_backend_message(i18n: &I18n, message: &str) -> String {
     let trimmed = message.trim();
     if trimmed.is_empty() {
@@ -451,6 +480,25 @@ mod tests {
             "Mount drive is already in use"
         );
         assert_eq!(
+            i18n.translate_backend(&localized_message(
+                "backendErrors.mount.alreadyInUse",
+                &[("name", "drive")]
+            )),
+            "Mount drive is already in use"
+        );
+        let params = translate_named_error_params(
+            &i18n,
+            &[
+                ("count", "2"),
+                (
+                    "error",
+                    &localized_message("backendErrors.mount.alreadyInUse", &[("name", "box")]),
+                ),
+            ],
+        );
+        assert_eq!(params[0].1, "2");
+        assert_eq!(params[1].1, "Mount box is already in use");
+        assert_eq!(
             i18n.translate_backend(
                 r#"Start failed: {"key":"backendErrors.mount.alreadyInUse","params":{"name":"x"}}"#
             ),
@@ -546,6 +594,11 @@ mod tests {
             "nautilus.notifications.sendToAdded",
             "nautilus.notifications.sendToRemoved",
             "nautilus.errors.sendToFailed",
+            "backendErrors.job.executionFailed",
+            "backendSuccess.job.stopped",
+            "operations.failedStart",
+            "mount.successUnmount",
+            "serve.failedStop",
         ] {
             assert!(i18n.has(key), "missing i18n key {key}");
         }

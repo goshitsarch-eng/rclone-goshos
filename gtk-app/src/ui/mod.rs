@@ -1233,6 +1233,62 @@ impl AppCtx {
         self.toast_near(parent, self.translate_error(message.as_ref()));
     }
 
+    pub fn toast_job_stop_result(
+        &self,
+        parent: &impl IsA<gtk::Widget>,
+        result: Result<impl std::fmt::Display, impl std::fmt::Display>,
+    ) {
+        match result {
+            Ok(_) => self.toast_near(
+                parent,
+                self.t_or(
+                    crate::jobs::job_stopped_toast_key(),
+                    "Job stopped successfully",
+                ),
+            ),
+            Err(e) => {
+                let error = self.translate_error(&e.to_string());
+                self.toast_near(
+                    parent,
+                    self.tf_or(
+                        crate::jobs::job_stop_failed_toast_key(),
+                        "Job execution failed: {{error}}",
+                        &[("error", &error)],
+                    ),
+                );
+            }
+        }
+    }
+
+    pub fn toast_serve_stop_result(
+        &self,
+        parent: &impl IsA<gtk::Widget>,
+        id: &str,
+        result: Result<impl std::fmt::Display, impl std::fmt::Display>,
+    ) {
+        match result {
+            Ok(_) => self.toast_near(
+                parent,
+                self.tf_or(
+                    "serve.successStop",
+                    "Successfully stopped serve {{id}}",
+                    &[("id", id)],
+                ),
+            ),
+            Err(e) => {
+                let error = self.translate_error(&e.to_string());
+                self.toast_near(
+                    parent,
+                    self.tf_or(
+                        "serve.failedStop",
+                        "Failed to stop serve {{id}}: {{error}}",
+                        &[("id", id), ("error", &error)],
+                    ),
+                );
+            }
+        }
+    }
+
     pub fn toast_action(
         &self,
         overlay: &adw::ToastOverlay,

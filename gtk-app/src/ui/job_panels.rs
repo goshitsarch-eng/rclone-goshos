@@ -340,15 +340,7 @@ pub fn overview_jobs_panel(
                 let on_changed = on_changed.clone();
                 stop.connect_clicked(move |btn| {
                     if let Some(c) = ctx.client() {
-                        if c.job_stop(id).is_ok() {
-                            ctx.toast_near(
-                                btn,
-                                ctx.t_or(
-                                    crate::jobs::job_stopped_toast_key(),
-                                    "Job stopped successfully",
-                                ),
-                            );
-                        }
+                        ctx.toast_job_stop_result(btn, c.job_stop(id));
                         ctx.refresh_runtime();
                         on_changed();
                     }
@@ -440,15 +432,7 @@ pub fn detail_jobs_panel(
             let on_changed = on_changed.clone();
             stop.connect_clicked(move |btn| {
                 if let Some(client) = ctx.client() {
-                    if client.job_stop(id).is_ok() {
-                        ctx.toast_near(
-                            btn,
-                            ctx.t_or(
-                                crate::jobs::job_stopped_toast_key(),
-                                "Job stopped successfully",
-                            ),
-                        );
-                    }
+                    ctx.toast_job_stop_result(btn, client.job_stop(id));
                     ctx.refresh_runtime();
                     on_changed();
                 }
