@@ -900,3 +900,7 @@ This client is the GTK 4 + libadwaita desktop UI. It talks to a local `rclone rc
 - Files copy/upload/delete/paste push one undo token per batch (Angular `UndoEntry`); stack capped at 20
 - Files Back exits search first (`effectiveCanGoBack`): clears the filter and restores path crumbs before popping folder history
 - Live GUI: Files at testdrive:Photos filtered to README.md / README.txt; Back restores photo1.jpg, photo2.jpg, preview.pdf, and path crumbs
+
+- Backend editor matches Angular Connection/Security tabs: Enable Auth switch, Copy Backend Settings vs Copy Remotes, duplicate name/host/port checks, and Remove Stored Password
+- App menu includes **Import rclone.conf** (`win.import-config`) beside settings-backup import
+- Live GUI: `--backends` Add Backend shows Connection (Customize Authentication, Copy Backend/Remote Settings) and Security (No Password Stored); Save with an empty name reports **Name exists**
