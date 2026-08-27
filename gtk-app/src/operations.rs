@@ -611,9 +611,10 @@ impl FileTypeCategory {
             "mp3" | "flac" | "ogg" | "wav" | "m4a" | "aac" | "opus" | "wma" => Self::Audio,
             "pdf" => Self::Pdf,
             "zip" | "tar" | "gz" | "tgz" | "bz2" | "xz" | "7z" | "rar" | "iso" => Self::Archive,
-            "txt" | "md" | "json" | "toml" | "yml" | "yaml" | "xml" | "csv" | "rs" | "ts"
-            | "js" | "html" | "css" | "py" | "go" | "c" | "h" | "cpp" | "sh" | "log" | "ini"
-            | "conf" | "cfg" => Self::Text,
+            "txt" | "md" | "markdown" | "json" | "toml" | "yml" | "yaml" | "xml" | "csv" | "rs"
+            | "ts" | "js" | "mjs" | "cjs" | "html" | "css" | "scss" | "sass" | "py" | "go"
+            | "c" | "h" | "cpp" | "sh" | "bash" | "zsh" | "sql" | "log" | "ini" | "conf"
+            | "cfg" => Self::Text,
             _ => Self::Binary,
         }
     }
@@ -788,6 +789,18 @@ mod tests {
         );
         assert_eq!(
             FileTypeCategory::from_name("notes.md", false),
+            FileTypeCategory::Text
+        );
+        assert_eq!(
+            FileTypeCategory::from_name("query.sql", false),
+            FileTypeCategory::Text
+        );
+        assert_eq!(
+            FileTypeCategory::from_name("init.zsh", false),
+            FileTypeCategory::Text
+        );
+        assert_eq!(
+            FileTypeCategory::from_name("theme.sass", false),
             FileTypeCategory::Text
         );
         assert_eq!(
