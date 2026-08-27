@@ -101,6 +101,7 @@ pub struct NautilusView {
     loading_left: gtk::Box,
     loading_right: gtk::Box,
     right_host: gtk::Overlay,
+    pending_undo: Rc<RefCell<Vec<crate::fileops::PendingUndo>>>,
 }
 
 fn picker_result_from_selection(
@@ -552,6 +553,7 @@ impl NautilusView {
             loading_left,
             loading_right,
             right_host,
+            pending_undo: Rc::new(RefCell::new(Vec::new())),
         };
         view.refresh_type_filters();
         {
@@ -2005,7 +2007,10 @@ impl NautilusView {
                             &group,
                             crate::jobs::transfer_snapshot_from_items(&transfers),
                         );
-                        self.push_undo_ops(transfers.iter().map(|item| item.file_op()).collect());
+                        self.queue_job_undo(
+                            &ids,
+                            transfers.iter().map(|item| item.file_op()).collect(),
+                        );
                         self.ctx.refresh_runtime();
                         self.reload();
                         self.toast.add_toast(adw::Toast::new(&format!(
@@ -3695,7 +3700,8 @@ impl NautilusView {
                         self.ctx.snapshot.borrow_mut().jobs.insert(0, preparing);
                     }
                 }
-                self.push_undo_ops(
+                self.queue_job_undo(
+                    &ids,
                     items
                         .iter()
                         .map(|item| crate::fileops::FileOp::Upload {
@@ -4055,6 +4061,7 @@ impl NautilusView {
         if self.listing_menu_open.get() {
             return;
         }
+        self.settle_pending_undos();
         let jobs = self.ctx.snapshot.borrow().jobs.clone();
         let history = {
             let store = self.ctx.store.borrow();
@@ -4079,17 +4086,43 @@ impl NautilusView {
             return;
         }
         let current = self.current.borrow().clone();
-        if !current.starred
-            && crate::jobs::listing_is_affected(&current.remote, &current.path, &affected)
-        {
+        let refresh_primary = !current.starred
+            && crate::jobs::listing_is_affected(&current.remote, &current.path, &affected);
+        let refresh_secondary = *self.split_enabled.borrow() && {
+            let secondary = self.secondary.borrow().clone();
+            crate::jobs::listing_is_affected(&secondary.remote, &secondary.path, &affected)
+        };
+        if refresh_primary {
             self.reload();
+        } else if refresh_secondary {
+            let secondary = self.secondary.borrow().clone();
+            self.reload_pane(&secondary);
+        }
+    }
+
+    fn queue_job_undo(&self, ids: &[u64], ops: Vec<crate::fileops::FileOp>) {
+        let Some(pending) = crate::fileops::pending_undo_from_ops(ids, &ops) else {
+            return;
+        };
+        if ids.is_empty() {
+            self.push_undo(pending.token);
             return;
         }
-        if *self.split_enabled.borrow() {
-            let secondary = self.secondary.borrow().clone();
-            if crate::jobs::listing_is_affected(&secondary.remote, &secondary.path, &affected) {
-                self.reload_pane(&secondary);
-            }
+        self.pending_undo.borrow_mut().push(pending);
+    }
+
+    fn settle_pending_undos(&self) {
+        let jobs = self.ctx.snapshot.borrow().jobs.clone();
+        let history = self.ctx.store.borrow().job_history.clone();
+        let statuses = crate::fileops::merge_job_statuses(
+            jobs.iter().map(|job| (job.id, job.status.as_str())),
+            history.iter().map(|job| (job.id, job.status.as_str())),
+        );
+        let pending = self.pending_undo.borrow().clone();
+        let (commit, keep) = crate::fileops::settle_pending_undos(pending, &statuses);
+        *self.pending_undo.borrow_mut() = keep;
+        for token in commit {
+            self.push_undo(token);
         }
     }
 
@@ -4418,7 +4451,7 @@ impl NautilusView {
                     ) {
                         Ok((_group, ids)) => {
                             view.remember_file_jobs(&ids, "filemanager");
-                            view.push_undo(item.file_op().encode());
+                            view.queue_job_undo(&ids, vec![item.file_op()]);
                             view.ctx.refresh_runtime();
                             view.reload();
                         }
@@ -4468,7 +4501,7 @@ impl NautilusView {
         match crate::fileops::start_grouped_deletes(&client, &items, "filemanager") {
             Ok((_group, ids)) => {
                 self.remember_file_jobs(&ids, "filemanager");
-                self.push_undo_ops(undos);
+                self.queue_job_undo(&ids, undos);
                 self.ctx.refresh_runtime();
                 self.reload();
             }
@@ -4601,7 +4634,7 @@ impl NautilusView {
                     &group,
                     crate::jobs::transfer_snapshot_from_items(&transfers),
                 );
-                self.push_undo_ops(transfers.iter().map(|item| item.file_op()).collect());
+                self.queue_job_undo(&ids, transfers.iter().map(|item| item.file_op()).collect());
                 self.ctx.refresh_runtime();
                 self.reload();
                 self.toast.add_toast(adw::Toast::new(&format!(

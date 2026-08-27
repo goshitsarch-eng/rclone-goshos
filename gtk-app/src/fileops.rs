@@ -3,6 +3,7 @@
 use crate::rclone::{remote_fs, RcClient};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
+use std::collections::HashMap;
 use std::path::PathBuf;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -213,6 +214,108 @@ pub fn push_capped(stack: &mut Vec<String>, token: String) {
     while stack.len() > MAX_UNDO_STACK {
         stack.remove(0);
     }
+}
+
+/// Undo token waiting for rclone jobs to finish — Angular pushes after `await transferItems`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PendingUndo {
+    pub job_ids: Vec<u64>,
+    pub token: String,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PendingUndoOutcome {
+    Wait,
+    Commit,
+    Drop,
+}
+
+pub fn pending_undo_from_ops(job_ids: &[u64], ops: &[FileOp]) -> Option<PendingUndo> {
+    let token = encode_undo(ops)?;
+    Some(PendingUndo {
+        job_ids: job_ids.to_vec(),
+        token,
+    })
+}
+
+pub fn pending_undo_outcome(
+    job_ids: &[u64],
+    statuses: &HashMap<u64, String>,
+) -> PendingUndoOutcome {
+    if job_ids.is_empty() {
+        return PendingUndoOutcome::Commit;
+    }
+    let mut seen = 0usize;
+    let mut failed = false;
+    let mut running = false;
+    for id in job_ids {
+        let Some(status) = statuses.get(id) else {
+            continue;
+        };
+        seen += 1;
+        match status.to_ascii_lowercase().as_str() {
+            "failed" | "stopped" | "error" => failed = true,
+            "completed" | "success" | "ok" => {}
+            _ => running = true,
+        }
+    }
+    if failed {
+        PendingUndoOutcome::Drop
+    } else if running || seen < job_ids.len() {
+        PendingUndoOutcome::Wait
+    } else {
+        PendingUndoOutcome::Commit
+    }
+}
+
+/// Commit successful pending tokens; keep waiting ones; drop failed/stopped jobs.
+pub fn settle_pending_undos(
+    pending: Vec<PendingUndo>,
+    statuses: &HashMap<u64, String>,
+) -> (Vec<String>, Vec<PendingUndo>) {
+    let mut commit = Vec::new();
+    let mut keep = Vec::new();
+    for item in pending {
+        match pending_undo_outcome(&item.job_ids, statuses) {
+            PendingUndoOutcome::Commit => commit.push(item.token),
+            PendingUndoOutcome::Wait => keep.push(item),
+            PendingUndoOutcome::Drop => {}
+        }
+    }
+    (commit, keep)
+}
+
+pub fn job_status_map<'a, I>(jobs: I) -> HashMap<u64, String>
+where
+    I: IntoIterator<Item = (u64, &'a str)>,
+{
+    jobs.into_iter()
+        .map(|(id, status)| (id, status.to_string()))
+        .collect()
+}
+
+fn is_terminal_undo_status(status: &str) -> bool {
+    matches!(
+        status.to_ascii_lowercase().as_str(),
+        "completed" | "failed" | "stopped" | "success" | "ok" | "error"
+    )
+}
+
+/// History fills missing ids; a live terminal status wins over a stale running row.
+pub fn merge_job_statuses<'a, L, H>(live: L, history: H) -> HashMap<u64, String>
+where
+    L: IntoIterator<Item = (u64, &'a str)>,
+    H: IntoIterator<Item = (u64, &'a str)>,
+{
+    let mut map = job_status_map(history);
+    for (id, status) in live {
+        if is_terminal_undo_status(status) || !map.contains_key(&id) {
+            map.insert(id, status.to_string());
+        } else if !is_terminal_undo_status(map.get(&id).map(String::as_str).unwrap_or("")) {
+            map.insert(id, status.to_string());
+        }
+    }
+    map
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
@@ -1566,6 +1669,78 @@ mod tests {
         assert_eq!(stack.len(), MAX_UNDO_STACK);
         assert_eq!(stack.first().map(String::as_str), Some("n0"));
         assert_eq!(decode_undo(&copy_a.encode()), Some(vec![copy_a]));
+    }
+
+    #[test]
+    fn pending_undo_waits_commits_and_drops() {
+        let copy = FileOp::Copy {
+            src_fs: "testdrive:".into(),
+            src: "Photos/a.txt".into(),
+            dst_fs: "testdrive:".into(),
+            dst: "Photos/verify-undo.txt".into(),
+        };
+        let pending = pending_undo_from_ops(&[42, 43], &[copy.clone()]).unwrap();
+        assert_eq!(pending.job_ids, vec![42, 43]);
+        assert!(pending.token.contains("verify-undo.txt"));
+        assert_eq!(
+            pending_undo_outcome(&[42], &job_status_map([(42, "running")])),
+            PendingUndoOutcome::Wait
+        );
+        assert_eq!(
+            pending_undo_outcome(&[42], &job_status_map([(42, "preparing")])),
+            PendingUndoOutcome::Wait
+        );
+        assert_eq!(
+            pending_undo_outcome(&[42, 43], &job_status_map([(42, "completed")])),
+            PendingUndoOutcome::Wait
+        );
+        assert_eq!(
+            pending_undo_outcome(
+                &[42, 43],
+                &job_status_map([(42, "completed"), (43, "completed")])
+            ),
+            PendingUndoOutcome::Commit
+        );
+        assert_eq!(
+            pending_undo_outcome(
+                &[42, 43],
+                &job_status_map([(42, "completed"), (43, "failed")])
+            ),
+            PendingUndoOutcome::Drop
+        );
+        assert_eq!(
+            pending_undo_outcome(&[42], &job_status_map([(42, "stopped")])),
+            PendingUndoOutcome::Drop
+        );
+        assert_eq!(
+            pending_undo_outcome(&[], &HashMap::new()),
+            PendingUndoOutcome::Commit
+        );
+        let (commit, keep) = settle_pending_undos(
+            vec![
+                PendingUndo {
+                    job_ids: vec![1],
+                    token: "ok".into(),
+                },
+                PendingUndo {
+                    job_ids: vec![2],
+                    token: "wait".into(),
+                },
+                PendingUndo {
+                    job_ids: vec![3],
+                    token: "fail".into(),
+                },
+            ],
+            &job_status_map([(1, "completed"), (2, "running"), (3, "failed")]),
+        );
+        assert_eq!(commit, vec!["ok".to_string()]);
+        assert_eq!(keep.len(), 1);
+        assert_eq!(keep[0].token, "wait");
+        assert!(pending_undo_from_ops(&[1], &[]).is_none());
+        let merged = merge_job_statuses([(9, "running")], [(9, "completed")]);
+        assert_eq!(merged.get(&9).map(String::as_str), Some("completed"));
+        let live_done = merge_job_statuses([(8, "failed")], [(8, "running")]);
+        assert_eq!(live_done.get(&8).map(String::as_str), Some("failed"));
     }
 
     #[test]

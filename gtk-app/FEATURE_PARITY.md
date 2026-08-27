@@ -922,3 +922,6 @@ This client is the GTK 4 + libadwaita desktop UI. It talks to a local `rclone rc
 
 - Live GUI: testdrive:Photos lists 6 items after an async `operations/list` job; rclone 1.60 returns a `jobid` then `output.list`
 - Live GUI: opening README.md shows **5 / 6 · 191 B**; Next opens README.txt as **6 / 6 · 7 B** and the status bar reads **"README.txt" selected (7 B)**
+
+- Files copy/move/upload/delete/rename undo tokens wait until rclone jobs complete (Angular `await transferItems`); failed or stopped jobs never become Undo
+- Files split-view job refresh reloads the secondary pane when only that folder is affected
