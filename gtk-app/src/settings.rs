@@ -505,7 +505,8 @@ pub fn apply_path_values(
     Ok(())
 }
 
-pub fn display_setting(value: &serde_json::Value, sep: &str) -> String {
+/// String items from a JSON array setting (or a single string value).
+pub fn setting_string_list(value: &serde_json::Value) -> Vec<String> {
     match value {
         serde_json::Value::Array(items) => items
             .iter()
@@ -514,8 +515,34 @@ pub fn display_setting(value: &serde_json::Value, sep: &str) -> String {
                 other if !other.is_null() => Some(other.to_string().trim_matches('"').to_string()),
                 _ => None,
             })
-            .collect::<Vec<_>>()
-            .join(sep),
+            .collect(),
+        serde_json::Value::String(s) if !s.is_empty() => vec![s.clone()],
+        _ => Vec::new(),
+    }
+}
+
+/// Persist a string-list setting as a JSON array.
+pub fn setting_string_list_value(items: &[String]) -> serde_json::Value {
+    serde_json::Value::Array(
+        items
+            .iter()
+            .map(|item| serde_json::Value::String(item.clone()))
+            .collect(),
+    )
+}
+
+/// Drop blank entries before writing an array setting.
+pub fn persistable_string_list(items: &[String]) -> Vec<String> {
+    items
+        .iter()
+        .map(|item| item.trim().to_string())
+        .filter(|item| !item.is_empty())
+        .collect()
+}
+
+pub fn display_setting(value: &serde_json::Value, sep: &str) -> String {
+    match value {
+        serde_json::Value::Array(_) => setting_string_list(value).join(sep),
         serde_json::Value::String(s) => s.clone(),
         serde_json::Value::Bool(b) => b.to_string(),
         serde_json::Value::Number(n) => n.to_string(),
@@ -726,6 +753,27 @@ mod tests {
             &serde_json::json!(["a"]),
             &serde_json::json!(["b"])
         ));
+    }
+
+    #[test]
+    fn setting_string_list_roundtrip() {
+        assert_eq!(
+            setting_string_list(&serde_json::json!(["--rc", "--fast-list"])),
+            vec!["--rc".to_string(), "--fast-list".to_string()]
+        );
+        assert_eq!(
+            setting_string_list(&serde_json::json!("RCLONE_VERBOSE=1")),
+            vec!["RCLONE_VERBOSE=1".to_string()]
+        );
+        assert!(setting_string_list(&serde_json::json!(null)).is_empty());
+        assert_eq!(
+            persistable_string_list(&[" --rc ".into(), "".into(), "  ".into(), "--vfs".into()]),
+            vec!["--rc".to_string(), "--vfs".to_string()]
+        );
+        assert_eq!(
+            setting_string_list_value(&["https://a".into(), "https://b".into()]),
+            serde_json::json!(["https://a", "https://b"])
+        );
     }
 
     #[test]

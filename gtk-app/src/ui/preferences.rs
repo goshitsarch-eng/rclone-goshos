@@ -6,7 +6,8 @@
 
 use super::AppCtx;
 use crate::settings::{
-    apply_path_values, default_for_path, display_setting, requires_engine_restart, values_equal,
+    apply_path_values, default_for_path, display_setting, persistable_string_list,
+    requires_engine_restart, setting_string_list, setting_string_list_value, values_equal,
 };
 use adw::prelude::*;
 use gtk::prelude::{Cast, IsA};
@@ -522,59 +523,28 @@ pub fn present_page(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, page: Option<&s
         40.0,
         1.0,
     );
-    add_entry(
-        &session,
-        &c1,
-        "settings.core.rclone_flags.label",
-        "Additional rclone flags (space-separated)",
-        "core.rclone_additional_flags",
-        " ",
-        |text| {
-            json!(text
-                .split_whitespace()
-                .map(|s| s.to_string())
-                .collect::<Vec<_>>())
-        },
-        |_| {},
-        None,
-    );
-    add_entry(
-        &session,
-        &c1,
-        "settings.core.rclone_env_vars.label",
-        "Rclone environment (KEY=value;KEY=value)",
-        "core.rclone_env_vars",
-        ";",
-        |text| {
-            json!(text
-                .split(';')
-                .map(str::trim)
-                .filter(|s| !s.is_empty())
-                .map(|s| s.to_string())
-                .collect::<Vec<_>>())
-        },
-        |_| {},
-        None,
-    );
-    add_entry(
-        &session,
-        &c1,
-        "settings.core.connection_check_urls.label",
-        "Connectivity check URLs (comma-separated)",
-        "core.connection_check_urls",
-        ", ",
-        |text| {
-            json!(text
-                .split(',')
-                .map(str::trim)
-                .filter(|s| !s.is_empty())
-                .map(|s| s.to_string())
-                .collect::<Vec<_>>())
-        },
-        |_| {},
-        None,
-    );
     core.add(&c1);
+    core.add(&build_list_editor_group(
+        &session,
+        "settings.core.rclone_flags.label",
+        "Additional rclone flags",
+        "core.rclone_additional_flags",
+        None,
+    ));
+    core.add(&build_list_editor_group(
+        &session,
+        "settings.core.rclone_env_vars.label",
+        "Rclone environment (KEY=value)",
+        "core.rclone_env_vars",
+        None,
+    ));
+    core.add(&build_list_editor_group(
+        &session,
+        "settings.core.connection_check_urls.label",
+        "Connectivity check URLs",
+        "core.connection_check_urls",
+        Some(crate::validators::validate_url),
+    ));
 
     let security = adw::PreferencesPage::new();
     security.set_name(Some("security"));
@@ -882,56 +852,28 @@ fn add_search_hit(
             |ctx| ctx.apply_effective_bandwidth(),
             Some(validate_bandwidth_row),
         ),
-        "settings.core.connection_check_urls.label" => add_entry(
+        "settings.core.connection_check_urls.label" => add_list_editor(
             session,
             group,
             item.title_key,
             item.title_fallback,
             "core.connection_check_urls",
-            ", ",
-            |text| {
-                json!(text
-                    .split(',')
-                    .map(str::trim)
-                    .filter(|s| !s.is_empty())
-                    .map(|s| s.to_string())
-                    .collect::<Vec<_>>())
-            },
-            |_| {},
-            None,
+            Some(crate::validators::validate_url),
         ),
-        "settings.core.rclone_flags.label" => add_entry(
+        "settings.core.rclone_flags.label" => add_list_editor(
             session,
             group,
             item.title_key,
             item.title_fallback,
             "core.rclone_additional_flags",
-            " ",
-            |text| {
-                json!(text
-                    .split_whitespace()
-                    .map(|s| s.to_string())
-                    .collect::<Vec<_>>())
-            },
-            |_| {},
             None,
         ),
-        "settings.core.rclone_env_vars.label" => add_entry(
+        "settings.core.rclone_env_vars.label" => add_list_editor(
             session,
             group,
             item.title_key,
             item.title_fallback,
             "core.rclone_env_vars",
-            ";",
-            |text| {
-                json!(text
-                    .split(';')
-                    .map(str::trim)
-                    .filter(|s| !s.is_empty())
-                    .map(|s| s.to_string())
-                    .collect::<Vec<_>>())
-            },
-            |_| {},
             None,
         ),
         "settings.core.default_mount_directory.label" => add_entry(
@@ -1374,6 +1316,197 @@ fn add_entry(
     }
     group.add(&row);
     row.upcast()
+}
+
+fn add_list_editor(
+    session: &PrefsSession,
+    group: &adw::PreferencesGroup,
+    key: &str,
+    fallback: &str,
+    path: &'static str,
+    validate_item: Option<fn(&str) -> Result<(), String>>,
+) -> gtk::Widget {
+    let list_group = build_list_editor_group(session, key, fallback, path, validate_item);
+    group.add(&list_group);
+    list_group.upcast()
+}
+
+fn build_list_editor_group(
+    session: &PrefsSession,
+    key: &str,
+    fallback: &str,
+    path: &'static str,
+    validate_item: Option<fn(&str) -> Result<(), String>>,
+) -> adw::PreferencesGroup {
+    let list_group = adw::PreferencesGroup::new();
+    list_group.set_title(&session.ctx.t_or(key, fallback));
+    if let Some(help) = help_text(session, key) {
+        list_group.set_description(Some(&help));
+    }
+
+    let current = session
+        .ctx
+        .settings
+        .borrow()
+        .get_by_path(path)
+        .map(|v| setting_string_list(&v))
+        .unwrap_or_default();
+    let label_key = key.to_string();
+    let rows: Rc<RefCell<Vec<adw::EntryRow>>> = Rc::new(RefCell::new(Vec::new()));
+    let add_row = adw::ActionRow::new();
+    add_row.set_title(&session.ctx.t_or("modals.preferences.addItem", "Add Item"));
+    add_row.set_activatable(true);
+    add_row.add_prefix(&gtk::Image::from_icon_name("list-add-symbolic"));
+    add_row.set_tooltip_text(Some(&session.ctx.tf(
+        "modals.preferences.aria.addNewItem",
+        &[("name", &session.ctx.t_or(key, fallback))],
+    )));
+
+    let commit_rows = {
+        let session = session.clone();
+        let rows = rows.clone();
+        let label_key = label_key.clone();
+        Rc::new(move || {
+            let mut next = Vec::new();
+            let mut ok = true;
+            for row in rows.borrow().iter() {
+                let text = row.text().to_string();
+                if let Some(validate) = validate_item {
+                    match validate(&text) {
+                        Ok(()) => {
+                            row.remove_css_class("error");
+                            apply_help_tooltip(&session, row, &label_key);
+                        }
+                        Err(_) => {
+                            if !text.trim().is_empty() {
+                                row.add_css_class("error");
+                                row.set_tooltip_text(Some(&session.ctx.t_or(
+                                    "modals.preferences.validation.urlArray",
+                                    "All items must be valid URLs (e.g., https://...).",
+                                )));
+                                ok = false;
+                            }
+                        }
+                    }
+                }
+                next.push(text);
+            }
+            if ok {
+                session.commit(
+                    path,
+                    setting_string_list_value(&persistable_string_list(&next)),
+                );
+            }
+        }) as Rc<dyn Fn()>
+    };
+
+    let populate = {
+        let session = session.clone();
+        let list_group = list_group.clone();
+        let rows = rows.clone();
+        let add_row = add_row.clone();
+        let commit_rows = commit_rows.clone();
+        Rc::new(move |values: Vec<String>| {
+            for row in rows.borrow().iter() {
+                if row.parent().as_ref() == Some(list_group.upcast_ref()) {
+                    list_group.remove(row);
+                }
+            }
+            rows.borrow_mut().clear();
+            if add_row.parent().as_ref() == Some(list_group.upcast_ref()) {
+                list_group.remove(&add_row);
+            }
+            for (idx, value) in values.into_iter().enumerate() {
+                let row = adw::EntryRow::new();
+                let index = (idx + 1).to_string();
+                row.set_title(
+                    &session
+                        .ctx
+                        .tf("modals.preferences.aria.itemIndex", &[("index", &index)]),
+                );
+                row.set_text(&value);
+                let remove = gtk::Button::from_icon_name("user-trash-symbolic");
+                remove.set_valign(gtk::Align::Center);
+                remove.add_css_class("flat");
+                remove.set_tooltip_text(Some(&session.ctx.tf(
+                    "modals.preferences.aria.removeItemIndex",
+                    &[("index", &index)],
+                )));
+                row.add_suffix(&remove);
+                {
+                    let commit_rows = commit_rows.clone();
+                    let session = session.clone();
+                    row.connect_changed(move |_| {
+                        if session.suppress.get() {
+                            return;
+                        }
+                        commit_rows();
+                    });
+                }
+                {
+                    let rows = rows.clone();
+                    let list_group = list_group.clone();
+                    let row = row.clone();
+                    let commit_rows = commit_rows.clone();
+                    let populate_later = Rc::clone(&rows);
+                    remove.connect_clicked(move |_| {
+                        if row.parent().as_ref() == Some(list_group.upcast_ref()) {
+                            list_group.remove(&row);
+                        }
+                        populate_later.borrow_mut().retain(|item| !item.eq(&row));
+                        commit_rows();
+                    });
+                }
+                list_group.add(&row);
+                rows.borrow_mut().push(row);
+            }
+            list_group.add(&add_row);
+        }) as Rc<dyn Fn(Vec<String>)>
+    };
+
+    {
+        let populate = populate.clone();
+        let rows = rows.clone();
+        add_row.connect_activated(move |_| {
+            let mut next: Vec<String> = rows
+                .borrow()
+                .iter()
+                .map(|row| row.text().to_string())
+                .collect();
+            next.push(String::new());
+            populate(next);
+        });
+    }
+
+    list_group.set_header_suffix(Some(&session.reset_button(path, {
+        let populate = populate.clone();
+        let session = session.clone();
+        move |value| {
+            session.suppress.set(true);
+            populate(setting_string_list(value));
+            session.suppress.set(false);
+        }
+    })));
+    {
+        let populate = populate.clone();
+        let ctx = session.ctx.clone();
+        let restorer = session.clone();
+        session.remember_restorer(path, move || {
+            restorer.suppress.set(true);
+            let values = ctx
+                .settings
+                .borrow()
+                .get_by_path(path)
+                .map(|v| setting_string_list(&v))
+                .unwrap_or_default();
+            populate(values);
+            restorer.suppress.set(false);
+        });
+    }
+    session.suppress.set(true);
+    populate(current);
+    session.suppress.set(false);
+    list_group
 }
 
 fn add_spin(

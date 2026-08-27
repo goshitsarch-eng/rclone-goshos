@@ -1107,3 +1107,6 @@ This client is the GTK 4 + libadwaita desktop UI. It talks to a local `rclone rc
 - Live GUI: `--dashboard` System Information **Engine Status: Active**, **Engine Version: v1.60.1-DEV**, **Platform: linux/amd64**, **Go Runtime: go1.22.2**, **Total Remotes: 5**, **Process ID**, **Engine Uptime**, **Heap Memory**
 - Live GUI: `--quick-add` wizard header **Configuration Steps · 1 / 2** (Create not clicked)
 - Live GUI: `--remote testdrive --tab mount` Monitoring shows VFS panel (Advanced Configuration + Poll Interval; alias mount has no VFS instance)
+
+- Preferences array settings (extra flags, env vars, connectivity URLs) use add/remove item rows instead of a single delimited field
+- Alert action editor groups fields under Basic Information and Configuration; rule editor titles Basic Information and Filters

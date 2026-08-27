@@ -268,6 +268,14 @@ pub fn validate_url(value: &str) -> Result<(), String> {
     }
 }
 
+/// Validate every non-empty entry of a connectivity-URL array setting.
+pub fn validate_url_list(items: &[String]) -> Result<(), String> {
+    for item in items {
+        validate_url(item)?;
+    }
+    Ok(())
+}
+
 pub fn validate_absolute_path(value: &str) -> Result<(), String> {
     if value.trim().is_empty() {
         return Ok(());
@@ -467,6 +475,8 @@ mod tests {
         assert!(validate_typed_value("string", "any", false, &[], None).is_ok());
         assert!(validate_url("https://example.com/a").is_ok());
         assert!(validate_url("ftp://x").is_err());
+        assert!(validate_url_list(&["".into(), "https://example.com".into()]).is_ok());
+        assert!(validate_url_list(&["https://ok".into(), "ftp://no".into()]).is_err());
         assert!(validate_absolute_path("/tmp/out").is_ok());
         assert!(validate_absolute_path("relative").is_err());
         assert!(validate_password("secret").is_ok());
