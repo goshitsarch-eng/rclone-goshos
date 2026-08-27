@@ -121,6 +121,21 @@ pub fn present_with(
     title_row.set_margin_top(10);
     title_row.append(&side_toggle);
     title_row.append(&title);
+    let page_search_btn = gtk::ToggleButton::new();
+    page_search_btn.set_icon_name("system-search-symbolic");
+    page_search_btn.set_tooltip_text(Some(&ctx.t_or("shared.search.toggle", "Search")));
+    title_row.append(&page_search_btn);
+    let page_search = gtk::SearchEntry::new();
+    page_search.set_placeholder_text(Some(
+        &ctx.t_or("shared.search.placeholder", "Search this page"),
+    ));
+    page_search.set_hexpand(true);
+    let page_search_bar = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+    page_search_bar.set_margin_start(12);
+    page_search_bar.set_margin_end(12);
+    page_search_bar.append(&page_search);
+    page_search_bar.set_visible(false);
+    let page_query = Rc::new(RefCell::new(String::new()));
     let body = gtk::Box::new(gtk::Orientation::Vertical, 8);
     body.set_hexpand(true);
     body.set_vexpand(true);
@@ -137,6 +152,7 @@ pub fn present_with(
     save_bar.append(&save);
     save_bar.append(&close);
     content.append(&title_row);
+    content.append(&page_search_bar);
     content.append(&body_scroll);
     content.append(&save_bar);
     split.set_content(Some(&content));
@@ -240,6 +256,61 @@ pub fn present_with(
             }
         }) as Rc<dyn Fn()>
     };
+    let rebuild = {
+        let inner = rebuild;
+        let body = body.clone();
+        let page_query = page_query.clone();
+        Rc::new(move || {
+            inner();
+            apply_page_search(&body, &page_query.borrow());
+        }) as Rc<dyn Fn()>
+    };
+    {
+        let page_query = page_query.clone();
+        let body = body.clone();
+        let page_search_bar = page_search_bar.clone();
+        let page_search_btn = page_search_btn.clone();
+        page_search.connect_search_changed(move |entry| {
+            let query = entry.text().to_string();
+            *page_query.borrow_mut() = query.clone();
+            apply_page_search(&body, &query);
+            let open = page_search_bar.is_visible();
+            page_search_btn.set_active(open);
+        });
+    }
+    {
+        let page_search_bar = page_search_bar.clone();
+        let page_search = page_search.clone();
+        page_search_btn.connect_toggled(move |btn| {
+            let show = btn.is_active();
+            page_search_bar.set_visible(show);
+            if show {
+                page_search.grab_focus();
+            } else {
+                page_search.set_text("");
+            }
+        });
+    }
+    {
+        let page_search_btn = page_search_btn.clone();
+        let page_search = page_search.clone();
+        let keys = gtk::EventControllerKey::new();
+        keys.connect_key_pressed(move |_, keyval, _, modifier| {
+            let ctrl = modifier.contains(gtk::gdk::ModifierType::CONTROL_MASK)
+                || modifier.contains(gtk::gdk::ModifierType::SUPER_MASK);
+            if ctrl && keyval == gtk::gdk::Key::f {
+                page_search_btn.set_active(true);
+                page_search.grab_focus();
+                return glib::Propagation::Stop;
+            }
+            if keyval == gtk::gdk::Key::Escape && page_search_btn.is_active() {
+                page_search_btn.set_active(false);
+                return glib::Propagation::Stop;
+            }
+            glib::Propagation::Proceed
+        });
+        split.add_controller(keys);
+    }
     side_col.append(&preset_bar(
         parent,
         ctx.clone(),
@@ -374,6 +445,34 @@ fn preset_bar(
 
 fn step_icon(step: EditorStep) -> &'static str {
     step.icon_name()
+}
+
+fn apply_page_search(root: &impl IsA<gtk::Widget>, query: &str) {
+    apply_page_search_widget(root.upcast_ref(), query);
+}
+
+fn apply_page_search_widget(widget: &gtk::Widget, query: &str) {
+    if let Ok(row) = widget.clone().downcast::<adw::PreferencesRow>() {
+        let title = row.title();
+        let subtitle = row
+            .downcast_ref::<adw::ActionRow>()
+            .and_then(|row| row.subtitle().map(|s| s.to_string()))
+            .or_else(|| {
+                row.downcast_ref::<adw::ExpanderRow>()
+                    .map(|row| row.subtitle().to_string())
+            })
+            .unwrap_or_default();
+        let tooltip = row.tooltip_text().unwrap_or_default();
+        row.set_visible(crate::config_search::page_field_visible(
+            &title, &subtitle, &tooltip, query,
+        ));
+        return;
+    }
+    let mut child = widget.first_child();
+    while let Some(next) = child {
+        apply_page_search_widget(&next, query);
+        child = next.next_sibling();
+    }
 }
 
 fn remote_page(

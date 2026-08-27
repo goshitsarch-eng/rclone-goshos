@@ -40,6 +40,11 @@ pub fn matches_config_search(name: &str, help: &str, field_name: &str, query: &s
         || normalize_rclone_key(field_name).contains(&flex_q)
 }
 
+/// Current-page field rows: title / subtitle / tooltip via `matchesConfigSearch`.
+pub fn page_field_visible(title: &str, subtitle: &str, tooltip: &str, query: &str) -> bool {
+    matches_config_search(title, subtitle, tooltip, query)
+}
+
 /// Angular `filteredRemotes`: match provider name or description.
 pub fn filter_providers(
     query: &str,
@@ -138,6 +143,14 @@ mod tests {
     #[test]
     fn matches_name_help_and_flex_keys() {
         assert!(matches_config_search("client_id", "OAuth client", "", ""));
+        assert!(page_field_visible(
+            "Buffer Size",
+            "Main",
+            "--buffer-size",
+            "buffer"
+        ));
+        assert!(!page_field_visible("Ask Password", "", "", "buffer"));
+        assert!(page_field_visible("Ask Password", "", "", ""));
         assert!(matches_config_search(
             "client_id",
             "OAuth client",
