@@ -847,3 +847,11 @@ This client is the GTK 4 + libadwaita desktop UI. It talks to a local `rclone rc
 - Live GUI: Copy source `testdrive:Pho` lists **Photos** (folder); picking it fills `testdrive:Photos/`
 - Live GUI: testdrive Copy dest `testdrive:verify-multi` Path check shows **Directory has files**
 - Live GUI: testdrive Mount dest `testdrive:Photos` Save is blocked with **Mount destination must be a local folder**; stored mount point stays `/tmp/rclone-testdrive-mnt`
+- Wizard provider type uses Angular `filteredRemotes` type-ahead (name + description) instead of a 100-item ComboRow
+- Wizard fields filter with `matchesConfigSearch` (Name / Help / `--client-id` flex keys)
+- `enableAutoStart` interpolates `{{type}}` from `modals.remoteConfig.steps.*` (Mount → Enable Auto-Mount on Startup)
+- Wizard remote-name errors use `wizards.remoteConfig.*` i18n keys
+- rclone array types (`Encoding`, `DumpFlags`, …) render as check-list MultiSelect when examples exist
+- VFS advanced config is searchable and grouped (Booleans / Durations / Sizes / …)
+- Live GUI: testdrive Mount shows **Enable Auto-Mount on Startup**
+- Live GUI: Quick Add provider `drive` lists **drive — Google Drive** and **onedrive — Microsoft OneDrive**
