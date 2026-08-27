@@ -12074,7 +12074,7 @@ fn populate_file_viewer_body(
                                             "fileBrowser.fileViewer.errorExtract",
                                             "Failed to extract archive",
                                         )),
-                                        Some(&e.to_string()),
+                                        Some(&ctx.translate_error(&e.to_string())),
                                     );
                                     toast.add_response("ok", &ctx.t("common.ok"));
                                     toast.present(Some(&parent));
