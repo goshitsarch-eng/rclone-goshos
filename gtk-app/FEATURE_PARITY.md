@@ -1027,3 +1027,4 @@ This client is the GTK 4 + libadwaita desktop UI. It talks to a local `rclone rc
 - Logs expanders split Angular `terminalOutput` (ANSI) from `logContext` JSON
 - Files window chrome accepts OS `FileList` drops onto the current folder (Tauri `onDragDropEvent` fallback)
 - File viewer live syntax highlighting is debounced (80ms) so large edits do not repaint on every keystroke
+- Live GUI: `--file-viewer testdrive:Photos/README.md` Preview shows inline **notes** button; clicking it opens **README.txt** (`2 / 7`)
