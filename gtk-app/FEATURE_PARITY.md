@@ -1116,3 +1116,6 @@ This client is the GTK 4 + libadwaita desktop UI. It talks to a local `rclone rc
 - Live GUI: Connectivity Check URLs shows **https://www.google.com** with remove
 - Live GUI: `--alerts` Add action editor sections **Basic Information** (name, enabled, action type) and **Configuration**
 - Locale files include `remoteConfig.filterKeys` and `wizards.remoteConfig.noMatchingProviders` (8 non-en locales)
+
+- Files delete, empty trash, and remove-empty-folders ask for confirmation (Angular confirmModal)
+- New Folder / Rename prompts use `nautilus.modals.*`; listing/upload/delete/rename/share/extract errors use i18n toasts

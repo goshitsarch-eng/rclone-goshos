@@ -611,6 +611,38 @@ pub fn prompt(
     dialog.present(Some(parent));
 }
 
+pub fn confirm(
+    parent: &impl IsA<gtk::Widget>,
+    ctx: &AppCtx,
+    title: &str,
+    message: &str,
+    confirm_id: &str,
+    confirm_label: &str,
+    destructive: bool,
+    on_ok: impl Fn() + 'static,
+) {
+    let dialog = adw::AlertDialog::new(Some(title), Some(message));
+    dialog.add_response("cancel", &ctx.t("common.cancel"));
+    dialog.add_response(confirm_id, confirm_label);
+    dialog.set_response_appearance(
+        confirm_id,
+        if destructive {
+            adw::ResponseAppearance::Destructive
+        } else {
+            adw::ResponseAppearance::Suggested
+        },
+    );
+    dialog.set_default_response(Some("cancel"));
+    dialog.set_close_response("cancel");
+    let confirm_id = confirm_id.to_string();
+    dialog.connect_response(None, move |_, response| {
+        if response == confirm_id {
+            on_ok();
+        }
+    });
+    dialog.present(Some(parent));
+}
+
 pub fn confirm_shutdown(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, on_quit: impl Fn() + 'static) {
     if ctx.shutdown_prompt_open.get() {
         return;

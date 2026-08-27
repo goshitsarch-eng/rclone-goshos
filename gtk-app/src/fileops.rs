@@ -1471,6 +1471,20 @@ pub fn nautilus_escape_action(
     }
 }
 
+/// i18n key and params for the Files delete confirmation (Angular `confirmModal`).
+pub fn delete_confirm_i18n(names: &[String]) -> (&'static str, Vec<(String, String)>) {
+    match names {
+        [name] => (
+            "nautilus.modals.delete.messageSingle",
+            vec![("name".into(), name.clone())],
+        ),
+        _ => (
+            "nautilus.modals.delete.messageMultiple",
+            vec![("count".into(), names.len().to_string())],
+        ),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -2266,5 +2280,18 @@ mod tests {
             nautilus_escape_action(true, false, false, false),
             NautilusEscape::ClearSearch
         );
+    }
+
+    #[test]
+    fn delete_confirm_i18n_picks_single_or_count() {
+        let (key, params) = delete_confirm_i18n(&["README.md".into()]);
+        assert_eq!(key, "nautilus.modals.delete.messageSingle");
+        assert_eq!(params, vec![("name".into(), "README.md".into())]);
+        let (key, params) = delete_confirm_i18n(&["a".into(), "b".into(), "c".into()]);
+        assert_eq!(key, "nautilus.modals.delete.messageMultiple");
+        assert_eq!(params, vec![("count".into(), "3".into())]);
+        let (key, params) = delete_confirm_i18n(&[]);
+        assert_eq!(key, "nautilus.modals.delete.messageMultiple");
+        assert_eq!(params, vec![("count".into(), "0".into())]);
     }
 }

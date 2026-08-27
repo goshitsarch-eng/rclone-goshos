@@ -3297,6 +3297,36 @@ impl NautilusView {
     }
 
     fn cleanup_named_remote(&self, remote: &str) {
+        self.confirm_empty_trash(remote);
+    }
+
+    fn confirm_empty_trash(&self, remote: &str) {
+        let Some(win) = self.root.root().and_downcast::<gtk::Window>() else {
+            return;
+        };
+        let view = self.clone();
+        let remote = remote.to_string();
+        dialogs::confirm(
+            &win,
+            &self.ctx,
+            &self
+                .ctx
+                .t_or("nautilus.modals.emptyTrash.title", "Empty Trash"),
+            &self.ctx.tf_or(
+                "nautilus.modals.emptyTrash.message",
+                "Are you sure you want to remove trashed items in {{remote}}?",
+                &[("remote", &remote)],
+            ),
+            "empty",
+            &self
+                .ctx
+                .t_or("nautilus.contextMenu.emptyTrash", "Empty Trash"),
+            true,
+            move || view.perform_empty_trash(&remote),
+        );
+    }
+
+    fn perform_empty_trash(&self, remote: &str) {
         let Some(client) = self.ctx.client() else {
             return;
         };
@@ -3311,10 +3341,11 @@ impl NautilusView {
                     .ctx
                     .t_or("nautilus.notifications.trashEmptied", "Cleanup started"),
             )),
-            Err(e) => self.toast.add_toast(adw::Toast::new(&self.ctx.tf(
+            Err(e) => self.toast_error(
                 "nautilus.errors.emptyTrashFailed",
+                "Failed to empty trash in {{remote}}: {{error}}",
                 &[("remote", remote), ("error", &e.to_string())],
-            ))),
+            ),
         }
     }
 
@@ -4263,8 +4294,10 @@ impl NautilusView {
             &self.ctx,
             &self
                 .ctx
-                .t_or("nautilus.contextMenu.newFolder", "New folder with selected"),
-            &self.ctx.t_or("common.name", "Folder name"),
+                .t_or("nautilus.modals.newFolder.title", "New Folder"),
+            &self
+                .ctx
+                .t_or("nautilus.modals.newFolder.label", "Folder name"),
             "",
             move |name| {
                 if name.is_empty() {
@@ -4350,8 +4383,10 @@ impl NautilusView {
                 &self.ctx,
                 &self
                     .ctx
-                    .t_or("nautilus.contextMenu.newFolder", "New folder"),
-                &self.ctx.t_or("common.name", "Folder name"),
+                    .t_or("nautilus.modals.newFolder.title", "New Folder"),
+                &self
+                    .ctx
+                    .t_or("nautilus.modals.newFolder.label", "Folder name"),
                 "",
                 move |name| {
                     if name.is_empty() {
@@ -4529,7 +4564,11 @@ impl NautilusView {
                     &[("count", &items.len().to_string())],
                 ));
             }
-            Err(e) => self.toast.add_toast(adw::Toast::new(&e)),
+            Err(e) => self.toast_error(
+                "nautilus.notifications.uploadFailed",
+                "Failed to upload {{count}} files.",
+                &[("count", &items.len().to_string()), ("error", &e)],
+            ),
         }
     }
 
@@ -4794,7 +4833,10 @@ impl NautilusView {
                 self.schedule_list_poll(primary, gen);
             }
             Err(err) => {
-                self.toast.add_toast(adw::Toast::new(&err.to_string()));
+                let message = self
+                    .ctx
+                    .t_or("nautilus.errors.loadFailed", "Failed to load directory");
+                self.toast.add_toast(adw::Toast::new(&message));
                 self.finish_listing_error(primary, &err.to_string());
             }
         }
@@ -4859,7 +4901,11 @@ impl NautilusView {
                         view.listing_generation(primary),
                         gen,
                     ) {
-                        view.toast.add_toast(adw::Toast::new(&err));
+                        view.toast.add_toast(adw::Toast::new(
+                            &view
+                                .ctx
+                                .t_or("nautilus.errors.loadFailed", "Failed to load directory"),
+                        ));
                         view.finish_listing_error(primary, &err);
                     }
                     glib::ControlFlow::Break
@@ -5366,8 +5412,8 @@ impl NautilusView {
         dialogs::prompt(
             &win,
             &self.ctx,
-            &self.ctx.t_or("nautilus.contextMenu.rename", "Rename"),
-            &self.ctx.t_or("modals.remoteConfig.newName", "New name"),
+            &self.ctx.t_or("nautilus.modals.rename.title", "Rename"),
+            &self.ctx.t_or("nautilus.modals.rename.label", "New name"),
             &old.clone(),
             move |new_name| {
                 if new_name.is_empty() || new_name == old {
@@ -5413,8 +5459,17 @@ impl NautilusView {
                             view.queue_job_undo(&ids, vec![item.file_op()]);
                             view.ctx.refresh_runtime();
                             view.reload();
+                            view.toast.add_toast(adw::Toast::new(
+                                &view
+                                    .ctx
+                                    .t_or("nautilus.notifications.renameStarted", "Rename started"),
+                            ));
                         }
-                        Err(e) => view.toast.add_toast(adw::Toast::new(&e)),
+                        Err(e) => view.toast_error(
+                            "nautilus.errors.renameFailed",
+                            "Failed to rename '{{name}}': {{error}}",
+                            &[("name", &old), ("error", &e)],
+                        ),
                     }
                 }
             },
@@ -5426,6 +5481,39 @@ impl NautilusView {
         if names.is_empty() {
             return;
         }
+        let Some(win) = self.root.root().and_downcast::<gtk::Window>() else {
+            return;
+        };
+        let (key, params) = crate::fileops::delete_confirm_i18n(&names);
+        let param_refs: Vec<(&str, &str)> = params
+            .iter()
+            .map(|(k, v)| (k.as_str(), v.as_str()))
+            .collect();
+        let view = self.clone();
+        dialogs::confirm(
+            &win,
+            &self.ctx,
+            &self
+                .ctx
+                .t_or("nautilus.modals.delete.title", "Delete Items"),
+            &self.ctx.tf_or(
+                key,
+                "Are you sure you want to delete these items?",
+                &param_refs,
+            ),
+            "delete",
+            &self.ctx.t("common.delete"),
+            true,
+            move || view.perform_delete_selected(),
+        );
+    }
+
+    fn perform_delete_selected(&self) {
+        let names = self.selected_names();
+        if names.is_empty() {
+            return;
+        }
+        let count = names.len().to_string();
         let Some(client) = self.ctx.client() else {
             return;
         };
@@ -5463,8 +5551,17 @@ impl NautilusView {
                 self.queue_job_undo(&ids, undos);
                 self.ctx.refresh_runtime();
                 self.reload();
+                self.toast.add_toast(adw::Toast::new(&self.ctx.tf_or(
+                    "nautilus.notifications.deleteStarted",
+                    "Deleting {{count}} items",
+                    &[("count", &count)],
+                )));
             }
-            Err(e) => self.toast.add_toast(adw::Toast::new(&e)),
+            Err(e) => self.toast_error(
+                "nautilus.errors.deleteFailed",
+                "Failed to delete {{count}} items",
+                &[("count", &count), ("error", &e)],
+            ),
         }
     }
 
@@ -5667,9 +5764,31 @@ impl NautilusView {
                 self.queue_job_undo(&ids, transfers.iter().map(|item| item.file_op()).collect());
                 self.ctx.refresh_runtime();
                 self.reload();
-                self.toast_with_undo(&format!("Transfer group {group} · {} job(s)", ids.len()));
+                let count = transfers.len().to_string();
+                let moved = transfers.iter().any(|item| item.cut);
+                self.toast_with_undo(&self.ctx.tf_or(
+                    if moved {
+                        "nautilus.notifications.moveStarted"
+                    } else {
+                        "nautilus.notifications.copyStarted"
+                    },
+                    "Transfer started ({{count}})",
+                    &[("count", &count)],
+                ));
             }
-            Err(e) => self.toast.add_toast(adw::Toast::new(&e)),
+            Err(e) => {
+                let count = transfers.len().to_string();
+                let moved = transfers.iter().any(|item| item.cut);
+                self.toast_error(
+                    if moved {
+                        "nautilus.errors.moveFailed"
+                    } else {
+                        "nautilus.errors.copyFailed"
+                    },
+                    "Transfer failed",
+                    &[("count", &count), ("error", &e)],
+                );
+            }
         }
     }
 
@@ -6419,7 +6538,11 @@ impl NautilusView {
                 "nautilus.notifications.noPublicLink",
                 "Remote did not return a public link",
             ))),
-            Err(e) => self.toast.add_toast(adw::Toast::new(&e.to_string())),
+            Err(e) => self.toast_error(
+                "fileBrowser.properties.failGetLink",
+                "Failed to get public link: {{error}}",
+                &[("error", &e.to_string())],
+            ),
         }
     }
 
@@ -6465,6 +6588,40 @@ impl NautilusView {
     }
 
     fn remove_empty_dirs(&self) {
+        let Some(win) = self.root.root().and_downcast::<gtk::Window>() else {
+            return;
+        };
+        let current = self.current.borrow().clone();
+        let path = self
+            .selected_name()
+            .map(|n| join_remote_path(&current.path, &n))
+            .unwrap_or_else(|| current.path.clone());
+        let leaf = crate::checks::leaf_name(&path);
+        let name = if leaf.is_empty() {
+            current.remote.clone()
+        } else {
+            leaf
+        };
+        let view = self.clone();
+        dialogs::confirm(
+            &win,
+            &self.ctx,
+            &self
+                .ctx
+                .t_or("nautilus.modals.rmdirs.title", "Remove Empty Folders"),
+            &self.ctx.tf_or(
+                "nautilus.modals.rmdirs.message",
+                "Are you sure you want to remove all empty folders in \"{{name}}\"?",
+                &[("name", &name)],
+            ),
+            "rmdirs",
+            &self.ctx.t_or("nautilus.modals.rmdirs.confirm", "Remove"),
+            true,
+            move || view.perform_remove_empty_dirs(),
+        );
+    }
+
+    fn perform_remove_empty_dirs(&self) {
         let Some(client) = self.ctx.client() else {
             return;
         };
@@ -6474,16 +6631,17 @@ impl NautilusView {
             .map(|n| join_remote_path(&current.path, &n))
             .unwrap_or_else(|| current.path.clone());
         let (fs, remote) = fs_remote(&current.remote, &path);
+        let leaf = crate::checks::leaf_name(&path);
         match client.rmdirs(&fs, &remote) {
             Ok(_) => {
                 self.reload();
-                self.toast.add_toast(adw::Toast::new(&self.ctx.t_or(
-                    "nautilus.notifications.rmdirsDone",
-                    "Removed empty directories",
+                self.toast.add_toast(adw::Toast::new(&self.ctx.tf_or(
+                    "nautilus.notifications.rmdirsStarted",
+                    "Removing empty folders in {{name}}",
+                    &[("name", &leaf)],
                 )));
             }
             Err(e) => {
-                let leaf = crate::checks::leaf_name(&path);
                 self.toast_error(
                     "nautilus.errors.rmdirsFailed",
                     "Failed to remove empty folders",
@@ -6494,23 +6652,8 @@ impl NautilusView {
     }
 
     fn cleanup_remote(&self) {
-        let Some(client) = self.ctx.client() else {
-            return;
-        };
         let current = self.current.borrow().clone();
-        let (fs, remote) = fs_remote(&current.remote, &current.path);
-        let remote_opt = if remote.is_empty() {
-            None
-        } else {
-            Some(remote.as_str())
-        };
-        match client.cleanup(&fs, remote_opt) {
-            Ok(_) => self.toast.add_toast(adw::Toast::new(&self.ctx.t_or(
-                "nautilus.notifications.cleanupStarted",
-                "Cleanup started for this remote",
-            ))),
-            Err(e) => self.toast.add_toast(adw::Toast::new(&e.to_string())),
-        }
+        self.confirm_empty_trash(&current.remote);
     }
 
     fn extract_selected(&self) {
@@ -6547,12 +6690,19 @@ impl NautilusView {
                     format!("{}:{dst}", current.remote)
                 };
                 match client.archive_extract(&src, &dest) {
-                    Ok(id) => {
+                    Ok(_id) => {
                         view.ctx.refresh_runtime();
-                        view.toast
-                            .add_toast(adw::Toast::new(&format!("Extract job #{id}")));
+                        view.toast.add_toast(adw::Toast::new(&view.ctx.tf_or(
+                            "fileBrowser.fileViewer.extracting",
+                            "Extracting {{name}}...",
+                            &[("name", &name)],
+                        )));
                     }
-                    Err(e) => view.toast.add_toast(adw::Toast::new(&e.to_string())),
+                    Err(e) => view.toast_error(
+                        "fileBrowser.fileViewer.errorUnexpected",
+                        "Failed to extract: {{error}}",
+                        &[("error", &e.to_string())],
+                    ),
                 }
             },
         );
@@ -6574,7 +6724,11 @@ impl NautilusView {
                     "nautilus.notifications.shareOpened",
                     "Opened system share for the file",
                 ))),
-                Err(e) => self.toast.add_toast(adw::Toast::new(&e)),
+                Err(e) => self.toast_error(
+                    "fileBrowser.fileViewer.errorUnexpected",
+                    "Share failed: {{error}}",
+                    &[("error", &e)],
+                ),
             }
             return;
         }
@@ -6589,9 +6743,17 @@ impl NautilusView {
                     "nautilus.notifications.shareOpened",
                     "Opened system share for the file",
                 ))),
-                Err(e) => self.toast.add_toast(adw::Toast::new(&e)),
+                Err(e) => self.toast_error(
+                    "fileBrowser.fileViewer.errorUnexpected",
+                    "Share failed: {{error}}",
+                    &[("error", &e)],
+                ),
             },
-            Err(e) => self.toast.add_toast(adw::Toast::new(&e.to_string())),
+            Err(e) => self.toast_error(
+                "fileBrowser.fileViewer.errorUnexpected",
+                "Share failed: {{error}}",
+                &[("error", &e.to_string())],
+            ),
         }
     }
 
