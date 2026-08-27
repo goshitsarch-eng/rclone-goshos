@@ -1036,3 +1036,7 @@ This client is the GTK 4 + libadwaita desktop UI. It talks to a local `rclone rc
 - File viewer save shows `saveSuccess` / `saveError` toasts; Preview / Edit / Save / Wrap live on the header toolbar
 - Text editor has a CodeMirror-style line-number gutter and a wrap-lines toggle
 - Job detail has a dedicated Paths section (copy buttons) and Active / Completed / Checks transfer tabs
+
+- Live GUI: `--file-viewer testdrive:Photos/README.md` header packs Open / Download / Wrap / Preview / Edit; Preview shows markdown plus **notes**
+- Live GUI: Escape closes the file viewer (not while editing)
+- Live GUI: `--job 42424` shows Paths **testdrive:Photos** → **testdrive:verify-ops** and tabs Active (0) / Recent (2) / Checked (0); Recent lists ok.txt and bad.txt

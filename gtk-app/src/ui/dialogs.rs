@@ -9077,6 +9077,7 @@ pub fn job_detail(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, job_id: u64) {
     paths.add_css_class("boxed-list");
     let transfer_stack = gtk::Stack::new();
     transfer_stack.set_hexpand(true);
+    transfer_stack.set_size_request(-1, 180);
     transfer_stack.add_titled(
         &transfers,
         Some("active"),
@@ -10614,9 +10615,11 @@ fn attach_text_preview(
         let save = gtk::Button::with_label(&ctx.t_or("fileBrowser.fileViewer.save", "Save"));
         save.add_css_class("suggested-action");
         save.set_sensitive(false);
+        save.set_visible(false);
         save.set_valign(gtk::Align::Center);
         let cancel = gtk::Button::with_label(&ctx.t_or("fileBrowser.fileViewer.cancel", "Cancel"));
         cancel.set_sensitive(false);
+        cancel.set_visible(false);
         cancel.set_valign(gtk::Align::Center);
         {
             let view = view.clone();
@@ -10624,7 +10627,9 @@ fn attach_text_preview(
             let cancel = cancel.clone();
             edit.connect_clicked(move |_| {
                 view.set_editable(true);
+                save.set_visible(true);
                 save.set_sensitive(true);
+                cancel.set_visible(true);
                 cancel.set_sensitive(true);
             });
         }
@@ -10637,7 +10642,9 @@ fn attach_text_preview(
                 view.buffer().set_text(&original);
                 view.set_editable(false);
                 save.set_sensitive(false);
+                save.set_visible(false);
                 cancel_btn.set_sensitive(false);
+                cancel_btn.set_visible(false);
             });
         }
         let view = view.clone();
@@ -10672,7 +10679,9 @@ fn attach_text_preview(
             }
             view.set_editable(false);
             btn.set_sensitive(false);
+            btn.set_visible(false);
             cancel_for_save.set_sensitive(false);
+            cancel_for_save.set_visible(false);
             let message = notify_ctx.t_or(
                 if ok {
                     "fileBrowser.fileViewer.saveSuccess"
@@ -10686,7 +10695,9 @@ fn attach_text_preview(
                 },
             );
             if let Some(toast) = &toast {
-                toast.add_toast(adw::Toast::new(&message));
+                let toast_msg = adw::Toast::new(&message);
+                toast_msg.set_timeout(5);
+                toast.add_toast(toast_msg);
             } else {
                 notify_ctx.notify(&message, "");
             }
