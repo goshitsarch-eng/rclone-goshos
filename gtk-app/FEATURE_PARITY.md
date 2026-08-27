@@ -1136,3 +1136,5 @@ This client is the GTK 4 + libadwaita desktop UI. It talks to a local `rclone rc
 - Check-result resolve toasts use `successSync` / `failSync`; job detail check rows toast on the dialog overlay
 - Properties groups folder size under Content Stats and disk usage under Storage; hash load/fail use dedicated keys
 - Indexed VFS banner titles **VFS Controls Unavailable**; queue rows label Size / Status / Name
+
+- Live GUI: `--properties testdrive:Photos` shows **Storage** Used 102.6 GiB / Free 136.4 GiB / Total Capacity 251.9 GiB and **Content Stats** Contained Files 293 / Total Size 20.0 MiB
