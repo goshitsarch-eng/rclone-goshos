@@ -75,6 +75,12 @@ pub fn same_nav_location(a_remote: &str, a_path: &str, b_remote: &str, b_path: &
     a_remote == b_remote && a_path.trim_matches('/') == b_path.trim_matches('/')
 }
 
+/// Starred (and stale generation) results must not replace the collection list.
+/// Angular `starredMode` cancels in-flight `listReadGroups` before painting stars.
+pub fn should_apply_directory_list(starred: bool, current_gen: u64, job_gen: u64) -> bool {
+    !starred && current_gen == job_gen
+}
+
 pub fn pop_nav_back(
     history: &mut Vec<(String, String)>,
     future: &mut Vec<(String, String)>,
@@ -401,5 +407,13 @@ mod tests {
             listing_siblings(&entries),
             vec![("Photos".into(), true), ("README.md".into(), false)]
         );
+    }
+
+    #[test]
+    fn directory_list_results_do_not_overwrite_starred() {
+        assert!(should_apply_directory_list(false, 3, 3));
+        assert!(!should_apply_directory_list(true, 3, 3));
+        assert!(!should_apply_directory_list(false, 4, 3));
+        assert!(!should_apply_directory_list(true, 4, 3));
     }
 }

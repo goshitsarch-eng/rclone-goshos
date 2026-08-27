@@ -989,3 +989,6 @@ This client is the GTK 4 + libadwaita desktop UI. It talks to a local `rclone rc
 
 - Live GUI: `--repair` Show Advanced reveals Recommended / Custom / Existing; Existing `/usr/bin/rclone` Test shows **Valid binary** and **Use This Binary**
 - Live GUI: `--starred` opens Files on Starred with per-item Unstar buttons
+
+- Opening Starred cancels in-flight `operations/list` jobs so the collection is not replaced by the previous folder (Angular `starredMode`)
+- Dragging a tab outside the tab strip scales it to 0 while the pointer is over the listing or sidebar, not only on drag-end

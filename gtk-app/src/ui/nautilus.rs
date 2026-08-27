@@ -1966,8 +1966,12 @@ impl NautilusView {
                 if view.pending_drag.borrow().is_some() {
                     host.add_css_class("file-drag-over");
                 }
-                if let (Some(from), InternalDrop::Tab(to_id)) = (view.tab_drag_from.get(), &dest) {
-                    view.apply_tab_slide_preview(from, *to_id, false);
+                if let Some(from) = view.tab_drag_from.get() {
+                    if let InternalDrop::Tab(to_id) = &dest {
+                        view.apply_tab_slide_preview(from, *to_id, false);
+                    } else {
+                        view.apply_tab_slide_preview(from, from, true);
+                    }
                 }
                 view.schedule_hover_open(&dest);
                 gtk::gdk::DragAction::COPY
@@ -3383,6 +3387,8 @@ impl NautilusView {
         clear_list(&self.list);
         clear_flow(&self.grid);
         if self.current.borrow().starred {
+            self.stop_list_group(true);
+            self.set_listing_loading(true, false);
             self.populate_starred();
             return;
         }
@@ -4494,13 +4500,24 @@ impl NautilusView {
             match listing::poll_list_job(&client, jobid) {
                 ListJobState::Running => glib::ControlFlow::Continue,
                 ListJobState::Finished(entries) => {
-                    if view.listing_generation(primary) == gen {
+                    if listing::should_apply_directory_list(
+                        primary && view.current.borrow().starred,
+                        view.listing_generation(primary),
+                        gen,
+                    ) {
                         view.finish_listing_ok(primary, entries);
+                    } else {
+                        view.set_list_job(primary, None);
+                        view.set_listing_loading(primary, false);
                     }
                     glib::ControlFlow::Break
                 }
                 ListJobState::Cancelled => {
-                    if view.listing_generation(primary) == gen {
+                    if listing::should_apply_directory_list(
+                        primary && view.current.borrow().starred,
+                        view.listing_generation(primary),
+                        gen,
+                    ) {
                         view.set_listing_loading(primary, false);
                         view.set_list_job(primary, None);
                         view.status.set_text(
@@ -4512,7 +4529,11 @@ impl NautilusView {
                     glib::ControlFlow::Break
                 }
                 ListJobState::Failed(err) => {
-                    if view.listing_generation(primary) == gen {
+                    if listing::should_apply_directory_list(
+                        primary && view.current.borrow().starred,
+                        view.listing_generation(primary),
+                        gen,
+                    ) {
                         view.toast.add_toast(adw::Toast::new(&err));
                         view.finish_listing_error(primary, &err);
                     }
@@ -4558,6 +4579,9 @@ impl NautilusView {
     fn finish_listing_ok(&self, primary: bool, entries: Vec<DirEntry>) {
         self.set_list_job(primary, None);
         self.set_listing_loading(primary, false);
+        if primary && self.current.borrow().starred {
+            return;
+        }
         let entries = self.filter_listing_entries(entries, primary);
         self.populate_entries(&entries, primary);
         if primary {
