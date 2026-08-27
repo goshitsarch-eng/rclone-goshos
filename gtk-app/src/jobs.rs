@@ -1824,7 +1824,7 @@ pub fn merge_overview_jobs(
             && profile.is_none_or(|wanted| {
                 job.profile == wanted || job.profile.is_empty() || job.profile == "default"
             })
-            && operation.is_none_or(|op| job_operation_matches(&job.operation, op))
+            && overview_operation_matches(job, operation, profile)
     };
     let mut out: Vec<JobInfo> = live.iter().filter(|job| matches(job)).cloned().collect();
     let ids: HashSet<u64> = out.iter().map(|job| job.id).collect();
@@ -2386,6 +2386,34 @@ pub fn job_operation_matches(job_op: &str, op: OperationType) -> bool {
         return true;
     }
     lower.split(['/', ':', ' ', '.']).any(|part| part == key)
+}
+
+/// rclone 1.60 finished jobs are stored as `job/<id>` (the RC group), not `copy`.
+pub fn is_opaque_job_operation(operation: &str) -> bool {
+    operation == "job" || operation.starts_with("job/")
+}
+
+fn overview_operation_matches(
+    job: &JobInfo,
+    operation: Option<OperationType>,
+    profile: Option<&str>,
+) -> bool {
+    let Some(op) = operation else {
+        return true;
+    };
+    if job_operation_matches(&job.operation, op) {
+        return true;
+    }
+    // Viewing a named profile: treat opaque leftovers as that operation so
+    // Transfer Activity follows the latest profile job instead of an older
+    // `copy`-labeled leftover (e.g. 42424).
+    is_opaque_job_operation(&job.operation)
+        && profile.is_some_and(|wanted| {
+            !wanted.is_empty()
+                && (job.profile == wanted
+                    || (wanted == "default"
+                        && (job.profile.is_empty() || job.profile == "default")))
+        })
 }
 
 pub fn job_belongs_to_remote(job: &JobInfo, remote: &str) -> bool {
@@ -5535,11 +5563,16 @@ mod tests {
             .unwrap()
             .with_timezone(&Utc);
         leftover.completed = json!([{ "name": "ok.txt" }, { "name": "bad.txt" }]);
-        let mut live_copy = running_job(24749, "testdrive", "copy", "gui-copy-test");
+        let mut live_copy = running_job(24749, "testdrive", "job/24749", "gui-copy-test");
         live_copy.start_time = DateTime::parse_from_rfc3339("2026-08-27T21:22:00Z")
             .unwrap()
             .with_timezone(&Utc);
         live_copy.transferring = json!([{ "name": "blob.bin", "speed": 2_097_152.0 }]);
+        assert!(is_opaque_job_operation(&live_copy.operation));
+        assert!(!job_operation_matches(
+            &live_copy.operation,
+            OperationType::Copy
+        ));
         let merged_copies = merge_overview_jobs(
             &[live_copy.clone()],
             &[leftover.clone()],

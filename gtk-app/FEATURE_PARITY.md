@@ -1198,3 +1198,5 @@ This client is the GTK 4 + libadwaita desktop UI. It talks to a local `rclone rc
 - Live GUI: `--job` / Job Detail for copy **#24749** shows **Completed · 100% · 39.8s**, transfer tabs **Recent (1)**
 
 - Operations/Flow Transfer Activity follows Angular `getLatestJobForRemote` (newest start_time then id) instead of merging every leftover job’s transfers; rows pass the selected job id/src/dst for Copy-to-Destination resolve
+
+- rclone 1.60 leftover jobs stored as `job/<id>` still match the selected operation when their profile matches, so latest Transfer Activity is not stuck on an older `copy`-labeled leftover
