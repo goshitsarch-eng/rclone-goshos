@@ -422,8 +422,42 @@ impl NautilusView {
         tab_scroll.set_policy(gtk::PolicyType::Automatic, gtk::PolicyType::Never);
         tab_scroll.set_propagate_natural_height(true);
         tab_scroll.set_child(Some(&tab_bar));
+        let tab_overlay = gtk::Overlay::new();
+        tab_overlay.set_child(Some(&tab_scroll));
+        let tab_fade_start = gtk::Box::new(gtk::Orientation::Horizontal, 0);
+        tab_fade_start.add_css_class("tab-fade-start");
+        tab_fade_start.set_halign(gtk::Align::Start);
+        tab_fade_start.set_valign(gtk::Align::Fill);
+        tab_fade_start.set_can_target(false);
+        tab_fade_start.set_visible(false);
+        let tab_fade_end = gtk::Box::new(gtk::Orientation::Horizontal, 0);
+        tab_fade_end.add_css_class("tab-fade-end");
+        tab_fade_end.set_halign(gtk::Align::End);
+        tab_fade_end.set_valign(gtk::Align::Fill);
+        tab_fade_end.set_can_target(false);
+        tab_fade_end.set_visible(false);
+        tab_overlay.add_overlay(&tab_fade_start);
+        tab_overlay.add_overlay(&tab_fade_end);
+        {
+            let tab_fade_start = tab_fade_start.clone();
+            let tab_fade_end = tab_fade_end.clone();
+            let sync = Rc::new(move |adj: &gtk::Adjustment| {
+                tab_fade_start.set_visible(adj.value() > 1.0);
+                tab_fade_end.set_visible(adj.value() + adj.page_size() + 1.0 < adj.upper());
+            });
+            let adj = tab_scroll.hadjustment();
+            adj.connect_value_changed({
+                let sync = sync.clone();
+                move |adj| sync(adj)
+            });
+            adj.connect_notify_local(Some("upper"), {
+                let sync = sync.clone();
+                move |adj, _| sync(adj)
+            });
+            adj.connect_notify_local(Some("page-size"), move |adj, _| sync(adj));
+        }
         let files_col = gtk::Box::new(gtk::Orientation::Vertical, 4);
-        files_col.append(&tab_scroll);
+        files_col.append(&tab_overlay);
         files_col.append(&paned);
         split.set_content(Some(&files_col));
 
@@ -1578,6 +1612,24 @@ impl NautilusView {
         }
     }
 
+    fn starred_unstar_button(&self, path: &str, name: &str) -> gtk::Button {
+        let btn = gtk::Button::from_icon_name("starred-symbolic");
+        btn.add_css_class("flat");
+        btn.add_css_class("star-button");
+        btn.set_tooltip_text(Some(
+            &self.ctx.t_or("fileBrowser.properties.unstar", "Unstar"),
+        ));
+        btn.set_can_focus(false);
+        let view = self.clone();
+        let path = path.to_string();
+        let name = name.to_string();
+        btn.connect_clicked(move |b| {
+            view.toggle_star_path(&path, &name);
+            b.set_state_flags(gtk::StateFlags::empty(), true);
+        });
+        btn
+    }
+
     fn show_starred(&self) {
         self.close_sidebar_if_narrow();
         let current = self.current.borrow().clone();
@@ -1890,10 +1942,13 @@ impl NautilusView {
             glib::Type::STRING,
             gtk::gdk::DragAction::COPY | gtk::gdk::DragAction::MOVE,
         );
+        let host = widget.clone().upcast::<gtk::Widget>();
         {
             let view = self.clone();
             let dest = dest.clone();
+            let host = host.clone();
             drop.connect_drop(move |_, value, _, _| {
+                host.remove_css_class("file-drag-over");
                 view.clear_hover_open();
                 let Ok(text) = value.get::<String>() else {
                     return false;
@@ -1904,14 +1959,20 @@ impl NautilusView {
         {
             let view = self.clone();
             let dest = dest.clone();
+            let host = host.clone();
             drop.connect_enter(move |_, _, _| {
+                if view.pending_drag.borrow().is_some() {
+                    host.add_css_class("file-drag-over");
+                }
                 view.schedule_hover_open(&dest);
                 gtk::gdk::DragAction::COPY
             });
         }
         {
             let view = self.clone();
+            let host = host.clone();
             drop.connect_leave(move |_| {
+                host.remove_css_class("file-drag-over");
                 view.clear_hover_open();
             });
         }
@@ -3451,6 +3512,9 @@ impl NautilusView {
         });
         let icon = self.entry_icon(&entry, tab);
         row.add_prefix(&icon);
+        if tab.starred {
+            row.add_prefix(&self.starred_unstar_button(&entry.path, &entry.name));
+        }
         if self.entry_is_cut(tab, &entry.name) {
             row.add_css_class("cut-item");
             row.set_opacity(0.5);
@@ -3515,6 +3579,14 @@ impl NautilusView {
         overlay.set_vexpand(true);
         overlay.set_overflow(gtk::Overflow::Visible);
         overlay.set_child(Some(&tile));
+        if tab.starred {
+            let star = self.starred_unstar_button(&entry.path, &entry.name);
+            star.set_halign(gtk::Align::Start);
+            star.set_valign(gtk::Align::Start);
+            star.set_margin_start(4);
+            star.set_margin_top(4);
+            overlay.add_overlay(&star);
+        }
         let hit = gtk::Box::new(gtk::Orientation::Horizontal, 0);
         hit.add_css_class("file-item-menu-hit");
         hit.set_halign(gtk::Align::End);

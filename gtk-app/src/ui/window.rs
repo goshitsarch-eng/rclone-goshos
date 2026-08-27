@@ -2697,6 +2697,36 @@ fn apply_startup_css() {
            min-width: 28px;\n\
            background-image: linear-gradient(to left, @window_bg_color, transparent);\n\
          }\n\
+         .tab-fade-start {\n\
+           min-width: 28px;\n\
+           background-image: linear-gradient(to right, @window_bg_color, transparent);\n\
+         }\n\
+         .tab-fade-end {\n\
+           min-width: 28px;\n\
+           background-image: linear-gradient(to left, @window_bg_color, transparent);\n\
+         }\n\
+         .file-drag-over {\n\
+           background-color: alpha(@accent_bg_color, 0.35);\n\
+           outline: 2px solid alpha(@accent_color, 0.65);\n\
+           outline-offset: -2px;\n\
+         }\n\
+         .star-button {\n\
+           min-width: 32px;\n\
+           min-height: 32px;\n\
+           padding: 4px;\n\
+         }\n\
+         levelbar.disk-usage-critical trough block.filled {\n\
+           background-color: @destructive_bg_color;\n\
+         }\n\
+         levelbar.disk-usage-high trough block.filled {\n\
+           background-color: #e66100;\n\
+         }\n\
+         levelbar.disk-usage-warning trough block.filled {\n\
+           background-color: @warning_bg_color;\n\
+         }\n\
+         levelbar.disk-usage-healthy trough block.filled {\n\
+           background-color: @success_bg_color;\n\
+         }\n\
          .cut-item { opacity: 0.5; }\n\
          .cut-icon {\n\
            outline: 2px dashed alpha(@window_fg_color, 0.45);\n\

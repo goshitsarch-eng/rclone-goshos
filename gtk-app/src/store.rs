@@ -2080,6 +2080,20 @@ pub fn disk_usage_ratio(about: &Value) -> Option<f64> {
     }
 }
 
+/// CSS class for remote disk-usage bars — mirrors Angular `DiskUsagePanel.usageSeverity`.
+pub fn disk_usage_severity_css(ratio: f64) -> &'static str {
+    let pct = ratio * 100.0;
+    if pct >= 90.0 {
+        "disk-usage-critical"
+    } else if pct >= 80.0 {
+        "disk-usage-high"
+    } else if pct >= 60.0 {
+        "disk-usage-warning"
+    } else {
+        "disk-usage-healthy"
+    }
+}
+
 /// Angular `sortOptions` keys: `name-asc`, `name-desc`, `modified-desc`, …
 pub fn sort_option_key(sort_by: &str, sort_desc: bool) -> &'static str {
     match (sort_by, sort_desc) {
@@ -2319,6 +2333,14 @@ mod tests {
         assert_eq!(disk_usage_ratio(&json!({"total": 0, "used": 1})), None);
         assert_eq!(disk_usage_ratio(&json!({})), None);
         assert_eq!(disk_label_from_about(&json!({})), "Not supported");
+    }
+
+    #[test]
+    fn disk_usage_severity_thresholds_match_angular() {
+        assert_eq!(disk_usage_severity_css(0.59), "disk-usage-healthy");
+        assert_eq!(disk_usage_severity_css(0.60), "disk-usage-warning");
+        assert_eq!(disk_usage_severity_css(0.85), "disk-usage-high");
+        assert_eq!(disk_usage_severity_css(0.95), "disk-usage-critical");
     }
 
     #[test]

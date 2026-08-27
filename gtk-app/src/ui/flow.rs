@@ -989,6 +989,7 @@ impl FlowView {
                         bar.set_max_value(1.0);
                         bar.set_value(ratio);
                         bar.set_hexpand(true);
+                        bar.add_css_class(crate::store::disk_usage_severity_css(ratio));
                         box_.append(&bar);
                     }
                 }

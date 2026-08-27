@@ -3392,11 +3392,13 @@ impl Dashboard {
             ));
             self.detail_box().append(&row);
             if usage.total > 0 {
+                let ratio = usage.used as f64 / usage.total as f64;
                 let bar = gtk::LevelBar::new();
                 bar.set_min_value(0.0);
                 bar.set_max_value(1.0);
-                bar.set_value(usage.used as f64 / usage.total as f64);
+                bar.set_value(ratio);
                 bar.set_hexpand(true);
+                bar.add_css_class(crate::store::disk_usage_severity_css(ratio));
                 self.detail_box().append(&bar);
             }
         }
@@ -3425,6 +3427,7 @@ impl Dashboard {
                         bar.set_max_value(1.0);
                         bar.set_value(ratio);
                         bar.set_hexpand(true);
+                        bar.add_css_class(crate::store::disk_usage_severity_css(ratio));
                         box_.append(&bar);
                     }
                 }
