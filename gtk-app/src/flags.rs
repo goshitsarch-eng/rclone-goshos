@@ -3,6 +3,7 @@
 
 use crate::operations::OperationType;
 use serde_json::{json, Map, Value};
+use std::collections::{BTreeMap, HashSet};
 
 const BACKEND_INCLUDE: &[&str] = &[
     "Performance",
@@ -565,6 +566,142 @@ pub fn options_for_category<'a>(
     out
 }
 
+/// Angular rclone-flags home: three top-level buckets.
+pub const MAIN_CATEGORY_KEYS: &[&str] = &[
+    "generalSettings",
+    "fileSystemAndStorage",
+    "networkAndServers",
+];
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FlagServiceCategory {
+    pub name: String,
+    pub options: Vec<FlagOption>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FlagService {
+    pub name: String,
+    pub categories: Vec<FlagServiceCategory>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FlagSearchHit {
+    pub service: String,
+    pub category: String,
+    pub option: FlagOption,
+}
+
+/// First `FieldName` segment, or `General` when the name is not dotted.
+pub fn option_field_category(field_name: &str) -> &str {
+    field_name
+        .split_once('.')
+        .map(|(group, _)| group)
+        .filter(|group| !group.is_empty())
+        .unwrap_or("General")
+}
+
+/// Angular `SERVICE_CONFIG[name].mainCategory` (unknown services → Network).
+pub fn service_main_category(service: &str) -> &'static str {
+    match service.to_ascii_lowercase().as_str() {
+        "vfs" | "mount" | "filter" => "fileSystemAndStorage",
+        "main" | "log" | "rc" | "proxy" => "generalSettings",
+        _ => "networkAndServers",
+    }
+}
+
+/// Group `options/info` blocks the way Angular `group_options` does:
+/// service = block name, category = first `FieldName` segment.
+pub fn group_blocks_by_service(blocks: &[FlagBlock]) -> Vec<FlagService> {
+    let mut services: BTreeMap<String, BTreeMap<String, Vec<FlagOption>>> = BTreeMap::new();
+    for block in blocks {
+        if block.options.is_empty() {
+            continue;
+        }
+        let cats = services.entry(block.name.clone()).or_default();
+        let mut seen = HashSet::new();
+        for option in &block.options {
+            let category = option_field_category(&option.field_name).to_string();
+            let key = if option.field_name.is_empty() {
+                option.name.clone()
+            } else {
+                option.field_name.clone()
+            };
+            if !seen.insert((category.clone(), key)) {
+                continue;
+            }
+            cats.entry(category).or_default().push(option.clone());
+        }
+    }
+    services
+        .into_iter()
+        .map(|(name, cats)| FlagService {
+            name,
+            categories: cats
+                .into_iter()
+                .map(|(name, options)| FlagServiceCategory { name, options })
+                .collect(),
+        })
+        .collect()
+}
+
+pub fn services_for_main_category<'a>(
+    services: &'a [FlagService],
+    main: &str,
+) -> Vec<&'a FlagService> {
+    services
+        .iter()
+        .filter(|service| service_main_category(&service.name) == main)
+        .collect()
+}
+
+pub fn search_grouped_flags(services: &[FlagService], query: &str) -> Vec<FlagSearchHit> {
+    let clean = crate::config_search::strip_cli_prefix(query);
+    if clean.is_empty() {
+        return Vec::new();
+    }
+    let mut hits = Vec::new();
+    for service in services {
+        let service_hit = service.name.to_ascii_lowercase().contains(&clean);
+        for category in &service.categories {
+            let category_hit = category.name.to_ascii_lowercase().contains(&clean);
+            for option in &category.options {
+                if service_hit
+                    || category_hit
+                    || crate::config_search::matches_config_search(
+                        &option.name,
+                        &option.help,
+                        &option.field_name,
+                        query,
+                    )
+                {
+                    hits.push(FlagSearchHit {
+                        service: service.name.clone(),
+                        category: category.name.clone(),
+                        option: option.clone(),
+                    });
+                }
+            }
+        }
+    }
+    hits
+}
+
+pub fn find_service_category<'a>(
+    services: &'a [FlagService],
+    service: &str,
+    category: &str,
+) -> Option<&'a FlagServiceCategory> {
+    services
+        .iter()
+        .find(|item| item.name.eq_ignore_ascii_case(service))
+        .and_then(|item| {
+            item.categories
+                .iter()
+                .find(|cat| cat.name.eq_ignore_ascii_case(category))
+        })
+}
+
 pub fn collect_edits(edits: &[(String, String, Value)]) -> Value {
     let mut root = Map::new();
     for (block, field, value) in edits {
@@ -835,6 +972,74 @@ mod tests {
         assert_eq!(parse_flag_value("Duration", "30s"), json!("30s"));
         assert_eq!(parse_flag_value("SizeSuffix", "1Gi"), json!("1Gi"));
         assert_eq!(parse_flag_value("Tristate", "unset"), json!(null));
+    }
+
+    #[test]
+    fn groups_options_by_service_and_field_prefix() {
+        let blocks = parse_options_info(&json!({
+            "main": [
+                {
+                    "Name": "transfers",
+                    "FieldName": "transfers",
+                    "Help": "parallel",
+                    "Type": "int"
+                },
+                {
+                    "Name": "listen-addr",
+                    "FieldName": "HTTP.ListenAddr",
+                    "Help": "listen",
+                    "Type": "string"
+                },
+                {
+                    "Name": "listen-addr",
+                    "FieldName": "HTTP.ListenAddr",
+                    "Help": "duplicate",
+                    "Type": "string"
+                }
+            ],
+            "vfs": [{
+                "Name": "cache-mode",
+                "FieldName": "CacheMode",
+                "Help": "cache",
+                "Type": "string"
+            }],
+            "sftp": [{
+                "Name": "user",
+                "FieldName": "Auth.User",
+                "Help": "user",
+                "Type": "string"
+            }]
+        }));
+        let grouped = group_blocks_by_service(&blocks);
+        assert_eq!(
+            grouped.iter().map(|s| s.name.as_str()).collect::<Vec<_>>(),
+            vec!["main", "sftp", "vfs"]
+        );
+        let main = grouped.iter().find(|s| s.name == "main").unwrap();
+        assert_eq!(
+            main.categories
+                .iter()
+                .map(|c| c.name.as_str())
+                .collect::<Vec<_>>(),
+            vec!["General", "HTTP"]
+        );
+        assert_eq!(main.categories[1].options.len(), 1);
+        assert_eq!(service_main_category("vfs"), "fileSystemAndStorage");
+        assert_eq!(service_main_category("main"), "generalSettings");
+        assert_eq!(service_main_category("sftp"), "networkAndServers");
+        assert_eq!(
+            services_for_main_category(&grouped, "fileSystemAndStorage")
+                .iter()
+                .map(|s| s.name.as_str())
+                .collect::<Vec<_>>(),
+            vec!["vfs"]
+        );
+        let hits = search_grouped_flags(&grouped, "--listen");
+        assert_eq!(hits.len(), 1);
+        assert_eq!(hits[0].service, "main");
+        assert_eq!(hits[0].category, "HTTP");
+        let vfs_hits = search_grouped_flags(&grouped, "vfs");
+        assert!(vfs_hits.iter().any(|h| h.option.name == "cache-mode"));
     }
 
     #[test]

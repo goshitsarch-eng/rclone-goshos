@@ -72,6 +72,12 @@ pub fn import_dump(backend_key: &str, dump: &Value) -> Result<Value, String> {
     Ok(dump.clone())
 }
 
+/// Clear persisted engine flags for one backend (Angular `resetOptions`).
+pub fn reset_for(backend_key: &str) -> Result<Value, String> {
+    save_for(backend_key, &json!({}))?;
+    Ok(json!({}))
+}
+
 pub fn apply(client: &RcClient, backend_key: &str) {
     let options = load_for(backend_key);
     if options.as_object().is_some_and(|o| !o.is_empty()) {
@@ -134,5 +140,14 @@ mod tests {
     #[test]
     fn import_dump_rejects_non_objects() {
         assert_eq!(import_dump("local", &json!("nope")).unwrap(), json!({}));
+    }
+
+    #[test]
+    fn reset_for_clears_backend_object() {
+        let key = "unit-reset-flags";
+        save_for(key, &json!({ "main": { "Transfers": 8 } })).unwrap();
+        assert_eq!(load_for(key)["main"]["Transfers"], 8);
+        assert_eq!(reset_for(key).unwrap(), json!({}));
+        assert_eq!(load_for(key), json!({}));
     }
 }

@@ -3201,172 +3201,480 @@ fn add_flag_option_row(
     }
 }
 
+fn apply_rclone_flag_payload(ctx: &AppCtx, toast: &adw::ToastOverlay, payload: serde_json::Value) {
+    let Some(client) = ctx.client() else {
+        toast.add_toast(adw::Toast::new(&ctx.t_or(
+            "modals.rcloneFlags.notifications.loadError",
+            "Failed to load Rclone flags",
+        )));
+        return;
+    };
+    match client.options_set(payload.clone()) {
+        Ok(_) => {
+            if let Err(e) = crate::backend_options::merge_and_save(&ctx.backend_key(), &payload) {
+                toast.add_toast(adw::Toast::new(&format!(
+                    "{}: {e}",
+                    ctx.t_or(
+                        "modals.rcloneFlags.notifications.saveError",
+                        "Failed to save flags"
+                    )
+                )));
+            } else {
+                toast.add_toast(adw::Toast::new(&ctx.t_or(
+                    "modals.rcloneFlags.notifications.saveSuccess",
+                    "Saved flags",
+                )));
+            }
+        }
+        Err(e) => toast.add_toast(adw::Toast::new(&ctx.tf_or(
+            "modals.rcloneFlags.notifications.saveError",
+            "Failed to save {{field}}: {{error}}",
+            &[("field", "options/set"), ("error", &e.to_string())],
+        ))),
+    }
+}
+
+fn flags_category_page(
+    ctx: &AppCtx,
+    toast: &adw::ToastOverlay,
+    service: &str,
+    category: &str,
+    options: &[crate::flags::FlagOption],
+    edits: &Rc<RefCell<Vec<(String, String, serde_json::Value)>>>,
+    focus: Option<&str>,
+) -> adw::NavigationPage {
+    let title = ctx.tf_or(
+        "modals.rcloneFlags.pageTitle.category",
+        &format!("{} - {category}", service.to_ascii_uppercase()),
+        &[
+            ("page", &service.to_ascii_uppercase()),
+            ("category", category),
+        ],
+    );
+    let page_box = gtk::Box::new(gtk::Orientation::Vertical, 8);
+    page_box.set_margin_top(8);
+    page_box.set_margin_bottom(12);
+    page_box.set_margin_start(12);
+    page_box.set_margin_end(12);
+    let search = gtk::SearchEntry::new();
+    search.set_placeholder_text(Some(&ctx.tf_or(
+        "modals.rcloneFlags.search.placeholderPage",
+        &format!("Search in {service}..."),
+        &[("page", service)],
+    )));
+    if let Some(focus) = focus {
+        search.set_text(focus);
+    }
+    page_box.append(&search);
+    let count = gtk::Label::new(Some(&ctx.tf_or(
+        "modals.rcloneFlags.search.showing",
+        &format!("{} flags", options.len()),
+        &[
+            ("count", &options.len().to_string()),
+            ("total", &options.len().to_string()),
+        ],
+    )));
+    count.set_xalign(0.0);
+    count.add_css_class("dim-label");
+    page_box.append(&count);
+    let json_toggle = adw::SwitchRow::new();
+    json_toggle.set_title(&ctx.t_or("remoteConfig.jsonMode", "JSON mode"));
+    json_toggle.set_active(ctx.settings.borrow().runtime.show_json_mode);
+    let json_group = adw::PreferencesGroup::new();
+    json_group.add(&json_toggle);
+    page_box.append(&json_group);
+    let flags_group = adw::PreferencesGroup::new();
+    flags_group.set_title(category);
+    let mut flag_rows = Vec::new();
+    for option in options {
+        let prev = flags_group.last_child();
+        add_flag_option_row(ctx, &flags_group, edits, service, option);
+        let mut child = flags_group.last_child();
+        let mut added = Vec::new();
+        while let Some(widget) = child {
+            if prev.as_ref().is_some_and(|prev| prev == &widget) {
+                break;
+            }
+            added.push(widget.clone());
+            child = widget.prev_sibling();
+        }
+        flag_rows.push((option.clone(), added));
+    }
+    page_box.append(&flags_group);
+    let editor = super::json_editor::JsonEditor::new(ctx);
+    editor.set_fields(
+        options
+            .iter()
+            .map(crate::json_editor::JsonFieldDef::from_flag)
+            .collect(),
+    );
+    editor.set_restrict(ctx.settings.borrow().general.restrict);
+    let mut json_map = serde_json::Map::new();
+    for option in options {
+        if !option.value.is_null() {
+            json_map.insert(option.field_name.clone(), option.value.clone());
+        }
+    }
+    editor.set_value(&serde_json::Value::Object(json_map));
+    editor.root.set_visible(json_toggle.is_active());
+    flags_group.set_visible(!json_toggle.is_active());
+    page_box.append(&editor.root);
+    let apply = gtk::Button::with_label(&ctx.t_or("common.apply", "Apply changes"));
+    apply.add_css_class("suggested-action");
+    apply.set_halign(gtk::Align::End);
+    page_box.append(&apply);
+    {
+        let ctx = ctx.clone();
+        let toast = toast.clone();
+        let edits = edits.clone();
+        let editor = editor.clone();
+        let json_toggle = json_toggle.clone();
+        let service = service.to_string();
+        apply.connect_clicked(move |_| {
+            if json_toggle.is_active() {
+                match editor.parsed() {
+                    Ok(map) => apply_rclone_flag_payload(
+                        &ctx,
+                        &toast,
+                        serde_json::json!({ service.clone(): map }),
+                    ),
+                    Err(err) => toast.add_toast(adw::Toast::new(&err)),
+                }
+            } else {
+                apply_rclone_flag_payload(
+                    &ctx,
+                    &toast,
+                    crate::flags::collect_edits(&edits.borrow()),
+                );
+            }
+        });
+    }
+    {
+        let ctx = ctx.clone();
+        let editor_root = editor.root.clone();
+        let flags_group = flags_group.clone();
+        json_toggle.connect_active_notify(move |row| {
+            let on = row.is_active();
+            ctx.settings.borrow_mut().runtime.show_json_mode = on;
+            ctx.persist();
+            editor_root.set_visible(on);
+            flags_group.set_visible(!on);
+        });
+    }
+    let apply_filter = {
+        let ctx = ctx.clone();
+        let count = count.clone();
+        let flag_rows = flag_rows.clone();
+        let total = options.len();
+        let json_toggle = json_toggle.clone();
+        Rc::new(move |query: &str| {
+            if json_toggle.is_active() {
+                return;
+            }
+            let mut visible = 0usize;
+            for (option, widgets) in &flag_rows {
+                let show = crate::config_search::matches_config_search(
+                    &option.name,
+                    &option.help,
+                    &option.field_name,
+                    query,
+                );
+                for widget in widgets {
+                    widget.set_visible(show);
+                }
+                if show {
+                    visible += 1;
+                }
+            }
+            count.set_text(&ctx.tf_or(
+                "modals.rcloneFlags.search.showing",
+                &format!("Showing {visible} of {total} flags"),
+                &[
+                    ("count", &visible.to_string()),
+                    ("total", &total.to_string()),
+                ],
+            ));
+        })
+    };
+    apply_filter(&search.text());
+    {
+        let apply_filter = apply_filter.clone();
+        search.connect_search_changed(move |row| apply_filter(&row.text()));
+    }
+    let scroll = gtk::ScrolledWindow::new();
+    scroll.set_vexpand(true);
+    scroll.set_policy(gtk::PolicyType::Never, gtk::PolicyType::Automatic);
+    scroll.set_child(Some(&page_box));
+    let toolbar = adw::ToolbarView::new();
+    toolbar.add_top_bar(&adw::HeaderBar::new());
+    toolbar.set_content(Some(&scroll));
+    adw::NavigationPage::builder()
+        .title(&title)
+        .child(&toolbar)
+        .build()
+}
+
+fn fill_flags_home(
+    ctx: &AppCtx,
+    nav: &adw::NavigationView,
+    toast: &adw::ToastOverlay,
+    body: &gtk::Box,
+    services: &[crate::flags::FlagService],
+    edits: &Rc<RefCell<Vec<(String, String, serde_json::Value)>>>,
+    query: &str,
+) {
+    while let Some(child) = body.first_child() {
+        body.remove(&child);
+    }
+    let q = query.trim();
+    if !q.is_empty() {
+        let hits = crate::flags::search_grouped_flags(services, q);
+        let group = adw::PreferencesGroup::new();
+        group.set_title(&ctx.t_or("modals.rcloneFlags.search.label", "Search Rclone flags"));
+        if hits.is_empty() {
+            let row = adw::ActionRow::new();
+            row.set_title(&ctx.t_or(
+                "modals.rcloneFlags.search.emptyResult",
+                "No Rclone flags found",
+            ));
+            group.add(&row);
+        }
+        for hit in hits {
+            let row = adw::ActionRow::new();
+            row.set_title(&ctx.option_label(&hit.option.name, "title", &hit.option.name));
+            row.set_subtitle(&format!("{} › {}", hit.service, hit.category));
+            row.set_activatable(true);
+            row.add_suffix(&gtk::Image::from_icon_name("go-next-symbolic"));
+            let ctx = ctx.clone();
+            let nav = nav.clone();
+            let toast = toast.clone();
+            let edits = edits.clone();
+            let services = services.to_vec();
+            row.connect_activated(move |_| {
+                if let Some(cat) =
+                    crate::flags::find_service_category(&services, &hit.service, &hit.category)
+                {
+                    nav.push(&flags_category_page(
+                        &ctx,
+                        &toast,
+                        &hit.service,
+                        &hit.category,
+                        &cat.options,
+                        &edits,
+                        Some(&hit.option.name),
+                    ));
+                }
+            });
+            group.add(&row);
+        }
+        body.append(&group);
+        return;
+    }
+    for main in crate::flags::MAIN_CATEGORY_KEYS {
+        let listed = crate::flags::services_for_main_category(services, main);
+        if listed.is_empty() {
+            continue;
+        }
+        let (title_key, title_fb, desc_key, desc_fb) = match *main {
+            "generalSettings" => (
+                "modals.rcloneFlags.mainCategories.generalSettings.title",
+                "General Settings",
+                "modals.rcloneFlags.mainCategories.generalSettings.description",
+                "Core Rclone options and logging flags",
+            ),
+            "fileSystemAndStorage" => (
+                "modals.rcloneFlags.mainCategories.fileSystemAndStorage.title",
+                "File System & Storage",
+                "modals.rcloneFlags.mainCategories.fileSystemAndStorage.description",
+                "Virtual file system, mounting, filtering, and storage flags",
+            ),
+            _ => (
+                "modals.rcloneFlags.mainCategories.networkAndServers.title",
+                "Network & Servers",
+                "modals.rcloneFlags.mainCategories.networkAndServers.description",
+                "HTTP, FTP, SFTP, WebDAV, S3, and other network service flags",
+            ),
+        };
+        let group = adw::PreferencesGroup::new();
+        group.set_title(&ctx.t_or(title_key, title_fb));
+        group.set_description(Some(&ctx.t_or(desc_key, desc_fb)));
+        for service in listed {
+            let expander = adw::ExpanderRow::new();
+            expander.set_title(&titlecase_service(&service.name));
+            expander.set_subtitle(&ctx.t_or(
+                &format!(
+                    "modals.rcloneFlags.services.{}",
+                    service.name.to_ascii_lowercase()
+                ),
+                "",
+            ));
+            for category in &service.categories {
+                let row = adw::ActionRow::new();
+                row.set_title(&category.name);
+                row.set_subtitle(&ctx.t_or(
+                    &format!("modals.rcloneFlags.categories.{}", category.name),
+                    "",
+                ));
+                row.set_activatable(true);
+                row.add_suffix(&gtk::Image::from_icon_name("go-next-symbolic"));
+                let ctx = ctx.clone();
+                let nav = nav.clone();
+                let toast = toast.clone();
+                let edits = edits.clone();
+                let service_name = service.name.clone();
+                let category_name = category.name.clone();
+                let options = category.options.clone();
+                row.connect_activated(move |_| {
+                    nav.push(&flags_category_page(
+                        &ctx,
+                        &toast,
+                        &service_name,
+                        &category_name,
+                        &options,
+                        &edits,
+                        None,
+                    ));
+                });
+                expander.add_row(&row);
+            }
+            group.add(&expander);
+        }
+        body.append(&group);
+    }
+}
+
+fn titlecase_service(name: &str) -> String {
+    let mut chars = name.chars();
+    match chars.next() {
+        Some(first) => format!("{}{}", first.to_ascii_uppercase(), chars.as_str()),
+        None => String::new(),
+    }
+}
+
+fn confirm_reset_rclone_flags(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, dialog: adw::Dialog) {
+    let confirm = adw::AlertDialog::new(
+        Some(&ctx.t_or("modals.rcloneFlags.reset.title", "Reset Flags")),
+        Some(&ctx.t_or(
+            "modals.rcloneFlags.reset.message",
+            "This will reset all Rclone flags to their default values and restart the rclone engine. Any custom settings will be lost. Continue?",
+        )),
+    );
+    confirm.add_response("cancel", &ctx.t_or("common.cancel", "Cancel"));
+    confirm.add_response(
+        "reset",
+        &ctx.t_or("modals.rcloneFlags.reset.confirm", "Reset & Restart"),
+    );
+    confirm.set_response_appearance("reset", adw::ResponseAppearance::Destructive);
+    confirm.set_default_response(Some("cancel"));
+    confirm.connect_response(None, move |_, response| {
+        if response != "reset" {
+            return;
+        }
+        if let Err(e) = crate::backend_options::reset_for(&ctx.backend_key()) {
+            log::warn!("failed to reset flags: {e}");
+            return;
+        }
+        ctx.restart_engine();
+        dialog.close();
+    });
+    confirm.present(Some(parent));
+}
+
 pub fn rclone_flags(parent: &impl IsA<gtk::Widget>, ctx: AppCtx) {
     if try_spawn_standalone(&ctx, "rclone-flags", serde_json::json!({})) {
         return;
     }
-    let dialog = adw::PreferencesDialog::new();
-    dialog.set_title(&ctx.t_or("titlebar.menu.flags", "Rclone Flags"));
-    dialog.set_search_enabled(true);
+    let dialog = adw::Dialog::new();
+    dialog.set_title(&ctx.t_or("modals.rcloneFlags.pageTitle.home", "Rclone Flags"));
+    dialog.set_content_width(720);
+    dialog.set_content_height(780);
+    let toast = adw::ToastOverlay::new();
+    let nav = adw::NavigationView::new();
+    toast.set_child(Some(&nav));
+    dialog.set_child(Some(&toast));
     let Some(client) = ctx.client() else {
-        let page = adw::PreferencesPage::new();
         let group = adw::PreferencesGroup::new();
         let row = adw::ActionRow::new();
         row.set_title(&ctx.t_or("common.engineOffline", "Engine offline"));
         group.add(&row);
-        page.add(&group);
-        dialog.add(&page);
+        let page = adw::StatusPage::new();
+        page.set_title(&ctx.t_or("common.engineOffline", "Engine offline"));
+        page.set_child(Some(&group));
+        nav.add(&adw::NavigationPage::builder().child(&page).build());
         dialog.present(Some(parent));
         return;
     };
     let current = client.options_get().unwrap_or(serde_json::json!({}));
     let mut blocks = client.option_flag_blocks();
     crate::flags::merge_current_values(&mut blocks, &current);
+    let services = crate::flags::group_blocks_by_service(&blocks);
     let edits: Rc<RefCell<Vec<(String, String, serde_json::Value)>>> =
         Rc::new(RefCell::new(Vec::new()));
-    for category in [
-        "backend", "filter", "vfs", "mount", "copy", "sync", "check", "network", "other",
-    ] {
-        let page = adw::PreferencesPage::new();
-        page.set_title(&category.to_ascii_uppercase());
-        let group = adw::PreferencesGroup::new();
-        group.set_title(category);
-        let options = crate::flags::options_for_category(&blocks, category);
-        if options.is_empty() {
-            let row = adw::ActionRow::new();
-            row.set_title(&ctx.t_or("modals.flags.emptyCategory", "No flags in this category"));
-            group.add(&row);
-        }
-        for (block, option) in options {
-            add_flag_option_row(&ctx, &group, &edits, block, option);
-        }
-        page.add(&group);
-        dialog.add(&page);
-    }
+    let home_box = gtk::Box::new(gtk::Orientation::Vertical, 12);
+    home_box.set_margin_top(8);
+    home_box.set_margin_bottom(12);
+    home_box.set_margin_start(12);
+    home_box.set_margin_end(12);
+    let search = gtk::SearchEntry::new();
+    search.set_placeholder_text(Some(&ctx.t_or(
+        "modals.rcloneFlags.search.placeholderHome",
+        "Search all services and flags...",
+    )));
+    home_box.append(&search);
+    let body = gtk::Box::new(gtk::Orientation::Vertical, 12);
+    fill_flags_home(&ctx, &nav, &toast, &body, &services, &edits, "");
+    home_box.append(&body);
     let apply = gtk::Button::with_label(&ctx.t_or("common.apply", "Apply changes"));
     apply.add_css_class("suggested-action");
     {
         let ctx = ctx.clone();
+        let toast = toast.clone();
         let edits = edits.clone();
         apply.connect_clicked(move |_| {
-            if let Some(client) = ctx.client() {
-                let payload = crate::flags::collect_edits(&edits.borrow());
-                match client.options_set(payload.clone()) {
-                    Ok(_) => {
-                        if let Err(e) =
-                            crate::backend_options::merge_and_save(&ctx.backend_key(), &payload)
-                        {
-                            log::warn!("failed to persist flags: {e}");
-                        } else {
-                            log::info!("rclone flags applied");
-                        }
-                    }
-                    Err(e) => log::warn!("failed to apply flags: {e}"),
-                }
-            }
+            apply_rclone_flag_payload(&ctx, &toast, crate::flags::collect_edits(&edits.borrow()));
         });
     }
-    let extra = adw::PreferencesPage::new();
-    extra.set_title(&ctx.t_or("common.apply", "Apply"));
-    let g = adw::PreferencesGroup::new();
-    g.set_description(Some(&ctx.t_or(
-        "remoteConfig.flagsApplyHelp",
-        "Edits are sent to rclone via options/set. Categories match the flag panels.",
-    )));
-    let row = adw::ActionRow::new();
-    row.set_title(&ctx.t_or(
-        "remoteConfig.flagsWriteEngine",
-        "Write flags to the running engine",
-    ));
-    row.add_suffix(&apply);
-    g.add(&row);
-    extra.add(&g);
-    dialog.add(&extra);
-
-    let json_page = adw::PreferencesPage::new();
-    json_page.set_title(&ctx.t_or("remoteConfig.jsonMode", "JSON"));
-    let json_group = adw::PreferencesGroup::new();
-    json_group.set_title(&ctx.t_or("remoteConfig.jsonPayload", "Raw options/set payload"));
-    json_group.set_description(Some(&ctx.t_or(
-        "remoteConfig.jsonPayloadHelp",
-        "Edit the current rclone options as JSON. Apply writes the object via options/set.",
-    )));
-    let json_toggle = adw::SwitchRow::new();
-    json_toggle.set_title(&ctx.t_or(
-        "settings.runtime.show_json_mode.label",
-        "Remember JSON mode",
-    ));
-    json_toggle.set_active(ctx.settings.borrow().runtime.show_json_mode);
+    let reset = gtk::Button::with_label(
+        &ctx.t_or("modals.rcloneFlags.reset.button", "Reset All to Default"),
+    );
+    reset.add_css_class("destructive-action");
     {
         let ctx = ctx.clone();
-        json_toggle.connect_active_notify(move |row| {
-            ctx.settings.borrow_mut().runtime.show_json_mode = row.is_active();
-            ctx.persist();
+        let dialog = dialog.clone();
+        reset.connect_clicked(move |btn| {
+            confirm_reset_rclone_flags(btn, ctx.clone(), dialog.clone());
         });
     }
-    json_group.add(&json_toggle);
-    let json_view = gtk::TextView::new();
-    json_view.set_monospace(true);
-    json_view.set_wrap_mode(gtk::WrapMode::WordChar);
-    let pretty = serde_json::to_string_pretty(&current).unwrap_or_else(|_| "{}".into());
-    json_view.buffer().set_text(&pretty);
-    let json_scroll = gtk::ScrolledWindow::new();
-    json_scroll.set_min_content_height(280);
-    json_scroll.set_child(Some(&json_view));
-    let json_apply = gtk::Button::with_label(&ctx.t_or("remoteConfig.applyJson", "Apply JSON"));
-    json_apply.add_css_class("suggested-action");
+    let actions = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+    actions.set_halign(gtk::Align::End);
+    actions.append(&reset);
+    actions.append(&apply);
+    home_box.append(&actions);
     {
         let ctx = ctx.clone();
-        let json_view = json_view.clone();
-        json_apply.connect_clicked(move |_| {
-            let buffer = json_view.buffer();
-            let text = buffer.text(&buffer.start_iter(), &buffer.end_iter(), false);
-            match crate::flags::parse_json_object(&text) {
-                Ok(map) => {
-                    if let Some(client) = ctx.client() {
-                        let payload = serde_json::Value::Object(map);
-                        match client.options_set(payload.clone()) {
-                            Ok(_) => {
-                                if let Err(e) = crate::backend_options::merge_and_save(
-                                    &ctx.backend_key(),
-                                    &payload,
-                                ) {
-                                    log::warn!("failed to persist JSON flags: {e}");
-                                } else {
-                                    log::info!("rclone flags applied from JSON");
-                                }
-                            }
-                            Err(e) => log::warn!("failed to apply JSON flags: {e}"),
-                        }
-                    }
-                }
-                Err(e) => log::warn!("invalid flags JSON: {e}"),
-            }
+        let nav = nav.clone();
+        let toast = toast.clone();
+        let body = body.clone();
+        let services = services.clone();
+        let edits = edits.clone();
+        search.connect_search_changed(move |row| {
+            fill_flags_home(&ctx, &nav, &toast, &body, &services, &edits, &row.text());
         });
     }
-    let json_row = adw::ActionRow::new();
-    json_row.set_title(&ctx.t_or(
-        "remoteConfig.flagsWriteJson",
-        "Write JSON to the running engine",
-    ));
-    json_row.add_suffix(&json_apply);
-    json_group.add(&json_row);
-    json_page.add(&json_group);
-    let json_box = gtk::Box::new(gtk::Orientation::Vertical, 8);
-    json_box.set_margin_start(12);
-    json_box.set_margin_end(12);
-    json_box.append(&json_scroll);
-    let json_holder = adw::PreferencesGroup::new();
-    let holder_row = adw::ActionRow::new();
-    holder_row.set_title("Document");
-    holder_row.set_activatable(false);
-    json_holder.add(&holder_row);
-    json_page.add(&json_holder);
-    dialog.add(&json_page);
-    // Attach the editor below the last page content via a toast-less overlay:
-    // PreferencesDialog pages can't host arbitrary boxes easily, so present the
-    // JSON editor as the ActionRow child suffix expansion.
-    holder_row.set_child(Some(&json_box));
+    let scroll = gtk::ScrolledWindow::new();
+    scroll.set_vexpand(true);
+    scroll.set_policy(gtk::PolicyType::Never, gtk::PolicyType::Automatic);
+    scroll.set_child(Some(&home_box));
+    let toolbar = adw::ToolbarView::new();
+    toolbar.add_top_bar(&adw::HeaderBar::new());
+    toolbar.set_content(Some(&scroll));
+    nav.add(
+        &adw::NavigationPage::builder()
+            .tag("home")
+            .title(&ctx.t_or("modals.rcloneFlags.pageTitle.home", "Rclone Flags"))
+            .child(&toolbar)
+            .build(),
+    );
     dialog.present(Some(parent));
 }
 
