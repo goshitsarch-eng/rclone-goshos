@@ -1072,13 +1072,15 @@ impl FlowView {
     fn append_transfer_activity(&self, name: &str, snap: &crate::store::RuntimeSnapshot) {
         let jobs = {
             let store = self.ctx.store.borrow();
-            crate::jobs::merge_overview_jobs(
+            crate::jobs::latest_overview_job(
                 &snap.jobs,
                 &crate::jobs::history_with_meta(&store.job_history, &store.job_meta),
                 name,
                 None,
                 None,
             )
+            .into_iter()
+            .collect::<Vec<_>>()
         };
         self.append_transfers(&self.content, &jobs);
     }
@@ -1090,7 +1092,15 @@ impl FlowView {
                 for item in arr {
                     let mut row = crate::transfers::parse_transfer_row(item);
                     crate::transfers::qualify_transfer_row(&mut row, &job.src, &job.dst);
-                    rows.push((job.operation.clone(), job.remote.clone(), row, false));
+                    rows.push((
+                        job.operation.clone(),
+                        job.remote.clone(),
+                        job.id,
+                        job.src.clone(),
+                        job.dst.clone(),
+                        row,
+                        false,
+                    ));
                 }
             }
             for source in [
@@ -1103,7 +1113,15 @@ impl FlowView {
                 for item in source {
                     let mut row = crate::transfers::parse_completed_transfer_row(item);
                     crate::transfers::qualify_transfer_row(&mut row, &job.src, &job.dst);
-                    rows.push((job.operation.clone(), job.remote.clone(), row, true));
+                    rows.push((
+                        job.operation.clone(),
+                        job.remote.clone(),
+                        job.id,
+                        job.src.clone(),
+                        job.dst.clone(),
+                        row,
+                        true,
+                    ));
                 }
             }
         }
@@ -1154,11 +1172,11 @@ impl FlowView {
         host.append(&search);
         let active_count = rows
             .iter()
-            .filter(|(_, _, _, completed)| !*completed)
+            .filter(|(_, _, _, _, _, _, completed)| !*completed)
             .count();
         let done_count = rows
             .iter()
-            .filter(|(_, _, _, completed)| *completed)
+            .filter(|(_, _, _, _, _, _, completed)| *completed)
             .count();
         if active_count > 0 && done_count > 0 {
             let tabs = gtk::Box::new(gtk::Orientation::Horizontal, 0);
@@ -1286,7 +1304,7 @@ impl FlowView {
         let tab = self.transfer_tab.borrow().clone();
         let filtered: Vec<_> = rows
             .into_iter()
-            .filter(|(_, _, row, completed)| {
+            .filter(|(_, _, _, _, _, row, completed)| {
                 if tab == "active" && *completed {
                     return false;
                 }
@@ -1313,7 +1331,7 @@ impl FlowView {
         let remaining = crate::jobs::activity_remaining(filtered.len(), limit);
         let list = gtk::ListBox::new();
         list.add_css_class("boxed-list");
-        for (operation, remote, row, completed) in &filtered[..end] {
+        for (operation, remote, job_id, src, dst, row, completed) in &filtered[..end] {
             list.append(&dialogs::transfer_activity_row(
                 &self.ctx,
                 row,
@@ -1321,9 +1339,9 @@ impl FlowView {
                 operation,
                 remote,
                 &self.toast,
-                0,
-                "",
-                "",
+                *job_id,
+                src,
+                dst,
             ));
         }
         if remaining > 0 {

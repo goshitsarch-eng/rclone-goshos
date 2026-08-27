@@ -1838,6 +1838,19 @@ pub fn merge_overview_jobs(
     out
 }
 
+/// Angular `getLatestJobForRemote`: newest matching overview job by start_time, then id.
+pub fn latest_overview_job(
+    live: &[JobInfo],
+    history: &[JobInfo],
+    remote: &str,
+    profile: Option<&str>,
+    operation: Option<OperationType>,
+) -> Option<JobInfo> {
+    merge_overview_jobs(live, history, remote, profile, operation)
+        .into_iter()
+        .next()
+}
+
 pub fn job_status_value(job: &JobInfo) -> Value {
     json!({
         "group": job.group,
@@ -5516,6 +5529,39 @@ mod tests {
             nightly.iter().map(|job| job.id).collect::<Vec<_>>(),
             vec![1, 2]
         );
+        let mut leftover = running_job(42424, "testdrive", "copy", "");
+        leftover.status = "completed".into();
+        leftover.start_time = DateTime::parse_from_rfc3339("2026-08-26T21:00:00Z")
+            .unwrap()
+            .with_timezone(&Utc);
+        leftover.completed = json!([{ "name": "ok.txt" }, { "name": "bad.txt" }]);
+        let mut live_copy = running_job(24749, "testdrive", "copy", "gui-copy-test");
+        live_copy.start_time = DateTime::parse_from_rfc3339("2026-08-27T21:22:00Z")
+            .unwrap()
+            .with_timezone(&Utc);
+        live_copy.transferring = json!([{ "name": "blob.bin", "speed": 2_097_152.0 }]);
+        let merged_copies = merge_overview_jobs(
+            &[live_copy.clone()],
+            &[leftover.clone()],
+            "testdrive",
+            Some("gui-copy-test"),
+            Some(OperationType::Copy),
+        );
+        assert_eq!(
+            merged_copies.iter().map(|job| job.id).collect::<Vec<_>>(),
+            vec![24749, 42424]
+        );
+        let latest = latest_overview_job(
+            &[live_copy],
+            &[leftover],
+            "testdrive",
+            Some("gui-copy-test"),
+            Some(OperationType::Copy),
+        )
+        .unwrap();
+        assert_eq!(latest.id, 24749);
+        assert_eq!(latest.transferring[0]["name"], "blob.bin");
+        assert!(latest.completed.as_array().unwrap().is_empty());
         let siblings = merge_job_lists(&[live.clone()], &history);
         assert_eq!(siblings.len(), 5);
         assert!(!nightly.iter().any(|job| job.id == 5));

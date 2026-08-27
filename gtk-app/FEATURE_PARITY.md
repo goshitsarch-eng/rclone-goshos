@@ -1196,3 +1196,5 @@ This client is the GTK 4 + libadwaita desktop UI. It talks to a local `rclone rc
 - Live GUI: `--start-operation testdrive:copy` switch to **gui-copy-test** clears the extra `testdrive:` source from **gui-copy-multi** and loads `testdrive:speedsrc` → `testdrive:speeddst3`
 - Live GUI: testdrive Operations **Start** on **gui-copy-test** toasts **Successfully started Copy for testdrive (gui-copy-test)**; dashboard Job Information shows live **77% · 36.9 MiB of 48.0 MiB** and **Transfer Speed: 2.0 MiB/s**
 - Live GUI: `--job` / Job Detail for copy **#24749** shows **Completed · 100% · 39.8s**, transfer tabs **Recent (1)**
+
+- Operations/Flow Transfer Activity follows Angular `getLatestJobForRemote` (newest start_time then id) instead of merging every leftover job’s transfers; rows pass the selected job id/src/dst for Copy-to-Destination resolve
