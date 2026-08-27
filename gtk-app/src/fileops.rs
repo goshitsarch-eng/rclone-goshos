@@ -1425,6 +1425,35 @@ pub fn open_file_natively(
     Ok(dest)
 }
 
+/// Angular `handleSelectionShortcuts` Escape order: search, picker, selection, clipboard.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum NautilusEscape {
+    ClearSearch,
+    CancelPicker,
+    ClearSelection,
+    ClearClipboard,
+    None,
+}
+
+pub fn nautilus_escape_action(
+    search_active: bool,
+    picker_active: bool,
+    has_selection: bool,
+    has_clipboard: bool,
+) -> NautilusEscape {
+    if search_active {
+        NautilusEscape::ClearSearch
+    } else if picker_active {
+        NautilusEscape::CancelPicker
+    } else if has_selection {
+        NautilusEscape::ClearSelection
+    } else if has_clipboard {
+        NautilusEscape::ClearClipboard
+    } else {
+        NautilusEscape::None
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -2183,5 +2212,33 @@ mod tests {
         assert!(total > 0);
         assert!(free <= total);
         assert!(local_path_disk_usage("").is_none());
+    }
+
+    #[test]
+    fn nautilus_escape_follows_angular_priority() {
+        assert_eq!(
+            nautilus_escape_action(true, true, true, true),
+            NautilusEscape::ClearSearch
+        );
+        assert_eq!(
+            nautilus_escape_action(false, true, true, true),
+            NautilusEscape::CancelPicker
+        );
+        assert_eq!(
+            nautilus_escape_action(false, false, true, true),
+            NautilusEscape::ClearSelection
+        );
+        assert_eq!(
+            nautilus_escape_action(false, false, false, true),
+            NautilusEscape::ClearClipboard
+        );
+        assert_eq!(
+            nautilus_escape_action(false, false, false, false),
+            NautilusEscape::None
+        );
+        assert_eq!(
+            nautilus_escape_action(true, false, false, false),
+            NautilusEscape::ClearSearch
+        );
     }
 }

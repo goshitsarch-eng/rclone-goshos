@@ -2524,7 +2524,12 @@ impl NautilusView {
                 return glib::Propagation::Stop;
             }
             if key == gtk::gdk::Key::Escape {
-                view.clear_search();
+                if view.listing_menu_open.get() {
+                    view.listing_popover.popdown();
+                    view.listing_menu_open.set(false);
+                    return glib::Propagation::Stop;
+                }
+                view.handle_escape();
                 return glib::Propagation::Stop;
             }
             if key == gtk::gdk::Key::F5 || (ctrl && key == gtk::gdk::Key::r) {
@@ -2629,7 +2634,7 @@ impl NautilusView {
                 return glib::Propagation::Stop;
             }
             if ctrl && key == gtk::gdk::Key::y {
-                view.paste_system_clipboard();
+                view.redo_last();
                 return glib::Propagation::Stop;
             }
             if ctrl && key == gtk::gdk::Key::a {
@@ -3314,6 +3319,30 @@ impl NautilusView {
         self.search_filter.borrow_mut().clear();
         self.show_crumbs();
         self.reload();
+    }
+
+    fn handle_escape(&self) {
+        match crate::fileops::nautilus_escape_action(
+            self.search_is_active(),
+            self.ctx.pending_picker.borrow().is_some(),
+            !self.selected_names().is_empty(),
+            !self.clipboard.borrow().is_empty(),
+        ) {
+            crate::fileops::NautilusEscape::ClearSearch => self.clear_search(),
+            crate::fileops::NautilusEscape::CancelPicker => self.finish_picker(true),
+            crate::fileops::NautilusEscape::ClearSelection => {
+                self.clear_listing_selection(true);
+                if *self.split_enabled.borrow() {
+                    self.clear_listing_selection(false);
+                }
+                self.refresh_selection_status();
+            }
+            crate::fileops::NautilusEscape::ClearClipboard => {
+                self.clipboard.borrow_mut().clear();
+                self.reload();
+            }
+            crate::fileops::NautilusEscape::None => {}
+        }
     }
 
     fn go_back(&self) {
