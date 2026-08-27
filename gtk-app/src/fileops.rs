@@ -605,6 +605,30 @@ pub fn ops_panel_title(base: &str, active: usize) -> String {
     }
 }
 
+/// Compact Angular ops row title: `copy · Completed`.
+pub fn ops_job_title(operation: &str, status_label: &str) -> String {
+    format!("{operation} · {status_label}")
+}
+
+/// Compact Angular ops row subtitle: `#42 · 80% · remote:path · 1.2 MB / 2.0 MB`.
+pub fn ops_job_subtitle(id: u64, percent: i32, src: &str, done: &str, total: &str) -> String {
+    format!("#{id} · {percent}% · {src} · {done} / {total}")
+}
+
+/// Keep `child_start..child_end` inside a horizontal viewport.
+pub fn scroll_child_into_view(value: f64, page: f64, child_start: f64, child_end: f64) -> f64 {
+    if page <= 0.0 {
+        return value.max(0.0);
+    }
+    if child_start < value {
+        child_start.max(0.0)
+    } else if child_end > value + page {
+        (child_end - page).max(0.0)
+    } else {
+        value
+    }
+}
+
 pub fn file_item_menu_widget_name(entry_name: &str) -> String {
     format!("file-menu-{entry_name}")
 }
@@ -2054,6 +2078,14 @@ mod tests {
         assert_eq!(active_ops_count(std::iter::empty::<&str>()), 0);
         assert_eq!(ops_panel_title("Operations", 0), "Operations");
         assert_eq!(ops_panel_title("Operations", 2), "Operations (2)");
+        assert_eq!(ops_job_title("copy", "Completed"), "copy · Completed");
+        assert_eq!(
+            ops_job_subtitle(42, 80, "testdrive:Photos", "8 B", "10 B"),
+            "#42 · 80% · testdrive:Photos · 8 B / 10 B"
+        );
+        assert_eq!(scroll_child_into_view(0.0, 200.0, 250.0, 320.0), 120.0);
+        assert_eq!(scroll_child_into_view(80.0, 200.0, 10.0, 60.0), 10.0);
+        assert_eq!(scroll_child_into_view(80.0, 200.0, 100.0, 160.0), 80.0);
         assert!(is_narrow_files_width(679));
         assert!(!is_narrow_files_width(680));
         assert!(!is_narrow_files_width(0));

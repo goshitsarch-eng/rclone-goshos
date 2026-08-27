@@ -513,9 +513,18 @@ impl NautilusView {
         bottom_layout.set_tooltip_text(Some(
             &ctx.t_or("nautilus.view.toggleLayout", "Toggle list / grid"),
         ));
+        let bottom_popout = gtk::Button::from_icon_name("window-new-symbolic");
+        bottom_popout.set_tooltip_text(Some(
+            &ctx.t_or("nautilus.contextMenu.openNewWindow", "Open in New Window"),
+        ));
+        let bottom_view = gtk::MenuButton::new();
+        bottom_view.set_icon_name("view-more-symbolic");
+        bottom_view.set_tooltip_text(Some(&ctx.t_or("nautilus.view.viewOptions", "View options")));
         bottom_bar.append(&bottom_sidebar);
         bottom_bar.append(&bottom_confirm);
+        bottom_bar.append(&bottom_popout);
         bottom_bar.append(&bottom_layout);
+        bottom_bar.append(&bottom_view);
 
         let toolbar_scroll = gtk::ScrolledWindow::builder()
             .hscrollbar_policy(gtk::PolicyType::Automatic)
@@ -950,6 +959,11 @@ impl NautilusView {
                 view.reload();
             });
         }
+        {
+            let view = view.clone();
+            bottom_popout.connect_clicked(move |_| view.detach_current_tab());
+        }
+        view.attach_view_options(&bottom_view);
         {
             let view = view.clone();
             view.root.clone().connect_map(move |widget| {
@@ -5252,6 +5266,30 @@ impl NautilusView {
             self.attach_tab_reorder(&btn, id);
             self.attach_internal_drop(&btn, InternalDrop::Tab(id));
             self.tab_bar.append(&btn);
+            if tab.id == current_id {
+                let view = self.clone();
+                let btn = btn.clone();
+                glib::idle_add_local_once(move || view.scroll_tab_into_view(&btn));
+            }
+        }
+    }
+
+    fn scroll_tab_into_view(&self, button: &impl IsA<gtk::Widget>) {
+        let Some(scroll) = self.tab_bar.parent().and_downcast::<gtk::ScrolledWindow>() else {
+            return;
+        };
+        let Some(bounds) = button.compute_bounds(&self.tab_bar) else {
+            return;
+        };
+        let adj = scroll.hadjustment();
+        let next = crate::fileops::scroll_child_into_view(
+            adj.value(),
+            adj.page_size(),
+            f64::from(bounds.x()),
+            f64::from(bounds.x() + bounds.width()),
+        );
+        if (next - adj.value()).abs() > f64::EPSILON {
+            adj.set_value(next);
         }
     }
 
@@ -6200,7 +6238,7 @@ impl NautilusView {
         }
     }
 
-    fn ops_row(&self, job: &crate::store::JobInfo, live: bool) -> adw::ExpanderRow {
+    fn ops_row(&self, job: &crate::store::JobInfo, live: bool) -> adw::ActionRow {
         let percent = if matches!(job.status.as_str(), "completed" | "failed" | "stopped")
             && job.progress <= 0.0
         {
@@ -6208,12 +6246,13 @@ impl NautilusView {
         } else {
             (job.progress * 100.0).round() as i32
         };
-        let row = adw::ExpanderRow::new();
-        row.set_title(&format!(
-            "{} · {}",
-            job.operation,
-            self.ctx
-                .t_or(crate::jobs::job_status_key(&job.status), &job.status)
+        let row = adw::ActionRow::new();
+        row.set_activatable(true);
+        row.set_title(&crate::fileops::ops_job_title(
+            &job.operation,
+            &self
+                .ctx
+                .t_or(crate::jobs::job_status_key(&job.status), &job.status),
         ));
         let src = if job.src.is_empty() {
             job.remote.clone()
@@ -6222,11 +6261,12 @@ impl NautilusView {
         };
         let bytes = crate::jobs::stats_i64(&job.stats, &["bytes"]);
         let total = crate::jobs::stats_i64(&job.stats, &["totalBytes", "size"]);
-        row.set_subtitle(&format!(
-            "#{id} · {percent}% · {src} · {} / {}",
-            crate::rclone::format_bytes(bytes),
-            crate::rclone::format_bytes(total),
-            id = job.id
+        row.set_subtitle(&crate::fileops::ops_job_subtitle(
+            job.id,
+            percent,
+            &src,
+            &crate::rclone::format_bytes(bytes),
+            &crate::rclone::format_bytes(total),
         ));
         if live && (job.status == "running" || job.status == "preparing") {
             let bar = gtk::ProgressBar::new();
@@ -6257,136 +6297,6 @@ impl NautilusView {
             }
             row.add_suffix(&bar);
         }
-        let (speed, eta) = crate::jobs::job_speed_eta(job);
-        let speed_row = adw::ActionRow::new();
-        speed_row.set_title(&self.ctx.t_or("modals.jobDetail.fields.speed", "Speed"));
-        speed_row.set_subtitle(&format!(
-            "{speed} · {} {eta}",
-            self.ctx.t_or("modals.jobDetail.fields.eta", "ETA")
-        ));
-        row.add_row(&speed_row);
-        if !job.src.is_empty() {
-            let source = adw::ActionRow::new();
-            source.set_title(
-                &self
-                    .ctx
-                    .t_or("fileBrowser.operations.details.source", "Source"),
-            );
-            source.set_subtitle(&job.src);
-            row.add_row(&source);
-        }
-        if !job.dst.is_empty() {
-            let dest = adw::ActionRow::new();
-            dest.set_title(
-                &self
-                    .ctx
-                    .t_or("fileBrowser.operations.details.destination", "Destination"),
-            );
-            dest.set_subtitle(&job.dst);
-            row.add_row(&dest);
-        }
-        if crate::jobs::has_known_start_time(job) {
-            let started = adw::ActionRow::new();
-            started.set_title(
-                &self
-                    .ctx
-                    .t_or("fileBrowser.operations.details.startTime", "Start time"),
-            );
-            started.set_subtitle(
-                &job.start_time
-                    .with_timezone(&chrono::Local)
-                    .format("%b %d, %H:%M")
-                    .to_string(),
-            );
-            row.add_row(&started);
-        }
-        if matches!(
-            job.status.as_str(),
-            "failed" | "running" | "Failed" | "Running"
-        ) {
-            if let Some(error) = crate::jobs::job_error_text(job) {
-                let err_row = adw::ActionRow::new();
-                err_row.set_title(&self.ctx.t_or("fileBrowser.operations.failed", "Failed"));
-                err_row.set_subtitle(&error);
-                err_row.add_css_class("error");
-                let copy = gtk::Button::from_icon_name("edit-copy-symbolic");
-                copy.set_valign(gtk::Align::Center);
-                copy.set_tooltip_text(Some(&self.ctx.t_or("common.copy", "Copy")));
-                let error_text = error.clone();
-                copy.connect_clicked(move |_| {
-                    if let Some(display) = gtk::gdk::Display::default() {
-                        display.clipboard().set_text(&error_text);
-                    }
-                });
-                err_row.add_suffix(&copy);
-                row.add_row(&err_row);
-            }
-        }
-        let previews = crate::jobs::job_transfer_previews(job, 6);
-        if !previews.is_empty() {
-            let header = adw::ActionRow::new();
-            header.set_title(&self.ctx.t_or(
-                if previews.len() == 1 {
-                    "fileBrowser.operations.currentFile"
-                } else {
-                    "fileBrowser.operations.currentFiles"
-                },
-                "Current files",
-            ));
-            row.add_row(&header);
-            for (name, detail) in &previews {
-                let child = adw::ActionRow::new();
-                child.set_title(&name);
-                child.set_subtitle(&detail);
-                row.add_row(&child);
-            }
-        }
-        let completed = crate::jobs::job_completed_previews(job, 12);
-        if !completed.is_empty() {
-            let header = adw::ActionRow::new();
-            header.set_title(&self.ctx.t_or(
-                crate::jobs::job_transferred_label_key(&job.operation),
-                "Processed files",
-            ));
-            row.add_row(&header);
-            for item in completed {
-                let child = adw::ActionRow::new();
-                child.set_title(&item.name);
-                if !item.detail.is_empty() {
-                    child.set_subtitle(&item.detail);
-                    child.set_tooltip_text(Some(&item.detail));
-                }
-                if item.failed {
-                    child.add_css_class("error");
-                }
-                row.add_row(&child);
-            }
-        } else if previews.is_empty() && live {
-            let empty = adw::ActionRow::new();
-            empty.set_title(&self.ctx.t_or(
-                "shared.transferActivity.empty.noActive",
-                "No active transfers",
-            ));
-            row.add_row(&empty);
-        }
-        let details = adw::ActionRow::new();
-        details.set_title(
-            &self
-                .ctx
-                .t_or("modals.jobDetail.sections.overview", "Job details"),
-        );
-        details.set_activatable(true);
-        {
-            let ctx = self.ctx.clone();
-            let id = job.id;
-            let view = self.clone();
-            details.connect_activated(move |_| {
-                if let Some(win) = view.root.root().and_downcast::<gtk::Window>() {
-                    dialogs::job_detail(&win, ctx.clone(), id);
-                }
-            });
-        }
-        row.add_row(&details);
         if live && matches!(job.status.as_str(), "running" | "preparing" | "starting") {
             let stop = gtk::Button::from_icon_name("media-playback-stop-symbolic");
             stop.set_valign(gtk::Align::Center);
@@ -6420,7 +6330,155 @@ impl NautilusView {
             });
             row.add_suffix(&dismiss);
         }
+        let popover = gtk::Popover::new();
+        popover.set_has_arrow(true);
+        popover.set_position(gtk::PositionType::Top);
+        popover.set_child(Some(&self.build_ops_details(job, live)));
+        popover.set_parent(&row);
+        {
+            let popover = popover.clone();
+            row.connect_activated(move |_| popover.popup());
+        }
         row
+    }
+
+    fn build_ops_details(&self, job: &crate::store::JobInfo, live: bool) -> gtk::Box {
+        let box_ = gtk::Box::new(gtk::Orientation::Vertical, 0);
+        box_.set_size_request(320, -1);
+        let list = gtk::ListBox::new();
+        list.add_css_class("boxed-list");
+        let (speed, eta) = crate::jobs::job_speed_eta(job);
+        let speed_row = adw::ActionRow::new();
+        speed_row.set_title(&self.ctx.t_or("modals.jobDetail.fields.speed", "Speed"));
+        speed_row.set_subtitle(&format!(
+            "{speed} · {} {eta}",
+            self.ctx.t_or("modals.jobDetail.fields.eta", "ETA")
+        ));
+        list.append(&speed_row);
+        if !job.src.is_empty() {
+            let source = adw::ActionRow::new();
+            source.set_title(
+                &self
+                    .ctx
+                    .t_or("fileBrowser.operations.details.source", "Source"),
+            );
+            source.set_subtitle(&job.src);
+            list.append(&source);
+        }
+        if !job.dst.is_empty() {
+            let dest = adw::ActionRow::new();
+            dest.set_title(
+                &self
+                    .ctx
+                    .t_or("fileBrowser.operations.details.destination", "Destination"),
+            );
+            dest.set_subtitle(&job.dst);
+            list.append(&dest);
+        }
+        if crate::jobs::has_known_start_time(job) {
+            let started = adw::ActionRow::new();
+            started.set_title(
+                &self
+                    .ctx
+                    .t_or("fileBrowser.operations.details.startTime", "Start time"),
+            );
+            started.set_subtitle(
+                &job.start_time
+                    .with_timezone(&chrono::Local)
+                    .format("%b %d, %H:%M")
+                    .to_string(),
+            );
+            list.append(&started);
+        }
+        if matches!(
+            job.status.as_str(),
+            "failed" | "running" | "Failed" | "Running"
+        ) {
+            if let Some(error) = crate::jobs::job_error_text(job) {
+                let err_row = adw::ActionRow::new();
+                err_row.set_title(&self.ctx.t_or("fileBrowser.operations.failed", "Failed"));
+                err_row.set_subtitle(&error);
+                err_row.add_css_class("error");
+                let copy = gtk::Button::from_icon_name("edit-copy-symbolic");
+                copy.set_valign(gtk::Align::Center);
+                copy.set_tooltip_text(Some(&self.ctx.t_or("common.copy", "Copy")));
+                let error_text = error.clone();
+                copy.connect_clicked(move |_| {
+                    if let Some(display) = gtk::gdk::Display::default() {
+                        display.clipboard().set_text(&error_text);
+                    }
+                });
+                err_row.add_suffix(&copy);
+                list.append(&err_row);
+            }
+        }
+        let previews = crate::jobs::job_transfer_previews(job, 6);
+        if !previews.is_empty() {
+            let header = adw::ActionRow::new();
+            header.set_title(&self.ctx.t_or(
+                if previews.len() == 1 {
+                    "fileBrowser.operations.currentFile"
+                } else {
+                    "fileBrowser.operations.currentFiles"
+                },
+                "Current files",
+            ));
+            list.append(&header);
+            for (name, detail) in &previews {
+                let child = adw::ActionRow::new();
+                child.set_title(name);
+                child.set_subtitle(detail);
+                list.append(&child);
+            }
+        }
+        let completed = crate::jobs::job_completed_previews(job, 12);
+        if !completed.is_empty() {
+            let header = adw::ActionRow::new();
+            header.set_title(&self.ctx.t_or(
+                crate::jobs::job_transferred_label_key(&job.operation),
+                "Processed files",
+            ));
+            list.append(&header);
+            for item in completed {
+                let child = adw::ActionRow::new();
+                child.set_title(&item.name);
+                if !item.detail.is_empty() {
+                    child.set_subtitle(&item.detail);
+                    child.set_tooltip_text(Some(&item.detail));
+                }
+                if item.failed {
+                    child.add_css_class("error");
+                }
+                list.append(&child);
+            }
+        } else if previews.is_empty() && live {
+            let empty = adw::ActionRow::new();
+            empty.set_title(&self.ctx.t_or(
+                "shared.transferActivity.empty.noActive",
+                "No active transfers",
+            ));
+            list.append(&empty);
+        }
+        let details = adw::ActionRow::new();
+        details.set_title(
+            &self
+                .ctx
+                .t_or("modals.jobDetail.sections.overview", "Job details"),
+        );
+        details.set_activatable(true);
+        {
+            let ctx = self.ctx.clone();
+            let id = job.id;
+            let view = self.clone();
+            details.connect_activated(move |_| {
+                if let Some(win) = view.root.root().and_downcast::<gtk::Window>() {
+                    dialogs::job_detail(&win, ctx.clone(), id);
+                }
+            });
+        }
+        list.append(&details);
+        box_.append(&list);
+        box_
     }
 }
 
