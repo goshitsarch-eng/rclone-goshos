@@ -9787,6 +9787,8 @@ pub fn job_detail(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, job_id: u64) {
                 &job.operation,
                 &job.remote,
                 job.id,
+                &job.src,
+                &job.dst,
                 active_limit.get(),
                 {
                     let limit = active_limit.clone();
@@ -9807,6 +9809,8 @@ pub fn job_detail(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, job_id: u64) {
                 &job.operation,
                 &job.remote,
                 job.id,
+                &job.src,
+                &job.dst,
                 done_limit.get(),
                 {
                     let limit = done_limit.clone();
@@ -10031,6 +10035,8 @@ pub(crate) fn transfer_activity_row(
     remote_name: &str,
     parent: &impl IsA<gtk::Widget>,
     parent_job_id: u64,
+    job_src: &str,
+    job_dst: &str,
 ) -> gtk::ListBoxRow {
     let wrap = gtk::Box::new(gtk::Orientation::Vertical, 4);
     wrap.set_margin_top(4);
@@ -10157,8 +10163,10 @@ pub(crate) fn transfer_activity_row(
         let ctx = ctx.clone();
         let parsed = parsed.clone();
         let parent = parent.upcast_ref::<gtk::Widget>().clone();
+        let job_src = job_src.to_string();
+        let job_dst = job_dst.to_string();
         resolve.connect_clicked(move |_| {
-            resolve_failed_transfer(&ctx, &parsed, parent_job_id, &parent);
+            resolve_failed_transfer(&ctx, &parsed, parent_job_id, &job_src, &job_dst, &parent);
         });
         row.add_suffix(&resolve);
     }
@@ -10186,6 +10194,8 @@ fn append_transfer_rows(
     job_type: &str,
     remote_name: &str,
     parent_job_id: u64,
+    job_src: &str,
+    job_dst: &str,
     limit: usize,
     on_more: Option<Rc<dyn Fn()>>,
 ) {
@@ -10246,6 +10256,8 @@ fn append_transfer_rows(
             remote_name,
             parent,
             parent_job_id,
+            job_src,
+            job_dst,
         ));
     }
     if remaining > 0 {
@@ -14402,14 +14414,20 @@ fn resolve_failed_transfer(
     ctx: &AppCtx,
     parsed: &crate::transfers::TransferRow,
     parent_job_id: u64,
+    job_src: &str,
+    job_dst: &str,
     parent: &impl IsA<gtk::Widget>,
 ) {
     let Some(client) = ctx.client() else {
         return;
     };
-    let Some((src_fs, src_remote, dst_fs, dst_remote)) =
-        crate::transfers::copyfile_sides(&parsed.src, &parsed.dst)
-    else {
+    let Some((src_fs, src_remote, dst_fs, dst_remote)) = crate::transfers::copyfile_sides_with_job(
+        &parsed.src,
+        &parsed.dst,
+        &parsed.name,
+        job_src,
+        job_dst,
+    ) else {
         add_action_toast(
             parent,
             &ctx.tf(

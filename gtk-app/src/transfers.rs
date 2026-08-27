@@ -125,6 +125,37 @@ pub fn copyfile_sides(src: &str, dst: &str) -> Option<(String, String, String, S
     ))
 }
 
+/// rclone completed transfers often store only the leaf name. Join that onto the
+/// parent job src/dst so `operations/copyfile` still has two remote paths.
+pub fn qualify_transfer_side(path: &str, job_side: &str, name: &str) -> String {
+    let leaf = if path.is_empty() { name } else { path };
+    if leaf.is_empty() {
+        return job_side.to_string();
+    }
+    if leaf.contains(':') || leaf.starts_with('/') {
+        return leaf.to_string();
+    }
+    if job_side.is_empty() {
+        return leaf.to_string();
+    }
+    crate::rclone::join_remote_path(job_side.trim_end_matches('/'), leaf)
+}
+
+pub fn copyfile_sides_with_job(
+    src: &str,
+    dst: &str,
+    name: &str,
+    job_src: &str,
+    job_dst: &str,
+) -> Option<(String, String, String, String)> {
+    copyfile_sides(src, dst).or_else(|| {
+        copyfile_sides(
+            &qualify_transfer_side(src, job_src, name),
+            &qualify_transfer_side(dst, job_dst, name),
+        )
+    })
+}
+
 pub fn transfer_status(completed: bool, row: &TransferRow) -> TransferStatus {
     if !row.error.is_empty() {
         return TransferStatus::Error;
@@ -777,5 +808,25 @@ mod tests {
                 "k.txt".into()
             ))
         );
+        assert_eq!(
+            qualify_transfer_side("bad.txt", "testdrive:Photos", "bad.txt"),
+            "testdrive:Photos/bad.txt"
+        );
+        assert_eq!(
+            copyfile_sides_with_job(
+                "bad.txt",
+                "bad.txt",
+                "bad.txt",
+                "testdrive:Photos",
+                "testdrive:verify-ops"
+            ),
+            Some((
+                "testdrive:".into(),
+                "Photos/bad.txt".into(),
+                "testdrive:".into(),
+                "verify-ops/bad.txt".into()
+            ))
+        );
+        assert!(copyfile_sides("bad.txt", "bad.txt").is_none());
     }
 }
