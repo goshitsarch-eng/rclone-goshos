@@ -1341,6 +1341,17 @@ impl Dashboard {
                 row.add_suffix(&hide);
                 row.add_suffix(&up);
                 row.add_suffix(&down);
+                let dash = self.clone();
+                super::dialogs::attach_id_drag_drop(
+                    &row,
+                    remote.name.clone(),
+                    Rc::new(move |from, to| {
+                        if dash.ctx.store.borrow_mut().move_remote_before(&from, &to) {
+                            dash.ctx.persist();
+                            dash.refresh();
+                        }
+                    }),
+                );
             }
             {
                 let ctx = self.ctx.clone();
@@ -3685,6 +3696,14 @@ impl Dashboard {
                     return false;
                 }
                 if tab == "recent" && !*completed {
+                    return false;
+                }
+                if self
+                    .ctx
+                    .hidden_transfer_ids
+                    .borrow()
+                    .contains(&crate::transfers::transfer_row_id(row))
+                {
                     return false;
                 }
                 if query.is_empty() {

@@ -30,11 +30,17 @@ pub fn vfs_panel(ctx: AppCtx, remote: &str, toast: adw::ToastOverlay) -> gtk::Wi
     empty.set_xalign(0.0);
     root.append(&empty);
 
-    let indexed = gtk::Label::new(None);
-    indexed.add_css_class("warning");
-    indexed.set_wrap(true);
-    indexed.set_xalign(0.0);
+    let indexed = gtk::Box::new(gtk::Orientation::Vertical, 4);
     indexed.set_visible(false);
+    let indexed_label = gtk::Label::new(None);
+    indexed_label.add_css_class("warning");
+    indexed_label.set_wrap(true);
+    indexed_label.set_xalign(0.0);
+    let indexed_link =
+        gtk::LinkButton::with_label("https://github.com/rclone/rclone/issues/9120", "#9120");
+    indexed_link.set_halign(gtk::Align::Start);
+    indexed.append(&indexed_label);
+    indexed.append(&indexed_link);
     root.append(&indexed);
 
     let combo = adw::ComboRow::new();
@@ -164,6 +170,7 @@ pub fn vfs_panel(ctx: AppCtx, remote: &str, toast: adw::ToastOverlay) -> gtk::Wi
         let suppressing = suppressing.clone();
         let empty = empty.clone();
         let indexed = indexed.clone();
+        let indexed_label = indexed_label.clone();
         let combo = combo.clone();
         let combo_group = combo_group.clone();
         let stats = stats.clone();
@@ -232,7 +239,8 @@ pub fn vfs_panel(ctx: AppCtx, remote: &str, toast: adw::ToastOverlay) -> gtk::Wi
 
             let fs = selected.borrow().clone();
             let indexed_fs = is_indexed_vfs(&fs);
-            indexed.set_text(&ctx.tf("shared.vfsControl.indexedWarning", &[("suffix", ":[0]")]));
+            indexed_label
+                .set_text(&ctx.tf("shared.vfsControl.indexedWarning", &[("suffix", ":[0]")]));
             indexed.set_visible(indexed_fs);
             if indexed_fs {
                 delay_box.set_visible(false);

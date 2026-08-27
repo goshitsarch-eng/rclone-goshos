@@ -1263,6 +1263,14 @@ impl FlowView {
                 if tab == "recent" && !*completed {
                     return false;
                 }
+                if self
+                    .ctx
+                    .hidden_transfer_ids
+                    .borrow()
+                    .contains(&crate::transfers::transfer_row_id(row))
+                {
+                    return false;
+                }
                 if query.is_empty() {
                     return true;
                 }

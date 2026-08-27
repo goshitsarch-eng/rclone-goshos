@@ -1185,6 +1185,27 @@ impl AppStore {
         true
     }
 
+    /// Drop `from` onto `to` and insert it before the drop target.
+    pub fn move_remote_before(&mut self, from: &str, to: &str) -> bool {
+        if from == to {
+            return false;
+        }
+        let Some(from_idx) = self.remote_order.iter().position(|n| n == from) else {
+            return false;
+        };
+        if !self.remote_order.iter().any(|n| n == to) {
+            return false;
+        }
+        let name = self.remote_order.remove(from_idx);
+        let to_idx = self
+            .remote_order
+            .iter()
+            .position(|n| n == to)
+            .unwrap_or(self.remote_order.len());
+        self.remote_order.insert(to_idx, name);
+        true
+    }
+
     pub fn set_remote_hidden(&mut self, name: &str, hidden: bool) {
         if hidden {
             if !self.hidden_remotes.iter().any(|n| n == name) {
@@ -2293,6 +2314,9 @@ mod tests {
         assert!(store.move_remote("a", -1));
         assert_eq!(store.remote_order, ["a", "b", "c", "d"]);
         assert!(!store.move_remote("a", -1));
+        assert!(store.move_remote_before("d", "b"));
+        assert_eq!(store.remote_order, ["a", "d", "b", "c"]);
+        assert!(!store.move_remote_before("a", "a"));
         assert!(store.toggle_remote_hidden("c"));
         assert_eq!(store.hidden_remotes, ["c"]);
         assert!(!store.toggle_remote_hidden("c"));

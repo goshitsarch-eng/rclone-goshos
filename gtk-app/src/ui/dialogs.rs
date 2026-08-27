@@ -4788,6 +4788,8 @@ pub fn alerts(parent: &impl IsA<gtk::Widget>, ctx: AppCtx) {
     let origin_refs: Vec<&str> = origin_labels.iter().map(|s| s.as_str()).collect();
     let rule_dd = gtk::DropDown::from_strings(&rule_refs);
     let origin_dd = gtk::DropDown::from_strings(&origin_refs);
+    let chips = gtk::Box::new(gtk::Orientation::Horizontal, 6);
+    chips.set_visible(false);
     let fill_cell: Rc<RefCell<Rc<dyn Fn()>>> = Rc::new(RefCell::new(Rc::new(|| {})));
     let fill: Rc<dyn Fn()> = {
         let history = history.clone();
@@ -4807,7 +4809,130 @@ pub fn alerts(parent: &impl IsA<gtk::Widget>, ctx: AppCtx) {
         let origin_labels = origin_labels.clone();
         let ctx = ctx.clone();
         let fill_cell = fill_cell.clone();
+        let chips = chips.clone();
+        let severity_critical = severity_critical.clone();
+        let severity_high = severity_high.clone();
+        let severity_average = severity_average.clone();
+        let severity_warning = severity_warning.clone();
+        let severity_info = severity_info.clone();
+        let all_kinds = all_kinds.clone();
+        let event_job = event_job.clone();
+        let event_serve = event_serve.clone();
+        let event_mount = event_mount.clone();
+        let event_engine = event_engine.clone();
+        let event_update = event_update.clone();
+        let event_automation = event_automation.clone();
+        let event_system = event_system.clone();
+        let ack_open = ack_open.clone();
+        let ack_done = ack_done.clone();
         Rc::new(move || {
+            while let Some(child) = chips.first_child() {
+                chips.remove(&child);
+            }
+            let mut chip_count = 0;
+            let push_chip = |dd: &gtk::DropDown, labels: &[String]| {
+                let idx = dd.selected() as usize;
+                if idx > 0 {
+                    if let Some(label) = labels.get(idx) {
+                        let chip = gtk::Button::with_label(&format!("{label} ×"));
+                        chip.add_css_class("pill");
+                        let dd = dd.clone();
+                        chip.connect_clicked(move |_| {
+                            dd.set_selected(0);
+                        });
+                        chips.append(&chip);
+                        return 1;
+                    }
+                }
+                0
+            };
+            chip_count += push_chip(&remote_dd, &remote_labels);
+            chip_count += push_chip(&profile_dd, &profile_labels);
+            chip_count += push_chip(&backend_dd, &backend_labels);
+            chip_count += push_chip(&rule_dd, &rule_labels);
+            chip_count += push_chip(&origin_dd, &origin_labels);
+            if severity.selected() > 0 {
+                chip_count += 1;
+                let chip = gtk::Button::with_label(&format!(
+                    "{} ×",
+                    match severity.selected() {
+                        1 => severity_critical.as_str(),
+                        2 => severity_high.as_str(),
+                        3 => severity_average.as_str(),
+                        4 => severity_warning.as_str(),
+                        _ => severity_info.as_str(),
+                    }
+                ));
+                chip.add_css_class("pill");
+                let severity = severity.clone();
+                chip.connect_clicked(move |_| {
+                    severity.set_selected(0);
+                });
+                chips.append(&chip);
+            }
+            if event_kind.selected() > 0 {
+                chip_count += 1;
+                let labels = [
+                    all_kinds.as_str(),
+                    event_job.as_str(),
+                    event_serve.as_str(),
+                    event_mount.as_str(),
+                    event_engine.as_str(),
+                    event_update.as_str(),
+                    event_automation.as_str(),
+                    event_system.as_str(),
+                ];
+                let label = labels
+                    .get(event_kind.selected() as usize)
+                    .copied()
+                    .unwrap_or("");
+                let chip = gtk::Button::with_label(&format!("{label} ×"));
+                chip.add_css_class("pill");
+                let event_kind = event_kind.clone();
+                chip.connect_clicked(move |_| {
+                    event_kind.set_selected(0);
+                });
+                chips.append(&chip);
+            }
+            if ack_state.selected() > 0 {
+                chip_count += 1;
+                let label = if ack_state.selected() == 1 {
+                    ack_open.as_str()
+                } else {
+                    ack_done.as_str()
+                };
+                let chip = gtk::Button::with_label(&format!("{label} ×"));
+                chip.add_css_class("pill");
+                let ack_state = ack_state.clone();
+                chip.connect_clicked(move |_| {
+                    ack_state.set_selected(0);
+                });
+                chips.append(&chip);
+            }
+            if chip_count > 1 {
+                let clear_all = gtk::Button::with_label(&ctx.t_or("common.reset", "Clear all"));
+                clear_all.add_css_class("flat");
+                let remote_dd = remote_dd.clone();
+                let profile_dd = profile_dd.clone();
+                let backend_dd = backend_dd.clone();
+                let rule_dd = rule_dd.clone();
+                let origin_dd = origin_dd.clone();
+                let severity = severity.clone();
+                let event_kind = event_kind.clone();
+                let ack_state = ack_state.clone();
+                clear_all.connect_clicked(move |_| {
+                    remote_dd.set_selected(0);
+                    profile_dd.set_selected(0);
+                    backend_dd.set_selected(0);
+                    rule_dd.set_selected(0);
+                    origin_dd.set_selected(0);
+                    severity.set_selected(0);
+                    event_kind.set_selected(0);
+                    ack_state.set_selected(0);
+                });
+                chips.append(&clear_all);
+            }
+            chips.set_visible(chip_count > 0);
             while let Some(child) = history.first_child() {
                 history.remove(&child);
             }
@@ -4984,6 +5109,7 @@ pub fn alerts(parent: &impl IsA<gtk::Widget>, ctx: AppCtx) {
     scope_row.append(&origin_dd);
     filters.append(&filter_row);
     filters.append(&scope_row);
+    filters.append(&chips);
     let buttons = gtk::Box::new(gtk::Orientation::Horizontal, 8);
     buttons.append(&ack);
     buttons.append(&clear);
@@ -8479,13 +8605,7 @@ pub fn properties(
     dialog.set_title(&ctx.t_or("fileBrowser.properties.title", "Properties"));
     dialog.set_content_width(520);
     dialog.set_content_height(640);
-    let location = if remote == "local" {
-        path.to_string()
-    } else if path.is_empty() {
-        format!("{remote}:")
-    } else {
-        format!("{remote}:{path}")
-    };
+    let location = crate::path_kind::format_location(remote, path, &ctx.engine_os());
     let starred =
         crate::settings::collection_contains(&ctx.settings.borrow().nautilus.starred, &location);
     let header = gtk::Box::new(gtk::Orientation::Horizontal, 8);
@@ -8534,7 +8654,7 @@ pub fn properties(
         (ctx.t_or("sidebar.remotes", "Remote"), remote.to_string()),
         (
             ctx.t_or("fileBrowser.properties.location", "Location"),
-            path.to_string(),
+            location.clone(),
         ),
         (ctx.t_or("modals.jobDetail.fields.type", "Type"), {
             let cat = crate::operations::FileTypeCategory::from_name(name, false);
@@ -8547,6 +8667,9 @@ pub fn properties(
         let row = adw::ActionRow::new();
         row.set_title(&title);
         row.set_subtitle(&value);
+        if title == ctx.t_or("fileBrowser.properties.location", "Location") {
+            add_copy_suffix(&ctx, &row, &value);
+        }
         list.append(&row);
     }
     let fs = if remote == "local" {
@@ -9269,6 +9392,10 @@ pub fn job_detail(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, job_id: u64) {
     toast.set_child(Some(&scroll));
     dialog.set_child(Some(&toast));
 
+    let active_limit = Rc::new(Cell::new(crate::jobs::ACTIVITY_PAGE));
+    let done_limit = Rc::new(Cell::new(crate::jobs::ACTIVITY_PAGE));
+    let check_limit = Rc::new(Cell::new(crate::jobs::ACTIVITY_PAGE));
+    let fill_cell: Rc<RefCell<Rc<dyn Fn()>>> = Rc::new(RefCell::new(Rc::new(|| {})));
     let fill = {
         let ctx = ctx.clone();
         let meta = meta.clone();
@@ -9285,6 +9412,10 @@ pub fn job_detail(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, job_id: u64) {
         let paths = paths.clone();
         let checks = checks.clone();
         let transfer_stack = transfer_stack.clone();
+        let active_limit = active_limit.clone();
+        let done_limit = done_limit.clone();
+        let check_limit = check_limit.clone();
+        let fill_cell = fill_cell.clone();
         move || {
             while let Some(child) = meta.first_child() {
                 meta.remove(&child);
@@ -9359,11 +9490,13 @@ pub fn job_detail(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, job_id: u64) {
             populate_opens(&job.src, &job.dst);
             paths.append(&job_path_row(
                 &ctx,
+                &dialog,
                 &ctx.t_or("fileBrowser.operations.details.source", "Source"),
                 &job.src,
             ));
             paths.append(&job_path_row(
                 &ctx,
+                &dialog,
                 &ctx.t_or("fileBrowser.operations.details.destination", "Destination"),
                 &job.dst,
             ));
@@ -9459,6 +9592,11 @@ pub fn job_detail(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, job_id: u64) {
                 row.set_title(&title);
                 row.set_subtitle(&value);
                 row.set_subtitle_lines(2);
+                if title == ctx.t_or("modals.jobDetail.fields.group", "Group")
+                    || title == ctx.t_or("modals.jobDetail.fields.backend", "Backend")
+                {
+                    add_copy_suffix(&ctx, &row, &value);
+                }
                 meta.append(&row);
             }
             for (title, value) in [
@@ -9582,6 +9720,9 @@ pub fn job_detail(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, job_id: u64) {
                 row.set_title(&title);
                 row.set_subtitle(&value);
                 row.set_subtitle_lines(2);
+                if title == ctx.t_or("modals.jobDetail.fields.executeId", "Execute ID") {
+                    add_copy_suffix(&ctx, &row, &value);
+                }
                 stats.append(&row);
             }
             if let Some(err) = job.error.as_deref().filter(|e| !e.is_empty()) {
@@ -9601,6 +9742,15 @@ pub fn job_detail(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, job_id: u64) {
                 &toast,
                 &job.operation,
                 &job.remote,
+                active_limit.get(),
+                {
+                    let limit = active_limit.clone();
+                    let fill_cell = fill_cell.clone();
+                    Some(Rc::new(move || {
+                        limit.set(limit.get().saturating_add(crate::jobs::ACTIVITY_PAGE));
+                        fill_cell.borrow().clone()();
+                    }) as Rc<dyn Fn()>)
+                },
             );
             append_transfer_rows(
                 &completed,
@@ -9611,6 +9761,15 @@ pub fn job_detail(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, job_id: u64) {
                 &toast,
                 &job.operation,
                 &job.remote,
+                done_limit.get(),
+                {
+                    let limit = done_limit.clone();
+                    let fill_cell = fill_cell.clone();
+                    Some(Rc::new(move || {
+                        limit.set(limit.get().saturating_add(crate::jobs::ACTIVITY_PAGE));
+                        fill_cell.borrow().clone()();
+                    }) as Rc<dyn Fn()>)
+                },
             );
             let check_source = crate::checks::check_source_from_job(&job.stats, &job.output);
             let results = crate::checks::visible_check_items(
@@ -9667,12 +9826,26 @@ pub fn job_detail(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, job_id: u64) {
                 ));
                 checks.append(&heading);
             } else {
-                for item in results {
-                    checks.append(&check_result_row(&ctx, &item, &dialog));
+                let end = crate::jobs::activity_visible_end(results.len(), check_limit.get());
+                let remaining = crate::jobs::activity_remaining(results.len(), check_limit.get());
+                for item in &results[..end] {
+                    checks.append(&check_result_row(&ctx, item, &dialog));
+                }
+                if remaining > 0 {
+                    checks.append(&activity_more_row(&ctx, remaining, {
+                        let limit = check_limit.clone();
+                        let fill_cell = fill_cell.clone();
+                        Rc::new(move || {
+                            limit.set(limit.get().saturating_add(crate::jobs::ACTIVITY_PAGE));
+                            fill_cell.borrow().clone()();
+                        })
+                    }));
                 }
             }
         }
     };
+    let fill: Rc<dyn Fn()> = Rc::new(fill);
+    *fill_cell.borrow_mut() = fill.clone();
     fill();
     {
         let fill = fill.clone();
@@ -9725,11 +9898,10 @@ fn append_open_job_paths(
     }
 }
 
-fn job_path_row(ctx: &AppCtx, title: &str, value: &str) -> adw::ActionRow {
-    let row = adw::ActionRow::new();
-    row.set_title(title);
-    row.set_subtitle(if value.is_empty() { "—" } else { value });
-    row.set_subtitle_lines(3);
+fn add_copy_suffix(ctx: &AppCtx, row: &adw::ActionRow, value: &str) {
+    if value.is_empty() || value == "—" {
+        return;
+    }
     let copy = gtk::Button::from_icon_name("edit-copy-symbolic");
     copy.set_valign(gtk::Align::Center);
     copy.set_tooltip_text(Some(&ctx.t_or("common.copy", "Copy")));
@@ -9740,6 +9912,68 @@ fn job_path_row(ctx: &AppCtx, title: &str, value: &str) -> adw::ActionRow {
         }
     });
     row.add_suffix(&copy);
+}
+
+fn activity_more_row(ctx: &AppCtx, remaining: usize, on_more: Rc<dyn Fn()>) -> adw::ActionRow {
+    let row = adw::ActionRow::new();
+    row.set_title(&ctx.tf_or(
+        "nautilus.loadMore",
+        "Show {{count}} more",
+        &[("count", &remaining.to_string())],
+    ));
+    row.set_activatable(true);
+    row.connect_activated(move |_| on_more());
+    row
+}
+
+fn job_path_row(ctx: &AppCtx, dialog: &adw::Dialog, title: &str, value: &str) -> adw::ActionRow {
+    let row = adw::ActionRow::new();
+    row.set_title(title);
+    row.set_subtitle(if value.is_empty() { "—" } else { value });
+    row.set_subtitle_lines(3);
+    let parts = crate::jobs::split_job_paths(value);
+    if parts.len() > 1 {
+        let open = gtk::MenuButton::new();
+        open.set_icon_name("folder-open-symbolic");
+        open.set_valign(gtk::Align::Center);
+        open.set_tooltip_text(Some(&ctx.t_or("common.browse", "Open in Files")));
+        let popover = gtk::Popover::new();
+        let list = gtk::Box::new(gtk::Orientation::Vertical, 4);
+        for path in parts {
+            let btn = gtk::Button::with_label(&path);
+            btn.add_css_class("flat");
+            btn.set_halign(gtk::Align::Start);
+            let ctx = ctx.clone();
+            let dialog = dialog.clone();
+            let popover = popover.clone();
+            btn.connect_clicked(move |_| {
+                if let Some((remote, folder)) = browse_target(&path) {
+                    super::window::present_files_at(&dialog, &ctx, &remote, &folder);
+                    dialog.close();
+                }
+                popover.popdown();
+            });
+            list.append(&btn);
+        }
+        popover.set_child(Some(&list));
+        open.set_popover(Some(&popover));
+        row.add_prefix(&open);
+    } else if let Some(path) = parts.first().filter(|p| !p.is_empty()) {
+        let open = gtk::Button::from_icon_name("folder-open-symbolic");
+        open.set_valign(gtk::Align::Center);
+        open.set_tooltip_text(Some(&ctx.t_or("common.browse", "Open in Files")));
+        let ctx = ctx.clone();
+        let dialog = dialog.clone();
+        let path = path.clone();
+        open.connect_clicked(move |_| {
+            if let Some((remote, folder)) = browse_target(&path) {
+                super::window::present_files_at(&dialog, &ctx, &remote, &folder);
+                dialog.close();
+            }
+        });
+        row.add_prefix(&open);
+    }
+    add_copy_suffix(ctx, &row, value);
     row
 }
 
@@ -9756,6 +9990,23 @@ pub(crate) fn transfer_activity_row(
     wrap.set_margin_bottom(4);
     let row = adw::ActionRow::new();
     row.set_title(&parsed.name);
+    row.set_activatable(true);
+    {
+        let name = parsed.name.clone();
+        let toast = parent
+            .upcast_ref::<gtk::Widget>()
+            .downcast_ref::<adw::ToastOverlay>()
+            .cloned();
+        let copied = ctx.t_or("common.copied", "Copied to clipboard");
+        row.connect_activated(move |_| {
+            if let Some(display) = gtk::gdk::Display::default() {
+                display.clipboard().set_text(&name);
+            }
+            if let Some(toast) = &toast {
+                toast.add_toast(adw::Toast::new(&copied));
+            }
+        });
+    }
     let src = if parsed.src.is_empty() {
         "—".into()
     } else {
@@ -9784,16 +10035,43 @@ pub(crate) fn transfer_activity_row(
         crate::transfers::TransferStatus::Progress => format!("{}%", parsed.percentage),
     };
     let meta = crate::transfers::transfer_meta_caption(parsed);
-    let subtitle = if meta.is_empty() {
+    let mut subtitle = if meta.is_empty() {
         format!("{status} · {src} → {dst}")
     } else {
         format!("{status} · {meta} · {src} → {dst}")
     };
+    if let Some(at) = parsed.completed_at {
+        let (key, count) = crate::checks::relative_time_parts(at, chrono::Utc::now());
+        let relative = if count == 0 {
+            ctx.t_or(key, "Just now")
+        } else {
+            ctx.tf(key, &[("count", &count.to_string())])
+        };
+        subtitle.push_str(" · ");
+        subtitle.push_str(&relative);
+        if let Some(started) = parsed.started_at {
+            let elapsed = crate::transfers::transfer_elapsed_caption(started, at);
+            if !elapsed.is_empty() {
+                subtitle.push_str(" · ");
+                subtitle.push_str(&elapsed);
+            }
+        }
+    }
     row.set_subtitle(&subtitle);
     if !parsed.error.is_empty() {
         row.add_css_class("error");
         row.set_tooltip_text(Some(&parsed.error));
     }
+    let unique = crate::transfers::transfer_row_id(parsed);
+    let on_deleted = Some(Rc::new({
+        let ctx = ctx.clone();
+        let unique = unique.clone();
+        let wrap = wrap.clone();
+        move |_| {
+            ctx.hidden_transfer_ids.borrow_mut().insert(unique.clone());
+            wrap.set_visible(false);
+        }
+    }) as Rc<dyn Fn(bool)>);
     row.add_suffix(&transfer_row_actions(
         ctx,
         parent,
@@ -9801,7 +10079,7 @@ pub(crate) fn transfer_activity_row(
         job_type,
         completed,
         remote_name,
-        None,
+        on_deleted,
         "",
     ));
     wrap.append(&row);
@@ -9825,6 +10103,8 @@ fn append_transfer_rows(
     parent: &impl IsA<gtk::Widget>,
     job_type: &str,
     remote_name: &str,
+    limit: usize,
+    on_more: Option<Rc<dyn Fn()>>,
 ) {
     let empty_title = if active {
         ctx.t_or(
@@ -9855,27 +10135,41 @@ fn append_transfer_rows(
         list.append(&row);
         return;
     };
-    let mut shown = 0;
+    let hidden = ctx.hidden_transfer_ids.borrow();
+    let mut matched = Vec::new();
     for item in arr {
         let parsed = if active {
             crate::transfers::parse_transfer_row(item)
         } else {
             crate::transfers::parse_completed_transfer_row(item)
         };
+        if hidden.contains(&crate::transfers::transfer_row_id(&parsed)) {
+            continue;
+        }
         if !query.is_empty() && !parsed.name.to_lowercase().contains(query) {
             continue;
         }
+        matched.push(parsed);
+    }
+    drop(hidden);
+    let end = crate::jobs::activity_visible_end(matched.len(), limit);
+    let remaining = crate::jobs::activity_remaining(matched.len(), limit);
+    for parsed in &matched[..end] {
         list.append(&transfer_activity_row(
             ctx,
-            &parsed,
+            parsed,
             !active,
             job_type,
             remote_name,
             parent,
         ));
-        shown += 1;
     }
-    if shown == 0 {
+    if remaining > 0 {
+        if let Some(on_more) = on_more {
+            list.append(&activity_more_row(ctx, remaining, on_more));
+        }
+    }
+    if matched.is_empty() {
         let row = adw::ActionRow::new();
         row.set_title(&empty_title);
         row.set_subtitle(&empty_hint);
@@ -13800,6 +14094,23 @@ pub(super) fn check_result_row(
     let wrap = gtk::Box::new(gtk::Orientation::Vertical, 4);
     let row = adw::ActionRow::new();
     row.set_title(&item.name);
+    row.set_activatable(true);
+    {
+        let name = item.name.clone();
+        let copied = ctx.t_or("common.copied", "Copied to clipboard");
+        let toast = parent
+            .upcast_ref::<gtk::Widget>()
+            .downcast_ref::<adw::ToastOverlay>()
+            .cloned();
+        row.connect_activated(move |_| {
+            if let Some(display) = gtk::gdk::Display::default() {
+                display.clipboard().set_text(&name);
+            }
+            if let Some(toast) = &toast {
+                toast.add_toast(adw::Toast::new(&copied));
+            }
+        });
+    }
     let status = check_status_label(ctx, &item.status);
     let subtitle = if let Some(at) = item.completed_at {
         let (key, count) = crate::checks::relative_time_parts(at, chrono::Utc::now());

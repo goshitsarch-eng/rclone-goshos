@@ -1,6 +1,7 @@
 //! Job-detail actions for individual rclone transfers.
 
 use crate::rclone::{browse_target, split_remote_path};
+use chrono::{DateTime, Utc};
 use serde_json::Value;
 
 #[derive(Debug, Clone, PartialEq, Default)]
@@ -14,6 +15,8 @@ pub struct TransferRow {
     pub speed: f64,
     pub eta: f64,
     pub error: String,
+    pub started_at: Option<DateTime<Utc>>,
+    pub completed_at: Option<DateTime<Utc>>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -70,6 +73,20 @@ fn parse_transfer_row_with(item: &Value, completed: bool) -> TransferRow {
         speed,
         eta,
         error,
+        started_at: parse_transfer_time(
+            item,
+            &["startedAt", "started_at", "startTime", "start_time"],
+        ),
+        completed_at: parse_transfer_time(
+            item,
+            &[
+                "completedAt",
+                "completed_at",
+                "endTime",
+                "end_time",
+                "finishedAt",
+            ],
+        ),
     };
     if completed {
         finalize_completed_row(&mut row);
@@ -128,6 +145,46 @@ pub fn transfer_meta_caption(row: &TransferRow) -> String {
         parts.push(crate::jobs::format_seconds(row.eta));
     }
     parts.join(" · ")
+}
+
+fn parse_transfer_time(item: &Value, keys: &[&str]) -> Option<DateTime<Utc>> {
+    for key in keys {
+        let Some(value) = item.get(*key) else {
+            continue;
+        };
+        if let Some(text) = value.as_str().filter(|s| !s.is_empty()) {
+            if let Ok(parsed) = DateTime::parse_from_rfc3339(text) {
+                return Some(parsed.with_timezone(&Utc));
+            }
+        }
+        if let Some(secs) = value.as_i64() {
+            if let Some(parsed) =
+                DateTime::from_timestamp(secs, 0).or_else(|| DateTime::from_timestamp_millis(secs))
+            {
+                return Some(parsed);
+            }
+        }
+        if let Some(secs) = value.as_f64() {
+            if let Some(parsed) = DateTime::from_timestamp(secs as i64, 0) {
+                return Some(parsed);
+            }
+        }
+    }
+    None
+}
+
+/// Stable id for hiding a transfer row after a side-action delete.
+pub fn transfer_row_id(row: &TransferRow) -> String {
+    format!("{}\t{}\t{}", row.name, row.src, row.dst)
+}
+
+pub fn transfer_elapsed_caption(started: DateTime<Utc>, completed: DateTime<Utc>) -> String {
+    let secs = completed.signed_duration_since(started).num_milliseconds() as f64 / 1000.0;
+    if secs <= 0.0 {
+        String::new()
+    } else {
+        crate::jobs::format_seconds(secs)
+    }
 }
 
 fn first_str(item: &Value, keys: &[&str]) -> Option<String> {
@@ -443,6 +500,34 @@ mod tests {
         assert_eq!(windows.dst, r"D:\out\a.jpg");
         assert!(!path_already_complete("drive", "a.jpg"));
         assert!(path_already_complete("/tmp/e.txt", "e.txt"));
+    }
+
+    #[test]
+    fn parses_transfer_times_and_row_id() {
+        let row = parse_completed_transfer_row(&json!({
+            "name": "ok.txt",
+            "src": "testdrive:Photos/ok.txt",
+            "dst": "testdrive:out/ok.txt",
+            "startedAt": "2026-08-26T21:00:00Z",
+            "completedAt": "2026-08-26T21:00:02Z",
+            "size": 3,
+            "bytes": 3
+        }));
+        assert_eq!(
+            transfer_row_id(&row),
+            "ok.txt\ttestdrive:Photos/ok.txt\ttestdrive:out/ok.txt"
+        );
+        assert_eq!(
+            row.started_at.map(|t| t.to_rfc3339()),
+            Some("2026-08-26T21:00:00+00:00".into())
+        );
+        assert_eq!(
+            transfer_elapsed_caption(row.started_at.unwrap(), row.completed_at.unwrap()),
+            crate::jobs::format_seconds(2.0)
+        );
+        assert!(
+            parse_transfer_time(&json!({ "end_time": 1_724_688_000 }), &["end_time"]).is_some()
+        );
     }
 
     #[test]
