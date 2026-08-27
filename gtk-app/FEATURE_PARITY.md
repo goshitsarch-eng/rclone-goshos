@@ -941,3 +941,4 @@ This client is the GTK 4 + libadwaita desktop UI. It talks to a local `rclone rc
 - Remote-config CLI Import and Obscure are exclusive slide-down content panels (Angular `app-cli-import` / `app-obscure-tool`), not a cramped sidebar strip or only a modal
 - Sidebar footer toggles Import from CLI / Obscure Password; opening one closes the other; Escape hides the overlay before page search
 - CLI apply still creates/overrides/patches the current operation profile; Obscure applies to password-typed fields on the open step, then remote secrets
+- Live GUI: `--remote-config testdrive --step copy` sidebar **Import from CLI** slides a full-width paste/preview panel over Copy; **Obscure Password** replaces it (exclusive); Preview of `rclone copy testdrive: testdrive: --transfers 4` shows Detected Configuration and Apply to Profile; Apply Patch hides the overlay
