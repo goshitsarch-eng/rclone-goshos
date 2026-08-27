@@ -111,10 +111,9 @@ WORKDIR /app
 # Copy the built backend binary
 COPY --from=builder /app/src-tauri/target/release/rclone-manager-headless /usr/local/bin/
 
-# Copy the built frontend assets
-# The destination path is critical: it must exactly match the `productName` defined in tauri.conf.headless.json
+# Copy the backend landing page (GTK is the desktop UI)
 COPY --from=builder \
-    ["/app/dist/rclone-manager/browser", "/usr/lib/RClone Manager Headless/browser/"]
+    ["/app/web", "/usr/lib/RClone Manager Headless/browser/"]
 COPY --from=builder \
     ["/app/resources/i18n", "/usr/lib/RClone Manager Headless/i18n/"]
 

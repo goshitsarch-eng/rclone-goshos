@@ -11,9 +11,38 @@ pub fn is_markdown(name: &str) -> bool {
     )
 }
 
+/// A display block for the GTK markdown preview (text, image, or link).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum PreviewPart {
+    Text(String),
+    Image { alt: String, href: String },
+    Link { label: String, href: String },
+}
+
+/// Where a resolved markdown image should be loaded from.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum PreviewSource {
+    Url(String),
+    Path(String),
+    RemotePath(String),
+}
+
 /// Convert common Markdown constructs into wrapped plain text for a GTK preview.
 pub fn to_preview(source: &str) -> String {
     let mut out = String::new();
+    for part in preview_parts(source) {
+        match part {
+            PreviewPart::Text(text) => out.push_str(&text),
+            PreviewPart::Image { alt, .. } => out.push_str(&alt),
+            PreviewPart::Link { label, .. } => out.push_str(&label),
+        }
+    }
+    out.trim().to_string()
+}
+
+/// Split markdown into text runs and image refs so the viewer can embed pictures.
+pub fn preview_parts(source: &str) -> Vec<PreviewPart> {
+    let mut out: Vec<PreviewPart> = Vec::new();
     let mut in_fence = false;
     for line in source.lines() {
         let trimmed = line.trim_start();
@@ -22,37 +51,37 @@ pub fn to_preview(source: &str) -> String {
             continue;
         }
         if in_fence {
-            out.push_str(line);
-            out.push('\n');
+            push_text(&mut out, line);
+            push_text(&mut out, "\n");
             continue;
         }
         if let Some(rest) = heading(trimmed) {
-            if !out.ends_with('\n') && !out.is_empty() {
-                out.push('\n');
+            if !ends_with_newline(&out) && !out.is_empty() {
+                push_text(&mut out, "\n");
             }
-            out.push_str(rest);
-            out.push('\n');
+            extend_inline_parts(&mut out, rest);
+            push_text(&mut out, "\n");
             continue;
         }
         if let Some(item) = list_item(trimmed) {
-            out.push_str("• ");
-            out.push_str(item);
-            out.push('\n');
+            push_text(&mut out, "• ");
+            extend_inline_parts(&mut out, item);
+            push_text(&mut out, "\n");
             continue;
         }
         if trimmed.starts_with("> ") {
-            out.push_str(trimmed.trim_start_matches("> ").trim());
-            out.push('\n');
+            extend_inline_parts(&mut out, trimmed.trim_start_matches("> ").trim());
+            push_text(&mut out, "\n");
             continue;
         }
         if trimmed == "---" || trimmed == "***" || trimmed == "___" {
-            out.push_str("────────\n");
+            push_text(&mut out, "────────\n");
             continue;
         }
-        out.push_str(&inline(line));
-        out.push('\n');
+        extend_inline_parts(&mut out, line);
+        push_text(&mut out, "\n");
     }
-    out.trim().to_string()
+    out
 }
 
 fn heading(line: &str) -> Option<&str> {
@@ -171,6 +200,21 @@ fn normalize_join(dir: &str, relative: &str) -> String {
     }
 }
 
+/// Resolve an image/link href the same way Angular `resolveRelativePath` + `generateUrl` do.
+pub fn resolve_preview_source(remote: &str, file_path: &str, href: &str) -> PreviewSource {
+    let resolved = resolve_relative_path(file_path, href);
+    if resolved.starts_with("http://")
+        || resolved.starts_with("https://")
+        || resolved.starts_with("file://")
+    {
+        return PreviewSource::Url(resolved);
+    }
+    if remote == "local" || resolved.starts_with('/') {
+        return PreviewSource::Path(resolved);
+    }
+    PreviewSource::RemotePath(resolved)
+}
+
 /// Markdown/HTML relative targets used by the Angular file viewer rewrite pass.
 pub fn relative_targets(source: &str) -> Vec<(String, String)> {
     let mut out = Vec::new();
@@ -254,7 +298,142 @@ fn parse_link(chars: &[char], start: usize) -> Option<(String, String, usize)> {
         return None;
     }
     let href: String = chars[href_start..i].iter().collect();
-    Some((label, href, i + 1))
+    Some((label, href.trim().to_string(), i + 1))
+}
+
+fn ends_with_newline(parts: &[PreviewPart]) -> bool {
+    match parts.last() {
+        Some(PreviewPart::Text(text)) => text.ends_with('\n'),
+        _ => false,
+    }
+}
+
+/// True for browser-openable markdown/What's New hrefs.
+pub fn is_web_href(href: &str) -> bool {
+    let href = href.trim();
+    href.starts_with("http://")
+        || href.starts_with("https://")
+        || href.starts_with("mailto:")
+        || href.starts_with("file://")
+}
+
+/// Split plain text so bare `http://` / `https://` URLs become [`PreviewPart::Link`].
+pub fn split_autolinks(text: &str) -> Vec<PreviewPart> {
+    let mut out = Vec::new();
+    let mut rest = text;
+    while let Some((start, end)) = next_autolink(rest) {
+        if start > 0 {
+            push_text(&mut out, &rest[..start]);
+        }
+        let href = rest[start..end].trim_end_matches(['.', ',', ';', ':', ')', ']']);
+        let label = href.to_string();
+        out.push(PreviewPart::Link {
+            label,
+            href: href.to_string(),
+        });
+        if href.len() < end - start {
+            push_text(&mut out, &rest[start + href.len()..end]);
+        }
+        rest = &rest[end..];
+    }
+    if !rest.is_empty() {
+        push_text(&mut out, rest);
+    }
+    out
+}
+
+fn next_autolink(text: &str) -> Option<(usize, usize)> {
+    let https = text.find("https://");
+    let http = text.find("http://");
+    let start = match (https, http) {
+        (Some(a), Some(b)) => a.min(b),
+        (Some(a), None) => a,
+        (None, Some(b)) => b,
+        (None, None) => return None,
+    };
+    let end = text[start..]
+        .find(|c: char| c.is_whitespace() || "<>\"'".contains(c))
+        .map(|idx| start + idx)
+        .unwrap_or(text.len());
+    if end <= start + "http://".len() {
+        return None;
+    }
+    Some((start, end))
+}
+
+fn push_text(out: &mut Vec<PreviewPart>, text: &str) {
+    if text.is_empty() {
+        return;
+    }
+    if let Some(PreviewPart::Text(existing)) = out.last_mut() {
+        existing.push_str(text);
+    } else {
+        out.push(PreviewPart::Text(text.to_string()));
+    }
+}
+
+fn extend_inline_parts(out: &mut Vec<PreviewPart>, line: &str) {
+    let chars: Vec<char> = line.chars().collect();
+    let mut i = 0;
+    let mut buf = String::new();
+    while i < chars.len() {
+        if chars[i] == '<' {
+            if let Some((alt, href, next)) = parse_html_img(&chars, i) {
+                push_text(out, &inline(&buf));
+                buf.clear();
+                out.push(PreviewPart::Image { alt, href });
+                i = next;
+                continue;
+            }
+        }
+        if chars[i] == '!' && chars.get(i + 1) == Some(&'[') {
+            if let Some((alt, href, next)) = parse_link(&chars, i + 1) {
+                push_text(out, &inline(&buf));
+                buf.clear();
+                out.push(PreviewPart::Image { alt, href });
+                i = next;
+                continue;
+            }
+        }
+        if chars[i] == '[' {
+            if let Some((label, href, next)) = parse_link(&chars, i) {
+                push_text(out, &inline(&buf));
+                buf.clear();
+                out.push(PreviewPart::Link { label, href });
+                i = next;
+                continue;
+            }
+        }
+        buf.push(chars[i]);
+        i += 1;
+    }
+    push_text(out, &inline(&buf));
+}
+
+fn parse_html_img(chars: &[char], start: usize) -> Option<(String, String, usize)> {
+    let rest: String = chars[start..].iter().collect();
+    if !rest.to_ascii_lowercase().starts_with("<img") {
+        return None;
+    }
+    let end = rest.find('>')? + 1;
+    let tag = &rest[..end];
+    let href = html_attr(tag, "src")?;
+    let alt = html_attr(tag, "alt").unwrap_or_default();
+    Some((alt, href, start + end))
+}
+
+fn html_attr(tag: &str, name: &str) -> Option<String> {
+    let lower = tag.to_ascii_lowercase();
+    let needle_dq = format!("{name}=\"");
+    let needle_sq = format!("{name}='");
+    for (needle, quote) in [(needle_dq.as_str(), '"'), (needle_sq.as_str(), '\'')] {
+        if let Some(idx) = lower.find(needle) {
+            let after = &tag[idx + needle.len()..];
+            let end = after.find(quote)?;
+            return Some(after[..end].trim().to_string());
+        }
+    }
+    None
 }
 
 #[cfg(test)]
@@ -324,5 +503,76 @@ mod tests {
             .any(|(l, p)| l == "cover" && p == "art/cover.jpg"));
         assert!(targets.iter().any(|(_, p)| p == "pic.png"));
         assert!(!targets.iter().any(|(_, p)| p.starts_with("https://")));
+    }
+
+    #[test]
+    fn preview_parts_keep_inline_images() {
+        let parts = preview_parts(
+            "# Title\n\nHello ![cover](art/cover.jpg) and <img src=\"pic.png\" alt=\"pic\">.\n",
+        );
+        assert!(parts
+            .iter()
+            .any(|p| matches!(p, PreviewPart::Text(t) if t.contains("Title"))));
+        assert!(parts.iter().any(|p| matches!(
+            p,
+            PreviewPart::Image { alt, href } if alt == "cover" && href == "art/cover.jpg"
+        )));
+        assert!(parts.iter().any(|p| matches!(
+            p,
+            PreviewPart::Image { alt, href } if alt == "pic" && href == "pic.png"
+        )));
+        let preview = to_preview("See ![cover](art/cover.jpg) now.\n");
+        assert!(preview.contains("cover"));
+        assert!(!preview.contains("art/cover.jpg"));
+        assert!(!preview.contains("!["));
+    }
+
+    #[test]
+    fn resolves_preview_image_sources() {
+        assert_eq!(
+            resolve_preview_source("testdrive", "Photos/README.md", "photo1.jpg"),
+            PreviewSource::RemotePath("Photos/photo1.jpg".into())
+        );
+        assert_eq!(
+            resolve_preview_source("local", "/tmp/docs/README.md", "images/a.png"),
+            PreviewSource::Path("/tmp/docs/images/a.png".into())
+        );
+        assert_eq!(
+            resolve_preview_source("testdrive", "Photos/README.md", "https://ex/a.png"),
+            PreviewSource::Url("https://ex/a.png".into())
+        );
+        assert_eq!(
+            resolve_preview_source("testdrive", "Photos/README.md", "/abs.png"),
+            PreviewSource::Path("/abs.png".into())
+        );
+    }
+
+    #[test]
+    fn preview_parts_keep_inline_links() {
+        let parts = preview_parts("See [docs](https://example.com) and [help](../help.md).\n");
+        assert!(parts.iter().any(|p| matches!(
+            p,
+            PreviewPart::Link { label, href }
+                if label == "docs" && href == "https://example.com"
+        )));
+        assert!(parts.iter().any(|p| matches!(
+            p,
+            PreviewPart::Link { label, href } if label == "help" && href == "../help.md"
+        )));
+        let preview = to_preview("See [docs](https://example.com).\n");
+        assert!(preview.contains("docs"));
+        assert!(!preview.contains("https://example.com"));
+        assert!(is_web_href("https://example.com"));
+        assert!(is_web_href("mailto:a@b"));
+        assert!(!is_web_href("../help.md"));
+        let auto = split_autolinks("Read https://rclone.org/docs, please.");
+        assert!(auto.iter().any(|p| matches!(
+            p,
+            PreviewPart::Link { href, .. } if href == "https://rclone.org/docs"
+        )));
+        assert!(auto.iter().any(|p| matches!(
+            p,
+            PreviewPart::Text(t) if t.contains("please")
+        )));
     }
 }

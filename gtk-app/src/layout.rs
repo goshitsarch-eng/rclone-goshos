@@ -89,6 +89,17 @@ impl PanelLayout {
         true
     }
 
+    pub fn move_panel_to(&mut self, id: &str, to_id: &str, catalog: &[&str]) -> bool {
+        self.ensure_order(catalog);
+        let Some(from) = self.order.iter().position(|n| n == id) else {
+            return false;
+        };
+        let Some(to) = self.order.iter().position(|n| n == to_id) else {
+            return false;
+        };
+        crate::action_order::move_index(&mut self.order, from, to)
+    }
+
     pub fn toggle_hidden(&mut self, id: &str) -> bool {
         if let Some(idx) = self.hidden.iter().position(|n| n == id) {
             self.hidden.remove(idx);
@@ -110,6 +121,19 @@ pub fn panel_title(id: &str) -> &'static str {
         "automations" => "Automations",
         "quickRuns" => "Quick Runs",
         _ => "Panel",
+    }
+}
+
+pub fn panel_title_key(id: &str) -> &'static str {
+    match id {
+        "remotes" => "generalOverview.panels.remotes",
+        "jobs" => "generalOverview.panels.jobs",
+        "serves" => "generalOverview.panels.serves",
+        "bandwidth" => "generalOverview.panels.bandwidth",
+        "system" => "generalOverview.panels.system",
+        "automations" => "generalOverview.panels.automations",
+        "quickRuns" => "flow.quickRun.title",
+        _ => "common.other",
     }
 }
 
@@ -178,6 +202,9 @@ mod tests {
         layout.ensure_order(DASHBOARD_PANELS);
         assert!(layout.move_panel("jobs", -1, DASHBOARD_PANELS));
         assert_eq!(layout.order[0], "jobs");
+        assert!(layout.move_panel_to("system", "jobs", DASHBOARD_PANELS));
+        assert_eq!(layout.order[0], "system");
+        assert_eq!(panel_title_key("jobs"), "generalOverview.panels.jobs");
         assert!(!layout.toggle_hidden("jobs"));
         assert_eq!(layout.hidden, ["jobs"]);
         assert!(layout.toggle_hidden("jobs"));

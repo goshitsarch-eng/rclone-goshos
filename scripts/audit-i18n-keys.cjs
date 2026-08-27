@@ -10,7 +10,7 @@ const strictMode = args.has('--strict');
 const jsonMode = args.has('--json');
 
 const backendFiles = collectFiles(path.join(repoRoot, 'src-tauri', 'src'), ['.rs']);
-const frontendFiles = collectFiles(path.join(repoRoot, 'src'), ['.ts', '.html']);
+const frontendFiles = collectFiles(path.join(repoRoot, 'gtk-app', 'src'), ['.rs']);
 const localeFiles = collectLocaleFiles(i18nRoot);
 
 const englishLocalePath = path.join(i18nRoot, 'en-US', 'main.json');

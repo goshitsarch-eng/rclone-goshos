@@ -1,6 +1,7 @@
 //! Job-detail actions for individual rclone transfers.
 
 use crate::rclone::{browse_target, split_remote_path};
+use chrono::{DateTime, Utc};
 use serde_json::Value;
 
 #[derive(Debug, Clone, PartialEq, Default)]
@@ -14,6 +15,8 @@ pub struct TransferRow {
     pub speed: f64,
     pub eta: f64,
     pub error: String,
+    pub started_at: Option<DateTime<Utc>>,
+    pub completed_at: Option<DateTime<Utc>>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -70,6 +73,20 @@ fn parse_transfer_row_with(item: &Value, completed: bool) -> TransferRow {
         speed,
         eta,
         error,
+        started_at: parse_transfer_time(
+            item,
+            &["startedAt", "started_at", "startTime", "start_time"],
+        ),
+        completed_at: parse_transfer_time(
+            item,
+            &[
+                "completedAt",
+                "completed_at",
+                "endTime",
+                "end_time",
+                "finishedAt",
+            ],
+        ),
     };
     if completed {
         finalize_completed_row(&mut row);
@@ -84,6 +101,59 @@ pub fn finalize_completed_row(row: &mut TransferRow) {
     } else if row.size > 0 && row.bytes >= row.size && row.percentage < 100 {
         row.percentage = 100;
     }
+}
+
+pub fn can_resolve_failed(completed: bool, row: &TransferRow) -> bool {
+    completed && !row.error.is_empty() && !row.src.is_empty() && !row.dst.is_empty()
+}
+
+/// Split stored transfer paths into `operations/copyfile` sides.
+pub fn copyfile_sides(src: &str, dst: &str) -> Option<(String, String, String, String)> {
+    if src.is_empty() || dst.is_empty() {
+        return None;
+    }
+    let (src_remote, src_path) = crate::rclone::split_remote_path(src);
+    let (dst_remote, dst_path) = crate::rclone::split_remote_path(dst);
+    if src_path.is_empty() || dst_path.is_empty() {
+        return None;
+    }
+    Some((
+        crate::rclone::remote_fs(&src_remote, ""),
+        src_path,
+        crate::rclone::remote_fs(&dst_remote, ""),
+        dst_path,
+    ))
+}
+
+/// rclone completed transfers often store only the leaf name. Join that onto the
+/// parent job src/dst so `operations/copyfile` still has two remote paths.
+pub fn qualify_transfer_side(path: &str, job_side: &str, name: &str) -> String {
+    let leaf = if path.is_empty() { name } else { path };
+    if leaf.is_empty() {
+        return job_side.to_string();
+    }
+    if leaf.contains(':') || leaf.starts_with('/') {
+        return leaf.to_string();
+    }
+    if job_side.is_empty() {
+        return leaf.to_string();
+    }
+    crate::rclone::join_remote_path(job_side.trim_end_matches('/'), leaf)
+}
+
+pub fn copyfile_sides_with_job(
+    src: &str,
+    dst: &str,
+    name: &str,
+    job_src: &str,
+    job_dst: &str,
+) -> Option<(String, String, String, String)> {
+    copyfile_sides(src, dst).or_else(|| {
+        copyfile_sides(
+            &qualify_transfer_side(src, job_src, name),
+            &qualify_transfer_side(dst, job_dst, name),
+        )
+    })
 }
 
 pub fn transfer_status(completed: bool, row: &TransferRow) -> TransferStatus {
@@ -102,8 +172,46 @@ pub fn transfer_status(completed: bool, row: &TransferRow) -> TransferStatus {
     TransferStatus::Progress
 }
 
-pub fn transfer_meta_caption(row: &TransferRow) -> String {
-    let size = if row.size > 0 {
+pub fn transfer_path_display(path: &str) -> &str {
+    if path.is_empty() {
+        "—"
+    } else {
+        path
+    }
+}
+
+/// Qualify leaf-only rclone transfer paths with the parent job src/dst so the
+/// card pills show `testdrive:Photos/ok.txt` instead of just `ok.txt`.
+pub fn transfer_card_paths(row: &TransferRow, job_src: &str, job_dst: &str) -> (String, String) {
+    (
+        qualify_transfer_side(&row.src, job_src, &row.name),
+        qualify_transfer_side(&row.dst, job_dst, &row.name),
+    )
+}
+
+pub fn qualify_transfer_row(row: &mut TransferRow, job_src: &str, job_dst: &str) {
+    row.src = qualify_transfer_side(&row.src, job_src, &row.name);
+    row.dst = qualify_transfer_side(&row.dst, job_dst, &row.name);
+}
+
+/// Angular `speedClass` thresholds (10 MiB/s fast, 1 MiB/s medium).
+pub fn transfer_speed_class(speed: f64) -> &'static str {
+    if speed > 10_485_760.0 {
+        "speed-fast"
+    } else if speed > 1_048_576.0 {
+        "speed-medium"
+    } else {
+        "speed-slow"
+    }
+}
+
+/// Angular only renders the footer speed-dot when `transfer.speed > 0`.
+pub fn transfer_speed_dot_visible(speed: f64) -> bool {
+    speed > 0.0
+}
+
+pub fn transfer_size_caption(row: &TransferRow) -> String {
+    if row.size > 0 {
         format!(
             "{} / {}",
             crate::rclone::format_bytes(row.bytes.max(0)),
@@ -113,21 +221,94 @@ pub fn transfer_meta_caption(row: &TransferRow) -> String {
         crate::rclone::format_bytes(row.bytes)
     } else {
         String::new()
-    };
+    }
+}
+
+pub fn transfer_speed_caption(row: &TransferRow) -> String {
+    if row.speed > 0.0 {
+        format!(
+            "{}/s",
+            crate::rclone::format_bytes(row.speed.round() as i64)
+        )
+    } else {
+        String::new()
+    }
+}
+
+pub fn transfer_eta_caption(row: &TransferRow) -> String {
+    if row.eta > 0.0 {
+        crate::jobs::format_seconds(row.eta)
+    } else {
+        String::new()
+    }
+}
+
+pub fn transfer_footer_right(row: &TransferRow, completed: bool) -> String {
     let mut parts = Vec::new();
+    let speed = transfer_speed_caption(row);
+    if !speed.is_empty() {
+        parts.push(speed);
+    }
+    if !completed {
+        let eta = transfer_eta_caption(row);
+        if !eta.is_empty() {
+            parts.push(eta);
+        }
+    }
+    parts.join(" · ")
+}
+
+pub fn transfer_meta_caption(row: &TransferRow) -> String {
+    let mut parts = Vec::new();
+    let size = transfer_size_caption(row);
     if !size.is_empty() {
         parts.push(size);
     }
-    if row.speed > 0.0 {
-        parts.push(format!(
-            "{}/s",
-            crate::rclone::format_bytes(row.speed.round() as i64)
-        ));
-    }
-    if row.eta > 0.0 {
-        parts.push(crate::jobs::format_seconds(row.eta));
+    let right = transfer_footer_right(row, false);
+    if !right.is_empty() {
+        parts.push(right);
     }
     parts.join(" · ")
+}
+
+fn parse_transfer_time(item: &Value, keys: &[&str]) -> Option<DateTime<Utc>> {
+    for key in keys {
+        let Some(value) = item.get(*key) else {
+            continue;
+        };
+        if let Some(text) = value.as_str().filter(|s| !s.is_empty()) {
+            if let Ok(parsed) = DateTime::parse_from_rfc3339(text) {
+                return Some(parsed.with_timezone(&Utc));
+            }
+        }
+        if let Some(secs) = value.as_i64() {
+            if let Some(parsed) =
+                DateTime::from_timestamp(secs, 0).or_else(|| DateTime::from_timestamp_millis(secs))
+            {
+                return Some(parsed);
+            }
+        }
+        if let Some(secs) = value.as_f64() {
+            if let Some(parsed) = DateTime::from_timestamp(secs as i64, 0) {
+                return Some(parsed);
+            }
+        }
+    }
+    None
+}
+
+/// Stable id for hiding a transfer row after a side-action delete.
+pub fn transfer_row_id(row: &TransferRow) -> String {
+    format!("{}\t{}\t{}", row.name, row.src, row.dst)
+}
+
+pub fn transfer_elapsed_caption(started: DateTime<Utc>, completed: DateTime<Utc>) -> String {
+    let secs = completed.signed_duration_since(started).num_milliseconds() as f64 / 1000.0;
+    if secs <= 0.0 {
+        String::new()
+    } else {
+        crate::jobs::format_seconds(secs)
+    }
 }
 
 fn first_str(item: &Value, keys: &[&str]) -> Option<String> {
@@ -198,19 +379,12 @@ pub fn join_fs_name(fs: &str, name: &str) -> String {
     }
 }
 
-pub fn can_delete_source(job_type: &str) -> bool {
-    !matches!(
-        job_type.to_ascii_lowercase().as_str(),
-        "delete" | "purge" | "rmdirs" | "cleanup" | "cryptcheck"
-    )
+pub fn can_delete_source(job_type: &str, status: &str) -> bool {
+    can_do_source_action(job_type, status)
 }
 
-pub fn can_delete_dest(job_type: &str, completed: bool) -> bool {
-    completed
-        && !matches!(
-            job_type.to_ascii_lowercase().as_str(),
-            "delete" | "purge" | "rmdirs" | "cleanup" | "check" | "cryptcheck"
-        )
+pub fn can_delete_dest(job_type: &str, completed: bool, status: &str) -> bool {
+    can_do_dest_action(completed, status) && !is_delete_job(job_type)
 }
 
 pub fn browse_for(path: &str) -> Option<(String, String)> {
@@ -283,11 +457,10 @@ pub fn can_copy_url_source(
     src: &str,
     job_type: &str,
     info: Option<&crate::rclone::FsInfo>,
+    status: &str,
 ) -> bool {
-    if is_move_job(job_type) || is_delete_job(job_type) {
-        return false;
-    }
-    remote_name_from_path(src).is_some_and(|remote| can_public_link(&remote, info))
+    can_do_source_action(job_type, status)
+        && remote_name_from_path(src).is_some_and(|remote| can_public_link(&remote, info))
 }
 
 pub fn can_copy_url_dest(
@@ -295,24 +468,125 @@ pub fn can_copy_url_dest(
     job_type: &str,
     completed: bool,
     info: Option<&crate::rclone::FsInfo>,
+    status: &str,
 ) -> bool {
-    completed
+    can_do_dest_action(completed, status)
         && !is_delete_job(job_type)
         && remote_name_from_path(dst).is_some_and(|remote| can_public_link(&remote, info))
 }
 
-pub fn can_download_source(src: &str, job_type: &str) -> bool {
-    if is_move_job(job_type) || is_delete_job(job_type) {
-        return false;
-    }
-    remote_name_from_path(src).is_some() && download_target(src).is_some()
+pub fn can_download_source(src: &str, job_type: &str, status: &str) -> bool {
+    can_do_source_action(job_type, status)
+        && remote_name_from_path(src).is_some()
+        && download_target(src).is_some()
 }
 
-pub fn can_download_dest(dst: &str, job_type: &str, completed: bool) -> bool {
-    completed
+pub fn can_download_dest(dst: &str, job_type: &str, completed: bool, status: &str) -> bool {
+    can_do_dest_action(completed, status)
         && !is_delete_job(job_type)
         && remote_name_from_path(dst).is_some()
         && download_target(dst).is_some()
+}
+
+/// Angular `TransferOperationsService.canDo` source-side gates.
+pub fn can_do_source_action(job_type: &str, status: &str) -> bool {
+    if status == "missing_src" {
+        return false;
+    }
+    if (is_move_job(job_type) || is_delete_job(job_type)) && status != "failed" {
+        return false;
+    }
+    true
+}
+
+/// Angular `canDo` dest-side gates (`isCompleted || completedAt || status`).
+pub fn can_do_dest_action(completed: bool, status: &str) -> bool {
+    if status == "failed" || status == "missing_dst" {
+        return false;
+    }
+    completed || !status.is_empty()
+}
+
+/// Angular `canDo` fallback-side gates.
+pub fn can_do_fallback_action(job_type: &str, remote: &str, status: &str) -> bool {
+    !remote.trim().is_empty() && status != "failed" && !is_delete_job(job_type)
+}
+
+/// Join `remote` + transfer name when rclone omits `srcFs`/`dstFs`.
+pub fn fallback_transfer_path(remote: &str, name: &str) -> Option<String> {
+    let remote = remote.trim();
+    let name = name.trim();
+    if remote.is_empty() || name.is_empty() {
+        return None;
+    }
+    if remote == "local" || remote == "/" {
+        return None;
+    }
+    let fs = if remote.contains(':') {
+        remote.to_string()
+    } else {
+        format!("{remote}:")
+    };
+    Some(join_fs_name(&fs, name))
+}
+
+pub fn has_cloud_remote(path: &str) -> bool {
+    if path.is_empty()
+        || crate::path_kind::is_windows_local_path(path)
+        || crate::path_kind::is_unc_path(path)
+    {
+        return false;
+    }
+    path.contains(':') && remote_name_from_path(path).is_some()
+}
+
+pub fn needs_fallback_actions(src: &str, dst: &str) -> bool {
+    !has_cloud_remote(src) && !has_cloud_remote(dst)
+}
+
+/// Sides that get Open / Copy / Download / Delete. Name-only rclone rows
+/// (no `srcFs`/`dstFs`) use only the Angular fallback `remote` + `name`.
+pub fn transfer_action_paths(
+    src: &str,
+    dst: &str,
+    remote: &str,
+    name: &str,
+) -> Vec<(String, bool)> {
+    if needs_fallback_actions(src, dst) {
+        return fallback_transfer_path(remote, name)
+            .into_iter()
+            .map(|path| (path, true))
+            .collect();
+    }
+    [src, dst]
+        .into_iter()
+        .filter(|path| !path.is_empty())
+        .map(|path| (path.to_string(), false))
+        .collect()
+}
+
+pub fn can_copy_url_fallback(
+    remote: &str,
+    name: &str,
+    job_type: &str,
+    info: Option<&crate::rclone::FsInfo>,
+    status: &str,
+) -> bool {
+    can_do_fallback_action(job_type, remote, status)
+        && fallback_transfer_path(remote, name)
+            .and_then(|path| remote_name_from_path(&path))
+            .is_some_and(|remote| can_public_link(&remote, info))
+}
+
+pub fn can_download_fallback(remote: &str, name: &str, job_type: &str, status: &str) -> bool {
+    can_do_fallback_action(job_type, remote, status)
+        && fallback_transfer_path(remote, name).is_some_and(|path| {
+            remote_name_from_path(&path).is_some() && download_target(&path).is_some()
+        })
+}
+
+pub fn can_delete_fallback(remote: &str, name: &str, job_type: &str, status: &str) -> bool {
+    can_download_fallback(remote, name, job_type, status)
 }
 
 #[cfg(test)]
@@ -353,6 +627,34 @@ mod tests {
     }
 
     #[test]
+    fn parses_transfer_times_and_row_id() {
+        let row = parse_completed_transfer_row(&json!({
+            "name": "ok.txt",
+            "src": "testdrive:Photos/ok.txt",
+            "dst": "testdrive:out/ok.txt",
+            "startedAt": "2026-08-26T21:00:00Z",
+            "completedAt": "2026-08-26T21:00:02Z",
+            "size": 3,
+            "bytes": 3
+        }));
+        assert_eq!(
+            transfer_row_id(&row),
+            "ok.txt\ttestdrive:Photos/ok.txt\ttestdrive:out/ok.txt"
+        );
+        assert_eq!(
+            row.started_at.map(|t| t.to_rfc3339()),
+            Some("2026-08-26T21:00:00+00:00".into())
+        );
+        assert_eq!(
+            transfer_elapsed_caption(row.started_at.unwrap(), row.completed_at.unwrap()),
+            crate::jobs::format_seconds(2.0)
+        );
+        assert!(
+            parse_transfer_time(&json!({ "end_time": 1_724_688_000 }), &["end_time"]).is_some()
+        );
+    }
+
+    #[test]
     fn parses_transfer_and_joins_fs() {
         let row = parse_transfer_row(&json!({
             "name": "Photos/a.jpg",
@@ -378,11 +680,13 @@ mod tests {
 
     #[test]
     fn delete_capabilities_match_job_type() {
-        assert!(can_delete_source("sync"));
-        assert!(!can_delete_source("delete"));
-        assert!(can_delete_dest("copy", true));
-        assert!(!can_delete_dest("copy", false));
-        assert!(!can_delete_dest("check", true));
+        assert!(can_delete_source("sync", ""));
+        assert!(!can_delete_source("delete", ""));
+        assert!(can_delete_dest("copy", true, ""));
+        assert!(!can_delete_dest("copy", false, ""));
+        assert!(can_delete_dest("check", true, ""));
+        assert!(!can_delete_dest("check", true, "missing_dst"));
+        assert!(!can_delete_source("check", "missing_src"));
     }
 
     #[test]
@@ -398,20 +702,99 @@ mod tests {
 
     #[test]
     fn src_dst_actions_match_angular_rules() {
-        assert!(can_copy_url_source("drive:Photos/a.jpg", "copy", None));
-        assert!(!can_copy_url_source("/tmp/a.jpg", "copy", None));
-        assert!(!can_copy_url_source("drive:Photos/a.jpg", "move", None));
-        assert!(!can_copy_url_dest("box:out/a.jpg", "copy", false, None));
-        assert!(can_copy_url_dest("box:out/a.jpg", "copy", true, None));
-        assert!(!can_copy_url_dest("box:out/a.jpg", "delete", true, None));
-        assert!(can_download_source("drive:Photos/a.jpg", "sync"));
-        assert!(!can_download_source("drive:Photos/a.jpg", "delete"));
-        assert!(!can_download_dest("box:out/a.jpg", "copy", false));
-        assert!(can_download_dest("box:out/a.jpg", "copy", true));
+        assert!(can_copy_url_source("drive:Photos/a.jpg", "copy", None, ""));
+        assert!(!can_copy_url_source("/tmp/a.jpg", "copy", None, ""));
+        assert!(!can_copy_url_source("drive:Photos/a.jpg", "move", None, ""));
+        assert!(can_copy_url_source(
+            "drive:Photos/a.jpg",
+            "move",
+            None,
+            "failed"
+        ));
+        assert!(!can_copy_url_dest("box:out/a.jpg", "copy", false, None, ""));
+        assert!(can_copy_url_dest("box:out/a.jpg", "copy", true, None, ""));
+        assert!(!can_copy_url_dest(
+            "box:out/a.jpg",
+            "delete",
+            true,
+            None,
+            ""
+        ));
+        assert!(can_download_source("drive:Photos/a.jpg", "sync", ""));
+        assert!(!can_download_source("drive:Photos/a.jpg", "delete", ""));
+        assert!(!can_download_dest("box:out/a.jpg", "copy", false, ""));
+        assert!(can_download_dest("box:out/a.jpg", "copy", true, ""));
         assert_eq!(remote_name_from_path("drive:x").as_deref(), Some("drive"));
         assert!(remote_name_from_path("/tmp/x").is_none());
         assert!(is_move_job("copy/move"));
         assert!(is_delete_job("delete/purge"));
+        assert_eq!(
+            fallback_transfer_path("testdrive", "Photos/a.jpg").as_deref(),
+            Some("testdrive:Photos/a.jpg")
+        );
+        assert_eq!(
+            fallback_transfer_path("testdrive:", "a.jpg").as_deref(),
+            Some("testdrive:a.jpg")
+        );
+        assert!(fallback_transfer_path("local", "a.jpg").is_none());
+        assert!(fallback_transfer_path("testdrive", "").is_none());
+        assert!(needs_fallback_actions("a.jpg", "a.jpg"));
+        assert!(needs_fallback_actions("/tmp/a.jpg", "a.jpg"));
+        assert!(!needs_fallback_actions("drive:a.jpg", "box:a.jpg"));
+        assert!(can_copy_url_fallback(
+            "testdrive",
+            "a.jpg",
+            "copy",
+            None,
+            ""
+        ));
+        assert!(can_copy_url_fallback(
+            "testdrive",
+            "a.jpg",
+            "move",
+            None,
+            ""
+        ));
+        assert!(!can_copy_url_fallback(
+            "testdrive",
+            "a.jpg",
+            "delete",
+            None,
+            ""
+        ));
+        assert!(!can_copy_url_fallback("local", "a.jpg", "copy", None, ""));
+        assert!(!can_copy_url_fallback(
+            "testdrive",
+            "a.jpg",
+            "copy",
+            None,
+            "failed"
+        ));
+        assert!(can_download_fallback("testdrive", "a.jpg", "sync", ""));
+        assert!(!can_download_fallback("testdrive", "a.jpg", "delete", ""));
+        assert!(can_delete_fallback("testdrive", "a.jpg", "copy", ""));
+        assert!(!can_delete_fallback("/", "a.jpg", "copy", ""));
+        let fallback_only =
+            transfer_action_paths("Photos/a.jpg", "Photos/a.jpg", "testdrive", "Photos/a.jpg");
+        assert_eq!(fallback_only, vec![("testdrive:Photos/a.jpg".into(), true)]);
+        let both = transfer_action_paths("drive:a.jpg", "box:a.jpg", "drive", "a.jpg");
+        assert_eq!(
+            both,
+            vec![("drive:a.jpg".into(), false), ("box:a.jpg".into(), false)]
+        );
+        assert!(!can_download_source("drive:a.jpg", "check", "missing_src"));
+        assert!(can_download_source("drive:a.jpg", "check", "missing_dst"));
+        assert!(!can_download_dest(
+            "box:a.jpg",
+            "check",
+            true,
+            "missing_dst"
+        ));
+        assert!(!can_download_dest("box:a.jpg", "check", true, "failed"));
+        assert!(can_download_dest("box:a.jpg", "check", true, "checked"));
+        assert!(can_download_dest("box:a.jpg", "check", false, "differ"));
+        assert!(!can_delete_dest("cryptcheck", true, "failed"));
+        assert!(can_delete_dest("cryptcheck", true, "checked"));
     }
 
     #[test]
@@ -436,6 +819,59 @@ mod tests {
         assert_eq!(transfer_status(true, &done), TransferStatus::Completed);
         let caption = transfer_meta_caption(&done);
         assert!(caption.contains("KiB"));
+        assert_eq!(transfer_speed_class(512.0), "speed-slow");
+        assert_eq!(transfer_speed_class(2_000_000.0), "speed-medium");
+        assert_eq!(transfer_speed_class(12_000_000.0), "speed-fast");
+        assert!(transfer_speed_dot_visible(512.0));
+        assert!(!transfer_speed_dot_visible(0.0));
+        assert!(!transfer_speed_dot_visible(-1.0));
+        assert_eq!(transfer_path_display(""), "—");
+        assert_eq!(transfer_path_display("testdrive:a"), "testdrive:a");
+        let leaf_only = parse_completed_transfer_row(&json!({
+            "name": "ok.txt",
+            "bytes": 3,
+            "size": 3,
+            "percentage": 100
+        }));
+        assert_eq!(leaf_only.src, "ok.txt");
+        assert_eq!(
+            transfer_card_paths(&leaf_only, "testdrive:Photos", "testdrive:verify-ops"),
+            (
+                "testdrive:Photos/ok.txt".into(),
+                "testdrive:verify-ops/ok.txt".into()
+            )
+        );
+        let already = parse_completed_transfer_row(&json!({
+            "name": "bad.txt",
+            "srcFs": "testdrive:Photos",
+            "srcRemote": "bad.txt",
+            "dstFs": "testdrive:verify-ops",
+            "dstRemote": "bad.txt",
+            "error": "denied"
+        }));
+        assert_eq!(
+            transfer_card_paths(&already, "testdrive:Photos", "testdrive:verify-ops"),
+            (
+                "testdrive:Photos/bad.txt".into(),
+                "testdrive:verify-ops/bad.txt".into()
+            )
+        );
+        let mut qualified = leaf_only.clone();
+        qualify_transfer_row(&mut qualified, "testdrive:Photos", "testdrive:verify-ops");
+        assert_eq!(qualified.src, "testdrive:Photos/ok.txt");
+        assert_eq!(qualified.dst, "testdrive:verify-ops/ok.txt");
+        assert_eq!(
+            transfer_size_caption(&done),
+            format!(
+                "{} / {}",
+                crate::rclone::format_bytes(1024),
+                crate::rclone::format_bytes(1024)
+            )
+        );
+        assert!(transfer_speed_caption(&done).ends_with("/s"));
+        assert!(!transfer_eta_caption(&done).is_empty());
+        assert!(transfer_footer_right(&done, true).contains("/s"));
+        assert!(transfer_footer_right(&done, false).contains(" · "));
         let failed = parse_transfer_row(&json!({
             "name": "c.bin",
             "error": "denied",
@@ -467,5 +903,54 @@ mod tests {
         }));
         assert_eq!(active.bytes, 0);
         assert_eq!(active.percentage, 0);
+        let failed = parse_completed_transfer_row(&json!({
+            "name": "bad.txt",
+            "srcFs": "testdrive:Photos",
+            "srcRemote": "bad.txt",
+            "dstFs": "testdrive:verify-ops",
+            "dstRemote": "bad.txt",
+            "error": "object not found"
+        }));
+        assert!(can_resolve_failed(true, &failed));
+        assert!(!can_resolve_failed(false, &failed));
+        assert_eq!(
+            copyfile_sides(&failed.src, &failed.dst),
+            Some((
+                "testdrive:".into(),
+                "Photos/bad.txt".into(),
+                "testdrive:".into(),
+                "verify-ops/bad.txt".into()
+            ))
+        );
+        assert!(copyfile_sides("", "testdrive:a").is_none());
+        assert_eq!(
+            copyfile_sides("/tmp/k.txt", "testdrive:k.txt"),
+            Some((
+                "/".into(),
+                "/tmp/k.txt".into(),
+                "testdrive:".into(),
+                "k.txt".into()
+            ))
+        );
+        assert_eq!(
+            qualify_transfer_side("bad.txt", "testdrive:Photos", "bad.txt"),
+            "testdrive:Photos/bad.txt"
+        );
+        assert_eq!(
+            copyfile_sides_with_job(
+                "bad.txt",
+                "bad.txt",
+                "bad.txt",
+                "testdrive:Photos",
+                "testdrive:verify-ops"
+            ),
+            Some((
+                "testdrive:".into(),
+                "Photos/bad.txt".into(),
+                "testdrive:".into(),
+                "verify-ops/bad.txt".into()
+            ))
+        );
+        assert!(copyfile_sides("bad.txt", "bad.txt").is_none());
     }
 }

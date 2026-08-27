@@ -97,18 +97,26 @@ const EXT_ICONS: &[(&str, &str)] = &[
     ("cpp", "text-x-cpp"),
     ("cs", "text-x-csharp"),
     ("css", "text-css"),
+    ("sass", "text-css"),
+    ("scss", "text-css"),
     ("go", "text-x-go"),
     ("h", "text-x-chdr"),
     ("html", "application-xml"),
     ("java", "text-x-java"),
     ("js", "text-x-javascript"),
+    ("mjs", "text-x-javascript"),
+    ("cjs", "text-x-javascript"),
     ("json", "application-json"),
     ("md", "text-x-markdown"),
+    ("markdown", "text-x-markdown"),
+    ("sql", "text-x-generic"),
     ("php", "application-x-php"),
     ("py", "text-x-python"),
     ("rb", "text-x-ruby"),
     ("rs", "text-rust"),
     ("sh", "application-x-shellscript"),
+    ("bash", "application-x-shellscript"),
+    ("zsh", "application-x-shellscript"),
     ("ts", "text-x-typescript"),
     ("xml", "application-xml"),
     ("yaml", "application-x-yaml"),
@@ -240,6 +248,12 @@ mod tests {
         assert_eq!(icon_for_mime("IMAGE/PNG"), Some("image-x-generic"));
         assert_eq!(icon_for_mime(""), None);
         assert_eq!(icon_for_extension("notes.md"), Some("text-x-markdown"));
+        assert_eq!(icon_for_extension("query.sql"), Some("text-x-generic"));
+        assert_eq!(
+            icon_for_extension("init.zsh"),
+            Some("application-x-shellscript")
+        );
+        assert_eq!(icon_for_extension("theme.sass"), Some("text-css"));
         assert_eq!(icon_for_extension("archive.ZIP"), Some("package-x-generic"));
         assert_eq!(icon_for_extension("README"), None);
         assert_eq!(generic_icon_for_mime("video/unknown"), "video-x-generic");

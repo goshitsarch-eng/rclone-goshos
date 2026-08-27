@@ -1,5 +1,6 @@
 //! Linux desktop integrations: autostart, sleep inhibit, Send-to.
 
+use crate::tray_menu::HelperMenuNode;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -31,6 +32,13 @@ pub fn send_to_display_name(remote: &str, path: Option<&str>) -> String {
         })
         .unwrap_or_default();
     sanitize_name(&format!("{remote}{path_suffix} (RClone Manager)"))
+}
+
+/// `nautilus.notifications.sendToAdded` interpolates `{{remote}}{{path}}`.
+pub fn send_to_path_param(path: Option<&str>) -> String {
+    path.filter(|p| !p.is_empty() && *p != "/")
+        .map(|p| format!("/{}", p.trim_start_matches('/')))
+        .unwrap_or_default()
 }
 
 fn apply_template(template: &str, replacements: &[(&str, &str)]) -> String {
@@ -73,19 +81,121 @@ pub fn autostart_desktop_path() -> PathBuf {
 }
 
 pub fn set_autostart(enabled: bool) -> Result<(), String> {
-    if is_flatpak() {
-        if let Err(err) = request_background_portal(enabled) {
-            log::warn!("Flatpak Background portal failed, using XDG autostart: {err}");
+    #[cfg(target_os = "windows")]
+    {
+        return set_windows_autostart(enabled);
+    }
+    #[cfg(target_os = "macos")]
+    {
+        return set_macos_autostart(enabled);
+    }
+    #[cfg(not(any(target_os = "windows", target_os = "macos")))]
+    {
+        if is_flatpak() {
+            if let Err(err) = request_background_portal(enabled) {
+                log::warn!("Flatpak Background portal failed, using XDG autostart: {err}");
+            }
         }
+        let path = autostart_desktop_path();
+        if !enabled {
+            let _ = std::fs::remove_file(&path);
+            return Ok(());
+        }
+        let exec = current_exe_quoted();
+        write_executable(&path, &autostart_desktop_entry(&exec)).map_err(|e| e.to_string())
     }
-    let path = autostart_desktop_path();
-    if !enabled {
-        let _ = std::fs::remove_file(&path);
-        return Ok(());
-    }
-    let exec = current_exe_quoted();
-    write_executable(&path, &autostart_desktop_entry(&exec)).map_err(|e| e.to_string())
 }
+
+pub const DESKTOP_FILE_ID: &str = "io.github.zarestia_dev.rclone-manager.desktop";
+
+pub fn applications_dir() -> PathBuf {
+    std::env::var("XDG_DATA_HOME")
+        .map(PathBuf::from)
+        .unwrap_or_else(|_| home_dir().join(".local/share"))
+        .join("applications")
+}
+
+/// User applications menu entry with the running binary as `Exec`.
+pub fn desktop_entry_for_exe(exe: &str) -> String {
+    let exec = if exe.contains(char::is_whitespace) {
+        format!("\"{exe}\"")
+    } else {
+        exe.to_string()
+    };
+    include_str!("../data/io.github.zarestia_dev.rclone-manager.desktop")
+        .replace("Exec=rclone-manager-gtk", &format!("Exec={exec}"))
+}
+
+pub fn install_user_desktop_entry() -> Result<PathBuf, String> {
+    let exe = std::env::current_exe().map_err(|e| e.to_string())?;
+    let path = applications_dir().join(DESKTOP_FILE_ID);
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+    }
+    let content = desktop_entry_for_exe(&exe.to_string_lossy());
+    if std::fs::read_to_string(&path).ok().as_deref() == Some(content.as_str()) {
+        return Ok(path);
+    }
+    std::fs::write(&path, content).map_err(|e| e.to_string())?;
+    Ok(path)
+}
+
+pub const MIME_PACKAGE_ID: &str = "io.github.zarestia_dev.rclone-manager.xml";
+
+pub fn mime_packages_dir() -> PathBuf {
+    std::env::var("XDG_DATA_HOME")
+        .map(PathBuf::from)
+        .unwrap_or_else(|_| home_dir().join(".local/share"))
+        .join("mime/packages")
+}
+
+/// Shared-MIME package so `rclone.conf` maps to `application/x-rclone-config`.
+pub fn install_user_mime_package() -> Result<PathBuf, String> {
+    let path = mime_packages_dir().join(MIME_PACKAGE_ID);
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+    }
+    let content = include_str!("../data/io.github.zarestia_dev.rclone-manager.xml");
+    if std::fs::read_to_string(&path).ok().as_deref() != Some(content) {
+        std::fs::write(&path, content).map_err(|e| e.to_string())?;
+    }
+    let mime_dir = path
+        .parent()
+        .and_then(|p| p.parent())
+        .map(PathBuf::from)
+        .unwrap_or_else(|| path.parent().unwrap_or(Path::new(".")).to_path_buf());
+    let _ = std::process::Command::new("update-mime-database")
+        .arg(&mime_dir)
+        .status();
+    Ok(path)
+}
+
+pub const METAINFO_ID: &str = "io.github.zarestia_dev.rclone-manager.metainfo.xml";
+
+pub fn metainfo_dir() -> PathBuf {
+    std::env::var("XDG_DATA_HOME")
+        .map(PathBuf::from)
+        .unwrap_or_else(|_| home_dir().join(".local/share"))
+        .join("metainfo")
+}
+
+/// AppStream metainfo so software centers can list the GTK desktop client.
+pub fn install_user_metainfo() -> Result<PathBuf, String> {
+    let path = metainfo_dir().join(METAINFO_ID);
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+    }
+    let content = include_str!("../data/io.github.zarestia_dev.rclone-manager.metainfo.xml");
+    if std::fs::read_to_string(&path).ok().as_deref() != Some(content) {
+        std::fs::write(&path, content).map_err(|e| e.to_string())?;
+    }
+    Ok(path)
+}
+
+pub use crate::os_notify::{
+    drain_notification_clicks, show_os_notification, show_os_notification_target,
+    NotificationTarget,
+};
 
 /// XDG autostart entry. `--tray` matches Tauri `tauri_plugin_autostart`.
 pub fn autostart_desktop_entry(exec: &str) -> String {
@@ -143,7 +253,413 @@ pub fn request_background_portal(enable: bool) -> Result<String, String> {
 }
 
 pub fn autostart_enabled() -> bool {
-    autostart_desktop_path().exists()
+    #[cfg(target_os = "windows")]
+    {
+        return windows_autostart_enabled();
+    }
+    #[cfg(target_os = "macos")]
+    {
+        return macos_launch_agent_path().exists();
+    }
+    #[cfg(not(any(target_os = "windows", target_os = "macos")))]
+    {
+        autostart_desktop_path().exists()
+    }
+}
+
+pub const WINDOWS_RUN_VALUE_NAME: &str = "Rclone Manager";
+
+/// Tray host used on this OS. Linux uses StatusNotifier (`ksni`);
+/// Windows uses a NotifyIcon helper; macOS uses an NSStatusItem helper.
+pub fn tray_backend() -> &'static str {
+    if cfg!(target_os = "windows") {
+        "notifyicon"
+    } else if cfg!(target_os = "macos") {
+        "nsstatusitem"
+    } else {
+        "ksni"
+    }
+}
+
+fn powershell_single_quoted(value: &str) -> String {
+    format!("'{}'", value.replace('\'', "''"))
+}
+
+/// Fallback menu when `plan_tray` has not been flattened yet.
+pub fn default_tray_helper_items() -> Vec<(String, Option<String>)> {
+    vec![
+        ("Show Window".into(), Some("show-window".into())),
+        ("Open Files".into(), Some("open-files".into())),
+        (String::new(), None),
+        ("Unmount All".into(), Some("unmount-all".into())),
+        ("Stop All Jobs".into(), Some("stop-jobs".into())),
+        ("Stop All Serves".into(), Some("stop-serves".into())),
+        (String::new(), None),
+        ("Quit".into(), Some("quit".into())),
+    ]
+}
+
+fn helper_items_or_default(items: &[(String, Option<String>)]) -> Vec<(String, Option<String>)> {
+    if items.is_empty() {
+        default_tray_helper_items()
+    } else {
+        items.to_vec()
+    }
+}
+
+/// PowerShell NotifyIcon that forwards clicks to `exe --tray-action`.
+pub fn windows_notifyicon_ps1(exe: &str, items: &[(String, Option<String>)]) -> String {
+    let quoted = powershell_single_quoted(exe);
+    let mut menu = String::new();
+    for (label, action) in helper_items_or_default(items) {
+        match action {
+            None => menu.push_str(
+                "$menu.Items.Add((New-Object System.Windows.Forms.ToolStripSeparator)) | Out-Null; ",
+            ),
+            Some(token) => {
+                let quoted_label = powershell_single_quoted(&label);
+                let quoted_action = powershell_single_quoted(&token);
+                menu.push_str(&format!(
+                    "$item = New-Object System.Windows.Forms.ToolStripMenuItem {quoted_label}; \
+                     $item.add_Click({{ Start-Process -FilePath {quoted} -ArgumentList '--tray-action',{quoted_action} }}); \
+                     $menu.Items.Add($item) | Out-Null; "
+                ));
+            }
+        }
+    }
+    format!(
+        "Add-Type -AssemblyName System.Windows.Forms; \
+         Add-Type -AssemblyName System.Drawing; \
+         $icon = New-Object System.Windows.Forms.NotifyIcon; \
+         $icon.Text = 'Rclone Manager'; \
+         $icon.Icon = [System.Drawing.SystemIcons]::Application; \
+         $icon.Visible = $true; \
+         $menu = New-Object System.Windows.Forms.ContextMenuStrip; \
+         {menu}\
+         $icon.ContextMenuStrip = $menu; \
+         $icon.add_DoubleClick({{ Start-Process -FilePath {quoted} -ArgumentList '--tray-action','show-window' }}); \
+         $app = New-Object System.Windows.Forms.ApplicationContext; \
+         [System.Windows.Forms.Application]::Run($app)"
+    )
+}
+
+fn swift_string_literal(value: &str) -> String {
+    value
+        .replace('\\', "\\\\")
+        .replace('"', "\\\"")
+        .replace('\n', " ")
+}
+
+/// Swift NSStatusItem helper that forwards clicks to `exe --tray-action`.
+pub fn macos_status_item_swift(exe: &str, items: &[(String, Option<String>)]) -> String {
+    let escaped = swift_string_literal(exe);
+    let mut adds = String::new();
+    for (label, action) in helper_items_or_default(items) {
+        match action {
+            None => adds.push_str("menu.addItem(NSMenuItem.separator())\n"),
+            Some(token) => {
+                let title = swift_string_literal(&label);
+                let token = swift_string_literal(&token);
+                adds.push_str(&format!("add(\"{title}\", \"{token}\")\n"));
+            }
+        }
+    }
+    format!(
+        r#"import Cocoa
+let exe = "{escaped}"
+func run(_ action: String) {{
+    let p = Process()
+    p.executableURL = URL(fileURLWithPath: exe)
+    p.arguments = ["--tray-action", action]
+    try? p.run()
+}}
+class TrayTarget: NSObject {{
+    @objc func runAction(_ sender: NSMenuItem) {{
+        if let action = sender.representedObject as? String {{ run(action) }}
+    }}
+}}
+let app = NSApplication.shared
+app.setActivationPolicy(.accessory)
+let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
+item.button?.title = "R"
+let menu = NSMenu()
+let target = TrayTarget()
+func add(_ title: String, _ action: String) {{
+    let mi = NSMenuItem(title: title, action: #selector(TrayTarget.runAction(_:)), keyEquivalent: "")
+    mi.representedObject = action
+    mi.target = target
+    menu.addItem(mi)
+}}
+{adds}item.menu = menu
+app.run()
+"#
+    )
+}
+
+fn default_helper_nodes() -> Vec<HelperMenuNode> {
+    default_tray_helper_items()
+        .into_iter()
+        .map(|(label, action)| match action {
+            None => HelperMenuNode::Separator,
+            Some(token) => HelperMenuNode::Action { label, token },
+        })
+        .collect()
+}
+
+fn helper_nodes_or_default(nodes: &[HelperMenuNode]) -> Vec<HelperMenuNode> {
+    if nodes.is_empty() {
+        default_helper_nodes()
+    } else {
+        nodes.to_vec()
+    }
+}
+
+fn emit_ps_nodes(
+    parent_items: &str,
+    nodes: &[HelperMenuNode],
+    n: &mut u32,
+    quoted_exe: &str,
+    out: &mut String,
+) {
+    for node in nodes {
+        match node {
+            HelperMenuNode::Separator => out.push_str(&format!(
+                "{parent_items}.Add((New-Object System.Windows.Forms.ToolStripSeparator)) | Out-Null; "
+            )),
+            HelperMenuNode::Action { label, token } => {
+                *n += 1;
+                let id = *n;
+                let quoted_label = powershell_single_quoted(label);
+                let quoted_action = powershell_single_quoted(token);
+                out.push_str(&format!(
+                    "$i{id} = New-Object System.Windows.Forms.ToolStripMenuItem {quoted_label}; \
+                     $i{id}.add_Click({{ Start-Process -FilePath {quoted_exe} -ArgumentList '--tray-action',{quoted_action} }}); \
+                     {parent_items}.Add($i{id}) | Out-Null; "
+                ));
+            }
+            HelperMenuNode::Submenu { label, children } => {
+                *n += 1;
+                let id = *n;
+                let quoted_label = powershell_single_quoted(label);
+                out.push_str(&format!(
+                    "$i{id} = New-Object System.Windows.Forms.ToolStripMenuItem {quoted_label}; \
+                     {parent_items}.Add($i{id}) | Out-Null; "
+                ));
+                emit_ps_nodes(
+                    &format!("$i{id}.DropDownItems"),
+                    children,
+                    n,
+                    quoted_exe,
+                    out,
+                );
+            }
+        }
+    }
+}
+
+/// Nested PowerShell NotifyIcon menu from `plan_tray`.
+pub fn windows_notifyicon_ps1_nodes(exe: &str, nodes: &[HelperMenuNode]) -> String {
+    let quoted = powershell_single_quoted(exe);
+    let mut menu = String::new();
+    let mut n = 0;
+    emit_ps_nodes(
+        "$menu.Items",
+        &helper_nodes_or_default(nodes),
+        &mut n,
+        &quoted,
+        &mut menu,
+    );
+    format!(
+        "Add-Type -AssemblyName System.Windows.Forms; \
+         Add-Type -AssemblyName System.Drawing; \
+         $icon = New-Object System.Windows.Forms.NotifyIcon; \
+         $icon.Text = 'Rclone Manager'; \
+         $icon.Icon = [System.Drawing.SystemIcons]::Application; \
+         $icon.Visible = $true; \
+         $menu = New-Object System.Windows.Forms.ContextMenuStrip; \
+         {menu}\
+         $icon.ContextMenuStrip = $menu; \
+         $icon.add_DoubleClick({{ Start-Process -FilePath {quoted} -ArgumentList '--tray-action','show-window' }}); \
+         $app = New-Object System.Windows.Forms.ApplicationContext; \
+         [System.Windows.Forms.Application]::Run($app)"
+    )
+}
+
+fn emit_swift_nodes(menu_var: &str, nodes: &[HelperMenuNode], n: &mut u32, out: &mut String) {
+    for node in nodes {
+        match node {
+            HelperMenuNode::Separator => {
+                out.push_str(&format!("{menu_var}.addItem(NSMenuItem.separator())\n"));
+            }
+            HelperMenuNode::Action { label, token } => {
+                let title = swift_string_literal(label);
+                let token = swift_string_literal(token);
+                out.push_str(&format!("add(\"{title}\", \"{token}\", {menu_var})\n"));
+            }
+            HelperMenuNode::Submenu { label, children } => {
+                *n += 1;
+                let id = *n;
+                let title = swift_string_literal(label);
+                out.push_str(&format!(
+                    "let m{id} = NSMenu()\n\
+                     let p{id} = NSMenuItem(title: \"{title}\", action: nil, keyEquivalent: \"\")\n\
+                     p{id}.submenu = m{id}\n\
+                     {menu_var}.addItem(p{id})\n"
+                ));
+                emit_swift_nodes(&format!("m{id}"), children, n, out);
+            }
+        }
+    }
+}
+
+/// Nested Swift NSStatusItem menu from `plan_tray`.
+pub fn macos_status_item_swift_nodes(exe: &str, nodes: &[HelperMenuNode]) -> String {
+    let escaped = swift_string_literal(exe);
+    let mut adds = String::new();
+    let mut n = 0;
+    emit_swift_nodes("menu", &helper_nodes_or_default(nodes), &mut n, &mut adds);
+    format!(
+        r#"import Cocoa
+let exe = "{escaped}"
+func run(_ action: String) {{
+    let p = Process()
+    p.executableURL = URL(fileURLWithPath: exe)
+    p.arguments = ["--tray-action", action]
+    try? p.run()
+}}
+class TrayTarget: NSObject {{
+    @objc func runAction(_ sender: NSMenuItem) {{
+        if let action = sender.representedObject as? String {{ run(action) }}
+    }}
+}}
+let app = NSApplication.shared
+app.setActivationPolicy(.accessory)
+let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
+item.button?.title = "R"
+let menu = NSMenu()
+let target = TrayTarget()
+func add(_ title: String, _ action: String, _ dest: NSMenu) {{
+    let mi = NSMenuItem(title: title, action: #selector(TrayTarget.runAction(_:)), keyEquivalent: "")
+    mi.representedObject = action
+    mi.target = target
+    dest.addItem(mi)
+}}
+{adds}item.menu = menu
+app.run()
+"#
+    )
+}
+
+pub fn windows_autostart_command(exe: &str) -> String {
+    format!("\"{exe}\" --tray")
+}
+
+pub fn windows_autostart_enable_ps1(exe: &str) -> String {
+    let cmd = windows_autostart_command(exe).replace('\'', "''");
+    format!(
+        "New-Item -Path 'HKCU:\\Software\\Microsoft\\Windows\\CurrentVersion\\Run' -Force | Out-Null; \
+         Set-ItemProperty -Path 'HKCU:\\Software\\Microsoft\\Windows\\CurrentVersion\\Run' \
+         -Name '{WINDOWS_RUN_VALUE_NAME}' -Value '{cmd}'"
+    )
+}
+
+pub fn windows_autostart_disable_ps1() -> String {
+    format!(
+        "Remove-ItemProperty -Path 'HKCU:\\Software\\Microsoft\\Windows\\CurrentVersion\\Run' \
+         -Name '{WINDOWS_RUN_VALUE_NAME}' -ErrorAction SilentlyContinue"
+    )
+}
+
+pub fn windows_autostart_query_ps1() -> String {
+    format!(
+        "if (Get-ItemProperty -Path 'HKCU:\\Software\\Microsoft\\Windows\\CurrentVersion\\Run' \
+         -Name '{WINDOWS_RUN_VALUE_NAME}' -ErrorAction SilentlyContinue) {{ '1' }} else {{ '0' }}"
+    )
+}
+
+#[cfg(target_os = "windows")]
+fn set_windows_autostart(enabled: bool) -> Result<(), String> {
+    let exe = std::env::current_exe().map_err(|e| e.to_string())?;
+    let script = if enabled {
+        windows_autostart_enable_ps1(&exe.to_string_lossy())
+    } else {
+        windows_autostart_disable_ps1()
+    };
+    run_powershell(&script)
+}
+
+#[cfg(target_os = "windows")]
+fn windows_autostart_enabled() -> bool {
+    let exe = if which::which("powershell").is_ok() {
+        "powershell"
+    } else if which::which("pwsh").is_ok() {
+        "pwsh"
+    } else {
+        return false;
+    };
+    Command::new(exe)
+        .args(["-NoProfile", "-Command", &windows_autostart_query_ps1()])
+        .output()
+        .ok()
+        .is_some_and(|out| String::from_utf8_lossy(&out.stdout).contains('1'))
+}
+
+pub const MACOS_LAUNCH_AGENT_LABEL: &str = "io.github.zarestia_dev.rclone-manager";
+
+pub fn macos_launch_agent_path() -> PathBuf {
+    home_dir().join(format!(
+        "Library/LaunchAgents/{MACOS_LAUNCH_AGENT_LABEL}.plist"
+    ))
+}
+
+pub fn macos_launch_agent_plist(exe: &str) -> String {
+    format!(
+        r#"<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>Label</key>
+	<string>{MACOS_LAUNCH_AGENT_LABEL}</string>
+	<key>ProgramArguments</key>
+	<array>
+		<string>{}</string>
+		<string>--tray</string>
+	</array>
+	<key>RunAtLoad</key>
+	<true/>
+	<key>LimitLoadToSessionType</key>
+	<string>Aqua</string>
+</dict>
+</plist>
+"#,
+        escape_xml(exe)
+    )
+}
+
+#[cfg(target_os = "macos")]
+fn set_macos_autostart(enabled: bool) -> Result<(), String> {
+    let path = macos_launch_agent_path();
+    if path.exists() {
+        let _ = Command::new("launchctl")
+            .args(["unload", "-w"])
+            .arg(&path)
+            .status();
+    }
+    if !enabled {
+        let _ = std::fs::remove_file(&path);
+        return Ok(());
+    }
+    let exe = std::env::current_exe().map_err(|e| e.to_string())?;
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+    }
+    std::fs::write(&path, macos_launch_agent_plist(&exe.to_string_lossy()))
+        .map_err(|e| e.to_string())?;
+    let _ = Command::new("launchctl")
+        .args(["load", "-w"])
+        .arg(&path)
+        .status();
+    Ok(())
 }
 
 /// NetworkManager `Metered` values 1 (yes) and 3 (guess yes).
@@ -151,7 +667,22 @@ pub fn metered_from_nm_status(status: u32) -> bool {
     matches!(status, 1 | 3)
 }
 
-pub fn is_network_metered() -> bool {
+pub fn metered_from_refarg(value: &dyn dbus::arg::RefArg) -> Option<bool> {
+    if let Some(n) = value.as_u64() {
+        return Some(metered_from_nm_status(n as u32));
+    }
+    if let Some(n) = value.as_i64() {
+        return Some(metered_from_nm_status(n.max(0) as u32));
+    }
+    None
+}
+
+static METERED_WATCH_STARTED: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
+static METERED_CACHED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+static METERED_DIRTY: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+fn query_network_metered() -> bool {
     use std::time::Duration;
     let Ok(conn) = dbus::blocking::Connection::new_system() else {
         return false;
@@ -166,6 +697,85 @@ pub fn is_network_metered() -> bool {
         Ok(status) => metered_from_nm_status(status),
         Err(_) => false,
     }
+}
+
+fn store_metered(value: bool) {
+    let prev = METERED_CACHED.swap(value, std::sync::atomic::Ordering::Relaxed);
+    if prev != value {
+        METERED_DIRTY.store(true, std::sync::atomic::Ordering::SeqCst);
+    }
+}
+
+/// Start a background NetworkManager `Metered` watcher (D-Bus signals, 1s poll fallback).
+pub fn start_metered_watch() {
+    if METERED_WATCH_STARTED.swap(true, std::sync::atomic::Ordering::SeqCst) {
+        return;
+    }
+    let initial = query_network_metered();
+    METERED_CACHED.store(initial, std::sync::atomic::Ordering::Relaxed);
+    let _ = std::thread::Builder::new()
+        .name("nm-metered".into())
+        .spawn(metered_watch_loop);
+}
+
+pub fn take_metered_change() -> Option<bool> {
+    if METERED_DIRTY.swap(false, std::sync::atomic::Ordering::SeqCst) {
+        Some(METERED_CACHED.load(std::sync::atomic::Ordering::Relaxed))
+    } else {
+        None
+    }
+}
+
+fn metered_watch_loop() {
+    if watch_nm_metered_signals().is_err() {
+        loop {
+            std::thread::sleep(std::time::Duration::from_secs(1));
+            store_metered(query_network_metered());
+        }
+    }
+}
+
+fn watch_nm_metered_signals() -> Result<(), ()> {
+    use dbus::arg::{RefArg, Variant};
+    use std::collections::HashMap;
+    let conn = dbus::blocking::Connection::new_system().map_err(|_| ())?;
+    let mut rule = dbus::message::MatchRule::new_signal(
+        "org.freedesktop.DBus.Properties",
+        "PropertiesChanged",
+    );
+    rule.path = Some("/org/freedesktop/NetworkManager".into());
+    conn.add_match(
+        rule,
+        |(iface, changed, _inv): (
+            String,
+            HashMap<String, Variant<Box<dyn RefArg + 'static>>>,
+            Vec<String>,
+        ),
+         _,
+         _| {
+            if let Some(value) = changed.get("Metered") {
+                if let Some(metered) = metered_from_refarg(&*value.0) {
+                    store_metered(metered);
+                }
+            } else if iface == "org.freedesktop.NetworkManager"
+                || iface == "org.freedesktop.DBus.Properties"
+            {
+                store_metered(query_network_metered());
+            }
+            true
+        },
+    )
+    .map_err(|_| ())?;
+    loop {
+        let _ = conn.process(std::time::Duration::from_secs(1));
+    }
+}
+
+pub fn is_network_metered() -> bool {
+    if METERED_WATCH_STARTED.load(std::sync::atomic::Ordering::Relaxed) {
+        return METERED_CACHED.load(std::sync::atomic::Ordering::Relaxed);
+    }
+    query_network_metered()
 }
 
 pub fn is_flatpak() -> bool {
@@ -218,6 +828,7 @@ struct LogindInhibit {
 pub struct PowerInhibitor {
     child: Option<Child>,
     logind: Option<LogindInhibit>,
+    windows_held: bool,
 }
 
 impl Default for PowerInhibitor {
@@ -231,11 +842,12 @@ impl PowerInhibitor {
         Self {
             child: None,
             logind: None,
+            windows_held: false,
         }
     }
 
     pub fn is_inhibited(&self) -> bool {
-        self.child.is_some() || self.logind.is_some()
+        self.child.is_some() || self.logind.is_some() || self.windows_held
     }
 
     pub fn update(&mut self, should_inhibit: bool, reason: &str) {
@@ -250,35 +862,62 @@ impl PowerInhibitor {
         if self.is_inhibited() {
             return;
         }
-        if let Some(hold) = acquire_logind(reason) {
-            log::info!("logind power inhibitor acquired: {reason}");
-            self.logind = Some(hold);
+        #[cfg(target_os = "windows")]
+        {
+            windows_set_thread_execution_state(true);
+            log::info!("Windows SetThreadExecutionState acquired: {reason}");
+            self.windows_held = true;
             return;
         }
-        match Command::new("systemd-inhibit")
-            .args([
-                "--what=idle:sleep:shutdown",
-                "--who=Rclone Manager",
-                "--why",
-                reason,
-                "--mode=block",
-                "sleep",
-                "infinity",
-            ])
-            .stdin(Stdio::null())
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .spawn()
+        #[cfg(target_os = "macos")]
         {
-            Ok(child) => {
-                log::info!("power inhibitor acquired: {reason}");
-                self.child = Some(child);
+            match spawn_caffeinate() {
+                Ok(child) => {
+                    log::info!("macOS caffeinate power inhibitor acquired: {reason}");
+                    self.child = Some(child);
+                    return;
+                }
+                Err(err) => log::warn!("caffeinate unavailable: {err}"),
             }
-            Err(err) => log::warn!("systemd-inhibit unavailable: {err}"),
+        }
+        #[cfg(not(any(target_os = "windows", target_os = "macos")))]
+        {
+            if let Some(hold) = acquire_logind(reason) {
+                log::info!("logind power inhibitor acquired: {reason}");
+                self.logind = Some(hold);
+                return;
+            }
+            match Command::new("systemd-inhibit")
+                .args([
+                    "--what=idle:sleep:shutdown",
+                    "--who=Rclone Manager",
+                    "--why",
+                    reason,
+                    "--mode=block",
+                    "sleep",
+                    "infinity",
+                ])
+                .stdin(Stdio::null())
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .spawn()
+            {
+                Ok(child) => {
+                    log::info!("power inhibitor acquired: {reason}");
+                    self.child = Some(child);
+                }
+                Err(err) => log::warn!("systemd-inhibit unavailable: {err}"),
+            }
         }
     }
 
     pub fn release(&mut self) {
+        if self.windows_held {
+            #[cfg(target_os = "windows")]
+            windows_set_thread_execution_state(false);
+            self.windows_held = false;
+            log::info!("Windows SetThreadExecutionState released");
+        }
         if self.logind.take().is_some() {
             log::info!("logind power inhibitor released");
         }
@@ -288,6 +927,45 @@ impl PowerInhibitor {
             log::info!("power inhibitor released");
         }
     }
+}
+
+/// `ES_CONTINUOUS | ES_SYSTEM_REQUIRED | ES_AWAYMODE_REQUIRED` while jobs run.
+pub const ES_SYSTEM_REQUIRED: u32 = 0x0000_0001;
+pub const ES_AWAYMODE_REQUIRED: u32 = 0x0000_0040;
+pub const ES_CONTINUOUS: u32 = 0x8000_0000;
+
+pub fn windows_execution_state_flags(inhibit: bool) -> u32 {
+    if inhibit {
+        ES_CONTINUOUS | ES_SYSTEM_REQUIRED | ES_AWAYMODE_REQUIRED
+    } else {
+        ES_CONTINUOUS
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn windows_set_thread_execution_state(inhibit: bool) {
+    #[link(name = "kernel32")]
+    extern "system" {
+        fn SetThreadExecutionState(es_flags: u32) -> u32;
+    }
+    unsafe {
+        SetThreadExecutionState(windows_execution_state_flags(inhibit));
+    }
+}
+
+pub fn caffeinate_args() -> &'static [&'static str] {
+    &["-dims"]
+}
+
+#[cfg(target_os = "macos")]
+fn spawn_caffeinate() -> Result<Child, String> {
+    Command::new("caffeinate")
+        .args(caffeinate_args())
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .map_err(|e| e.to_string())
 }
 
 fn acquire_logind(reason: &str) -> Option<LogindInhibit> {
@@ -318,6 +996,8 @@ impl Drop for PowerInhibitor {
 }
 
 const NAUTILUS_SCRIPT: &str = include_str!("../../src-tauri/resources/send_to/nautilus_script.sh");
+const NAUTILUS_EXTENSION: &str =
+    include_str!("../../src-tauri/resources/send_to/nautilus_extension.py");
 const DOLPHIN_DESKTOP: &str =
     include_str!("../../src-tauri/resources/send_to/dolphin_action.desktop");
 const NEMO_ACTION: &str = include_str!("../../src-tauri/resources/send_to/nemo_action.nemo_action");
@@ -370,6 +1050,32 @@ pub fn is_send_to_registered(remote: &str, path: Option<&str>) -> bool {
     }
 }
 
+pub fn nautilus_python_dir() -> PathBuf {
+    home_dir().join(".local/share/nautilus-python/extensions")
+}
+
+/// GNOME Files context-menu extension (same template as Tauri).
+pub fn nautilus_python_extension(
+    name: &str,
+    exec_path: &str,
+    remote: &str,
+    path: &str,
+    class_name: &str,
+    uuid: &str,
+) -> String {
+    apply_template(
+        NAUTILUS_EXTENSION,
+        &[
+            ("class_name", class_name),
+            ("exec_path", exec_path),
+            ("remote", remote),
+            ("path", path),
+            ("uuid", uuid),
+            ("name", name),
+        ],
+    )
+}
+
 fn register_linux_send_to(remote: &str, path: Option<&str>) -> Result<(), String> {
     let name = send_to_display_name(remote, path);
     let exec = current_exe_quoted();
@@ -385,6 +1091,17 @@ fn register_linux_send_to(remote: &str, path: Option<&str>) -> Result<(), String
     write_executable(
         &home.join(".local/share/nautilus/scripts").join(&name),
         &apply_template(NAUTILUS_SCRIPT, &replacements),
+    )
+    .map_err(|e| e.to_string())?;
+    let uuid = uuid::Uuid::new_v4().to_string().replace('-', "");
+    let class_name = format!("RCloneManagerExtension_{uuid}");
+    let py_path = nautilus_python_dir().join(format!("{name}.py"));
+    if let Some(parent) = py_path.parent() {
+        std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+    }
+    std::fs::write(
+        &py_path,
+        nautilus_python_extension(&name, &exec, remote, path_val, &class_name, &uuid),
     )
     .map_err(|e| e.to_string())?;
     write_executable(
@@ -408,6 +1125,7 @@ fn unregister_linux_send_to(remote: &str, path: Option<&str>) -> Result<(), Stri
     let name = send_to_display_name(remote, path);
     let home = home_dir();
     let _ = std::fs::remove_file(home.join(".local/share/nautilus/scripts").join(&name));
+    let _ = std::fs::remove_file(nautilus_python_dir().join(format!("{name}.py")));
     let _ = std::fs::remove_file(
         home.join(".local/share/kio/servicemenus")
             .join(format!("{name}.desktop")),
@@ -425,6 +1143,7 @@ fn is_linux_send_to_registered(remote: &str, path: Option<&str>) -> bool {
     home.join(".local/share/nautilus/scripts")
         .join(&name)
         .exists()
+        || nautilus_python_dir().join(format!("{name}.py")).exists()
         || home
             .join(".local/share/kio/servicemenus")
             .join(format!("{name}.desktop"))
@@ -842,6 +1561,7 @@ pub fn parse_share_intake_args(args: &[String]) -> Option<Vec<PathBuf>> {
                         | "--dialog"
                         | "--dialog-data"
                         | "--dialog-result"
+                        | "--import-config"
                 ) {
                     i += 1;
                 }
@@ -991,6 +1711,105 @@ mod tests {
     }
 
     #[test]
+    fn windows_autostart_scripts_use_run_key_and_tray() {
+        let enable = windows_autostart_enable_ps1(r"C:\Program Files\rclone-manager-gtk.exe");
+        assert!(enable.contains(r"HKCU:\Software\Microsoft\Windows\CurrentVersion\Run"));
+        assert!(enable.contains(WINDOWS_RUN_VALUE_NAME));
+        assert!(enable.contains("--tray"));
+        assert!(enable.contains(r"C:\Program Files\rclone-manager-gtk.exe"));
+        let disable = windows_autostart_disable_ps1();
+        assert!(disable.contains("Remove-ItemProperty"));
+        assert!(disable.contains(WINDOWS_RUN_VALUE_NAME));
+        assert_eq!(
+            windows_autostart_command(r"C:\app.exe"),
+            r#""C:\app.exe" --tray"#
+        );
+        assert!(windows_autostart_query_ps1().contains(WINDOWS_RUN_VALUE_NAME));
+    }
+
+    #[test]
+    fn macos_launch_agent_plist_uses_tray_and_escapes() {
+        let plist =
+            macos_launch_agent_plist("/Applications/Rclone & Manager.app/Contents/MacOS/app");
+        assert!(plist.contains(MACOS_LAUNCH_AGENT_LABEL));
+        assert!(plist.contains("--tray"));
+        assert!(plist.contains("RunAtLoad"));
+        assert!(plist.contains("Rclone &amp; Manager"));
+        assert!(macos_launch_agent_path()
+            .to_string_lossy()
+            .contains("Library/LaunchAgents/io.github.zarestia_dev.rclone-manager.plist"));
+    }
+
+    #[test]
+    fn tray_helpers_match_desktop_backends() {
+        assert_eq!(
+            tray_backend(),
+            if cfg!(target_os = "windows") {
+                "notifyicon"
+            } else if cfg!(target_os = "macos") {
+                "nsstatusitem"
+            } else {
+                "ksni"
+            }
+        );
+        let ps = windows_notifyicon_ps1(
+            r"C:\Program Files\rclone-manager-gtk.exe",
+            &default_tray_helper_items(),
+        );
+        assert!(ps.contains("System.Windows.Forms.NotifyIcon"));
+        assert!(ps.contains("--tray-action"));
+        assert!(ps.contains("show-window"));
+        assert!(ps.contains("unmount-all"));
+        assert!(ps.contains("ToolStripSeparator"));
+        assert!(ps.contains(r"C:\Program Files\rclone-manager-gtk.exe"));
+        let swift = macos_status_item_swift(
+            r#"/Applications/Rclone "Manager".app/Contents/MacOS/app"#,
+            &default_tray_helper_items(),
+        );
+        assert!(swift.contains("NSStatusItem"));
+        assert!(swift.contains("--tray-action"));
+        assert!(swift.contains("open-files"));
+        assert!(swift.contains(r#"\""#));
+        let dynamic = vec![
+            (
+                "testdrive: Mount · default".into(),
+                Some("mount|testdrive|default".into()),
+            ),
+            (String::new(), None),
+            ("Quit".into(), Some("quit".into())),
+        ];
+        let ps = windows_notifyicon_ps1(r"C:\rclone-manager-gtk.exe", &dynamic);
+        assert!(ps.contains("mount|testdrive|default"));
+        assert!(ps.contains("testdrive: Mount"));
+        let swift = macos_status_item_swift("/opt/rclone-manager-gtk", &dynamic);
+        assert!(swift.contains("mount|testdrive|default"));
+        assert!(swift.contains("NSMenuItem.separator"));
+        let nodes = vec![crate::tray_menu::HelperMenuNode::Submenu {
+            label: "testdrive".into(),
+            children: vec![crate::tray_menu::HelperMenuNode::Action {
+                label: "Mount · default".into(),
+                token: "mount|testdrive|default".into(),
+            }],
+        }];
+        let nested_ps = windows_notifyicon_ps1_nodes(r"C:\rclone-manager-gtk.exe", &nodes);
+        assert!(nested_ps.contains("DropDownItems"));
+        assert!(nested_ps.contains("mount|testdrive|default"));
+        let nested_swift = macos_status_item_swift_nodes("/opt/rclone-manager-gtk", &nodes);
+        assert!(nested_swift.contains(".submenu"));
+        assert!(nested_swift.contains("mount|testdrive|default"));
+    }
+
+    #[test]
+    fn prevent_sleep_flags_match_tauri_desktop() {
+        assert_eq!(
+            windows_execution_state_flags(true),
+            ES_CONTINUOUS | ES_SYSTEM_REQUIRED | ES_AWAYMODE_REQUIRED
+        );
+        assert_eq!(windows_execution_state_flags(false), ES_CONTINUOUS);
+        assert_eq!(caffeinate_args(), ["-dims"]);
+    }
+
+    #[test]
     fn background_portal_options_include_autostart() {
         let options = background_portal_options(true);
         assert!(options.contains_key("reason"));
@@ -1015,6 +1834,9 @@ mod tests {
             send_to_display_name("drive", None),
             "drive (RClone Manager)"
         );
+        assert_eq!(send_to_path_param(Some("Photos/2024")), "/Photos/2024");
+        assert_eq!(send_to_path_param(Some("/")), "");
+        assert_eq!(send_to_path_param(None), "");
     }
 
     #[test]
@@ -1115,12 +1937,69 @@ mod tests {
     }
 
     #[test]
+    fn nautilus_python_extension_matches_tauri_menu_provider() {
+        let py = nautilus_python_extension(
+            "testdrive (RClone Manager)",
+            "\"/opt/rclone-manager-gtk\"",
+            "testdrive",
+            "Photos",
+            "RCloneManagerExtension_abc123",
+            "abc123",
+        );
+        assert!(py.contains("class RCloneManagerExtension_abc123"));
+        assert!(py.contains("Nautilus.MenuProvider"));
+        assert!(py.contains("--send-to-remote"));
+        assert!(py.contains("testdrive"));
+        assert!(py.contains("Photos"));
+        assert!(py.contains("Upload to testdrive (RClone Manager)"));
+        assert!(nautilus_python_dir()
+            .to_string_lossy()
+            .contains("nautilus-python/extensions"));
+    }
+
+    #[test]
+    fn desktop_file_has_tray_action_and_rclone_mime() {
+        let desktop = include_str!("../data/io.github.zarestia_dev.rclone-manager.desktop");
+        assert!(desktop
+            .contains("MimeType=application/x-rclone-config;x-scheme-handler/rclone-manager;"));
+        assert!(desktop.contains("Exec=rclone-manager-gtk %U"));
+        assert!(desktop.contains("Actions=StartOnTray"));
+        assert!(desktop.contains("rclone-manager-gtk --tray"));
+        assert!(desktop.contains("Keywords=rclone;cloud;backup;sync;mount;"));
+        let installed = desktop_entry_for_exe("/opt/Rclone Manager/rclone-manager-gtk");
+        assert!(installed.contains("Exec=\"/opt/Rclone Manager/rclone-manager-gtk\" %U"));
+        assert!(installed.contains("Exec=\"/opt/Rclone Manager/rclone-manager-gtk\" --tray"));
+        assert!(!installed.contains("Exec=rclone-manager-gtk"));
+        assert!(applications_dir()
+            .to_string_lossy()
+            .contains("applications"));
+        assert_eq!(
+            DESKTOP_FILE_ID,
+            "io.github.zarestia_dev.rclone-manager.desktop"
+        );
+        let mime = include_str!("../data/io.github.zarestia_dev.rclone-manager.xml");
+        assert!(mime.contains("application/x-rclone-config"));
+        assert!(mime.contains("rclone.conf"));
+        assert!(mime_packages_dir()
+            .to_string_lossy()
+            .contains("mime/packages"));
+        let metainfo = include_str!("../data/io.github.zarestia_dev.rclone-manager.metainfo.xml");
+        assert!(metainfo.contains("io.github.zarestia_dev.rclone-manager"));
+        assert!(metainfo.contains("application/x-rclone-config"));
+        assert!(metainfo_dir().to_string_lossy().contains("metainfo"));
+    }
+
+    #[test]
     fn metered_status_matches_networkmanager() {
         assert!(metered_from_nm_status(1));
         assert!(metered_from_nm_status(3));
         assert!(!metered_from_nm_status(0));
         assert!(!metered_from_nm_status(2));
         assert!(!metered_from_nm_status(4));
+        assert_eq!(metered_from_refarg(&1u32), Some(true));
+        assert_eq!(metered_from_refarg(&2u32), Some(false));
+        assert_eq!(metered_from_refarg(&3u64), Some(true));
+        assert!(take_metered_change().is_none());
     }
 
     #[test]

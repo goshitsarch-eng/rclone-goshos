@@ -5,18 +5,24 @@ use crate::cli_import::{
     LookupOption, ProfileMode,
 };
 use crate::guidance::{operation_banners, BannerKind};
+use crate::installation::{
+    config_action_key, default_install_dest, install_action_key, installation_valid,
+    rclone_install_dest, repair_tooltip_key, InstallLocation, InstallationMode,
+};
 use crate::jobs::{
-    assemble_rclone, build_job_params, default_dest, default_source, flatten_rclone,
-    job_from_status, merge_template_into, path_list, start_request, SOURCE_KEYS,
+    assemble_rclone, default_dest, default_source, flatten_rclone, job_from_status,
+    merge_template_into, path_list, start_request, SOURCE_KEYS,
 };
 use crate::operations::OperationType;
 use crate::rclone::{
-    browse_target, describe_cron_i18n, group_metadata_info, nanoseconds_to_duration, parse_hashsum,
-    parse_hashsum_list, public_link_expiry_value, remote_fs, validate_cron,
+    browse_target, describe_cron_i18n, group_metadata_info, job_error_message, job_is_finished,
+    job_output, nanoseconds_to_duration, parse_hashsum, parse_hashsum_list, properties_read_group,
+    public_link_expiry_value, remote_fs, validate_cron, RcJobStart,
 };
 use crate::rename::{preview as rename_preview, RenameMode, RenamePlan};
 use crate::store::{
     AlertAction, AlertEvent, AlertEventKind, AlertRule, AlertSeverity, ProfileConfig, QuickRun,
+    UserTemplate,
 };
 use adw::prelude::*;
 use gtk::gio;
@@ -171,15 +177,185 @@ pub(super) fn settings_list(
     list
 }
 
+/// Angular `app-settings-panel`: expandable groups with optional Edit.
+pub(super) fn settings_panel(
+    ctx: &AppCtx,
+    title: &str,
+    settings: &serde_json::Value,
+    on_edit: Option<Rc<dyn Fn()>>,
+) -> gtk::Widget {
+    let restrict = ctx.settings.borrow().general.restrict;
+    let groups = crate::restrict::grouped_settings(settings, restrict);
+    let count: usize = groups.iter().map(|group| group.entries.len()).sum();
+
+    let expander = adw::ExpanderRow::new();
+    expander.set_title(title);
+    if count == 0 {
+        expander.set_subtitle(&ctx.t_or("detailShared.settings.notConfigured", "Not configured"));
+    } else {
+        expander.set_subtitle(&ctx.tf(
+            "detailShared.settings.metrics",
+            &[("count", &count.to_string())],
+        ));
+    }
+    if let Some(on_edit) = on_edit.clone() {
+        let edit = gtk::Button::from_icon_name("document-edit-symbolic");
+        edit.add_css_class("flat");
+        edit.set_valign(gtk::Align::Center);
+        edit.set_tooltip_text(Some(
+            &ctx.t_or("detailShared.settings.edit", "Edit Settings"),
+        ));
+        edit.connect_clicked(move |_| on_edit());
+        expander.add_suffix(&edit);
+    }
+    if count == 0 {
+        let row = adw::ActionRow::new();
+        row.set_title(&ctx.t_or(
+            "detailShared.settings.noData",
+            "No configuration data available",
+        ));
+        expander.add_row(&row);
+    } else {
+        for group in groups {
+            if !group.category.is_empty() {
+                let head = adw::ActionRow::new();
+                let fallback = group
+                    .category
+                    .rsplit('.')
+                    .next()
+                    .unwrap_or(group.category.as_str());
+                head.set_title(&ctx.t_or(&group.category, fallback));
+                head.set_sensitive(false);
+                expander.add_row(&head);
+            }
+            for entry in group.entries {
+                let row = adw::ActionRow::new();
+                row.set_title(&entry.key);
+                row.set_subtitle(&entry.display);
+                if entry.sensitive {
+                    row.set_icon_name(Some("dialog-password-symbolic"));
+                    row.set_tooltip_text(Some(
+                        &ctx.t_or("detailShared.settings.restricted", "RESTRICTED"),
+                    ));
+                }
+                expander.add_row(&row);
+            }
+        }
+    }
+
+    let list = gtk::ListBox::new();
+    list.add_css_class("boxed-list");
+    list.append(&expander);
+    let wrap = gtk::Box::new(gtk::Orientation::Vertical, 8);
+    wrap.append(&list);
+    if let Some(on_edit) = on_edit {
+        let edit =
+            gtk::Button::with_label(&ctx.t_or("detailShared.settings.edit", "Edit Settings"));
+        edit.add_css_class("suggested-action");
+        edit.connect_clicked(move |_| on_edit());
+        wrap.append(&edit);
+    }
+    wrap.upcast()
+}
+
+fn standalone_window_title(ctx: &AppCtx, kind: &str) -> String {
+    match kind {
+        "preferences" => ctx.t_or("settings.title", "Preferences"),
+        "about" => ctx.t_or("modals.about.title", "About"),
+        "logs" => ctx.t_or("modals.logs.title", "Logs"),
+        "export" => ctx.t_or("modals.export.title", "Export backup"),
+        "backend" => ctx.t_or("modals.backend.title", "Backends"),
+        "rclone-flags" => ctx.t_or("settings.rcloneFlags.title", "Rclone Flags"),
+        "job-detail" => ctx.t_or("jobManager.jobDetail", "Job Detail"),
+        "properties" => ctx.t_or("nautilus.contextMenu.properties", "Properties"),
+        "remote-about" => ctx.t_or("home.options.aboutRemote", "About Remote"),
+        "keyboard-shortcuts" => ctx.t_or("shortcuts.title", "Keyboard Shortcuts"),
+        "alerts" => ctx.t_or("alerts.title", "Alerts"),
+        "archive-create" => ctx.t_or("nautilus.modals.archiveCreate.title", "Create archive"),
+        "quick-run-editor" => ctx.t_or("flow.quickRun.editor.createTitle", "Create Quick Run"),
+        "template-manager" => ctx.t_or("templates.title", "Templates"),
+        "delete-remote" => ctx.t_or("home.deleteRemote.title", "Delete Remote"),
+        "remote-config" => ctx.t_or("general.remoteConfig.title.add", "Remote Configuration"),
+        "restore-preview" => ctx.t_or("backup.restore.title", "Restore Backup"),
+        "vfs" => ctx.t_or("remoteConfig.vfs", "VFS"),
+        "start-operation" => ctx.t_or("operations.start", "Start"),
+        "file-viewer" => ctx.t_or("nautilus.contextMenu.open", "Open"),
+        other => other.to_string(),
+    }
+}
+
+pub(super) fn drag_handle_button(ctx: &AppCtx) -> gtk::Button {
+    drag_handle_button_with_tip(&ctx.t_or("common.dragToReorder", "Drag to reorder"))
+}
+
+pub(super) fn drag_handle_button_with_tip(tip: &str) -> gtk::Button {
+    let handle = gtk::Button::from_icon_name("list-drag-handle-symbolic");
+    handle.set_valign(gtk::Align::Center);
+    handle.add_css_class("flat");
+    handle.set_has_frame(false);
+    handle.set_can_focus(false);
+    handle.set_focus_on_click(false);
+    handle.set_tooltip_text(Some(tip));
+    handle
+}
+
+pub(super) fn attach_id_drag_drop(
+    widget: &impl IsA<gtk::Widget>,
+    id: String,
+    on_drop: Rc<dyn Fn(String, String)>,
+) {
+    attach_id_drag_drop_on(widget, widget, id, on_drop);
+}
+
+pub(super) fn attach_id_drag_drop_on(
+    handle: &impl IsA<gtk::Widget>,
+    target: &impl IsA<gtk::Widget>,
+    id: String,
+    on_drop: Rc<dyn Fn(String, String)>,
+) {
+    let source = gtk::DragSource::new();
+    source.set_actions(gtk::gdk::DragAction::MOVE);
+    source.set_propagation_phase(gtk::PropagationPhase::Capture);
+    {
+        let id = id.clone();
+        source.connect_prepare(move |_, _, _| {
+            Some(gtk::gdk::ContentProvider::for_value(&id.to_value()))
+        });
+    }
+    source.connect_drag_begin(|src, _| {
+        if let Some(widget) = src.widget() {
+            src.set_icon(Some(&gtk::WidgetPaintable::new(Some(&widget))), 12, 12);
+        }
+    });
+    handle.add_controller(source);
+    let drop = gtk::DropTarget::new(String::static_type(), gtk::gdk::DragAction::MOVE);
+    drop.set_preload(true);
+    {
+        let to = id;
+        drop.connect_drop(move |_, value, _, _| {
+            let Ok(from) = value.get::<String>() else {
+                return false;
+            };
+            if from == to {
+                return false;
+            }
+            on_drop(from, to.clone());
+            true
+        });
+    }
+    target.add_controller(drop);
+}
+
 pub fn present_standalone(
     app: &adw::Application,
     ctx: AppCtx,
     req: crate::platform::DialogRequest,
 ) {
     crate::platform::set_standalone_dialog(true);
+    let title = standalone_window_title(&ctx, &req.kind);
     let window = adw::ApplicationWindow::builder()
         .application(app)
-        .title(&req.kind)
+        .title(&title)
         .default_width(780)
         .default_height(720)
         .build();
@@ -212,7 +388,14 @@ pub fn present_standalone(
             ctx.clone(),
             req.data.get("page").and_then(|v| v.as_str()),
         ),
-        "about" => about(&window, ctx.clone()),
+        "about" => about_open(
+            &window,
+            ctx.clone(),
+            req.data
+                .get("page")
+                .and_then(|v| v.as_str())
+                .unwrap_or("home"),
+        ),
         "logs" => logs(
             &window,
             ctx.clone(),
@@ -228,14 +411,37 @@ pub fn present_standalone(
         "job-detail" => job_detail(&window, ctx.clone(), jobid),
         "properties" => properties(&window, ctx.clone(), &remote, &path, &name),
         "remote-about" => remote_about(&window, ctx.clone(), &remote),
-        "keyboard-shortcuts" => shortcuts(&window, &ctx),
+        "keyboard-shortcuts" => shortcuts_open(
+            &window,
+            &ctx,
+            req.data
+                .get("nautilus")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false),
+        ),
         "alerts" => alerts(&window, ctx.clone()),
         "archive-create" => archive_create(&window, ctx.clone(), &remote, &path, &[]),
         "quick-run-editor" => {
             let existing = serde_json::from_value::<QuickRun>(req.data.clone()).ok();
             quick_run_editor(&window, ctx.clone(), existing, noop);
         }
-        "template-manager" => templates(&window, ctx.clone()),
+        "template-manager" => {
+            let save = req
+                .data
+                .get("mode")
+                .and_then(|v| v.as_str())
+                .is_some_and(|mode| mode == "save" || mode == "new");
+            let remote = req
+                .data
+                .get("remote")
+                .and_then(|v| v.as_str())
+                .filter(|s| !s.is_empty());
+            if let Some(remote) = remote {
+                templates_capture_for_remote(&window, ctx.clone(), remote);
+            } else {
+                templates_open(&window, ctx.clone(), save);
+            }
+        }
         "delete-remote" => delete_remote(&window, ctx.clone(), &remote, noop),
         "remote-config" => remote_config_open(
             &window,
@@ -263,6 +469,13 @@ pub fn present_standalone(
                     .get("autoAdd")
                     .and_then(|v| v.as_bool())
                     .unwrap_or(false),
+                clone_from: req
+                    .data
+                    .get("cloneFrom")
+                    .or_else(|| req.data.get("clone_from"))
+                    .and_then(|v| v.as_str())
+                    .filter(|s| !s.is_empty())
+                    .map(|s| s.to_string()),
             },
             noop,
         ),
@@ -288,6 +501,7 @@ pub fn present_standalone(
                 .and_then(|v| v.as_bool())
                 .unwrap_or(false),
             &[],
+            None,
         ),
         "quick-add-remote" => quick_add_remote(&window, ctx.clone(), noop),
         "restore-preview" => {
@@ -380,18 +594,70 @@ pub fn prompt(
     initial: &str,
     on_ok: impl Fn(String) + 'static,
 ) {
+    prompt_ex(parent, ctx, title, label, initial, None, None, on_ok);
+}
+
+pub fn prompt_ex(
+    parent: &impl IsA<gtk::Widget>,
+    ctx: &AppCtx,
+    title: &str,
+    label: &str,
+    initial: &str,
+    confirm_label: Option<&str>,
+    placeholder: Option<&str>,
+    on_ok: impl Fn(String) + 'static,
+) {
     let dialog = adw::AlertDialog::new(Some(title), Some(label));
     let entry = gtk::Entry::new();
     entry.set_text(initial);
+    if let Some(placeholder) = placeholder.filter(|s| !s.is_empty()) {
+        entry.set_placeholder_text(Some(placeholder));
+    }
     dialog.set_extra_child(Some(&entry));
     dialog.add_response("cancel", &ctx.t("common.cancel"));
-    dialog.add_response("ok", &ctx.t_or("common.ok", "OK"));
+    let confirm = confirm_label
+        .filter(|s| !s.is_empty())
+        .map(|s| s.to_string())
+        .unwrap_or_else(|| ctx.t_or("common.ok", "OK"));
+    dialog.add_response("ok", &confirm);
     dialog.set_response_appearance("ok", adw::ResponseAppearance::Suggested);
     dialog.set_default_response(Some("ok"));
     dialog.set_close_response("cancel");
     dialog.connect_response(None, move |_, response| {
         if response == "ok" {
             on_ok(entry.text().to_string());
+        }
+    });
+    dialog.present(Some(parent));
+}
+
+pub fn confirm(
+    parent: &impl IsA<gtk::Widget>,
+    ctx: &AppCtx,
+    title: &str,
+    message: &str,
+    confirm_id: &str,
+    confirm_label: &str,
+    destructive: bool,
+    on_ok: impl Fn() + 'static,
+) {
+    let dialog = adw::AlertDialog::new(Some(title), Some(message));
+    dialog.add_response("cancel", &ctx.t("common.cancel"));
+    dialog.add_response(confirm_id, confirm_label);
+    dialog.set_response_appearance(
+        confirm_id,
+        if destructive {
+            adw::ResponseAppearance::Destructive
+        } else {
+            adw::ResponseAppearance::Suggested
+        },
+    );
+    dialog.set_default_response(Some("cancel"));
+    dialog.set_close_response("cancel");
+    let confirm_id = confirm_id.to_string();
+    dialog.connect_response(None, move |_, response| {
+        if response == confirm_id {
+            on_ok();
         }
     });
     dialog.present(Some(parent));
@@ -478,8 +744,708 @@ pub fn preferences_page(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, page: Optio
     super::preferences::present_page(parent, ctx, page);
 }
 
+fn quit_rclone_engine(ctx: &AppCtx, toast: &adw::ToastOverlay) {
+    let local = ctx.settings.borrow().core.active_backend.is_empty()
+        || ctx.settings.borrow().core.active_backend == "local";
+    if local {
+        if ctx.engine.borrow().is_none() {
+            toast.add_toast(adw::Toast::new(
+                &ctx.t_or("modals.about.noProcessToKill", "No rclone process to kill"),
+            ));
+            return;
+        }
+        *ctx.engine.borrow_mut() = None;
+        ctx.refresh_runtime();
+        toast.add_toast(adw::Toast::new(&ctx.t_or(
+            "modals.about.killSuccess",
+            "Rclone process killed successfully",
+        )));
+        return;
+    }
+    if let Some(client) = ctx.client() {
+        match client.quit() {
+            Ok(_) => toast.add_toast(adw::Toast::new(&ctx.t_or(
+                "modals.about.killSuccess",
+                "Rclone process killed successfully",
+            ))),
+            Err(_) => toast.add_toast(adw::Toast::new(
+                &ctx.t_or("modals.about.killFailed", "Failed to kill rclone process"),
+            )),
+        }
+    } else {
+        toast.add_toast(adw::Toast::new(
+            &ctx.t_or("modals.about.noProcessToKill", "No rclone process to kill"),
+        ));
+    }
+}
+
+fn relaunch_application(widget: &impl IsA<gtk::Widget>, ctx: &AppCtx, toast: &adw::ToastOverlay) {
+    ctx.settings.borrow_mut().runtime.app_restart_required = false;
+    ctx.persist();
+    match crate::platform::relaunch() {
+        Ok(()) => {
+            if let Some(app) = widget
+                .root()
+                .and_then(|root| root.downcast::<gtk::Window>().ok())
+                .and_then(|win| win.application())
+            {
+                app.quit();
+            }
+        }
+        Err(e) => ctx.toast_error(toast, &e),
+    }
+}
+
+fn about_channel_row(ctx: &AppCtx, title: &str, current: &str, app: bool) -> adw::ComboRow {
+    let row = adw::ComboRow::new();
+    row.set_title(title);
+    let stable = ctx.t_or("modals.about.channelStable", "Stable");
+    let beta = ctx.t_or("modals.about.channelBeta", "Beta");
+    row.set_model(Some(&gtk::StringList::new(&[&stable, &beta])));
+    row.set_selected(if current == "beta" { 1 } else { 0 });
+    {
+        let ctx = ctx.clone();
+        row.connect_selected_notify(move |row| {
+            let value = if row.selected() == 1 {
+                "beta"
+            } else {
+                "stable"
+            };
+            if app {
+                ctx.settings.borrow_mut().runtime.app_update_channel = value.into();
+            } else {
+                ctx.settings.borrow_mut().runtime.rclone_update_channel = value.into();
+            }
+            ctx.persist();
+        });
+    }
+    row
+}
+
+fn about_auto_check_row(ctx: &AppCtx, current: bool, app: bool) -> adw::SwitchRow {
+    let row = adw::SwitchRow::new();
+    row.set_title(&ctx.t_or("modals.about.autoCheck", "Auto-Check Updates"));
+    row.set_active(current);
+    {
+        let ctx = ctx.clone();
+        row.connect_active_notify(move |row| {
+            if app {
+                ctx.settings.borrow_mut().runtime.app_auto_check_updates = row.is_active();
+            } else {
+                ctx.settings.borrow_mut().runtime.rclone_auto_check_updates = row.is_active();
+            }
+            ctx.persist();
+        });
+    }
+    row
+}
+
+fn about_app_page(
+    parent: &impl IsA<gtk::Widget>,
+    ctx: &AppCtx,
+    dialog: &adw::Dialog,
+    toast: &adw::ToastOverlay,
+) -> gtk::Widget {
+    let page = gtk::Box::new(gtk::Orientation::Vertical, 12);
+    page.set_margin_top(16);
+    page.set_margin_start(16);
+    page.set_margin_end(16);
+    page.set_margin_bottom(16);
+    let debug = crate::platform::debug_info();
+    let identity = adw::PreferencesGroup::new();
+    identity.set_title(&ctx.t_or("modals.about.aboutApp", "About App"));
+    let name = adw::ActionRow::new();
+    name.set_title(&ctx.t_or("modals.about.appName", "Rclone Manager"));
+    name.set_subtitle(env!("CARGO_PKG_VERSION"));
+    identity.add(&name);
+    let os_row = adw::ActionRow::new();
+    os_row.set_title(&ctx.t_or("modals.about.os", "OS"));
+    os_row.set_subtitle(&format!("{} ({})", debug.platform, debug.arch));
+    identity.add(&os_row);
+    let mode_row = adw::ActionRow::new();
+    mode_row.set_title(&ctx.t_or("modals.about.mode", "Mode"));
+    mode_row.set_subtitle(&debug.mode);
+    identity.add(&mode_row);
+    {
+        let parent = parent.clone();
+        let ctx_click = ctx.clone();
+        let debug_btn =
+            gtk::Button::with_label(&ctx.t_or("modals.about.debugTools", "Debug tools"));
+        debug_btn.set_valign(gtk::Align::Center);
+        debug_btn.connect_clicked(move |_| debug_info(&parent, ctx_click.clone()));
+        let debug_row = adw::ActionRow::new();
+        debug_row.set_title(&ctx.t_or("modals.about.debugTools", "Debug tools"));
+        debug_row.add_suffix(&debug_btn);
+        identity.add(&debug_row);
+    }
+    page.append(&identity);
+
+    let restart = ctx.settings.borrow().runtime.app_restart_required;
+    let pending_app = ctx.updates.borrow().app.clone().filter(|u| u.available);
+    let card = crate::updater::about_update_card(restart, pending_app.is_some());
+    let updates = adw::PreferencesGroup::new();
+    match card {
+        crate::updater::AboutUpdateCard::RestartRequired => {
+            updates.set_title(&ctx.t_or("modals.about.readyToRestart", "Restart Required"));
+            updates.set_description(Some(&ctx.t_or(
+                "modals.about.restartDescription",
+                "An update has been installed. Please restart the application to apply the changes.",
+            )));
+            if let Some(info) = &pending_app {
+                let row = adw::ActionRow::new();
+                row.set_title(&ctx.t_or("modals.about.version", "Version"));
+                row.set_subtitle(&info.latest);
+                updates.add(&row);
+            }
+            page.append(&updates);
+            let restart_btn =
+                gtk::Button::with_label(&ctx.t_or("modals.about.restartNow", "Restart Now"));
+            restart_btn.add_css_class("suggested-action");
+            restart_btn.set_halign(gtk::Align::Start);
+            {
+                let parent = parent.clone();
+                let ctx = ctx.clone();
+                let toast = toast.clone();
+                restart_btn.connect_clicked(move |_| {
+                    relaunch_application(&parent, &ctx, &toast);
+                });
+            }
+            page.append(&restart_btn);
+        }
+        crate::updater::AboutUpdateCard::Available => {
+            let info = pending_app.expect("available card requires pending app update");
+            updates.set_title(&ctx.t_or("modals.about.updateAvailable", "Update Available"));
+            let ver = adw::ActionRow::new();
+            ver.set_title(&ctx.t_or("modals.about.version", "Version"));
+            let channel = ctx.settings.borrow().runtime.app_update_channel.clone();
+            let channel_label = ctx.t_or(
+                if channel == "beta" {
+                    "modals.about.channelBeta"
+                } else {
+                    "modals.about.channelStable"
+                },
+                &channel,
+            );
+            ver.set_subtitle(&format!("{} · {channel_label}", info.latest));
+            updates.add(&ver);
+            page.append(&updates);
+            let buttons = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+            {
+                let parent = parent.clone();
+                let ctx = ctx.clone();
+                let notes =
+                    gtk::Button::with_label(&ctx.t_or("modals.about.whatsNew", "What's New"));
+                notes.connect_clicked(move |_| whats_new(&parent, ctx.clone(), "app"));
+                buttons.append(&notes);
+            }
+            let managed = crate::platform::managed_build();
+            let can_install = info.download_url.is_some()
+                && crate::platform::update_command(managed).is_none()
+                && crate::platform::update_page_url(managed).is_none();
+            if can_install {
+                let install = gtk::Button::with_label(
+                    &ctx.t_or("modals.about.installUpdate", "Download Update"),
+                );
+                install.add_css_class("suggested-action");
+                {
+                    let parent = parent.clone();
+                    let ctx = ctx.clone();
+                    let toast = toast.clone();
+                    let dialog = dialog.clone();
+                    install.connect_clicked(move |_| {
+                        start_app_update(&parent, ctx.clone(), toast.clone());
+                        dialog.close();
+                    });
+                }
+                buttons.append(&install);
+            } else {
+                if let Some(command) = crate::platform::update_command(managed) {
+                    let cmd_row = adw::ActionRow::new();
+                    cmd_row.set_title(&ctx.t_or(
+                        "modals.about.managedBuildNotice",
+                        "This build cannot be updated by the app updater.",
+                    ));
+                    cmd_row.set_subtitle(command);
+                    page.append(&cmd_row);
+                }
+                if let Some(url) = crate::platform::update_page_url(managed) {
+                    let label = if matches!(managed, crate::platform::ManagedBuild::Flatpak) {
+                        ctx.t_or("modals.about.openFlathub", "Open Flathub")
+                    } else {
+                        ctx.t_or("modals.about.downloadPage", "Download Page")
+                    };
+                    buttons.append(&gtk::LinkButton::with_label(url, &label));
+                }
+            }
+            {
+                let ctx = ctx.clone();
+                let parent = parent.clone();
+                let dialog = dialog.clone();
+                let latest = info.latest.clone();
+                let skip =
+                    gtk::Button::with_label(&ctx.t_or("modals.about.skipVersion", "Skip Version"));
+                skip.connect_clicked(move |_| {
+                    ctx.settings
+                        .borrow_mut()
+                        .runtime
+                        .app_skipped_updates
+                        .push(latest.clone());
+                    ctx.persist();
+                    ctx.refresh_updates();
+                    dialog.close();
+                    about_open(&parent, ctx.clone(), "about-app");
+                });
+                buttons.append(&skip);
+            }
+            page.append(&buttons);
+        }
+        crate::updater::AboutUpdateCard::UpToDate => {
+            updates.set_title(&ctx.t_or("modals.about.upToDate", "Up to Date"));
+            updates.set_description(Some(&ctx.t_or(
+                "modals.about.latestVersionMsg",
+                "You're running the latest version",
+            )));
+            page.append(&updates);
+        }
+    }
+
+    if !restart {
+        let check =
+            gtk::Button::with_label(&ctx.t_or("modals.about.checkUpdates", "Check for Updates"));
+        check.set_halign(gtk::Align::Start);
+        {
+            let ctx = ctx.clone();
+            let parent = parent.clone();
+            let dialog = dialog.clone();
+            check.connect_clicked(move |_| {
+                ctx.refresh_updates();
+                dialog.close();
+                about_open(&parent, ctx.clone(), "about-app");
+            });
+        }
+        page.append(&check);
+    }
+
+    let settings = adw::PreferencesGroup::new();
+    settings.set_title(&ctx.t_or("modals.about.updateSettings", "Update Settings"));
+    let auto = about_auto_check_row(
+        ctx,
+        ctx.settings.borrow().runtime.app_auto_check_updates,
+        true,
+    );
+    auto.set_sensitive(!restart);
+    settings.add(&auto);
+    let channel = about_channel_row(
+        ctx,
+        &ctx.t_or("modals.about.releaseChannel", "Release Channel"),
+        &ctx.settings.borrow().runtime.app_update_channel,
+        true,
+    );
+    channel.set_sensitive(!restart);
+    settings.add(&channel);
+    page.append(&settings);
+    if let Some(skipped) = skipped_versions_group(
+        ctx,
+        &ctx.t_or("modals.about.skippedUpdates", "Skipped Updates"),
+        &ctx.settings.borrow().runtime.app_skipped_updates,
+        true,
+    ) {
+        page.append(&skipped);
+    }
+    page.upcast()
+}
+
+fn about_rclone_page(
+    parent: &impl IsA<gtk::Widget>,
+    ctx: &AppCtx,
+    dialog: &adw::Dialog,
+    toast: &adw::ToastOverlay,
+) -> gtk::Widget {
+    let page = gtk::Box::new(gtk::Orientation::Vertical, 12);
+    page.set_margin_top(16);
+    page.set_margin_start(16);
+    page.set_margin_end(16);
+    page.set_margin_bottom(16);
+    let identity = adw::PreferencesGroup::new();
+    identity.set_title(&ctx.t_or("modals.about.aboutRclone", "About Rclone"));
+    match ctx
+        .client()
+        .and_then(|c| c.version_info().ok())
+        .map(|v| crate::rclone::backend_identity(&v))
+    {
+        Some(info) => {
+            let ver = adw::ActionRow::new();
+            ver.set_title(&ctx.t_or("modals.about.version", "Version"));
+            let subtitle = match info.channel_badge() {
+                Some("beta") => format!(
+                    "{} · {}",
+                    info.version,
+                    ctx.t_or("modals.about.channelBeta", "Beta")
+                ),
+                Some("dev") => format!("{} · Dev", info.version),
+                _ => info.version.clone(),
+            };
+            ver.set_subtitle(&subtitle);
+            identity.add(&ver);
+            let os_row = adw::ActionRow::new();
+            os_row.set_title(&ctx.t_or("modals.about.os", "OS"));
+            os_row.set_subtitle(&format!("{} ({})", info.os, info.arch));
+            identity.add(&os_row);
+            let go_row = adw::ActionRow::new();
+            go_row.set_title(&ctx.t_or("modals.about.goVersion", "Go Version"));
+            go_row.set_subtitle(&info.go);
+            identity.add(&go_row);
+        }
+        None => {
+            let err = adw::ActionRow::new();
+            err.set_title(&ctx.t_or("modals.about.loadInfoFailed", "Failed to load rclone info."));
+            identity.add(&err);
+        }
+    }
+    let pid = ctx
+        .client()
+        .and_then(|c| c.pid().ok())
+        .map(|n| n.to_string());
+    if let Some(pid) = pid {
+        let pid_row = adw::ActionRow::new();
+        pid_row.set_title(&ctx.t_or("modals.about.pid", "Process ID"));
+        pid_row.set_subtitle(&pid);
+        let kill = gtk::Button::with_label(&ctx.t_or("modals.about.killProcess", "Kill Process"));
+        kill.add_css_class("destructive-action");
+        kill.set_valign(gtk::Align::Center);
+        {
+            let ctx = ctx.clone();
+            let toast = toast.clone();
+            kill.connect_clicked(move |_| quit_rclone_engine(&ctx, &toast));
+        }
+        pid_row.add_suffix(&kill);
+        identity.add(&pid_row);
+    }
+    let mem_row = adw::ActionRow::new();
+    mem_row.set_title(&ctx.t_or("modals.about.memory", "Memory"));
+    let alloc = ctx
+        .client()
+        .and_then(|c| c.memstats().ok())
+        .and_then(|mem| mem.get("Alloc").cloned())
+        .map(|v| crate::rclone::format_bytes(v.as_i64().unwrap_or(0)))
+        .unwrap_or_else(|| "—".into());
+    mem_row.set_subtitle(&alloc);
+    {
+        let parent = parent.clone();
+        let ctx = ctx.clone();
+        let view = gtk::Button::with_label(
+            &ctx.t_or("modals.about.viewMemoryStats", "View Memory Statistics"),
+        );
+        view.set_valign(gtk::Align::Center);
+        view.connect_clicked(move |_| memory_stats(&parent, ctx.clone()));
+        mem_row.add_suffix(&view);
+    }
+    identity.add(&mem_row);
+    let cache_row = adw::ActionRow::new();
+    cache_row.set_title(&ctx.t_or("modals.about.backendCache", "Backend Cache"));
+    let cache_count = ctx
+        .client()
+        .and_then(|c| c.fscache_entries().ok())
+        .map(|v| crate::rclone::parse_fscache_entry_count(&v).to_string())
+        .unwrap_or_else(|| "—".into());
+    cache_row.set_subtitle(&format!(
+        "{} {}",
+        cache_count,
+        ctx.t_or("modals.about.entries", "Active Entries")
+    ));
+    {
+        let ctx = ctx.clone();
+        let toast = toast.clone();
+        let cache_row_cb = cache_row.clone();
+        let entries_label = ctx.t_or("modals.about.entries", "Active Entries");
+        let clear = gtk::Button::with_label(&ctx.t_or("modals.about.clear", "Clear"));
+        clear.set_valign(gtk::Align::Center);
+        clear.connect_clicked(move |_| {
+            if let Some(client) = ctx.client() {
+                match client.fscache_clear() {
+                    Ok(_) => {
+                        let count = client
+                            .fscache_entries()
+                            .ok()
+                            .map(|v| crate::rclone::parse_fscache_entry_count(&v).to_string())
+                            .unwrap_or_else(|| "0".into());
+                        cache_row_cb.set_subtitle(&format!("{count} {entries_label}"));
+                        toast.add_toast(adw::Toast::new(
+                            &ctx.t_or("modals.about.cacheCleared", "Cache cleared successfully"),
+                        ));
+                    }
+                    Err(_) => toast.add_toast(adw::Toast::new(
+                        &ctx.t_or("modals.about.cacheClearFailed", "Failed to clear cache"),
+                    )),
+                }
+            }
+        });
+        cache_row.add_suffix(&clear);
+    }
+    identity.add(&cache_row);
+    page.append(&identity);
+
+    let restart = ctx.settings.borrow().runtime.rclone_restart_required;
+    let pending_rclone = ctx.updates.borrow().rclone.clone().filter(|u| u.available);
+    let card = crate::updater::about_update_card(restart, pending_rclone.is_some());
+    let updates = adw::PreferencesGroup::new();
+    match card {
+        crate::updater::AboutUpdateCard::RestartRequired => {
+            updates.set_title(&ctx.t_or(
+                "modals.about.rcloneRestartRequired",
+                "Rclone Restart Required",
+            ));
+            updates.set_description(Some(&ctx.t_or(
+                "modals.about.rcloneRestartDescription",
+                "An Rclone update has been installed. Please restart the engine to apply the changes.",
+            )));
+            if let Some(info) = &pending_rclone {
+                let row = adw::ActionRow::new();
+                row.set_title(&ctx.t_or("modals.about.version", "Version"));
+                row.set_subtitle(&info.latest);
+                updates.add(&row);
+            }
+            page.append(&updates);
+            let restart_btn =
+                gtk::Button::with_label(&ctx.t_or("modals.about.restartNow", "Restart Now"));
+            restart_btn.add_css_class("suggested-action");
+            restart_btn.set_halign(gtk::Align::Start);
+            {
+                let ctx = ctx.clone();
+                restart_btn.connect_clicked(move |_| {
+                    ctx.settings.borrow_mut().runtime.rclone_restart_required = false;
+                    ctx.persist();
+                    ctx.restart_engine();
+                });
+            }
+            page.append(&restart_btn);
+        }
+        crate::updater::AboutUpdateCard::Available => {
+            let info = pending_rclone.expect("available card requires pending rclone update");
+            updates.set_title(&ctx.t_or(
+                "modals.about.rcloneUpdateAvailable",
+                "Rclone Update Available",
+            ));
+            let ver = adw::ActionRow::new();
+            ver.set_title(&ctx.t_or("modals.about.version", "Version"));
+            let channel = ctx.settings.borrow().runtime.rclone_update_channel.clone();
+            let channel_label = ctx.t_or(
+                if channel == "beta" {
+                    "modals.about.channelBeta"
+                } else {
+                    "modals.about.channelStable"
+                },
+                &channel,
+            );
+            ver.set_subtitle(&format!("{} · {channel_label}", info.latest));
+            updates.add(&ver);
+            page.append(&updates);
+            let buttons = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+            {
+                let parent = parent.clone();
+                let ctx = ctx.clone();
+                let notes = gtk::Button::with_label(
+                    &ctx.t_or("modals.about.whatsNewRclone", "What's New in Rclone"),
+                );
+                notes.connect_clicked(move |_| whats_new(&parent, ctx.clone(), "rclone"));
+                buttons.append(&notes);
+            }
+            let install = gtk::Button::with_label(
+                &ctx.t_or("modals.about.updateRclone", "Download Rclone Update"),
+            );
+            install.add_css_class("suggested-action");
+            {
+                let parent = parent.clone();
+                let ctx = ctx.clone();
+                let toast = toast.clone();
+                let dialog = dialog.clone();
+                install.connect_clicked(move |_| {
+                    start_rclone_update(&parent, ctx.clone(), toast.clone());
+                    dialog.close();
+                });
+            }
+            buttons.append(&install);
+            {
+                let ctx = ctx.clone();
+                let parent = parent.clone();
+                let dialog = dialog.clone();
+                let latest = info.latest.clone();
+                let skip =
+                    gtk::Button::with_label(&ctx.t_or("modals.about.skipVersion", "Skip Version"));
+                skip.connect_clicked(move |_| {
+                    ctx.settings
+                        .borrow_mut()
+                        .runtime
+                        .rclone_skipped_updates
+                        .push(latest.clone());
+                    ctx.persist();
+                    ctx.refresh_updates();
+                    dialog.close();
+                    about_open(&parent, ctx.clone(), "about-rclone");
+                });
+                buttons.append(&skip);
+            }
+            page.append(&buttons);
+        }
+        crate::updater::AboutUpdateCard::UpToDate => {
+            updates.set_title(&ctx.t_or("modals.about.rcloneUpToDate", "Rclone Up to Date"));
+            updates.set_description(Some(&ctx.t_or(
+                "modals.about.latestVersionMsg",
+                "You're running the latest version",
+            )));
+            page.append(&updates);
+        }
+    }
+
+    if !restart {
+        let check = gtk::Button::with_label(&ctx.t_or(
+            "modals.about.checkRcloneUpdates",
+            "Check for Rclone Updates",
+        ));
+        check.set_halign(gtk::Align::Start);
+        {
+            let ctx = ctx.clone();
+            let parent = parent.clone();
+            let dialog = dialog.clone();
+            check.connect_clicked(move |_| {
+                ctx.refresh_updates();
+                dialog.close();
+                about_open(&parent, ctx.clone(), "about-rclone");
+            });
+        }
+        page.append(&check);
+    }
+
+    let settings = adw::PreferencesGroup::new();
+    settings.set_title(&ctx.t_or(
+        "modals.about.rcloneUpdateSettings",
+        "Rclone Update Settings",
+    ));
+    let auto = about_auto_check_row(
+        ctx,
+        ctx.settings.borrow().runtime.rclone_auto_check_updates,
+        false,
+    );
+    auto.set_sensitive(!restart);
+    settings.add(&auto);
+    let channel = about_channel_row(
+        ctx,
+        &ctx.t_or("modals.about.releaseChannel", "Release Channel"),
+        &ctx.settings.borrow().runtime.rclone_update_channel,
+        false,
+    );
+    channel.set_sensitive(!restart);
+    settings.add(&channel);
+    page.append(&settings);
+    if let Some(skipped) = skipped_versions_group(
+        ctx,
+        &ctx.t_or(
+            "modals.about.skippedRcloneUpdates",
+            "Skipped Rclone Updates",
+        ),
+        &ctx.settings.borrow().runtime.rclone_skipped_updates,
+        false,
+    ) {
+        page.append(&skipped);
+    }
+    page.upcast()
+}
+
+fn about_nav_page(tag: &str, title: &str, child: &impl IsA<gtk::Widget>) -> adw::NavigationPage {
+    let scroll = gtk::ScrolledWindow::new();
+    scroll.set_vexpand(true);
+    scroll.set_hexpand(true);
+    scroll.set_policy(gtk::PolicyType::Never, gtk::PolicyType::Automatic);
+    scroll.set_child(Some(child));
+    let toolbar = adw::ToolbarView::new();
+    toolbar.add_top_bar(&adw::HeaderBar::new());
+    toolbar.set_content(Some(&scroll));
+    adw::NavigationPage::builder()
+        .tag(tag)
+        .title(title)
+        .child(&toolbar)
+        .build()
+}
+
+fn about_nav_row(
+    ctx: &AppCtx,
+    nav: &adw::NavigationView,
+    item: crate::updater::AboutHomeItem,
+    badge: bool,
+) -> adw::ActionRow {
+    let row = adw::ActionRow::new();
+    row.set_title(&ctx.t_or(item.i18n_key, item.fallback));
+    row.set_activatable(true);
+    if badge {
+        let mark = gtk::Label::new(Some("!"));
+        mark.add_css_class("accent");
+        mark.add_css_class("heading");
+        row.add_suffix(&mark);
+    }
+    row.add_suffix(&gtk::Image::from_icon_name("go-next-symbolic"));
+    let nav = nav.clone();
+    row.connect_activated(move |_| {
+        nav.push_by_tag(item.tag);
+    });
+    row
+}
+
+fn about_home_page(ctx: &AppCtx, nav: &adw::NavigationView, version: &str) -> gtk::Widget {
+    let page = gtk::Box::new(gtk::Orientation::Vertical, 16);
+    page.set_margin_top(20);
+    page.set_margin_start(16);
+    page.set_margin_end(16);
+    page.set_margin_bottom(16);
+    let title = gtk::Label::new(Some(&ctx.t_or("modals.about.appName", "Rclone Manager")));
+    title.add_css_class("title-1");
+    title.set_justify(gtk::Justification::Center);
+    let comments = gtk::Label::new(Some(&format!(
+        "{} · {} · rclone {version}",
+        ctx.t_or("modals.about.toolkit", "GTK 4 + libadwaita"),
+        env!("CARGO_PKG_VERSION")
+    )));
+    comments.set_wrap(true);
+    comments.set_justify(gtk::Justification::Center);
+    comments.add_css_class("dim-label");
+    page.append(&title);
+    page.append(&comments);
+    let app_badge = ctx.settings.borrow().runtime.app_restart_required
+        || ctx
+            .updates
+            .borrow()
+            .app
+            .as_ref()
+            .is_some_and(|update| update.available);
+    let rclone_badge = ctx.settings.borrow().runtime.rclone_restart_required
+        || ctx
+            .updates
+            .borrow()
+            .rclone
+            .as_ref()
+            .is_some_and(|update| update.available);
+    let nav_group = adw::PreferencesGroup::new();
+    for item in crate::updater::about_home_nav() {
+        let badge = match item.tag {
+            "about-app" => app_badge,
+            "about-rclone" => rclone_badge,
+            _ => false,
+        };
+        nav_group.add(&about_nav_row(ctx, nav, *item, badge));
+    }
+    page.append(&nav_group);
+    page.upcast()
+}
+
 pub fn about(parent: &impl IsA<gtk::Widget>, ctx: AppCtx) {
-    if try_spawn_standalone(&ctx, "about", serde_json::json!({})) {
+    about_open(parent, ctx, "home");
+}
+
+pub fn about_open(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, page: &str) {
+    if try_spawn_standalone(
+        &ctx,
+        "about",
+        serde_json::json!({ "page": crate::updater::about_visible_page(page) }),
+    ) {
         return;
     }
     let version = ctx
@@ -507,9 +1473,15 @@ pub fn about(parent: &impl IsA<gtk::Widget>, ctx: AppCtx) {
         .unwrap_or_else(|| ctx.t_or("modals.about.rcloneUpToDate", "rclone is up to date"));
     let dialog = adw::Dialog::new();
     dialog.set_title(&ctx.t_or("modals.about.title", "About"));
-    dialog.set_content_width(560);
-    dialog.set_content_height(560);
-    let stack = adw::ViewStack::new();
+    dialog.set_content_width(680);
+    dialog.set_content_height(620);
+    let nav = adw::NavigationView::new();
+    let toast = adw::ToastOverlay::new();
+    nav.add(&about_nav_page(
+        "home",
+        &ctx.t_or("modals.about.title", "About"),
+        &about_home_page(&ctx, &nav, &version),
+    ));
 
     let details = gtk::Box::new(gtk::Orientation::Vertical, 12);
     details.set_margin_top(16);
@@ -518,13 +1490,32 @@ pub fn about(parent: &impl IsA<gtk::Widget>, ctx: AppCtx) {
     let title = gtk::Label::new(Some(&ctx.t_or("modals.about.appName", "Rclone Manager")));
     title.add_css_class("title-1");
     let comments = gtk::Label::new(Some(&format!(
-        "GTK 4 + libadwaita · {} · rclone {version}\n{app_update}\n{rclone_update}",
+        "{} · {} · rclone {version}\n{app_update}\n{rclone_update}",
+        ctx.t_or("modals.about.toolkit", "GTK 4 + libadwaita"),
         env!("CARGO_PKG_VERSION")
     )));
     comments.set_wrap(true);
     comments.set_justify(gtk::Justification::Center);
     details.append(&title);
     details.append(&comments);
+    let version_row = adw::ActionRow::new();
+    version_row.set_title(&ctx.t_or("modals.about.version", "Version"));
+    version_row.set_subtitle(&format!("{} · rclone {version}", env!("CARGO_PKG_VERSION")));
+    let copy_version = gtk::Button::from_icon_name("edit-copy-symbolic");
+    copy_version.set_valign(gtk::Align::Center);
+    copy_version.set_tooltip_text(Some(&ctx.t_or("common.copy", "Copy")));
+    let copy_text = ctx.tf_or(
+        "modals.about.copyVersion",
+        "Rclone Manager {version} · rclone {rclone}",
+        &[("version", env!("CARGO_PKG_VERSION")), ("rclone", &version)],
+    );
+    copy_version.connect_clicked(move |_| {
+        if let Some(display) = gtk::gdk::Display::default() {
+            display.clipboard().set_text(&copy_text);
+        }
+    });
+    version_row.add_suffix(&copy_version);
+    details.append(&version_row);
     let site = gtk::LinkButton::with_label(
         "https://github.com/Zarestia-Dev/rclone-manager",
         &ctx.t_or("modals.about.website", "Website"),
@@ -536,7 +1527,7 @@ pub fn about(parent: &impl IsA<gtk::Widget>, ctx: AppCtx) {
     details.append(&site);
     details.append(&issues);
     let wiki = gtk::LinkButton::with_label(
-        "https://github.com/Zarestia-Dev/rclone-manager/wiki",
+        "https://hakanismail.info/zarestia/rclone-manager/docs",
         &ctx.t_or("modals.about.wiki", "Wiki Page"),
     );
     let rclone_site = gtk::LinkButton::with_label(
@@ -591,11 +1582,21 @@ pub fn about(parent: &impl IsA<gtk::Widget>, ctx: AppCtx) {
         notes.connect_clicked(move |_| whats_new(&parent, ctx.clone(), "app"));
         details.append(&notes);
     }
-    stack.add_titled(
-        &details,
-        Some("details"),
+    nav.add(&about_nav_page(
+        "details",
         &ctx.t_or("modals.about.details", "Details"),
-    );
+        &details,
+    ));
+    nav.add(&about_nav_page(
+        "about-app",
+        &ctx.t_or("modals.about.aboutApp", "About App"),
+        &about_app_page(parent, &ctx, &dialog, &toast),
+    ));
+    nav.add(&about_nav_page(
+        "about-rclone",
+        &ctx.t_or("modals.about.aboutRclone", "About Rclone"),
+        &about_rclone_page(parent, &ctx, &dialog, &toast),
+    ));
 
     let credits = gtk::Box::new(gtk::Orientation::Vertical, 8);
     credits.set_margin_top(16);
@@ -605,24 +1606,24 @@ pub fn about(parent: &impl IsA<gtk::Widget>, ctx: AppCtx) {
     team.set_title(&ctx.t_or("modals.about.devTeam", "Development Team"));
     let lead = adw::ActionRow::new();
     lead.set_title(&ctx.t_or("modals.about.leadDeveloper", "Lead Developer"));
-    lead.set_subtitle("Zarestia Dev");
+    lead.set_subtitle(&ctx.t_or("modals.about.leadName", "Zarestia Dev"));
     team.add(&lead);
     let ack = adw::PreferencesGroup::new();
     ack.set_title(&ctx.t_or("modals.about.acknowledgments", "Acknowledgments"));
     let ack_row = adw::ActionRow::new();
     ack_row.set_title(&ctx.t_or(
-        "modals.about.ackText",
-        "This application relies on the excellent Rclone project for cloud storage management.",
+        "modals.about.ackTextGtk",
+        "This application is built with GTK 4 + libadwaita and relies on the excellent Rclone project for cloud storage management.",
     ));
     ack_row.set_subtitle_lines(4);
     ack.add(&ack_row);
     credits.append(&team);
     credits.append(&ack);
-    stack.add_titled(
-        &credits,
-        Some("credits"),
+    nav.add(&about_nav_page(
+        "credits",
         &ctx.t_or("modals.about.credits", "Credits"),
-    );
+        &credits,
+    ));
 
     let legal = gtk::Box::new(gtk::Orientation::Vertical, 8);
     legal.set_margin_top(16);
@@ -631,13 +1632,14 @@ pub fn about(parent: &impl IsA<gtk::Widget>, ctx: AppCtx) {
     let license = adw::PreferencesGroup::new();
     license.set_title(&ctx.t_or("modals.about.license", "License"));
     let license_row = adw::ActionRow::new();
-    license_row.set_title("GPL-3.0-or-later");
+    license_row.set_title(&ctx.t_or("modals.about.licenseId", "GPL-3.0-or-later"));
     license_row.set_subtitle(&format!(
-        "{} GNU GPL v3 {} {}",
+        "{} {} {} {}",
         ctx.t_or(
             "modals.about.licenseText1",
             "This application is free and open source software distributed under the"
         ),
+        ctx.t_or("modals.about.gnuGpl", "GNU GPL v3"),
         ctx.t_or("modals.about.orLater", "or later."),
         ctx.t_or(
             "modals.about.licenseText2",
@@ -655,16 +1657,18 @@ pub fn about(parent: &impl IsA<gtk::Widget>, ctx: AppCtx) {
     ));
     third_row.set_subtitle_lines(4);
     third.add(&third_row);
-    let gpl =
-        gtk::LinkButton::with_label("https://www.gnu.org/licenses/gpl-3.0.html", "GNU GPL v3");
+    let gpl = gtk::LinkButton::with_label(
+        "https://www.gnu.org/licenses/gpl-3.0.html",
+        &ctx.t_or("modals.about.gnuGpl", "GNU GPL v3"),
+    );
     legal.append(&license);
     legal.append(&third);
     legal.append(&gpl);
-    stack.add_titled(
-        &legal,
-        Some("legal"),
+    nav.add(&about_nav_page(
+        "legal",
         &ctx.t_or("modals.about.legal", "Legal"),
-    );
+        &legal,
+    ));
 
     let system = gtk::Box::new(gtk::Orientation::Vertical, 8);
     system.set_margin_top(16);
@@ -681,7 +1685,6 @@ pub fn about(parent: &impl IsA<gtk::Widget>, ctx: AppCtx) {
         .unwrap_or_else(|| "—".into());
     pid_row.set_subtitle(&pid);
     engine_group.add(&pid_row);
-    let toast = adw::ToastOverlay::new();
     {
         let ctx = ctx.clone();
         let toast = toast.clone();
@@ -689,38 +1692,7 @@ pub fn about(parent: &impl IsA<gtk::Widget>, ctx: AppCtx) {
             gtk::Button::with_label(&ctx.t_or("modals.about.killRclone", "Quit rclone engine"));
         quit.add_css_class("destructive-action");
         quit.set_halign(gtk::Align::Start);
-        quit.connect_clicked(move |_| {
-            let local = ctx.settings.borrow().core.active_backend.is_empty()
-                || ctx.settings.borrow().core.active_backend == "local";
-            if local {
-                if ctx.engine.borrow().is_none() {
-                    toast.add_toast(adw::Toast::new(
-                        &ctx.t_or("modals.about.noProcessToKill", "No rclone process to kill"),
-                    ));
-                    return;
-                }
-                *ctx.engine.borrow_mut() = None;
-                ctx.refresh_runtime();
-                toast.add_toast(adw::Toast::new(&ctx.t_or(
-                    "modals.about.killSuccess",
-                    "Rclone process killed successfully",
-                )));
-            } else if let Some(client) = ctx.client() {
-                match client.quit() {
-                    Ok(_) => toast.add_toast(adw::Toast::new(&ctx.t_or(
-                        "modals.about.killSuccess",
-                        "Rclone process killed successfully",
-                    ))),
-                    Err(_) => toast.add_toast(adw::Toast::new(
-                        &ctx.t_or("modals.about.killFailed", "Failed to kill rclone process"),
-                    )),
-                }
-            } else {
-                toast.add_toast(adw::Toast::new(
-                    &ctx.t_or("modals.about.noProcessToKill", "No rclone process to kill"),
-                ));
-            }
-        });
+        quit.connect_clicked(move |_| quit_rclone_engine(&ctx, &toast));
         system.append(&engine_group);
         system.append(&quit);
     }
@@ -782,21 +1754,16 @@ pub fn about(parent: &impl IsA<gtk::Widget>, ctx: AppCtx) {
         };
         system.append(&gtk::LinkButton::with_label(url, &label));
     }
-    stack.add_titled(
-        &system,
-        Some("system"),
+    nav.add(&about_nav_page(
+        "system",
         &ctx.t_or("generalOverview.panels.system", "System"),
-    );
-
-    let switcher = adw::ViewSwitcher::new();
-    switcher.set_stack(Some(&stack));
-    switcher.set_policy(adw::ViewSwitcherPolicy::Wide);
-    let toolbar = adw::ToolbarView::new();
-    let header = adw::HeaderBar::new();
-    header.set_title_widget(Some(&switcher));
-    toolbar.add_top_bar(&header);
-    toolbar.set_content(Some(&stack));
-    toast.set_child(Some(&toolbar));
+        &system,
+    ));
+    let requested = crate::updater::about_visible_page(page);
+    if requested != "home" {
+        nav.push_by_tag(requested);
+    }
+    toast.set_child(Some(&nav));
     dialog.set_child(Some(&toast));
     present_window_or_dialog(parent, &ctx, &dialog);
 }
@@ -842,22 +1809,16 @@ pub fn whats_new(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, kind: &str) {
                 }),
         )
     };
-    let view = gtk::TextView::new();
-    view.set_editable(false);
-    view.set_wrap_mode(gtk::WrapMode::WordChar);
-    view.set_left_margin(8);
-    view.set_right_margin(8);
-    view.set_top_margin(8);
-    view.set_bottom_margin(8);
-    view.buffer().set_text(&notes.unwrap_or_else(|| {
+    let body = notes.unwrap_or_else(|| {
         ctx.t_or(
             "modals.logs.noLogsFound",
             "No release notes are available yet.",
         )
-    }));
+    });
+    let preview = build_markdown_preview(&body, None);
     let scroll = gtk::ScrolledWindow::new();
     scroll.set_vexpand(true);
-    scroll.set_child(Some(&view));
+    scroll.set_child(Some(&preview));
     let open = gtk::LinkButton::with_label(&url, &ctx.t_or("common.open", "Open in browser"));
     open.set_halign(gtk::Align::Start);
     let box_ = gtk::Box::new(gtk::Orientation::Vertical, 8);
@@ -880,14 +1841,23 @@ pub fn memory_stats(parent: &impl IsA<gtk::Widget>, ctx: AppCtx) {
     if let Some(mem) = ctx.client().and_then(|c| c.memstats().ok()) {
         for (key, i18n_key, fallback) in [
             ("Alloc", "modals.about.memAlloc", "Allocated"),
+            (
+                "TotalAlloc",
+                "modals.about.memTotalAlloc",
+                "Total allocated",
+            ),
             ("Sys", "modals.about.memSys", "System"),
+            ("Mallocs", "modals.about.memMallocs", "Mallocs"),
+            ("Frees", "modals.about.memFrees", "Frees"),
             ("HeapAlloc", "modals.about.memHeapAlloc", "Heap"),
+            ("HeapSys", "modals.about.memHeapSys", "Heap system"),
+            ("StackInuse", "modals.about.memStackInuse", "Stack"),
             ("NumGC", "modals.about.gc", "GC cycles"),
         ] {
             let row = adw::ActionRow::new();
             row.set_title(&ctx.t_or(i18n_key, fallback));
             let value = mem.get(key).cloned().unwrap_or(serde_json::json!(0));
-            row.set_subtitle(&if key == "NumGC" {
+            row.set_subtitle(&if matches!(key, "NumGC" | "Mallocs" | "Frees") {
                 value.to_string()
             } else {
                 crate::rclone::format_bytes(value.as_i64().unwrap_or(0))
@@ -946,7 +1916,11 @@ pub fn updates(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, toast: adw::ToastOve
             });
         }
         app_row.add_suffix(&notes);
-        if info.download_url.is_some() {
+        let managed = crate::platform::managed_build();
+        if info.download_url.is_some()
+            && crate::platform::update_command(managed).is_none()
+            && crate::platform::update_page_url(managed).is_none()
+        {
             let install = gtk::Button::with_label(&ctx.t_or("common.install", "Install"));
             install.add_css_class("suggested-action");
             install.set_valign(gtk::Align::Center);
@@ -961,6 +1935,15 @@ pub fn updates(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, toast: adw::ToastOve
                 });
             }
             app_row.add_suffix(&install);
+        } else if let Some(url) = crate::platform::update_page_url(managed) {
+            let label = if matches!(managed, crate::platform::ManagedBuild::Flatpak) {
+                ctx.t_or("modals.about.openFlathub", "Open Flathub")
+            } else {
+                ctx.t_or("modals.about.downloadPage", "Download Page")
+            };
+            let link = gtk::LinkButton::with_label(url, &label);
+            link.set_valign(gtk::Align::Center);
+            app_row.add_suffix(&link);
         }
         let skip = gtk::Button::with_label(&ctx.t_or("modals.about.skipVersion", "Skip"));
         skip.set_valign(gtk::Align::Center);
@@ -1155,22 +2138,25 @@ fn start_app_update(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, toast: adw::Toa
                 "updates.installSuccess",
                 &[("path", &path.display().to_string())],
             )));
-            if let Err(e) = crate::platform::relaunch() {
-                ctx.notify(
-                    &ctx.tf("backendErrors.updater.relaunchFailed", &[("error", &e)]),
-                    "",
-                );
-            } else {
-                std::process::exit(0);
-            }
+            ctx.settings.borrow_mut().runtime.app_restart_required = true;
+            ctx.persist();
+            toast.add_toast(adw::Toast::new(
+                &ctx.t_or("modals.about.readyToRestart", "Restart Required"),
+            ));
         },
     );
 }
 
 fn start_rclone_update(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, toast: adw::ToastOverlay) {
-    let dest = dirs::home_dir()
-        .unwrap_or_else(|| std::path::PathBuf::from("."))
-        .join(".local/bin");
+    start_rclone_update_to(parent, ctx, toast, default_install_dest());
+}
+
+fn start_rclone_update_to(
+    parent: &impl IsA<gtk::Widget>,
+    ctx: AppCtx,
+    toast: adw::ToastOverlay,
+    dest: std::path::PathBuf,
+) {
     let installing = ctx.t_or("repair.progress.installingRclone", "Installing rclone");
     run_download_job(
         parent,
@@ -1180,10 +2166,11 @@ fn start_rclone_update(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, toast: adw::
         move |cancel, progress| crate::updater::install_rclone_binary_ex(&dest, cancel, progress),
         |ctx, path, toast| {
             ctx.settings.borrow_mut().core.rclone_binary = path.to_string_lossy().into_owned();
+            ctx.settings.borrow_mut().runtime.rclone_restart_required = true;
             ctx.persist();
             toast.add_toast(adw::Toast::new(&ctx.t_or(
-                "updates.installSuccess",
-                "Update installed. Please restart the app.",
+                "modals.about.rcloneRestartRequired",
+                "Rclone Restart Required",
             )));
         },
     );
@@ -1282,7 +2269,7 @@ fn run_progress_job<T, F, OnOk>(
                     ));
                 }
                 Err(e) => {
-                    toast_done.add_toast(adw::Toast::new(&e));
+                    ctx_done.toast_error(&toast_done, &e);
                 }
             }
             return glib::ControlFlow::Break;
@@ -1292,11 +2279,23 @@ fn run_progress_job<T, F, OnOk>(
 }
 
 pub fn shortcuts(parent: &impl IsA<gtk::Widget>, ctx: &AppCtx) {
-    if try_spawn_standalone(ctx, "keyboard-shortcuts", serde_json::json!({})) {
+    shortcuts_open(parent, ctx, false);
+}
+
+pub fn shortcuts_open(parent: &impl IsA<gtk::Widget>, ctx: &AppCtx, nautilus: bool) {
+    if try_spawn_standalone(
+        ctx,
+        "keyboard-shortcuts",
+        serde_json::json!({ "nautilus": nautilus }),
+    ) {
         return;
     }
     let dialog = adw::Dialog::new();
-    dialog.set_title(&ctx.t_or("shortcuts.title", "Keyboard Shortcuts"));
+    dialog.set_title(&if nautilus {
+        ctx.t_or("nautilus.shortcuts.title", "Nautilus Keyboard Shortcuts")
+    } else {
+        ctx.t_or("shortcuts.title", "Keyboard Shortcuts")
+    });
     dialog.set_content_width(560);
     dialog.set_content_height(560);
     let search = gtk::SearchEntry::new();
@@ -1306,7 +2305,7 @@ pub fn shortcuts(parent: &impl IsA<gtk::Widget>, ctx: &AppCtx) {
     )));
     let list = gtk::ListBox::new();
     list.add_css_class("boxed-list");
-    let entries = [
+    let global = [
         (
             "global",
             "shortcuts.categories.global",
@@ -1314,16 +2313,34 @@ pub fn shortcuts(parent: &impl IsA<gtk::Widget>, ctx: &AppCtx) {
             &[
                 ("Ctrl+Q", "shortcuts.actions.quit", "Quit Application"),
                 (
-                    "Ctrl+Shift+?",
+                    "Ctrl+? / Ctrl+Shift+?",
                     "shortcuts.actions.showShortcuts",
                     "Show Keyboard Shortcuts",
                 ),
+            ][..],
+        ),
+        (
+            "application",
+            "shortcuts.categories.application",
+            "Application",
+            &[
                 (
                     "Ctrl+,",
                     "shortcuts.actions.openPreferences",
                     "Open Preferences",
                 ),
                 ("Ctrl+.", "shortcuts.actions.openFlags", "Open Rclone Flags"),
+                ("Ctrl+Alt+A", "alerts.title", "Alerts"),
+                (
+                    "Ctrl+Alt+F",
+                    "shortcuts.actions.openFlowOverlay",
+                    "Toggle Flow Workspace",
+                ),
+                (
+                    "Ctrl+B",
+                    "shortcuts.actions.toggleBrowser",
+                    "Toggle File Browser",
+                ),
             ][..],
         ),
         (
@@ -1342,16 +2359,6 @@ pub fn shortcuts(parent: &impl IsA<gtk::Widget>, ctx: &AppCtx) {
                     "Create New Remote (Quick)",
                 ),
                 (
-                    "Ctrl+I",
-                    "shortcuts.actions.loadConfig",
-                    "Load Configuration",
-                ),
-                (
-                    "Ctrl+E",
-                    "shortcuts.actions.exportConfig",
-                    "Export Configuration",
-                ),
-                (
                     "Ctrl+Shift+M",
                     "shortcuts.actions.forceCheck",
                     "Force Check Mounts",
@@ -1365,82 +2372,96 @@ pub fn shortcuts(parent: &impl IsA<gtk::Widget>, ctx: &AppCtx) {
         ),
         (
             "files",
-            "shortcuts.categories.fileBrowser",
-            "File Browser",
+            "shortcuts.categories.fileOperations",
+            "File Operations",
             &[
                 (
-                    "Ctrl+B",
-                    "shortcuts.actions.toggleBrowser",
-                    "Toggle File Browser",
-                ),
-                (
-                    "Ctrl+Alt+F",
-                    "shortcuts.actions.openFlowOverlay",
-                    "Toggle Flow Workspace",
-                ),
-                (
-                    "Ctrl+T / Ctrl+W",
-                    "nautilus.tabs.newClose",
-                    "New / close file tab",
-                ),
-                (
-                    "Ctrl+Shift+D",
-                    "titlebar.detach",
-                    "Detach current workspace",
-                ),
-                ("F5", "nautilus.actions.reload", "Reload listing"),
-                ("F2", "nautilus.contextMenu.rename", "Rename"),
-                (
-                    "Space",
-                    "fileBrowser.fileViewer.title",
-                    "Preview file or folder",
-                ),
-                ("Delete", "nautilus.contextMenu.delete", "Delete"),
-                (
-                    "Ctrl+C / X / V",
-                    "nautilus.actions.clipboard",
-                    "Copy / Cut / Paste",
-                ),
-                (
-                    "Ctrl+Shift+N",
-                    "nautilus.contextMenu.newFolder",
-                    "New folder",
-                ),
-                ("Ctrl+H", "nautilus.view.hidden", "Toggle hidden files"),
-                ("Backspace", "nautilus.actions.parent", "Parent folder"),
-                ("Ctrl+Tab", "nautilus.contextMenu.nextTab", "Next file tab"),
-                (
-                    "Ctrl+Shift+Tab",
-                    "nautilus.contextMenu.previousTab",
-                    "Previous file tab",
-                ),
-                (
                     "Ctrl+I",
-                    "nautilus.contextMenu.switchPane",
-                    "Switch split pane",
-                ),
-                ("Alt+Enter", "nautilus.contextMenu.properties", "Properties"),
-                ("Ctrl+A", "nautilus.contextMenu.selectAll", "Select all"),
-                ("Ctrl+L", "nautilus.titles.pathPlaceholder", "Edit path"),
-                (
-                    "Ctrl+F",
-                    "nautilus.titles.searchPlaceholder",
-                    "Search listing",
+                    "shortcuts.actions.loadConfig",
+                    "Load Configuration",
                 ),
                 (
-                    "Alt+← / Alt+→",
-                    "nautilus.actions.history",
-                    "Back / forward",
+                    "Ctrl+E",
+                    "shortcuts.actions.exportConfig",
+                    "Export Configuration",
                 ),
             ][..],
         ),
+        (
+            "navigation",
+            "shortcuts.categories.navigation",
+            "Navigation",
+            &[("Escape", "shortcuts.actions.closeDialog", "Close Dialog")][..],
+        ),
     ];
+    let nautilus_entries = [(
+        "files",
+        "shortcuts.categories.fileBrowserNautilus",
+        "File Browser (Nautilus)",
+        &[
+            ("Ctrl+C", "nautilus.contextMenu.copy", "Copy"),
+            ("Ctrl+X", "nautilus.contextMenu.cut", "Cut"),
+            ("Ctrl+V", "nautilus.contextMenu.paste", "Paste"),
+            ("Delete", "nautilus.contextMenu.delete", "Delete"),
+            ("Ctrl+A", "nautilus.contextMenu.selectAll", "Select All"),
+            ("F5 / Ctrl+R", "nautilus.contextMenu.refresh", "Refresh"),
+            (
+                "Ctrl+Shift+N",
+                "nautilus.contextMenu.newFolder",
+                "New Folder",
+            ),
+            ("Ctrl+F", "nautilus.contextMenu.search", "Search"),
+            ("Ctrl+H", "nautilus.view.showHidden", "Show Hidden Files"),
+            ("Alt+Enter", "nautilus.contextMenu.properties", "Properties"),
+            ("Backspace / Alt+Up", "nautilus.contextMenu.goUp", "Go Up"),
+            ("Alt+Left", "nautilus.contextMenu.goBack", "Go Back"),
+            ("Alt+Right", "nautilus.contextMenu.goForward", "Go Forward"),
+            ("Enter", "nautilus.contextMenu.open", "Open"),
+            ("Ctrl+L", "nautilus.contextMenu.focusPath", "Focus Path"),
+            ("Ctrl+T", "nautilus.contextMenu.newTab", "New Tab"),
+            ("Ctrl+Tab", "nautilus.contextMenu.nextTab", "Next Tab"),
+            (
+                "Ctrl+Shift+Tab",
+                "nautilus.contextMenu.previousTab",
+                "Previous Tab",
+            ),
+            (
+                "Ctrl+Shift+T",
+                "nautilus.contextMenu.duplicateTab",
+                "Duplicate Tab",
+            ),
+            ("Ctrl+W", "nautilus.contextMenu.closeTab", "Close Tab"),
+            ("Ctrl+/", "nautilus.contextMenu.toggleSplit", "Toggle Split"),
+            ("Ctrl+I", "nautilus.contextMenu.switchPane", "Switch Pane"),
+            ("F2", "nautilus.contextMenu.rename", "Rename"),
+            ("Space", "nautilus.contextMenu.open", "Open / Preview"),
+            (
+                "Ctrl+Enter",
+                "nautilus.contextMenu.openNewTab",
+                "Open in New Tab",
+            ),
+            (
+                "Shift+Enter",
+                "nautilus.contextMenu.openNewWindow",
+                "Open in New Window",
+            ),
+            (
+                "Ctrl+Shift+D",
+                "nautilus.contextMenu.detachTab",
+                "Detach Tab",
+            ),
+            ("Ctrl+Z", "nautilus.contextMenu.undo", "Undo"),
+            ("Ctrl+Shift+Z", "nautilus.contextMenu.redo", "Redo"),
+            ("Escape", "shortcuts.actions.closeDialog", "Close Dialog"),
+        ][..],
+    )];
+    let entries: &[(_, _, _, _)] = if nautilus { &nautilus_entries } else { &global };
     for (_, cat_key, cat_fallback, items) in entries {
         let header = adw::ActionRow::new();
         header.set_title(&ctx.t_or(cat_key, cat_fallback));
         header.set_sensitive(false);
         list.append(&header);
-        for (keys, desc_key, desc_fallback) in items {
+        for (keys, desc_key, desc_fallback) in items.iter() {
             let row = adw::ActionRow::new();
             row.set_title(&ctx.t_or(desc_key, desc_fallback));
             row.set_subtitle(keys);
@@ -1448,29 +2469,21 @@ pub fn shortcuts(parent: &impl IsA<gtk::Widget>, ctx: &AppCtx) {
             list.append(&row);
         }
     }
+    let empty = adw::StatusPage::new();
+    empty.set_icon_name(Some("edit-find-symbolic"));
+    empty.set_title(&ctx.t_or("shared.search.title", "No results found"));
+    empty.set_description(Some(
+        &ctx.t_or("shared.search.description", "No options match your search"),
+    ));
+    let clear = gtk::Button::with_label(&ctx.t_or("shared.search.action", "Clear Search"));
+    clear.set_halign(gtk::Align::Center);
     {
-        let list = list.clone();
-        search.connect_search_changed(move |entry| {
-            let query = entry.text().to_lowercase();
-            let mut child = list.first_child();
-            while let Some(widget) = child {
-                let next = widget.next_sibling();
-                if let Ok(row) = widget.downcast::<adw::ActionRow>() {
-                    if row.is_sensitive() {
-                        let hay = format!(
-                            "{} {} {}",
-                            row.title(),
-                            row.subtitle().unwrap_or_default(),
-                            row.widget_name()
-                        )
-                        .to_lowercase();
-                        row.set_visible(query.is_empty() || hay.contains(&query));
-                    }
-                }
-                child = next;
-            }
-        });
+        let search = search.clone();
+        clear.connect_clicked(move |_| search.set_text(""));
     }
+    empty.set_child(Some(&clear));
+    empty.set_visible(false);
+    empty.set_vexpand(true);
     let box_ = gtk::Box::new(gtk::Orientation::Vertical, 8);
     box_.set_margin_start(12);
     box_.set_margin_end(12);
@@ -1480,6 +2493,52 @@ pub fn shortcuts(parent: &impl IsA<gtk::Widget>, ctx: &AppCtx) {
     scroll.set_vexpand(true);
     scroll.set_child(Some(&list));
     box_.append(&scroll);
+    box_.append(&empty);
+    {
+        let list = list.clone();
+        let empty = empty.clone();
+        let scroll = scroll.clone();
+        search.connect_search_changed(move |entry| {
+            let query = entry.text().to_string();
+            let mut child = list.first_child();
+            let mut visible_items = 0usize;
+            let mut header: Option<adw::ActionRow> = None;
+            let mut header_has_visible = false;
+            let flush_header = |header: &Option<adw::ActionRow>, has: bool| {
+                if let Some(row) = header {
+                    row.set_visible(query.trim().is_empty() || has);
+                }
+            };
+            while let Some(widget) = child {
+                let next = widget.next_sibling();
+                if let Ok(row) = widget.downcast::<adw::ActionRow>() {
+                    if row.is_sensitive() {
+                        let visible = crate::shortcuts::shortcut_matches(
+                            &query,
+                            &row.title(),
+                            &row.subtitle().unwrap_or_default(),
+                            &row.widget_name(),
+                        );
+                        row.set_visible(visible);
+                        if visible {
+                            visible_items += 1;
+                            header_has_visible = true;
+                        }
+                    } else {
+                        flush_header(&header, header_has_visible);
+                        header = Some(row);
+                        header_has_visible = false;
+                    }
+                }
+                child = next;
+            }
+            flush_header(&header, header_has_visible);
+            let show_empty = crate::shortcuts::shortcut_search_empty(&query, visible_items);
+            empty.set_visible(show_empty);
+            list.set_visible(!show_empty);
+            scroll.set_visible(!show_empty);
+        });
+    }
     dialog.set_child(Some(&box_));
     dialog.present(Some(parent));
 }
@@ -1525,7 +2584,13 @@ pub fn debug_info(parent: &impl IsA<gtk::Widget>, ctx: AppCtx) {
             for key in ["config", "cache", "temp"] {
                 if let Some(value) = paths.get(key).and_then(|v| v.as_str()) {
                     let row = adw::ActionRow::new();
-                    row.set_title(&format!("rclone {key}"));
+                    let title = match key {
+                        "config" => ctx.t_or("developerTools.rcloneConfig", "rclone config"),
+                        "cache" => ctx.t_or("developerTools.rcloneCache", "rclone cache"),
+                        "temp" => ctx.t_or("developerTools.rcloneTemp", "rclone temp"),
+                        _ => format!("rclone {key}"),
+                    };
+                    row.set_title(&title);
                     row.set_subtitle(value);
                     row.set_subtitle_lines(3);
                     list.append(&row);
@@ -1534,8 +2599,10 @@ pub fn debug_info(parent: &impl IsA<gtk::Widget>, ctx: AppCtx) {
         }
         if let Ok(encrypted) = client.config_is_encrypted() {
             let row = adw::ActionRow::new();
-            row.set_title("rclone.conf encrypted");
-            row.set_subtitle(if encrypted { "yes" } else { "no" });
+            row.set_title(&ctx.t_or("developerTools.configEncrypted", "rclone.conf encrypted"));
+            let yes = ctx.t("common.yes");
+            let no = ctx.t("common.no");
+            row.set_subtitle(if encrypted { &yes } else { &no });
             list.append(&row);
         }
     }
@@ -1576,6 +2643,22 @@ pub fn debug_info(parent: &impl IsA<gtk::Widget>, ctx: AppCtx) {
     actions.append(&open_cfg);
     actions.append(&open_cache);
     actions.append(&open_logs);
+    let inspector =
+        gtk::Button::with_label(&ctx.t_or("modals.about.openDevTools", "Open DevTools"));
+    inspector.connect_clicked(|_| {
+        gtk::Window::set_interactive_debugging(true);
+    });
+    actions.append(&inspector);
+    {
+        let parent = parent.clone();
+        let ctx = ctx.clone();
+        let restart = gtk::Button::with_label(&ctx.t_or("modals.about.restartApp", "Restart App"));
+        restart.add_css_class("destructive-action");
+        restart.connect_clicked(move |_| {
+            relaunch_application(&parent, &ctx, &adw::ToastOverlay::new());
+        });
+        actions.append(&restart);
+    }
     let box_ = gtk::Box::new(gtk::Orientation::Vertical, 8);
     box_.set_margin_top(12);
     box_.set_margin_start(12);
@@ -1662,6 +2745,7 @@ pub fn logs(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, remote: Option<String>)
     ));
     let copy_label = ctx.t_or("common.copy", "Copy");
     let context_label = ctx.t_or("modals.logs.logContext", "Log Context");
+    let output_label = ctx.t_or("modals.logs.terminalOutput", "Terminal Output");
     let apply = {
         let ctx = ctx.clone();
         let list = list.clone();
@@ -1671,6 +2755,7 @@ pub fn logs(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, remote: Option<String>)
         let remote_filter = remote_filter.clone();
         let copy_label = copy_label.clone();
         let context_label = context_label.clone();
+        let output_label = output_label.clone();
         move |query: &str| {
             while let Some(child) = list.first_child() {
                 list.remove(&child);
@@ -1731,8 +2816,29 @@ pub fn logs(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, remote: Option<String>)
                 row_box.append(&text);
                 row_box.append(&copy);
                 if let Some(details) = &entry.context {
+                    let col = gtk::Box::new(gtk::Orientation::Vertical, 4);
+                    col.append(&row_box);
+                    if let Some(output) = crate::logs::extract_command_output(details) {
+                        let expander = gtk::Expander::new(Some(&output_label));
+                        let label = gtk::Label::new(None);
+                        if crate::ansi::has_ansi(&output) {
+                            label.set_markup(&crate::ansi::ansi_to_pango(&output));
+                        } else {
+                            label.set_text(&output);
+                        }
+                        label.set_wrap(true);
+                        label.set_xalign(0.0);
+                        label.set_selectable(true);
+                        label.add_css_class("monospace");
+                        label.set_margin_start(12);
+                        label.set_margin_end(12);
+                        label.set_margin_top(4);
+                        label.set_margin_bottom(8);
+                        expander.set_child(Some(&label));
+                        col.append(&expander);
+                    }
                     let expander = gtk::Expander::new(Some(&context_label));
-                    let label = gtk::Label::new(Some(details));
+                    let label = gtk::Label::new(Some(&crate::logs::format_log_context(details)));
                     label.set_wrap(true);
                     label.set_xalign(0.0);
                     label.set_selectable(true);
@@ -1742,8 +2848,6 @@ pub fn logs(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, remote: Option<String>)
                     label.set_margin_top(4);
                     label.set_margin_bottom(8);
                     expander.set_child(Some(&label));
-                    let col = gtk::Box::new(gtk::Orientation::Vertical, 4);
-                    col.append(&row_box);
                     col.append(&expander);
                     let row = gtk::ListBoxRow::new();
                     row.set_child(Some(&col));
@@ -1774,6 +2878,49 @@ pub fn logs(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, remote: Option<String>)
                 .copied()
                 .unwrap_or_default();
             *level_filter.borrow_mut() = selected.to_string();
+            apply(&search.text());
+        });
+    }
+    let remote_names = {
+        let mut names: Vec<String> = ctx
+            .snapshot
+            .borrow()
+            .remotes
+            .iter()
+            .map(|r| r.name.clone())
+            .collect();
+        for key in ctx.store.borrow().logs.keys() {
+            if key != "_engine" && !names.iter().any(|n| n == key) {
+                names.push(key.clone());
+            }
+        }
+        names.sort();
+        names
+    };
+    let remote_labels: Vec<String> = std::iter::once(ctx.t_or("common.all", "All"))
+        .chain(remote_names.iter().cloned())
+        .collect();
+    let remote_label_refs: Vec<&str> = remote_labels.iter().map(String::as_str).collect();
+    let remotes_model = gtk::StringList::new(&remote_label_refs);
+    let remote_drop = gtk::DropDown::new(Some(remotes_model), gtk::Expression::NONE);
+    remote_drop.set_tooltip_text(Some(&ctx.t_or("alerts.remoteFilter", "Remote Filter")));
+    if let Some(locked_name) = locked.as_deref() {
+        if let Some(idx) = remote_names.iter().position(|n| n == locked_name) {
+            remote_drop.set_selected((idx + 1) as u32);
+        }
+        remote_drop.set_sensitive(false);
+    } else {
+        let apply = apply.clone();
+        let search = search.clone();
+        let remote_filter = remote_filter.clone();
+        let remote_names = remote_names.clone();
+        remote_drop.connect_selected_notify(move |drop| {
+            let idx = drop.selected() as usize;
+            *remote_filter.borrow_mut() = if idx == 0 {
+                None
+            } else {
+                remote_names.get(idx - 1).cloned()
+            };
             apply(&search.text());
         });
     }
@@ -1914,6 +3061,7 @@ pub fn logs(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, remote: Option<String>)
     toolbar.set_margin_top(8);
     search.set_hexpand(true);
     toolbar.append(&level);
+    toolbar.append(&remote_drop);
     toolbar.append(&search);
     toolbar.append(&refresh);
     toolbar.append(&copy_all);
@@ -2006,13 +3154,7 @@ fn add_flag_option_row(
             let labels: Vec<String> = option
                 .examples
                 .iter()
-                .map(|(value, help)| {
-                    if help.is_empty() {
-                        value.clone()
-                    } else {
-                        format!("{value} — {help}")
-                    }
-                })
+                .map(|(value, hint)| crate::config_search::example_choice_label(value, hint))
                 .collect();
             let values: Vec<String> = option.examples.iter().map(|(v, _)| v.clone()).collect();
             let row = adw::ComboRow::new();
@@ -2027,8 +3169,9 @@ fn add_flag_option_row(
             let block = block.to_string();
             let field = option.field_name.clone();
             let type_name = option.type_name.clone();
+            let values_cb = values.clone();
             row.connect_selected_notify(move |row| {
-                if let Some(text) = values.get(row.selected() as usize) {
+                if let Some(text) = values_cb.get(row.selected() as usize) {
                     push_flag_edit(
                         &edits,
                         &block,
@@ -2037,6 +3180,25 @@ fn add_flag_option_row(
                     );
                 }
             });
+            if crate::config_search::should_search_examples(
+                &option.field_name,
+                option.examples.len(),
+            ) || crate::config_search::should_search_examples(
+                &option.name,
+                option.examples.len(),
+            ) {
+                let search = adw::EntryRow::new();
+                search.set_title(&title);
+                if !help.is_empty() {
+                    search.set_tooltip_text(Some(&help));
+                }
+                if let Some(label) = labels.get(row.selected() as usize) {
+                    search.set_text(label);
+                }
+                attach_example_typeahead(ctx, &search, &row, &option.examples);
+                row.set_visible(false);
+                group.add(&search);
+            }
             group.add(&row);
         }
         crate::value_mapper::ControlKind::Numeric => {
@@ -2070,6 +3232,56 @@ fn add_flag_option_row(
             });
             group.add(&row);
         }
+        crate::value_mapper::ControlKind::MultiSelect => {
+            let row = adw::ExpanderRow::new();
+            row.set_title(&title);
+            row.set_subtitle(&help);
+            let selected: Vec<String> = current_text
+                .split([',', ' '])
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .map(|s| s.to_ascii_lowercase())
+                .collect();
+            let mut items = Vec::new();
+            for (value, hint) in &option.examples {
+                let check = gtk::CheckButton::with_label(value);
+                if !hint.is_empty() {
+                    check.set_tooltip_text(Some(hint));
+                }
+                check.set_active(selected.iter().any(|s| s == &value.to_ascii_lowercase()));
+                let wrap = adw::ActionRow::new();
+                wrap.set_title(value);
+                if !hint.is_empty() {
+                    wrap.set_subtitle(hint);
+                }
+                wrap.add_prefix(&check);
+                row.add_row(&wrap);
+                items.push((value.clone(), check));
+            }
+            let checks = Rc::new(items);
+            for (_, check) in checks.iter() {
+                let edits = edits.clone();
+                let block = block.to_string();
+                let field = option.field_name.clone();
+                let type_name = option.type_name.clone();
+                let checks = checks.clone();
+                check.connect_active_notify(move |_| {
+                    let joined = checks
+                        .iter()
+                        .filter(|(_, c)| c.is_active())
+                        .map(|(v, _)| v.clone())
+                        .collect::<Vec<_>>()
+                        .join(",");
+                    push_flag_edit(
+                        &edits,
+                        &block,
+                        &field,
+                        crate::flags::parse_flag_value(&type_name, &joined),
+                    );
+                });
+            }
+            group.add(&row);
+        }
         crate::value_mapper::ControlKind::Input => {
             let row = adw::EntryRow::new();
             row.set_title(&title);
@@ -2099,173 +3311,517 @@ fn add_flag_option_row(
     }
 }
 
+fn apply_rclone_flag_payload(ctx: &AppCtx, toast: &adw::ToastOverlay, payload: serde_json::Value) {
+    let Some(client) = ctx.client() else {
+        toast.add_toast(adw::Toast::new(&ctx.t_or(
+            "modals.rcloneFlags.notifications.loadError",
+            "Failed to load Rclone flags",
+        )));
+        return;
+    };
+    match client.options_set(payload.clone()) {
+        Ok(_) => {
+            if let Err(e) = crate::backend_options::merge_and_save(&ctx.backend_key(), &payload) {
+                toast.add_toast(adw::Toast::new(&format!(
+                    "{}: {e}",
+                    ctx.t_or(
+                        "modals.rcloneFlags.notifications.saveError",
+                        "Failed to save flags"
+                    )
+                )));
+            } else {
+                toast.add_toast(adw::Toast::new(&ctx.t_or(
+                    "modals.rcloneFlags.notifications.saveSuccess",
+                    "Saved flags",
+                )));
+            }
+        }
+        Err(e) => toast.add_toast(adw::Toast::new(&ctx.tf_or(
+            "modals.rcloneFlags.notifications.saveError",
+            "Failed to save {{field}}: {{error}}",
+            &[("field", "options/set"), ("error", &e.to_string())],
+        ))),
+    }
+}
+
+fn flags_category_page(
+    ctx: &AppCtx,
+    toast: &adw::ToastOverlay,
+    service: &str,
+    category: &str,
+    options: &[crate::flags::FlagOption],
+    edits: &Rc<RefCell<Vec<(String, String, serde_json::Value)>>>,
+    focus: Option<&str>,
+) -> adw::NavigationPage {
+    let title = ctx.tf_or(
+        "modals.rcloneFlags.pageTitle.category",
+        &format!("{} - {category}", service.to_ascii_uppercase()),
+        &[
+            ("page", &service.to_ascii_uppercase()),
+            ("category", category),
+        ],
+    );
+    let page_box = gtk::Box::new(gtk::Orientation::Vertical, 8);
+    page_box.set_margin_top(8);
+    page_box.set_margin_bottom(12);
+    page_box.set_margin_start(12);
+    page_box.set_margin_end(12);
+    let search = gtk::SearchEntry::new();
+    search.set_placeholder_text(Some(&ctx.tf_or(
+        "modals.rcloneFlags.search.placeholderPage",
+        &format!("Search in {service}..."),
+        &[("page", service)],
+    )));
+    if let Some(focus) = focus {
+        search.set_text(focus);
+    }
+    page_box.append(&search);
+    let count = gtk::Label::new(Some(&ctx.tf_or(
+        "modals.rcloneFlags.search.showing",
+        &format!("{} flags", options.len()),
+        &[
+            ("count", &options.len().to_string()),
+            ("total", &options.len().to_string()),
+        ],
+    )));
+    count.set_xalign(0.0);
+    count.add_css_class("dim-label");
+    page_box.append(&count);
+    let json_toggle = adw::SwitchRow::new();
+    json_toggle.set_title(&ctx.t_or("remoteConfig.jsonMode", "JSON mode"));
+    json_toggle.set_active(ctx.settings.borrow().runtime.show_json_mode);
+    let json_group = adw::PreferencesGroup::new();
+    json_group.add(&json_toggle);
+    let prefs = adw::PreferencesPage::new();
+    prefs.add(&json_group);
+    let flags_group = adw::PreferencesGroup::new();
+    flags_group.set_title(category);
+    let mut flag_rows = Vec::new();
+    for option in options {
+        let prev = flags_group.last_child();
+        add_flag_option_row(ctx, &flags_group, edits, service, option);
+        let mut child = flags_group.last_child();
+        let mut added = Vec::new();
+        while let Some(widget) = child {
+            if prev.as_ref().is_some_and(|prev| prev == &widget) {
+                break;
+            }
+            added.push(widget.clone());
+            child = widget.prev_sibling();
+        }
+        flag_rows.push((option.clone(), added));
+    }
+    prefs.add(&flags_group);
+    let editor = super::json_editor::JsonEditor::new(ctx);
+    editor.set_fields(
+        options
+            .iter()
+            .map(crate::json_editor::JsonFieldDef::from_flag)
+            .collect(),
+    );
+    editor.set_restrict(ctx.settings.borrow().general.restrict);
+    let mut json_map = serde_json::Map::new();
+    for option in options {
+        if !option.value.is_null() {
+            json_map.insert(option.field_name.clone(), option.value.clone());
+        }
+    }
+    editor.set_value(&serde_json::Value::Object(json_map));
+    editor.root.set_visible(json_toggle.is_active());
+    flags_group.set_visible(!json_toggle.is_active());
+    let json_holder = adw::PreferencesGroup::new();
+    json_holder.set_title(&ctx.t_or("remoteConfig.jsonPayload", "Raw options/set payload"));
+    json_holder.add(&{
+        let row = adw::ActionRow::new();
+        row.set_title(&ctx.t_or("remoteConfig.jsonMode", "JSON"));
+        row.set_activatable(false);
+        row.set_child(Some(&editor.root));
+        row
+    });
+    json_holder.set_visible(json_toggle.is_active());
+    prefs.add(&json_holder);
+    let apply = gtk::Button::with_label(&ctx.t_or("common.apply", "Apply changes"));
+    apply.add_css_class("suggested-action");
+    apply.set_halign(gtk::Align::End);
+    let apply_group = adw::PreferencesGroup::new();
+    let apply_row = adw::ActionRow::new();
+    apply_row.set_title(&ctx.t_or(
+        "remoteConfig.flagsWriteEngine",
+        "Write flags to the running engine",
+    ));
+    apply_row.add_suffix(&apply);
+    apply_group.add(&apply_row);
+    prefs.add(&apply_group);
+    page_box.append(&prefs);
+    {
+        let ctx = ctx.clone();
+        let toast = toast.clone();
+        let edits = edits.clone();
+        let editor = editor.clone();
+        let json_toggle = json_toggle.clone();
+        let service = service.to_string();
+        apply.connect_clicked(move |_| {
+            if json_toggle.is_active() {
+                match editor.parsed() {
+                    Ok(map) => apply_rclone_flag_payload(
+                        &ctx,
+                        &toast,
+                        serde_json::json!({ service.clone(): map }),
+                    ),
+                    Err(err) => ctx.toast_error(&toast, &err),
+                }
+            } else {
+                apply_rclone_flag_payload(
+                    &ctx,
+                    &toast,
+                    crate::flags::collect_edits(&edits.borrow()),
+                );
+            }
+        });
+    }
+    {
+        let ctx = ctx.clone();
+        let editor_root = editor.root.clone();
+        let flags_group = flags_group.clone();
+        let json_holder = json_holder.clone();
+        json_toggle.connect_active_notify(move |row| {
+            let on = row.is_active();
+            ctx.settings.borrow_mut().runtime.show_json_mode = on;
+            ctx.persist();
+            editor_root.set_visible(on);
+            json_holder.set_visible(on);
+            flags_group.set_visible(!on);
+        });
+    }
+    let apply_filter = {
+        let ctx = ctx.clone();
+        let count = count.clone();
+        let flag_rows = flag_rows.clone();
+        let total = options.len();
+        let json_toggle = json_toggle.clone();
+        Rc::new(move |query: &str| {
+            if json_toggle.is_active() {
+                return;
+            }
+            let mut visible = 0usize;
+            for (option, widgets) in &flag_rows {
+                let show = crate::config_search::matches_config_search(
+                    &option.name,
+                    &option.help,
+                    &option.field_name,
+                    query,
+                );
+                for widget in widgets {
+                    widget.set_visible(show);
+                }
+                if show {
+                    visible += 1;
+                }
+            }
+            count.set_text(&ctx.tf_or(
+                "modals.rcloneFlags.search.showing",
+                &format!("Showing {visible} of {total} flags"),
+                &[
+                    ("count", &visible.to_string()),
+                    ("total", &total.to_string()),
+                ],
+            ));
+        })
+    };
+    apply_filter(&search.text());
+    {
+        let apply_filter = apply_filter.clone();
+        search.connect_search_changed(move |row| apply_filter(&row.text()));
+    }
+    let scroll = gtk::ScrolledWindow::new();
+    scroll.set_vexpand(true);
+    scroll.set_policy(gtk::PolicyType::Never, gtk::PolicyType::Automatic);
+    scroll.set_child(Some(&page_box));
+    let toolbar = adw::ToolbarView::new();
+    toolbar.add_top_bar(&adw::HeaderBar::new());
+    toolbar.set_content(Some(&scroll));
+    adw::NavigationPage::builder()
+        .title(&title)
+        .child(&toolbar)
+        .build()
+}
+
+fn fill_flags_home(
+    ctx: &AppCtx,
+    nav: &adw::NavigationView,
+    toast: &adw::ToastOverlay,
+    body: &gtk::Box,
+    services: &[crate::flags::FlagService],
+    edits: &Rc<RefCell<Vec<(String, String, serde_json::Value)>>>,
+    query: &str,
+) {
+    while let Some(child) = body.first_child() {
+        body.remove(&child);
+    }
+    let page = adw::PreferencesPage::new();
+    let mut added = false;
+    let q = query.trim();
+    if !q.is_empty() {
+        let hits = crate::flags::search_grouped_flags(services, q);
+        let group = adw::PreferencesGroup::new();
+        group.set_title(&ctx.t_or("modals.rcloneFlags.search.label", "Search Rclone flags"));
+        if hits.is_empty() {
+            let row = adw::ActionRow::new();
+            row.set_title(&ctx.t_or(
+                "modals.rcloneFlags.search.emptyResult",
+                "No Rclone flags found",
+            ));
+            group.add(&row);
+        }
+        for hit in hits {
+            let row = adw::ActionRow::new();
+            row.set_title(&ctx.option_label(&hit.option.name, "title", &hit.option.name));
+            row.set_subtitle(&format!("{} › {}", hit.service, hit.category));
+            row.set_activatable(true);
+            row.add_suffix(&gtk::Image::from_icon_name("go-next-symbolic"));
+            let ctx = ctx.clone();
+            let nav = nav.clone();
+            let toast = toast.clone();
+            let edits = edits.clone();
+            let services = services.to_vec();
+            row.connect_activated(move |_| {
+                if let Some(cat) =
+                    crate::flags::find_service_category(&services, &hit.service, &hit.category)
+                {
+                    nav.push(&flags_category_page(
+                        &ctx,
+                        &toast,
+                        &hit.service,
+                        &hit.category,
+                        &cat.options,
+                        &edits,
+                        Some(&hit.option.name),
+                    ));
+                }
+            });
+            group.add(&row);
+        }
+        page.add(&group);
+        added = true;
+        body.append(&page);
+        return;
+    }
+    for main in crate::flags::MAIN_CATEGORY_KEYS {
+        let listed = crate::flags::services_for_main_category(services, main);
+        if listed.is_empty() {
+            continue;
+        }
+        let (title_key, title_fb, desc_key, desc_fb) = match *main {
+            "generalSettings" => (
+                "modals.rcloneFlags.mainCategories.generalSettings.title",
+                "General Settings",
+                "modals.rcloneFlags.mainCategories.generalSettings.description",
+                "Core Rclone options and logging flags",
+            ),
+            "fileSystemAndStorage" => (
+                "modals.rcloneFlags.mainCategories.fileSystemAndStorage.title",
+                "File System & Storage",
+                "modals.rcloneFlags.mainCategories.fileSystemAndStorage.description",
+                "Virtual file system, mounting, filtering, and storage flags",
+            ),
+            _ => (
+                "modals.rcloneFlags.mainCategories.networkAndServers.title",
+                "Network & Servers",
+                "modals.rcloneFlags.mainCategories.networkAndServers.description",
+                "HTTP, FTP, SFTP, WebDAV, S3, and other network service flags",
+            ),
+        };
+        let group = adw::PreferencesGroup::new();
+        group.set_title(&ctx.t_or(title_key, title_fb));
+        group.set_description(Some(&ctx.t_or(desc_key, desc_fb)));
+        for service in listed {
+            let expander = adw::ExpanderRow::new();
+            expander.set_title(&titlecase_service(&service.name));
+            expander.set_subtitle(&ctx.t_or(
+                &format!(
+                    "modals.rcloneFlags.services.{}",
+                    service.name.to_ascii_lowercase()
+                ),
+                "",
+            ));
+            for category in &service.categories {
+                let row = adw::ActionRow::new();
+                row.set_title(&category.name);
+                row.set_subtitle(&ctx.t_or(
+                    &format!("modals.rcloneFlags.categories.{}", category.name),
+                    "",
+                ));
+                row.set_activatable(true);
+                row.add_suffix(&gtk::Image::from_icon_name("go-next-symbolic"));
+                let ctx = ctx.clone();
+                let nav = nav.clone();
+                let toast = toast.clone();
+                let edits = edits.clone();
+                let service_name = service.name.clone();
+                let category_name = category.name.clone();
+                let options = category.options.clone();
+                row.connect_activated(move |_| {
+                    nav.push(&flags_category_page(
+                        &ctx,
+                        &toast,
+                        &service_name,
+                        &category_name,
+                        &options,
+                        &edits,
+                        None,
+                    ));
+                });
+                expander.add_row(&row);
+            }
+            group.add(&expander);
+        }
+        page.add(&group);
+        added = true;
+    }
+    if !added {
+        let empty = adw::PreferencesGroup::new();
+        let row = adw::ActionRow::new();
+        row.set_title(&ctx.t_or(
+            "modals.rcloneFlags.search.emptyResult",
+            "No Rclone flags found",
+        ));
+        empty.add(&row);
+        page.add(&empty);
+    }
+    body.append(&page);
+}
+
+fn titlecase_service(name: &str) -> String {
+    let mut chars = name.chars();
+    match chars.next() {
+        Some(first) => format!("{}{}", first.to_ascii_uppercase(), chars.as_str()),
+        None => String::new(),
+    }
+}
+
+fn confirm_reset_rclone_flags(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, dialog: adw::Dialog) {
+    let confirm = adw::AlertDialog::new(
+        Some(&ctx.t_or("modals.rcloneFlags.reset.title", "Reset Flags")),
+        Some(&ctx.t_or(
+            "modals.rcloneFlags.reset.message",
+            "This will reset all Rclone flags to their default values and restart the rclone engine. Any custom settings will be lost. Continue?",
+        )),
+    );
+    confirm.add_response("cancel", &ctx.t_or("common.cancel", "Cancel"));
+    confirm.add_response(
+        "reset",
+        &ctx.t_or("modals.rcloneFlags.reset.confirm", "Reset & Restart"),
+    );
+    confirm.set_response_appearance("reset", adw::ResponseAppearance::Destructive);
+    confirm.set_default_response(Some("cancel"));
+    confirm.connect_response(None, move |_, response| {
+        if response != "reset" {
+            return;
+        }
+        if let Err(e) = crate::backend_options::reset_for(&ctx.backend_key()) {
+            log::warn!("failed to reset flags: {e}");
+            return;
+        }
+        ctx.restart_engine();
+        dialog.close();
+    });
+    confirm.present(Some(parent));
+}
+
 pub fn rclone_flags(parent: &impl IsA<gtk::Widget>, ctx: AppCtx) {
     if try_spawn_standalone(&ctx, "rclone-flags", serde_json::json!({})) {
         return;
     }
-    let dialog = adw::PreferencesDialog::new();
-    dialog.set_title(&ctx.t_or("titlebar.menu.flags", "Rclone Flags"));
-    dialog.set_search_enabled(true);
+    let dialog = adw::Dialog::new();
+    dialog.set_title(&ctx.t_or("modals.rcloneFlags.pageTitle.home", "Rclone Flags"));
+    dialog.set_content_width(720);
+    dialog.set_content_height(780);
+    let toast = adw::ToastOverlay::new();
+    let nav = adw::NavigationView::new();
+    toast.set_child(Some(&nav));
+    dialog.set_child(Some(&toast));
     let Some(client) = ctx.client() else {
-        let page = adw::PreferencesPage::new();
         let group = adw::PreferencesGroup::new();
         let row = adw::ActionRow::new();
         row.set_title(&ctx.t_or("common.engineOffline", "Engine offline"));
         group.add(&row);
-        page.add(&group);
-        dialog.add(&page);
+        let page = adw::StatusPage::new();
+        page.set_title(&ctx.t_or("common.engineOffline", "Engine offline"));
+        page.set_child(Some(&group));
+        nav.add(&adw::NavigationPage::builder().child(&page).build());
         dialog.present(Some(parent));
         return;
     };
-    let info = client.options_info().unwrap_or(serde_json::json!({}));
     let current = client.options_get().unwrap_or(serde_json::json!({}));
-    let mut blocks = crate::flags::parse_options_info(&info);
-    crate::flags::merge_current_values(&mut blocks, &current);
+    let blocks = crate::flags::blocks_for_flags_ui(client.option_flag_blocks(), &current);
+    let services = crate::flags::group_blocks_by_service(&blocks);
     let edits: Rc<RefCell<Vec<(String, String, serde_json::Value)>>> =
         Rc::new(RefCell::new(Vec::new()));
-    for category in [
-        "backend", "filter", "vfs", "mount", "copy", "sync", "check", "network", "other",
-    ] {
-        let page = adw::PreferencesPage::new();
-        page.set_title(&category.to_ascii_uppercase());
-        let group = adw::PreferencesGroup::new();
-        group.set_title(category);
-        let options = crate::flags::options_for_category(&blocks, category);
-        if options.is_empty() {
-            let row = adw::ActionRow::new();
-            row.set_title(&ctx.t_or("modals.flags.emptyCategory", "No flags in this category"));
-            group.add(&row);
-        }
-        for (block, option) in options {
-            add_flag_option_row(&ctx, &group, &edits, block, option);
-        }
-        page.add(&group);
-        dialog.add(&page);
-    }
+    let home_box = gtk::Box::new(gtk::Orientation::Vertical, 12);
+    home_box.set_margin_top(8);
+    home_box.set_margin_bottom(12);
+    home_box.set_margin_start(12);
+    home_box.set_margin_end(12);
+    let search = gtk::SearchEntry::new();
+    search.set_placeholder_text(Some(&ctx.t_or(
+        "modals.rcloneFlags.search.placeholderHome",
+        "Search all services and flags...",
+    )));
+    home_box.append(&search);
+    let body = gtk::Box::new(gtk::Orientation::Vertical, 12);
+    fill_flags_home(&ctx, &nav, &toast, &body, &services, &edits, "");
+    home_box.append(&body);
     let apply = gtk::Button::with_label(&ctx.t_or("common.apply", "Apply changes"));
     apply.add_css_class("suggested-action");
     {
         let ctx = ctx.clone();
+        let toast = toast.clone();
         let edits = edits.clone();
         apply.connect_clicked(move |_| {
-            if let Some(client) = ctx.client() {
-                let payload = crate::flags::collect_edits(&edits.borrow());
-                match client.options_set(payload.clone()) {
-                    Ok(_) => {
-                        if let Err(e) =
-                            crate::backend_options::merge_and_save(&ctx.backend_key(), &payload)
-                        {
-                            log::warn!("failed to persist flags: {e}");
-                        } else {
-                            log::info!("rclone flags applied");
-                        }
-                    }
-                    Err(e) => log::warn!("failed to apply flags: {e}"),
-                }
-            }
+            apply_rclone_flag_payload(&ctx, &toast, crate::flags::collect_edits(&edits.borrow()));
         });
     }
-    let extra = adw::PreferencesPage::new();
-    extra.set_title(&ctx.t_or("common.apply", "Apply"));
-    let g = adw::PreferencesGroup::new();
-    g.set_description(Some(&ctx.t_or(
-        "remoteConfig.flagsApplyHelp",
-        "Edits are sent to rclone via options/set. Categories match the Angular flag panels.",
-    )));
-    let row = adw::ActionRow::new();
-    row.set_title(&ctx.t_or(
-        "remoteConfig.flagsWriteEngine",
-        "Write flags to the running engine",
-    ));
-    row.add_suffix(&apply);
-    g.add(&row);
-    extra.add(&g);
-    dialog.add(&extra);
-
-    let json_page = adw::PreferencesPage::new();
-    json_page.set_title(&ctx.t_or("remoteConfig.jsonMode", "JSON"));
-    let json_group = adw::PreferencesGroup::new();
-    json_group.set_title(&ctx.t_or("remoteConfig.jsonPayload", "Raw options/set payload"));
-    json_group.set_description(Some(&ctx.t_or(
-        "remoteConfig.jsonPayloadHelp",
-        "Edit the current rclone options as JSON. Apply writes the object via options/set.",
-    )));
-    let json_toggle = adw::SwitchRow::new();
-    json_toggle.set_title(&ctx.t_or(
-        "settings.runtime.show_json_mode.label",
-        "Remember JSON mode",
-    ));
-    json_toggle.set_active(ctx.settings.borrow().runtime.show_json_mode);
+    let reset = gtk::Button::with_label(
+        &ctx.t_or("modals.rcloneFlags.reset.button", "Reset All to Default"),
+    );
+    reset.add_css_class("destructive-action");
     {
         let ctx = ctx.clone();
-        json_toggle.connect_active_notify(move |row| {
-            ctx.settings.borrow_mut().runtime.show_json_mode = row.is_active();
-            ctx.persist();
+        let dialog = dialog.clone();
+        reset.connect_clicked(move |btn| {
+            confirm_reset_rclone_flags(btn, ctx.clone(), dialog.clone());
         });
     }
-    json_group.add(&json_toggle);
-    let json_view = gtk::TextView::new();
-    json_view.set_monospace(true);
-    json_view.set_wrap_mode(gtk::WrapMode::WordChar);
-    let pretty = serde_json::to_string_pretty(&current).unwrap_or_else(|_| "{}".into());
-    json_view.buffer().set_text(&pretty);
-    let json_scroll = gtk::ScrolledWindow::new();
-    json_scroll.set_min_content_height(280);
-    json_scroll.set_child(Some(&json_view));
-    let json_apply = gtk::Button::with_label(&ctx.t_or("remoteConfig.applyJson", "Apply JSON"));
-    json_apply.add_css_class("suggested-action");
+    let actions = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+    actions.set_halign(gtk::Align::End);
+    actions.append(&reset);
+    actions.append(&apply);
+    home_box.append(&actions);
     {
         let ctx = ctx.clone();
-        let json_view = json_view.clone();
-        json_apply.connect_clicked(move |_| {
-            let buffer = json_view.buffer();
-            let text = buffer.text(&buffer.start_iter(), &buffer.end_iter(), false);
-            match crate::flags::parse_json_object(&text) {
-                Ok(map) => {
-                    if let Some(client) = ctx.client() {
-                        let payload = serde_json::Value::Object(map);
-                        match client.options_set(payload.clone()) {
-                            Ok(_) => {
-                                if let Err(e) = crate::backend_options::merge_and_save(
-                                    &ctx.backend_key(),
-                                    &payload,
-                                ) {
-                                    log::warn!("failed to persist JSON flags: {e}");
-                                } else {
-                                    log::info!("rclone flags applied from JSON");
-                                }
-                            }
-                            Err(e) => log::warn!("failed to apply JSON flags: {e}"),
-                        }
-                    }
-                }
-                Err(e) => log::warn!("invalid flags JSON: {e}"),
-            }
+        let nav = nav.clone();
+        let toast = toast.clone();
+        let body = body.clone();
+        let services = services.clone();
+        let edits = edits.clone();
+        search.connect_search_changed(move |row| {
+            fill_flags_home(&ctx, &nav, &toast, &body, &services, &edits, &row.text());
         });
     }
-    let json_row = adw::ActionRow::new();
-    json_row.set_title(&ctx.t_or(
-        "remoteConfig.flagsWriteJson",
-        "Write JSON to the running engine",
-    ));
-    json_row.add_suffix(&json_apply);
-    json_group.add(&json_row);
-    json_page.add(&json_group);
-    let json_box = gtk::Box::new(gtk::Orientation::Vertical, 8);
-    json_box.set_margin_start(12);
-    json_box.set_margin_end(12);
-    json_box.append(&json_scroll);
-    let json_holder = adw::PreferencesGroup::new();
-    let holder_row = adw::ActionRow::new();
-    holder_row.set_title("Document");
-    holder_row.set_activatable(false);
-    json_holder.add(&holder_row);
-    json_page.add(&json_holder);
-    dialog.add(&json_page);
-    // Attach the editor below the last page content via a toast-less overlay:
-    // PreferencesDialog pages can't host arbitrary boxes easily, so present the
-    // JSON editor as the ActionRow child suffix expansion.
-    holder_row.set_child(Some(&json_box));
+    let scroll = gtk::ScrolledWindow::new();
+    scroll.set_vexpand(true);
+    scroll.set_policy(gtk::PolicyType::Never, gtk::PolicyType::Automatic);
+    scroll.set_child(Some(&home_box));
+    let toolbar = adw::ToolbarView::new();
+    toolbar.add_top_bar(&adw::HeaderBar::new());
+    toolbar.set_content(Some(&scroll));
+    nav.add(
+        &adw::NavigationPage::builder()
+            .tag("home")
+            .title(&ctx.t_or("modals.rcloneFlags.pageTitle.home", "Rclone Flags"))
+            .child(&toolbar)
+            .build(),
+    );
     dialog.present(Some(parent));
 }
 
@@ -2292,8 +3848,8 @@ pub fn action_order(
     let rebuild: Rc<RefCell<Box<dyn Fn()>>> = Rc::new(RefCell::new(Box::new(|| {})));
     let visible_l = ctx.t_or("common.show", "Visible");
     let hidden_l = ctx.t_or("common.hide", "Hidden");
-    let up_tip = ctx.t_or("modals.itemOrderVisibility.showItem", "Move up");
-    let down_tip = ctx.t_or("modals.itemOrderVisibility.hideItem", "Move down");
+    let up_tip = ctx.t_or("generalOverview.moveUp", "Move panel up");
+    let down_tip = ctx.t_or("generalOverview.moveDown", "Move panel down");
     let rebuild_fn = {
         let list = list.clone();
         let items = items.clone();
@@ -2370,6 +3926,40 @@ pub fn action_order(
                 row.add_suffix(&up);
                 row.add_suffix(&down);
                 row.add_suffix(&visible);
+                if item.visible {
+                    if max_visible.is_some() {
+                        let rank = snapshot.iter().take(idx + 1).filter(|i| i.visible).count();
+                        let badge = gtk::Label::new(Some(&rank.to_string()));
+                        badge.add_css_class("numeric");
+                        badge.add_css_class("dim-label");
+                        badge.set_width_chars(1);
+                        row.add_prefix(&badge);
+                    }
+                }
+                let handle = drag_handle_button(&ctx);
+                row.add_prefix(&handle);
+                {
+                    let items = items.clone();
+                    let rebuild = rebuild.clone();
+                    attach_id_drag_drop_on(
+                        &handle,
+                        &row,
+                        item.id.clone(),
+                        Rc::new(move |from, to| {
+                            let mut list = items.borrow_mut();
+                            let Some(from_idx) = list.iter().position(|item| item.id == from)
+                            else {
+                                return;
+                            };
+                            let Some(to_idx) = list.iter().position(|item| item.id == to) else {
+                                return;
+                            };
+                            crate::action_order::move_index(&mut list, from_idx, to_idx);
+                            drop(list);
+                            rebuild.borrow()();
+                        }),
+                    );
+                }
                 list.append(&row);
             }
         })
@@ -2446,6 +4036,27 @@ pub fn action_order(
     dialog.present(Some(parent));
 }
 
+pub fn backend_switch_button(ctx: &AppCtx) -> gtk::Button {
+    let name = ctx.backend_display_name();
+    let label = format!(
+        "{} · {name}",
+        ctx.t_or("overviewHeader.manageBackends", "Manage Backends")
+    );
+    let btn = gtk::Button::with_label(&label);
+    btn.set_tooltip_text(Some(&ctx.tf_or(
+        "overviewHeader.backendSwitchAria",
+        "Current mode: {title} - Click to switch backend",
+        &[("title", &name)],
+    )));
+    let ctx = ctx.clone();
+    btn.connect_clicked(move |btn| {
+        if let Some(win) = btn.root().and_downcast::<gtk::Window>() {
+            backends(&win, ctx.clone());
+        }
+    });
+    btn
+}
+
 pub fn backends(parent: &impl IsA<gtk::Widget>, ctx: AppCtx) {
     if try_spawn_standalone(&ctx, "backend", serde_json::json!({})) {
         return;
@@ -2453,7 +4064,7 @@ pub fn backends(parent: &impl IsA<gtk::Widget>, ctx: AppCtx) {
     let dialog = adw::Dialog::new();
     dialog.set_title(&ctx.t_or("titlebar.menu.backends", "Backends"));
     dialog.set_content_width(560);
-    dialog.set_content_height(520);
+    dialog.set_content_height(640);
     let list = gtk::ListBox::new();
     list.add_css_class("boxed-list");
     let ready = ctx.engine_ready();
@@ -2485,8 +4096,10 @@ pub fn backends(parent: &impl IsA<gtk::Widget>, ctx: AppCtx) {
     {
         let ctx = ctx.clone();
         let parent = parent.clone();
+        let dialog = dialog.clone();
         use_local.connect_clicked(move |_| {
             ctx.switch_backend("local");
+            dialog.close();
             backends(&parent, ctx.clone());
         });
     }
@@ -2631,8 +4244,10 @@ pub fn backends(parent: &impl IsA<gtk::Widget>, ctx: AppCtx) {
             let ctx = ctx.clone();
             let name = backend.name.clone();
             let parent = parent.clone();
+            let dialog = dialog.clone();
             use_btn.connect_clicked(move |_| {
                 ctx.switch_backend(&name);
+                dialog.close();
                 backends(&parent, ctx.clone());
             });
         }
@@ -2640,6 +4255,7 @@ pub fn backends(parent: &impl IsA<gtk::Widget>, ctx: AppCtx) {
             let ctx = ctx.clone();
             let name = backend.name.clone();
             let parent = parent.clone();
+            let dialog = dialog.clone();
             remove.connect_clicked(move |_| {
                 ctx.settings
                     .borrow_mut()
@@ -2650,6 +4266,7 @@ pub fn backends(parent: &impl IsA<gtk::Widget>, ctx: AppCtx) {
                     ctx.settings.borrow_mut().core.active_backend.clear();
                 }
                 ctx.persist();
+                dialog.close();
                 backends(&parent, ctx.clone());
             });
         }
@@ -2738,10 +4355,23 @@ pub fn backends(parent: &impl IsA<gtk::Widget>, ctx: AppCtx) {
             backend_editor(&parent, ctx.clone(), None);
         });
     }
+    let close = gtk::Button::with_label(&ctx.t_or("common.close", "Close"));
+    {
+        let dialog = dialog.clone();
+        close.connect_clicked(move |_| {
+            dialog.close();
+        });
+    }
+    let bar = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+    bar.append(&add);
+    bar.append(&close);
     let box_ = gtk::Box::new(gtk::Orientation::Vertical, 8);
     box_.set_margin_top(12);
     box_.append(&scrolled_list(&list));
-    box_.append(&add);
+    box_.append(&super::preferences::rclone_conf_security_group(
+        &ctx, parent,
+    ));
+    box_.append(&bar);
     dialog.set_child(Some(&box_));
     present_window_or_dialog(parent, &ctx, &dialog);
 }
@@ -2774,22 +4404,59 @@ fn rc_client_for_entry(entry: &crate::settings::BackendEntry) -> crate::rclone::
     )
 }
 
+fn backend_copy_sources(ctx: &AppCtx, existing: Option<&str>) -> (Vec<String>, Vec<String>) {
+    let mut labels = vec![ctx.t_or("modals.backend.copyOptions.fromZero", "Start from Zero")];
+    let mut ids = vec![String::new()];
+    labels.push(ctx.t_or("modals.backend.local", "Local rclone RC"));
+    ids.push("local".into());
+    for backend in ctx.settings.borrow().core.extra_backends.clone() {
+        if existing.is_some_and(|name| name == backend.name) {
+            continue;
+        }
+        labels.push(backend.name.clone());
+        ids.push(backend.name);
+    }
+    (labels, ids)
+}
+
+fn backend_editor_alert(parent: &impl IsA<gtk::Widget>, ctx: &AppCtx, title: &str, message: &str) {
+    let alert = adw::AlertDialog::new(Some(title), Some(message));
+    alert.add_response("ok", &ctx.t_or("common.ok", "OK"));
+    alert.present(Some(parent));
+}
+
 fn backend_editor(
     parent: &impl IsA<gtk::Widget>,
     ctx: AppCtx,
     existing: Option<crate::settings::BackendEntry>,
 ) {
     let dialog = adw::Dialog::new();
-    dialog.set_title(&ctx.t_or("modals.backend.addTitle", "Remote RC backend"));
-    dialog.set_content_width(480);
+    dialog.set_title(&ctx.t_or(
+        if existing.is_some() {
+            "modals.backend.editBackend"
+        } else {
+            "modals.backend.addBackend"
+        },
+        if existing.is_some() {
+            "Edit Backend"
+        } else {
+            "Add Backend"
+        },
+    ));
+    dialog.set_content_width(520);
+    dialog.set_content_height(640);
+    let editing_name = existing.as_ref().map(|entry| entry.name.clone());
     let name = adw::EntryRow::new();
     name.set_title(&ctx.t_or("modals.backend.name", "Name"));
+    name.set_sensitive(existing.is_none());
     let host = adw::EntryRow::new();
     host.set_title(&ctx.t_or("modals.backend.fields.host.label", "Host"));
     host.set_text("127.0.0.1");
     let port = adw::EntryRow::new();
     port.set_title(&ctx.t_or("modals.backend.fields.port.label", "Port"));
     port.set_text("5573");
+    let auth = adw::SwitchRow::new();
+    auth.set_title(&ctx.t_or("modals.backend.enableAuth", "Customize Authentication"));
     let user = adw::EntryRow::new();
     user.set_title(&ctx.t_or("modals.backend.fields.username.label", "Username"));
     let pass = adw::PasswordEntryRow::new();
@@ -2801,6 +4468,33 @@ fn backend_editor(
         "modals.backend.fields.configPassword.label",
         "Config password",
     ));
+    let stored = adw::ActionRow::new();
+    stored.set_title(&ctx.t_or(
+        "modals.backend.remoteSecurity.noPasswordStored",
+        "No Password Stored",
+    ));
+    stored.set_subtitle(&ctx.t_or(
+        "modals.backend.remoteSecurity.limitation",
+        "Note: Rclone does not support changing or verifying remote config passwords via API.",
+    ));
+    let refresh_stored = {
+        let stored = stored.clone();
+        let config_pass = config_pass.clone();
+        let ctx = ctx.clone();
+        Rc::new(move || {
+            if config_pass.text().is_empty() {
+                stored.set_title(&ctx.t_or(
+                    "modals.backend.remoteSecurity.noPasswordStored",
+                    "No Password Stored",
+                ));
+            } else {
+                stored.set_title(&ctx.t_or(
+                    "modals.backend.remoteSecurity.passwordStored",
+                    "Password Stored",
+                ));
+            }
+        }) as Rc<dyn Fn()>
+    };
     if let Some(entry) = &existing {
         name.set_text(&entry.name);
         host.set_text(&entry.host);
@@ -2809,36 +4503,39 @@ fn backend_editor(
         pass.set_text(&entry.pass);
         config_path.set_text(&entry.config_path);
         config_pass.set_text(&entry.config_password);
+        auth.set_active(!entry.user.is_empty() || !entry.pass.is_empty());
     }
-    let mut copy_labels = vec![
-        ctx.t_or("modals.backend.copyOptions.fromZero", "Don't copy remotes"),
-        ctx.t_or("modals.backend.local", "Local rclone RC"),
-    ];
-    let mut copy_ids = vec![String::new(), "local".to_string()];
-    for backend in ctx.settings.borrow().core.extra_backends.clone() {
-        if existing
-            .as_ref()
-            .map(|e| e.name == backend.name)
-            .unwrap_or(false)
-        {
-            continue;
-        }
-        copy_labels.push(backend.name.clone());
-        copy_ids.push(backend.name);
+    refresh_stored();
+    user.set_visible(auth.is_active());
+    pass.set_visible(auth.is_active());
+    {
+        let user = user.clone();
+        let pass = pass.clone();
+        auth.connect_active_notify(move |row| {
+            user.set_visible(row.is_active());
+            pass.set_visible(row.is_active());
+        });
     }
+    let (copy_labels, copy_ids) = backend_copy_sources(&ctx, editing_name.as_deref());
     let copy_refs: Vec<&str> = copy_labels.iter().map(|s| s.as_str()).collect();
-    let copy_from = gtk::DropDown::from_strings(&copy_refs);
-    copy_from.set_selected(0);
-    let copy_row = adw::ActionRow::new();
-    copy_row.set_title(&ctx.t_or(
+    let copy_options = gtk::DropDown::from_strings(&copy_refs);
+    copy_options.set_selected(0);
+    let copy_options_row = adw::ActionRow::new();
+    copy_options_row.set_title(&ctx.t_or(
+        "modals.backend.copyOptions.backendConfig",
+        "Copy Backend Settings",
+    ));
+    copy_options_row.add_suffix(&copy_options);
+    let copy_remotes = gtk::DropDown::from_strings(&copy_refs);
+    copy_remotes.set_selected(0);
+    let copy_remotes_row = adw::ActionRow::new();
+    copy_remotes_row.set_title(&ctx.t_or(
         "modals.backend.copyOptions.remotesConfig",
-        "Copy remotes from",
+        "Copy Remote Settings",
     ));
-    copy_row.set_subtitle(&ctx.t_or(
-        "modals.backend.copyOptions.description",
-        "Optional: clone remotes from another RC backend after saving",
-    ));
-    copy_row.add_suffix(&copy_from);
+    copy_remotes_row.add_suffix(&copy_remotes);
+    let copy_ids_options = copy_ids.clone();
+    let copy_ids_remotes = copy_ids;
     let test =
         gtk::Button::with_label(&ctx.t_or("modals.backend.testConnection", "Test connection"));
     let save = gtk::Button::with_label(&ctx.t_or("modals.backend.save", "Save"));
@@ -2850,14 +4547,23 @@ fn backend_editor(
         let port = port.clone();
         let user = user.clone();
         let pass = pass.clone();
+        let auth = auth.clone();
         test.connect_clicked(move |_| {
             let port_n = port.text().parse::<u16>().unwrap_or(5573);
             let entry = crate::settings::BackendEntry {
                 name: "test".into(),
                 host: host.text().to_string(),
                 port: port_n,
-                user: user.text().to_string(),
-                pass: pass.text().to_string(),
+                user: if auth.is_active() {
+                    user.text().to_string()
+                } else {
+                    String::new()
+                },
+                pass: if auth.is_active() {
+                    pass.text().to_string()
+                } else {
+                    String::new()
+                },
                 ..Default::default()
             };
             let client = rc_client_for_entry(&entry);
@@ -2872,12 +4578,12 @@ fn backend_editor(
             } else {
                 ctx.t_or("modals.backend.status.failed", "Connection failed")
             };
-            let alert = adw::AlertDialog::new(
-                Some(&ctx.t_or("modals.backend.testConnection", "Test connection")),
-                Some(&msg),
+            backend_editor_alert(
+                &dialog,
+                &ctx,
+                &ctx.t_or("modals.backend.testConnection", "Test connection"),
+                &msg,
             );
-            alert.add_response("ok", &ctx.t("common.ok"));
-            alert.present(Some(&dialog));
         });
     }
     {
@@ -2889,26 +4595,99 @@ fn backend_editor(
         let port = port.clone();
         let user = user.clone();
         let pass = pass.clone();
+        let auth = auth.clone();
         let config_path = config_path.clone();
         let config_pass = config_pass.clone();
-        let copy_from = copy_from.clone();
+        let copy_options = copy_options.clone();
+        let copy_remotes = copy_remotes.clone();
+        let editing_name = editing_name.clone();
         save.connect_clicked(move |_| {
-            let port_n = port.text().parse::<u16>().unwrap_or(5573);
+            let title = ctx.t_or("modals.backend.save", "Save");
+            let Some(port_n) = port.text().parse::<u16>().ok() else {
+                backend_editor_alert(&dialog, &ctx, &title, "1024 - 65535");
+                return;
+            };
+            if !crate::backend_options::valid_backend_port(port_n) {
+                backend_editor_alert(&dialog, &ctx, &title, "1024 - 65535");
+                return;
+            }
+            let name_text = name.text().trim().to_string();
+            let host_text = host.text().trim().to_string();
+            if !crate::backend_options::valid_backend_name(&name_text) {
+                backend_editor_alert(
+                    &dialog,
+                    &ctx,
+                    &title,
+                    &ctx.t_or("modals.backend.nameExists", "Name exists"),
+                );
+                return;
+            }
+            if host_text.is_empty() {
+                backend_editor_alert(
+                    &dialog,
+                    &ctx,
+                    &title,
+                    &ctx.t_or("modals.backend.fields.host.label", "Host"),
+                );
+                return;
+            }
+            let extras = ctx.settings.borrow().core.extra_backends.clone();
+            if crate::backend_options::backend_name_taken(
+                &extras,
+                &name_text,
+                editing_name.as_deref(),
+            ) {
+                backend_editor_alert(
+                    &dialog,
+                    &ctx,
+                    &title,
+                    &ctx.t_or("modals.backend.nameExists", "Name exists"),
+                );
+                return;
+            }
+            if crate::backend_options::backend_host_taken(
+                &extras,
+                &host_text,
+                port_n,
+                editing_name.as_deref(),
+            ) {
+                backend_editor_alert(
+                    &dialog,
+                    &ctx,
+                    &title,
+                    &ctx.t_or(
+                        "modals.backend.hostExists",
+                        "This host:port is already in use",
+                    ),
+                );
+                return;
+            }
             let entry = crate::settings::BackendEntry {
-                name: name.text().to_string(),
-                host: host.text().to_string(),
+                name: name_text,
+                host: host_text,
                 port: port_n,
-                user: user.text().to_string(),
-                pass: pass.text().to_string(),
+                user: if auth.is_active() {
+                    user.text().to_string()
+                } else {
+                    String::new()
+                },
+                pass: if auth.is_active() {
+                    pass.text().to_string()
+                } else {
+                    String::new()
+                },
                 config_path: config_path.text().to_string(),
                 config_password: config_pass.text().to_string(),
                 ..Default::default()
             };
-            if entry.name.is_empty() || entry.host.is_empty() {
-                return;
-            }
-            let source_idx = copy_from.selected() as usize;
-            let source_id = copy_ids.get(source_idx).cloned().unwrap_or_default();
+            let options_id = copy_ids_options
+                .get(copy_options.selected() as usize)
+                .cloned()
+                .unwrap_or_default();
+            let remotes_id = copy_ids_remotes
+                .get(copy_remotes.selected() as usize)
+                .cloned()
+                .unwrap_or_default();
             let mut settings = ctx.settings.borrow_mut();
             if let Some(idx) = settings
                 .core
@@ -2922,19 +4701,9 @@ fn backend_editor(
             }
             drop(settings);
             ctx.persist();
-            let options_from = if source_id.is_empty() {
-                ctx.backend_key()
-            } else {
-                source_id.clone()
-            };
-            if options_from != entry.name {
-                let dest_empty = crate::backend_options::load_for(&entry.name)
-                    .as_object()
-                    .is_none_or(|o| o.is_empty());
-                if dest_empty {
-                    if let Err(e) = crate::backend_options::copy_for(&options_from, &entry.name) {
-                        log::warn!("copy backend.json failed: {e}");
-                    }
+            if !options_id.is_empty() && options_id != entry.name {
+                if let Err(e) = crate::backend_options::copy_for(&options_id, &entry.name) {
+                    log::warn!("copy backend.json failed: {e}");
                 }
             }
             crate::rclone::apply_backend_rc_config(
@@ -2942,21 +4711,18 @@ fn backend_editor(
                 Some(entry.config_path.as_str()),
                 Some(entry.config_password.as_str()),
             );
-            if !source_id.is_empty() {
-                if let (Some(source), dest) =
-                    (rc_client_for(&ctx, &source_id), rc_client_for_entry(&entry))
-                {
+            if !remotes_id.is_empty() {
+                if let (Some(source), dest) = (
+                    rc_client_for(&ctx, &remotes_id),
+                    rc_client_for_entry(&entry),
+                ) {
                     if let Err(e) = dest.copy_remotes_from(&source) {
-                        let alert =
-                            adw::AlertDialog::new(
-                                Some(&ctx.t_or(
-                                    "modals.backend.copyOptions.remotesConfig",
-                                    "Copy remotes",
-                                )),
-                                Some(&e.to_string()),
-                            );
-                        alert.add_response("ok", &ctx.t_or("common.ok", "OK"));
-                        alert.present(Some(&parent));
+                        backend_editor_alert(
+                            &parent,
+                            &ctx,
+                            &ctx.t_or("modals.backend.copyOptions.remotesConfig", "Copy remotes"),
+                            &e.to_string(),
+                        );
                     }
                 }
             }
@@ -2964,20 +4730,73 @@ fn backend_editor(
             backends(&parent, ctx.clone());
         });
     }
-    let group = adw::PreferencesGroup::new();
-    group.add(&name);
-    group.add(&host);
-    group.add(&port);
-    group.add(&user);
-    group.add(&pass);
-    group.add(&config_path);
-    group.add(&config_pass);
-    group.add(&copy_row);
+    let remove_pass = gtk::Button::with_label(&ctx.t_or(
+        "modals.backend.remoteSecurity.removePassword",
+        "Remove Stored Password",
+    ));
+    {
+        let config_pass = config_pass.clone();
+        let refresh_stored = refresh_stored.clone();
+        let ctx = ctx.clone();
+        let editing_name = editing_name.clone();
+        remove_pass.connect_clicked(move |_| {
+            config_pass.set_text("");
+            if let Some(name) = &editing_name {
+                if let Some(entry) = ctx
+                    .settings
+                    .borrow_mut()
+                    .core
+                    .extra_backends
+                    .iter_mut()
+                    .find(|backend| backend.name == *name)
+                {
+                    entry.config_password.clear();
+                }
+                ctx.persist();
+            }
+            refresh_stored();
+        });
+    }
+    let connection = adw::PreferencesGroup::new();
+    connection.set_title(&ctx.t_or("modals.backend.connectionTab", "Connection"));
+    connection.add(&name);
+    connection.add(&host);
+    connection.add(&port);
+    connection.add(&auth);
+    connection.add(&user);
+    connection.add(&pass);
+    let security = adw::PreferencesGroup::new();
+    security.set_title(&ctx.t_or("modals.backend.securityTab", "Security"));
+    security.add(&config_path);
+    security.add(&config_pass);
+    stored.add_suffix(&remove_pass);
+    security.add(&stored);
+    if existing.is_none() {
+        connection.add(&copy_options_row);
+        connection.add(&copy_remotes_row);
+    }
+    let stack = adw::ViewStack::new();
+    stack.add_titled(
+        &connection,
+        Some("connection"),
+        &ctx.t_or("modals.backend.connectionTab", "Connection"),
+    );
+    stack.add_titled(
+        &security,
+        Some("security"),
+        &ctx.t_or("modals.backend.securityTab", "Security"),
+    );
+    let switcher = adw::ViewSwitcher::new();
+    switcher.set_stack(Some(&stack));
+    switcher.set_policy(adw::ViewSwitcherPolicy::Wide);
     let box_ = gtk::Box::new(gtk::Orientation::Vertical, 8);
-    box_.set_margin_top(12);
-    box_.append(&group);
+    box_.set_margin_top(8);
+    box_.append(&switcher);
+    box_.append(&stack);
     let buttons = gtk::Box::new(gtk::Orientation::Horizontal, 8);
     buttons.set_halign(gtk::Align::End);
+    buttons.set_margin_end(12);
+    buttons.set_margin_bottom(8);
     buttons.append(&test);
     buttons.append(&save);
     box_.append(&buttons);
@@ -3065,6 +4884,11 @@ pub fn alerts(parent: &impl IsA<gtk::Widget>, ctx: AppCtx) {
     let origin_refs: Vec<&str> = origin_labels.iter().map(|s| s.as_str()).collect();
     let rule_dd = gtk::DropDown::from_strings(&rule_refs);
     let origin_dd = gtk::DropDown::from_strings(&origin_refs);
+    let chips = gtk::Box::new(gtk::Orientation::Horizontal, 6);
+    chips.set_visible(false);
+    let ack = gtk::Button::with_label(&ctx.t_or("alerts.acknowledgeAll", "Acknowledge all"));
+    let clear = gtk::Button::with_label(&ctx.t_or("alerts.clearHistory", "Clear history"));
+    clear.add_css_class("destructive-action");
     let fill_cell: Rc<RefCell<Rc<dyn Fn()>>> = Rc::new(RefCell::new(Rc::new(|| {})));
     let fill: Rc<dyn Fn()> = {
         let history = history.clone();
@@ -3082,9 +4906,134 @@ pub fn alerts(parent: &impl IsA<gtk::Widget>, ctx: AppCtx) {
         let backend_labels = backend_labels.clone();
         let rule_labels = rule_labels.clone();
         let origin_labels = origin_labels.clone();
+        let ack_btn = ack.clone();
+        let clear_btn = clear.clone();
         let ctx = ctx.clone();
         let fill_cell = fill_cell.clone();
+        let chips = chips.clone();
+        let severity_critical = severity_critical.clone();
+        let severity_high = severity_high.clone();
+        let severity_average = severity_average.clone();
+        let severity_warning = severity_warning.clone();
+        let severity_info = severity_info.clone();
+        let all_kinds = all_kinds.clone();
+        let event_job = event_job.clone();
+        let event_serve = event_serve.clone();
+        let event_mount = event_mount.clone();
+        let event_engine = event_engine.clone();
+        let event_update = event_update.clone();
+        let event_automation = event_automation.clone();
+        let event_system = event_system.clone();
+        let ack_open = ack_open.clone();
+        let ack_done = ack_done.clone();
         Rc::new(move || {
+            while let Some(child) = chips.first_child() {
+                chips.remove(&child);
+            }
+            let mut chip_count = 0;
+            let push_chip = |dd: &gtk::DropDown, labels: &[String]| {
+                let idx = dd.selected() as usize;
+                if idx > 0 {
+                    if let Some(label) = labels.get(idx) {
+                        let chip = gtk::Button::with_label(&format!("{label} ×"));
+                        chip.add_css_class("pill");
+                        let dd = dd.clone();
+                        chip.connect_clicked(move |_| {
+                            dd.set_selected(0);
+                        });
+                        chips.append(&chip);
+                        return 1;
+                    }
+                }
+                0
+            };
+            chip_count += push_chip(&remote_dd, &remote_labels);
+            chip_count += push_chip(&profile_dd, &profile_labels);
+            chip_count += push_chip(&backend_dd, &backend_labels);
+            chip_count += push_chip(&rule_dd, &rule_labels);
+            chip_count += push_chip(&origin_dd, &origin_labels);
+            if severity.selected() > 0 {
+                chip_count += 1;
+                let chip = gtk::Button::with_label(&format!(
+                    "{} ×",
+                    match severity.selected() {
+                        1 => severity_critical.as_str(),
+                        2 => severity_high.as_str(),
+                        3 => severity_average.as_str(),
+                        4 => severity_warning.as_str(),
+                        _ => severity_info.as_str(),
+                    }
+                ));
+                chip.add_css_class("pill");
+                let severity = severity.clone();
+                chip.connect_clicked(move |_| {
+                    severity.set_selected(0);
+                });
+                chips.append(&chip);
+            }
+            if event_kind.selected() > 0 {
+                chip_count += 1;
+                let labels = [
+                    all_kinds.as_str(),
+                    event_job.as_str(),
+                    event_serve.as_str(),
+                    event_mount.as_str(),
+                    event_engine.as_str(),
+                    event_update.as_str(),
+                    event_automation.as_str(),
+                    event_system.as_str(),
+                ];
+                let label = labels
+                    .get(event_kind.selected() as usize)
+                    .copied()
+                    .unwrap_or("");
+                let chip = gtk::Button::with_label(&format!("{label} ×"));
+                chip.add_css_class("pill");
+                let event_kind = event_kind.clone();
+                chip.connect_clicked(move |_| {
+                    event_kind.set_selected(0);
+                });
+                chips.append(&chip);
+            }
+            if ack_state.selected() > 0 {
+                chip_count += 1;
+                let label = if ack_state.selected() == 1 {
+                    ack_open.as_str()
+                } else {
+                    ack_done.as_str()
+                };
+                let chip = gtk::Button::with_label(&format!("{label} ×"));
+                chip.add_css_class("pill");
+                let ack_state = ack_state.clone();
+                chip.connect_clicked(move |_| {
+                    ack_state.set_selected(0);
+                });
+                chips.append(&chip);
+            }
+            if chip_count > 1 {
+                let clear_all = gtk::Button::with_label(&ctx.t_or("common.reset", "Clear all"));
+                clear_all.add_css_class("flat");
+                let remote_dd = remote_dd.clone();
+                let profile_dd = profile_dd.clone();
+                let backend_dd = backend_dd.clone();
+                let rule_dd = rule_dd.clone();
+                let origin_dd = origin_dd.clone();
+                let severity = severity.clone();
+                let event_kind = event_kind.clone();
+                let ack_state = ack_state.clone();
+                clear_all.connect_clicked(move |_| {
+                    remote_dd.set_selected(0);
+                    profile_dd.set_selected(0);
+                    backend_dd.set_selected(0);
+                    rule_dd.set_selected(0);
+                    origin_dd.set_selected(0);
+                    severity.set_selected(0);
+                    event_kind.set_selected(0);
+                    ack_state.set_selected(0);
+                });
+                chips.append(&clear_all);
+            }
+            chips.set_visible(chip_count > 0);
             while let Some(child) = history.first_child() {
                 history.remove(&child);
             }
@@ -3095,9 +5044,15 @@ pub fn alerts(parent: &impl IsA<gtk::Widget>, ctx: AppCtx) {
                 .last_at
                 .map(|t| t.format("%Y-%m-%d %H:%M").to_string())
                 .unwrap_or_else(|| "—".into());
-            stats_row.set_subtitle(&format!(
-                "{} total · {} ack · {} open · {} delivered · last {last}",
-                stats.total, stats.acknowledged, stats.unacknowledged, stats.delivered
+            stats_row.set_subtitle(&ctx.tf(
+                "alerts.statsLine",
+                &[
+                    ("total", &stats.total.to_string()),
+                    ("ack", &stats.acknowledged.to_string()),
+                    ("open", &stats.unacknowledged.to_string()),
+                    ("delivered", &stats.delivered.to_string()),
+                    ("last", &last),
+                ],
             ));
             history.append(&stats_row);
             let sev = match severity.selected() {
@@ -3179,6 +5134,9 @@ pub fn alerts(parent: &impl IsA<gtk::Widget>, ctx: AppCtx) {
                 row.set_title(&ctx.t_or("alerts.noHistory", "No alert history"));
                 history.append(&row);
             }
+            let has_history = !ctx.store.borrow().alert_history.is_empty();
+            ack_btn.set_sensitive(has_history);
+            clear_btn.set_sensitive(has_history);
         })
     };
     *fill_cell.borrow_mut() = fill.clone();
@@ -3219,7 +5177,6 @@ pub fn alerts(parent: &impl IsA<gtk::Widget>, ctx: AppCtx) {
         let fill = fill.clone();
         origin_dd.connect_selected_notify(move |_| fill());
     }
-    let ack = gtk::Button::with_label(&ctx.t_or("alerts.acknowledgeAll", "Acknowledge all"));
     {
         let ctx = ctx.clone();
         let fill = fill.clone();
@@ -3229,15 +5186,33 @@ pub fn alerts(parent: &impl IsA<gtk::Widget>, ctx: AppCtx) {
             fill();
         });
     }
-    let clear = gtk::Button::with_label(&ctx.t_or("alerts.clearHistory", "Clear history"));
-    clear.add_css_class("destructive-action");
     {
         let ctx = ctx.clone();
         let fill = fill.clone();
+        let parent = parent.clone();
         clear.connect_clicked(move |_| {
-            ctx.store.borrow_mut().clear_alert_history();
-            ctx.persist();
-            fill();
+            let title = ctx.t_or("alerts.clearHistory", "Clear history");
+            let message = ctx.t_or(
+                "alerts.clearHistoryConfirm",
+                "Are you sure you want to clear all alert history? This action cannot be undone.",
+            );
+            let confirm_label = ctx.t("common.delete");
+            let ctx_ok = ctx.clone();
+            let fill = fill.clone();
+            confirm(
+                &parent,
+                &ctx,
+                &title,
+                &message,
+                "clear",
+                &confirm_label,
+                true,
+                move || {
+                    ctx_ok.store.borrow_mut().clear_alert_history();
+                    ctx_ok.persist();
+                    fill();
+                },
+            );
         });
     }
     let filters = gtk::Box::new(gtk::Orientation::Vertical, 8);
@@ -3255,6 +5230,7 @@ pub fn alerts(parent: &impl IsA<gtk::Widget>, ctx: AppCtx) {
     scope_row.append(&origin_dd);
     filters.append(&filter_row);
     filters.append(&scope_row);
+    filters.append(&chips);
     let buttons = gtk::Box::new(gtk::Orientation::Horizontal, 8);
     buttons.append(&ack);
     buttons.append(&clear);
@@ -3267,46 +5243,133 @@ pub fn alerts(parent: &impl IsA<gtk::Widget>, ctx: AppCtx) {
 
     let rules = gtk::ListBox::new();
     rules.add_css_class("boxed-list");
-    for rule in ctx.store.borrow().alert_rules.clone() {
-        let row = adw::ActionRow::new();
-        row.set_title(&rule.name);
-        row.set_subtitle(&format!(
-            "min {} · {} actions · {}",
-            rule.severity_min.as_str(),
-            rule.action_ids.len(),
-            if rule.enabled { "on" } else { "off" }
-        ));
-        let enabled = gtk::Switch::new();
-        enabled.set_valign(gtk::Align::Center);
-        enabled.set_active(rule.enabled);
-        {
-            let ctx = ctx.clone();
-            let id = rule.id.clone();
-            enabled.connect_active_notify(move |sw| {
-                if let Some(rule) = ctx
-                    .store
-                    .borrow_mut()
-                    .alert_rules
-                    .iter_mut()
-                    .find(|r| r.id == id)
-                {
-                    if rule.enabled != sw.is_active() {
-                        rule.enabled = sw.is_active();
-                    }
+    let rules_search = gtk::SearchEntry::new();
+    rules_search.set_placeholder_text(Some(&ctx.t_or("alerts.rules", "Search rules")));
+    let fill_rules_cell: Rc<RefCell<Rc<dyn Fn()>>> = Rc::new(RefCell::new(Rc::new(|| {})));
+    let fill_rules: Rc<dyn Fn()> = {
+        let rules = rules.clone();
+        let rules_search = rules_search.clone();
+        let ctx = ctx.clone();
+        let parent = parent.clone();
+        let fill_rules_cell = fill_rules_cell.clone();
+        Rc::new(move || {
+            while let Some(child) = rules.first_child() {
+                rules.remove(&child);
+            }
+            let query = rules_search.text().to_string();
+            let enabled_lbl = ctx.t_or("alerts.enabled", "Enabled");
+            let disabled_lbl = ctx.t_or("common.off", "Disabled");
+            let last_fired_lbl = ctx.t_or("alerts.lastFired", "Last Fired");
+            let mut shown = 0;
+            for rule in ctx.store.borrow().alert_rules.clone() {
+                if !crate::store::alert_rule_matches(&rule, &query) {
+                    continue;
                 }
-                ctx.persist();
-            });
-        }
-        row.add_suffix(&enabled);
-        {
-            let ctx = ctx.clone();
-            let parent = parent.clone();
-            let id = rule.id.clone();
-            row.connect_activated(move |_| {
-                alert_rule_editor(&parent, ctx.clone(), Some(id.clone()));
-            });
-        }
-        rules.append(&row);
+                let row = adw::ActionRow::new();
+                row.set_title(&rule.name);
+                row.set_activatable(true);
+                let state = if rule.enabled {
+                    enabled_lbl.as_str()
+                } else {
+                    disabled_lbl.as_str()
+                };
+                let mut subtitle = format!(
+                    "{} · {} {} · {state}",
+                    ctx.t_or(
+                        &format!("alerts.severityLevels.{}", rule.severity_min.as_str()),
+                        rule.severity_min.as_str(),
+                    ),
+                    rule.action_ids.len(),
+                    ctx.t_or("alerts.actions", "actions"),
+                );
+                if let Some(suffix) = crate::store::alert_rule_fire_suffix(
+                    rule.fire_count,
+                    rule.last_fired,
+                    &last_fired_lbl,
+                ) {
+                    subtitle.push_str(" · ");
+                    subtitle.push_str(&suffix);
+                }
+                row.set_subtitle(&subtitle);
+                let enabled = gtk::Switch::new();
+                enabled.set_valign(gtk::Align::Center);
+                enabled.set_active(rule.enabled);
+                enabled.set_tooltip_text(Some(&ctx.t_or("alerts.enabled", "Enabled")));
+                {
+                    let ctx = ctx.clone();
+                    let id = rule.id.clone();
+                    enabled.connect_active_notify(move |sw| {
+                        {
+                            if let Some(rule) = ctx
+                                .store
+                                .borrow_mut()
+                                .alert_rules
+                                .iter_mut()
+                                .find(|item| item.id == id)
+                            {
+                                if rule.enabled != sw.is_active() {
+                                    rule.enabled = sw.is_active();
+                                }
+                            }
+                        }
+                        ctx.persist();
+                    });
+                }
+                let delete = gtk::Button::from_icon_name("user-trash-symbolic");
+                delete.set_valign(gtk::Align::Center);
+                delete.set_tooltip_text(Some(&ctx.t_or("common.delete", "Delete")));
+                {
+                    let ctx = ctx.clone();
+                    let parent = parent.clone();
+                    let id = rule.id.clone();
+                    let fill_rules_cell = fill_rules_cell.clone();
+                    delete.connect_clicked(move |_| {
+                        confirm_alert_delete(
+                            &parent,
+                            &ctx,
+                            &ctx.t_or("common.delete", "Delete"),
+                            &ctx.t_or(
+                                "alerts.deleteRuleConfirm",
+                                "Are you sure you want to delete this alert rule?",
+                            ),
+                            {
+                                let ctx = ctx.clone();
+                                let id = id.clone();
+                                let fill_rules_cell = fill_rules_cell.clone();
+                                move || {
+                                    ctx.store.borrow_mut().remove_alert_rule(&id);
+                                    ctx.persist();
+                                    fill_rules_cell.borrow().clone()();
+                                }
+                            },
+                        );
+                    });
+                }
+                {
+                    let ctx = ctx.clone();
+                    let parent = parent.clone();
+                    let id = rule.id.clone();
+                    row.connect_activated(move |_| {
+                        alert_rule_editor(&parent, ctx.clone(), Some(id.clone()));
+                    });
+                }
+                row.add_suffix(&enabled);
+                row.add_suffix(&delete);
+                rules.append(&row);
+                shown += 1;
+            }
+            if shown == 0 {
+                let row = adw::ActionRow::new();
+                row.set_title(&ctx.t_or("alerts.noRules", "No alert rules"));
+                rules.append(&row);
+            }
+        })
+    };
+    *fill_rules_cell.borrow_mut() = fill_rules.clone();
+    fill_rules();
+    {
+        let fill_rules = fill_rules.clone();
+        rules_search.connect_search_changed(move |_| fill_rules());
     }
     let add_rule = gtk::Button::with_label(&ctx.t_or("alerts.addRule", "Add rule"));
     {
@@ -3317,6 +5380,7 @@ pub fn alerts(parent: &impl IsA<gtk::Widget>, ctx: AppCtx) {
         });
     }
     let rules_box = gtk::Box::new(gtk::Orientation::Vertical, 8);
+    rules_box.append(&rules_search);
     rules_box.append(&scrolled_list(&rules));
     rules_box.append(&add_rule);
     let rules_title = ctx.t_or("alerts.rules", "Rules");
@@ -3324,19 +5388,131 @@ pub fn alerts(parent: &impl IsA<gtk::Widget>, ctx: AppCtx) {
 
     let actions = gtk::ListBox::new();
     actions.add_css_class("boxed-list");
-    for action in ctx.store.borrow().alert_actions.clone() {
-        let row = adw::ActionRow::new();
-        row.set_title(&action.name);
-        row.set_subtitle(&action.kind);
-        {
-            let ctx = ctx.clone();
-            let parent = parent.clone();
-            let id = action.id.clone();
-            row.connect_activated(move |_| {
-                alert_action_editor(&parent, ctx.clone(), Some(id.clone()));
-            });
-        }
-        actions.append(&row);
+    let actions_search = gtk::SearchEntry::new();
+    actions_search.set_placeholder_text(Some(&ctx.t_or("alerts.actions", "Search actions")));
+    let fill_actions_cell: Rc<RefCell<Rc<dyn Fn()>>> = Rc::new(RefCell::new(Rc::new(|| {})));
+    let fill_actions: Rc<dyn Fn()> = {
+        let actions = actions.clone();
+        let actions_search = actions_search.clone();
+        let ctx = ctx.clone();
+        let parent = parent.clone();
+        let fill_actions_cell = fill_actions_cell.clone();
+        Rc::new(move || {
+            while let Some(child) = actions.first_child() {
+                actions.remove(&child);
+            }
+            let query = actions_search.text().to_string();
+            let enabled_lbl = ctx.t_or("alerts.enabled", "Enabled");
+            let disabled_lbl = ctx.t_or("common.off", "Disabled");
+            let mut shown = 0;
+            for action in ctx.store.borrow().alert_actions.clone() {
+                if !crate::store::alert_action_matches(&action, &query) {
+                    continue;
+                }
+                let row = adw::ActionRow::new();
+                row.set_title(&action.name);
+                row.set_activatable(true);
+                let kind_label = ctx.t_or(
+                    &format!("alerts.action.{}", action.kind),
+                    action.kind.as_str(),
+                );
+                let state = if action.enabled {
+                    enabled_lbl.as_str()
+                } else {
+                    disabled_lbl.as_str()
+                };
+                row.set_subtitle(&format!("{kind_label} · {state}"));
+                let enabled = gtk::Switch::new();
+                enabled.set_valign(gtk::Align::Center);
+                enabled.set_active(action.enabled);
+                enabled.set_tooltip_text(Some(&ctx.t_or("alerts.enabled", "Enabled")));
+                {
+                    let ctx = ctx.clone();
+                    let id = action.id.clone();
+                    enabled.connect_active_notify(move |sw| {
+                        {
+                            if let Some(action) = ctx
+                                .store
+                                .borrow_mut()
+                                .alert_actions
+                                .iter_mut()
+                                .find(|item| item.id == id)
+                            {
+                                if action.enabled != sw.is_active() {
+                                    action.enabled = sw.is_active();
+                                }
+                            }
+                        }
+                        ctx.persist();
+                    });
+                }
+                let test = gtk::Button::from_icon_name("media-playback-start-symbolic");
+                test.set_valign(gtk::Align::Center);
+                test.set_tooltip_text(Some(&ctx.t_or("alerts.testAction", "Test action")));
+                {
+                    let ctx = ctx.clone();
+                    let parent = parent.clone();
+                    let action = action.clone();
+                    test.connect_clicked(move |_| {
+                        test_alert_action(&parent, &ctx, &action);
+                    });
+                }
+                let delete = gtk::Button::from_icon_name("user-trash-symbolic");
+                delete.set_valign(gtk::Align::Center);
+                delete.set_tooltip_text(Some(&ctx.t_or("common.delete", "Delete")));
+                {
+                    let ctx = ctx.clone();
+                    let parent = parent.clone();
+                    let id = action.id.clone();
+                    let fill_actions_cell = fill_actions_cell.clone();
+                    delete.connect_clicked(move |_| {
+                        confirm_alert_delete(
+                            &parent,
+                            &ctx,
+                            &ctx.t_or("common.delete", "Delete"),
+                            &ctx.t_or(
+                                "alerts.deleteActionConfirm",
+                                "Are you sure you want to delete this action?",
+                            ),
+                            {
+                                let ctx = ctx.clone();
+                                let id = id.clone();
+                                let fill_actions_cell = fill_actions_cell.clone();
+                                move || {
+                                    ctx.store.borrow_mut().remove_alert_action(&id);
+                                    ctx.persist();
+                                    fill_actions_cell.borrow().clone()();
+                                }
+                            },
+                        );
+                    });
+                }
+                {
+                    let ctx = ctx.clone();
+                    let parent = parent.clone();
+                    let id = action.id.clone();
+                    row.connect_activated(move |_| {
+                        alert_action_editor(&parent, ctx.clone(), Some(id.clone()));
+                    });
+                }
+                row.add_suffix(&enabled);
+                row.add_suffix(&test);
+                row.add_suffix(&delete);
+                actions.append(&row);
+                shown += 1;
+            }
+            if shown == 0 {
+                let row = adw::ActionRow::new();
+                row.set_title(&ctx.t_or("alerts.noActions", "No alert actions"));
+                actions.append(&row);
+            }
+        })
+    };
+    *fill_actions_cell.borrow_mut() = fill_actions.clone();
+    fill_actions();
+    {
+        let fill_actions = fill_actions.clone();
+        actions_search.connect_search_changed(move |_| fill_actions());
     }
     let add_action = gtk::Button::with_label(&ctx.t_or("alerts.addAction", "Add action"));
     {
@@ -3347,6 +5523,7 @@ pub fn alerts(parent: &impl IsA<gtk::Widget>, ctx: AppCtx) {
         });
     }
     let actions_box = gtk::Box::new(gtk::Orientation::Vertical, 8);
+    actions_box.append(&actions_search);
     actions_box.append(&scrolled_list(&actions));
     actions_box.append(&add_action);
     let actions_title = ctx.t_or("alerts.actions", "Actions");
@@ -3359,13 +5536,51 @@ pub fn alerts(parent: &impl IsA<gtk::Widget>, ctx: AppCtx) {
     box_.append(&stack);
     dialog.set_child(Some(&box_));
     present_window_or_dialog(parent, &ctx, &dialog);
-    let _ = AlertSeverity::Info;
-    let _ = AlertEvent::new(
+}
+
+fn confirm_alert_delete(
+    parent: &impl IsA<gtk::Widget>,
+    ctx: &AppCtx,
+    title: &str,
+    body: &str,
+    on_ok: impl Fn() + 'static,
+) {
+    let dialog = adw::AlertDialog::new(Some(title), Some(body));
+    dialog.add_response("cancel", &ctx.t("common.cancel"));
+    dialog.add_response("delete", &ctx.t("common.delete"));
+    dialog.set_response_appearance("delete", adw::ResponseAppearance::Destructive);
+    dialog.connect_response(None, move |_, response| {
+        if response == "delete" {
+            on_ok();
+        }
+    });
+    dialog.present(Some(parent));
+}
+
+fn test_alert_action(parent: &impl IsA<gtk::Widget>, ctx: &AppCtx, action: &AlertAction) {
+    let mut event = AlertEvent::new(
         AlertEventKind::System,
         AlertSeverity::Info,
-        String::new(),
-        String::new(),
+        ctx.t_or("alerts.testAction", "Test action"),
+        format!("{} · {}", action.name, action.kind),
     );
+    event.remote = ctx
+        .selected_remote
+        .borrow()
+        .clone()
+        .unwrap_or_else(|| "local".into());
+    event.profile = "default".into();
+    event.origin = "test".into();
+    crate::store::dispatch_action(action, &event);
+    let toast = adw::AlertDialog::new(
+        Some(&ctx.t_or("alerts.testAction", "Test action")),
+        Some(&ctx.t_or(
+            "alerts.testActionSuccess",
+            "Alert action test completed successfully.",
+        )),
+    );
+    toast.add_response("ok", &ctx.t("common.ok"));
+    toast.present(Some(parent));
 }
 
 pub fn quick_add_remote(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, on_done: Rc<dyn Fn()>) {
@@ -3404,9 +5619,19 @@ pub fn remote_config_open(
             "remote": existing.clone().unwrap_or_default(),
             "initial": open.initial.clone().unwrap_or_default(),
             "profile": open.profile.clone().unwrap_or_default(),
-            "autoAdd": open.auto_add
+            "autoAdd": open.auto_add,
+            "cloneFrom": open.clone_from.clone().unwrap_or_default()
         }),
     ) {
+        return;
+    }
+    if let Some(source) = open
+        .clone_from
+        .as_deref()
+        .filter(|name| !name.is_empty())
+        .map(|s| s.to_string())
+    {
+        super::wizard::present_clone(parent, ctx, source, on_done);
         return;
     }
     if let Some(name) = existing {
@@ -3556,7 +5781,10 @@ pub fn start_operation(
         return;
     }
     let dialog = adw::Dialog::new();
-    dialog.set_title(&format!("{} — {remote}", op.api_label()));
+    dialog.set_title(&format!(
+        "{} — {remote}",
+        ctx.t_or(op.action_label_key(), op.api_label())
+    ));
     dialog.set_content_width(560);
     dialog.set_content_height(640);
 
@@ -3590,7 +5818,6 @@ pub fn start_operation(
     });
     src.set_text(&default_source(remote, &rclone));
     let src_kind = if op != OperationType::Copyurl {
-        attach_path_picker(&ctx, &src, crate::picker::FilePickerConfig::folders());
         Some(attach_path_kind(&ctx, &src, remote))
     } else {
         None
@@ -3602,7 +5829,11 @@ pub fn start_operation(
             let row = adw::EntryRow::new();
             row.set_title(&ctx.t_or("wizards.appOperation.addSource", "Additional source"));
             row.set_text(extra);
-            attach_path_picker(&ctx, &row, crate::picker::FilePickerConfig::folders());
+            attach_path_picker(
+                &ctx,
+                &row,
+                crate::picker::FilePickerConfig::folders().with_remote(remote),
+            );
             extra_sources.borrow_mut().push(row);
         }
     }
@@ -3631,22 +5862,27 @@ pub fn start_operation(
         }
     });
     let dst_kind = if op == OperationType::Mount {
-        attach_path_picker(&ctx, &dst, crate::picker::FilePickerConfig::local_folders());
+        attach_path_picker(
+            &ctx,
+            &dst,
+            crate::picker::FilePickerConfig::local_mount_folders(),
+        );
         None
     } else if op == OperationType::Serve {
         None
     } else {
-        attach_path_picker(&ctx, &dst, crate::picker::FilePickerConfig::folders());
+        attach_path_picker(
+            &ctx,
+            &dst,
+            crate::picker::FilePickerConfig::folders().with_remote(remote),
+        );
         Some(attach_path_kind(&ctx, &dst, remote))
     };
     let dest_status = gtk::Label::new(None);
     dest_status.add_css_class("dim-label");
     dest_status.set_xalign(0.0);
     dest_status.set_wrap(true);
-    dest_status.set_visible(matches!(
-        op,
-        OperationType::Mount | OperationType::Sync | OperationType::Copy | OperationType::Bisync
-    ));
+    dest_status.set_visible(crate::path_inspection::shows_dest_status(op));
     {
         let dest_status = dest_status.clone();
         let ctx = ctx.clone();
@@ -3727,41 +5963,33 @@ pub fn start_operation(
 
     let flags_group = adw::PreferencesGroup::new();
     flags_group.set_title(&ctx.t_or("remoteConfig.flags", "Operation flags"));
-    let flag_rows: Rc<RefCell<Vec<(String, adw::EntryRow, String)>>> =
+    let flag_rows: Rc<RefCell<Vec<super::flag_widget::FlagRow>>> =
         Rc::new(RefCell::new(Vec::new()));
     let live_blocks = operation_flag_blocks(&ctx);
     for flag in crate::flags::merged_flags_for(op, &live_blocks) {
         if op == OperationType::Serve && flag.field_name == "type" {
             continue;
         }
-        let row = flag_value_row(&flag, &rclone);
-        flags_group.add(&row);
+        let row = flag_value_row(&ctx, &flag, &rclone);
+        row.add_to(&flags_group);
         flag_rows
             .borrow_mut()
             .push((flag.field_name, row, flag.type_name));
     }
-    let serve_flag_rows: Rc<RefCell<Vec<(String, String, adw::EntryRow, String)>>> =
+    let serve_flag_rows: Rc<RefCell<Vec<super::flag_widget::ServeFlagRow>>> =
         Rc::new(RefCell::new(Vec::new()));
     if op == OperationType::Serve {
         if let Some(client) = ctx.client() {
-            if let Ok(info) = client.options_info() {
-                let blocks = crate::flags::parse_options_info(&info);
+            {
+                let blocks = client.option_flag_blocks();
                 for serve_type in serve_types.iter() {
                     for flag in crate::flags::collect_serve_flags(&blocks, serve_type) {
-                        let row = adw::EntryRow::new();
+                        let mut row = flag_value_row(&ctx, &flag, &rclone);
                         row.set_title(&format!("{serve_type} · {}", flag.name));
-                        if !flag.help.is_empty() {
-                            row.set_tooltip_text(Some(&flag.help));
-                        }
-                        let current = rclone
-                            .get(&flag.field_name)
-                            .map(|v| v.to_string().trim_matches('"').to_string())
-                            .unwrap_or_else(|| flag.default_str.clone());
-                        row.set_text(&current);
                         let selected =
                             crate::operations::selected_or(&serve_types, serve.selected(), "http");
                         row.set_visible(serve_type == selected);
-                        flags_group.add(&row);
+                        row.add_to(&flags_group);
                         serve_flag_rows.borrow_mut().push((
                             serve_type.clone(),
                             flag.field_name,
@@ -3803,6 +6031,7 @@ pub fn start_operation(
         let names = names.clone();
         let src = src.clone();
         let dst = dst.clone();
+        let extra_sources = extra_sources.clone();
         let remote = remote.to_string();
         profile_row.connect_selected_notify(move |row| {
             let Some(name) = names.get(row.selected() as usize) else {
@@ -3814,6 +6043,10 @@ pub fn start_operation(
             let rclone = flatten_rclone(&profile.rclone);
             src.set_text(&default_source(&remote, &rclone));
             dst.set_text(&default_dest(&remote, &rclone, op));
+            let extras = crate::jobs::path_list(&rclone, crate::jobs::SOURCE_KEYS);
+            for (idx, row) in extra_sources.borrow().iter().enumerate() {
+                row.set_text(extras.get(idx + 1).map(String::as_str).unwrap_or(""));
+            }
         });
     }
 
@@ -3840,6 +6073,8 @@ pub fn start_operation(
         let vfs_names = vfs_names.clone();
         let filter_names = filter_names.clone();
         let backend_names = backend_names.clone();
+        let profile_row = profile_row.clone();
+        let profile_names = names.clone();
         start.connect_clicked(move |_| {
             let Some(client) = ctx.client() else {
                 toast.add_toast(adw::Toast::new(&ctx.t_or(
@@ -3848,6 +6083,31 @@ pub fn start_operation(
                 )));
                 return;
             };
+            if let Some((_, field, msg)) = first_invalid_flag(
+                flag_rows
+                    .borrow()
+                    .iter()
+                    .map(|(field, row, type_name)| (field.clone(), row.clone(), type_name.clone())),
+            ) {
+                toast.add_toast(adw::Toast::new(&format!("{field}: {msg}")));
+                return;
+            }
+            let selected_serve =
+                crate::operations::selected_or(&serve_types, serve.selected(), "webdav");
+            if let Some((_, field, msg)) =
+                first_invalid_flag(serve_flag_rows.borrow().iter().filter_map(
+                    |(serve_type, field, row, type_name)| {
+                        (serve_type == selected_serve).then_some((
+                            field.clone(),
+                            row.clone(),
+                            type_name.clone(),
+                        ))
+                    },
+                ))
+            {
+                toast.add_toast(adw::Toast::new(&format!("{field}: {msg}")));
+                return;
+            }
             let mut rclone = serde_json::Map::new();
             if op == OperationType::Serve {
                 rclone.insert(
@@ -3884,8 +6144,6 @@ pub fn start_operation(
                     );
                 }
             }
-            let selected_serve =
-                crate::operations::selected_or(&serve_types, serve.selected(), "webdav");
             for (serve_type, field, row, type_name) in serve_flag_rows.borrow().iter() {
                 if serve_type != selected_serve {
                     continue;
@@ -3916,6 +6174,13 @@ pub fn start_operation(
             } else {
                 crate::path_kind::resolve_job_path(&dst.text(), &remote)
             };
+            if crate::path_inspection::mount_dest_is_invalid(op, &dest, &ctx.engine_os()) {
+                toast.add_toast(adw::Toast::new(&ctx.t_or(
+                    "wizards.appOperation.mountDestMustBeLocal",
+                    "Mount destination must be a local folder",
+                )));
+                return;
+            }
             let mut rclone = serde_json::Value::Object(rclone);
             if let Some(meta) = ctx.store.borrow().remotes.get(&remote) {
                 let mut profile = crate::store::ProfileConfig::default();
@@ -3924,10 +6189,19 @@ pub fn start_operation(
                 profile.app.backend_profile = helper_selected(&backend_row, &backend_names);
                 crate::jobs::apply_helper_options(&mut rclone, &profile, Some(meta));
             }
+            let src_path = sources.first().cloned().unwrap_or_default();
             let mut ids = Vec::new();
             let mut error = None;
             for source in sources {
-                match build_job_params(op, &remote, &source, &dest, &rclone) {
+                let is_dir = crate::jobs::source_is_directory(Some(&client), &source);
+                match crate::jobs::build_job_params_ex(
+                    op,
+                    &remote,
+                    &source,
+                    &dest,
+                    &rclone,
+                    Some(is_dir),
+                ) {
                     Ok(req) => match start_request(&client, &req) {
                         Ok(id) => ids.push(id),
                         Err(e) => {
@@ -3942,13 +6216,30 @@ pub fn start_operation(
                 }
             }
             if let Some(e) = error {
+                let translated = ctx.translate_error(&e);
                 let err = adw::AlertDialog::new(
                     Some(&ctx.t_or("remoteConfig.startFailed", "Start failed")),
-                    Some(&e),
+                    Some(&translated),
                 );
                 err.add_response("ok", &ctx.t_or("common.ok", "OK"));
                 err.present(Some(&dialog));
             } else {
+                let profile_name = profile_names
+                    .get(profile_row.selected() as usize)
+                    .cloned()
+                    .unwrap_or_else(|| "default".into());
+                let mut profile = crate::store::ProfileConfig::default();
+                profile.name = profile_name.clone();
+                ctx.record_started_job(
+                    &ids.join(", "),
+                    &remote,
+                    &profile,
+                    "dashboard",
+                    op.as_str(),
+                    &src_path,
+                    &dest,
+                    "",
+                );
                 ctx.store
                     .borrow_mut()
                     .push_log(&remote, format!("started {op} {}", ids.join(", ")));
@@ -3958,7 +6249,7 @@ pub fn start_operation(
                     &[
                         ("type", op.api_label()),
                         ("remote", &remote),
-                        ("profile", "start"),
+                        ("profile", profile_name.as_str()),
                     ],
                 )));
                 on_done();
@@ -3974,6 +6265,41 @@ pub fn start_operation(
         identity.add(kind);
     }
     identity.add(&src);
+    if crate::path_inspection::shows_source_status(op) {
+        let src_status = gtk::Label::new(None);
+        src_status.add_css_class("dim-label");
+        src_status.set_xalign(0.0);
+        src_status.set_wrap(true);
+        let ctx_s = ctx.clone();
+        let remote_s = remote.to_string();
+        let src_status_c = src_status.clone();
+        let refresh_src = move |path: &str| {
+            let resolved = crate::path_kind::resolve_job_path(path, &remote_s);
+            let local = crate::path_kind::is_truly_local_path(&resolved, &ctx_s.engine_os());
+            src_status_c.set_visible(local);
+            if !local {
+                return;
+            }
+            let status = crate::path_inspection::inspect_dest_ex(
+                &ctx_s.store.borrow(),
+                &resolved,
+                &remote_s,
+                op,
+                &ctx_s.snapshot.borrow().mounts,
+                ctx_s.client().as_ref(),
+                &ctx_s.engine_os(),
+            );
+            src_status_c.set_text(&path_status_label(&ctx_s, &status));
+        };
+        refresh_src(&src.text());
+        src.connect_changed(move |row| refresh_src(&row.text()));
+        identity.add(&{
+            let row = adw::ActionRow::new();
+            row.set_title(&ctx.t_or("remoteConfig.pathStatusTitle", "Path check"));
+            row.add_suffix(&src_status);
+            row
+        });
+    }
     for row in extra_sources.borrow().iter() {
         identity.add(row);
     }
@@ -3983,10 +6309,15 @@ pub fn start_operation(
             let extra_sources = extra_sources.clone();
             let identity = identity.clone();
             let ctx = ctx.clone();
+            let remote_name = remote.to_string();
             add_src.connect_clicked(move |_| {
                 let row = adw::EntryRow::new();
                 row.set_title(&ctx.t_or("wizards.appOperation.addSource", "Additional source"));
-                attach_path_picker(&ctx, &row, crate::picker::FilePickerConfig::folders());
+                attach_path_picker(
+                    &ctx,
+                    &row,
+                    crate::picker::FilePickerConfig::folders().with_remote(&remote_name),
+                );
                 identity.add(&row);
                 extra_sources.borrow_mut().push(row);
             });
@@ -3995,6 +6326,45 @@ pub fn start_operation(
         add_row.set_title(&ctx.t_or("remoteConfig.multipleSources", "Multiple sources"));
         add_row.add_suffix(&add_src);
         identity.add(&add_row);
+    }
+    if op != OperationType::Copyurl {
+        let extra_sources = extra_sources.clone();
+        let identity_for_pick = identity.clone();
+        let ctx_pick = ctx.clone();
+        let src_row = src.clone();
+        let remote_name = remote.to_string();
+        let mut cfg = crate::picker::FilePickerConfig::folders().with_remote(remote);
+        cfg.multi = op.supports_multi_source();
+        attach_path_picker_with(
+            &ctx,
+            &src,
+            cfg,
+            Some(Rc::new(move |extras| {
+                let title = ctx_pick.t_or("wizards.appOperation.addSource", "Additional source");
+                for path in extras {
+                    if path.is_empty() || src_row.text() == path.as_str() {
+                        continue;
+                    }
+                    if extra_sources
+                        .borrow()
+                        .iter()
+                        .any(|row| row.text() == path.as_str())
+                    {
+                        continue;
+                    }
+                    let row = adw::EntryRow::new();
+                    row.set_title(&title);
+                    row.set_text(&path);
+                    attach_path_picker(
+                        &ctx_pick,
+                        &row,
+                        crate::picker::FilePickerConfig::folders().with_remote(&remote_name),
+                    );
+                    identity_for_pick.add(&row);
+                    extra_sources.borrow_mut().push(row);
+                }
+            })),
+        );
     }
     if let Some(kind) = &dst_kind {
         identity.add(kind);
@@ -4025,6 +6395,115 @@ pub fn start_operation(
     dialog.present(Some(parent));
 }
 
+fn delete_remote_details(ctx: &AppCtx, plan: &crate::store::DeleteRemotePlan) -> gtk::Box {
+    let box_ = gtk::Box::new(gtk::Orientation::Vertical, 8);
+    box_.set_hexpand(true);
+    if plan.has_active_ops() {
+        let title = gtk::Label::new(Some(&ctx.t_or(
+            "home.deleteRemote.activeOperationsTitle",
+            "Active Operations Running",
+        )));
+        title.add_css_class("heading");
+        title.set_xalign(0.0);
+        box_.append(&title);
+        let desc = gtk::Label::new(Some(&ctx.t_or(
+            "home.deleteRemote.activeOperationsDesc",
+            "The following active operations are currently running on this remote and will be forcefully terminated:",
+        )));
+        desc.set_wrap(true);
+        desc.set_xalign(0.0);
+        desc.add_css_class("dim-label");
+        box_.append(&desc);
+        for point in &plan.mounts {
+            box_.append(&delete_detail_row(
+                "drive-harddisk-symbolic",
+                &ctx.t_or("home.deleteRemote.willUnmount", "Will Unmount"),
+                point,
+            ));
+        }
+        for serve in &plan.serves {
+            box_.append(&delete_detail_row(
+                "network-server-symbolic",
+                &ctx.t_or("home.deleteRemote.willStop", "Will Stop"),
+                serve,
+            ));
+        }
+        for job in &plan.jobs {
+            box_.append(&delete_detail_row(
+                "emblem-synchronizing-symbolic",
+                &ctx.t_or("home.deleteRemote.willCancel", "Will Cancel"),
+                &format!("#{job}"),
+            ));
+        }
+    }
+    if !plan.profiles.is_empty() {
+        let title = gtk::Label::new(Some(&ctx.tf_or(
+            "home.deleteRemote.savedProfilesTitle",
+            "Saved Profiles ({{count}})",
+            &[("count", &plan.profiles.len().to_string())],
+        )));
+        title.add_css_class("heading");
+        title.set_xalign(0.0);
+        box_.append(&title);
+        for profile in plan.profiles.iter().take(12) {
+            box_.append(&delete_detail_row(
+                "document-properties-symbolic",
+                profile,
+                "",
+            ));
+        }
+    }
+    if !plan.quick_runs.is_empty() {
+        let title = gtk::Label::new(Some(&ctx.tf_or(
+            "home.deleteRemote.quickRunsTitle",
+            "Associated Quick Runs ({{count}})",
+            &[("count", &plan.quick_runs.len().to_string())],
+        )));
+        title.add_css_class("heading");
+        title.set_xalign(0.0);
+        box_.append(&title);
+        for name in plan.quick_runs.iter().take(8) {
+            box_.append(&delete_detail_row(
+                "media-playback-start-symbolic",
+                name,
+                "",
+            ));
+        }
+    }
+    if !plan.automations.is_empty() {
+        let title = gtk::Label::new(Some(&ctx.tf_or(
+            "home.deleteRemote.automationsTitle",
+            "Scheduled Automations ({{count}})",
+            &[("count", &plan.automations.len().to_string())],
+        )));
+        title.add_css_class("heading");
+        title.set_xalign(0.0);
+        box_.append(&title);
+        for name in plan.automations.iter().take(8) {
+            box_.append(&delete_detail_row("x-office-calendar-symbolic", name, ""));
+        }
+    }
+    let scroll = gtk::ScrolledWindow::new();
+    scroll.set_min_content_height(120);
+    scroll.set_max_content_height(280);
+    scroll.set_child(Some(&box_));
+    let wrap = gtk::Box::new(gtk::Orientation::Vertical, 0);
+    wrap.append(&scroll);
+    wrap
+}
+
+fn delete_detail_row(icon: &str, title: &str, subtitle: &str) -> adw::ActionRow {
+    let row = adw::ActionRow::new();
+    row.set_title(title);
+    if !subtitle.is_empty() {
+        row.set_subtitle(subtitle);
+    }
+    let image = gtk::Image::from_icon_name(icon);
+    image.set_valign(gtk::Align::Center);
+    row.add_prefix(&image);
+    row
+}
+
 pub fn delete_remote(
     parent: &impl IsA<gtk::Widget>,
     ctx: AppCtx,
@@ -4037,8 +6516,13 @@ pub fn delete_remote(
     let plan = crate::store::plan_delete_remote(name, &ctx.store.borrow(), &ctx.snapshot.borrow());
     let dialog = adw::AlertDialog::new(
         Some(&ctx.t_or("home.deleteRemote.title", "Delete Remote")),
-        Some(&plan.summary()),
+        Some(&ctx.tf_or(
+            "home.deleteRemote.message",
+            "Are you sure you want to delete '{{name}}'? This action cannot be undone.",
+            &[("name", name)],
+        )),
     );
+    dialog.set_extra_child(Some(&delete_remote_details(&ctx, &plan)));
     dialog.add_response("cancel", &ctx.t("common.cancel"));
     dialog.add_response("delete", &ctx.t("common.delete"));
     dialog.set_response_appearance("delete", adw::ResponseAppearance::Destructive);
@@ -4066,6 +6550,7 @@ pub fn delete_remote(
     dialog.present(Some(parent));
 }
 
+#[allow(dead_code)]
 pub fn clone_remote(
     parent: &impl IsA<gtk::Widget>,
     ctx: AppCtx,
@@ -4126,8 +6611,8 @@ pub fn quick_run_editor(
     } else {
         ctx.t_or("flow.quickRun.editor.createTitle", "Create Quick Run")
     });
-    dialog.set_content_width(520);
-    dialog.set_content_height(640);
+    dialog.set_content_width(640);
+    dialog.set_content_height(720);
     let group = adw::PreferencesGroup::new();
     let name = adw::EntryRow::new();
     name.set_title(&ctx.t_or("flow.quickRun.editor.name", "Name"));
@@ -4135,6 +6620,7 @@ pub fn quick_run_editor(
     description.set_title(&ctx.t_or("flow.quickRun.editor.description", "Description"));
     let remote = adw::EntryRow::new();
     remote.set_title(&ctx.t_or("flow.quickRun.editor.remote", "Remote"));
+    attach_remote_chooser(&ctx, &remote);
     let src = adw::EntryRow::new();
     src.set_title(&ctx.t_or("fileBrowser.operations.details.source", "Source"));
     let extra_sources: Rc<RefCell<Vec<adw::EntryRow>>> = Rc::new(RefCell::new(Vec::new()));
@@ -4149,7 +6635,6 @@ pub fn quick_run_editor(
         "fileBrowser.operations.details.destination",
         "Destination / mount point",
     ));
-    attach_path_picker(&ctx, &dst, crate::picker::FilePickerConfig::folders());
     let cron = adw::EntryRow::new();
     cron.set_title(&ctx.t_or("flow.quickRun.editor.cron", "Cron expression"));
     let cron_hint = gtk::Label::new(None);
@@ -4179,8 +6664,39 @@ pub fn quick_run_editor(
     auto.set_title(&ctx.t_or("flow.quickRun.badges.autostart", "Auto start"));
     let watch = adw::SwitchRow::new();
     watch.set_title(&ctx.t_or("flow.quickRun.badges.watcher", "Watch enabled"));
+    watch.set_subtitle(&ctx.t_or(
+        "wizards.appOperation.watchDescription",
+        "Watch local source directories for file modifications and sync changes automatically.",
+    ));
     let watch_delay = adw::EntryRow::new();
     watch_delay.set_title(&ctx.t_or("wizards.appOperation.watchDelay", "Watch delay (seconds)"));
+    watch_delay.set_tooltip_text(Some(&ctx.t_or(
+        "wizards.appOperation.watchDelayHint",
+        "Seconds to wait after a change before starting the job.",
+    )));
+    let watch_zero = gtk::Label::new(None);
+    watch_zero.add_css_class("dim-label");
+    watch_zero.set_xalign(0.0);
+    watch_zero.set_wrap(true);
+    watch_zero.set_margin_start(12);
+    watch_zero.set_margin_end(12);
+    {
+        let ctx = ctx.clone();
+        let watch_zero = watch_zero.clone();
+        let refresh_watch_zero = move |text: &str| {
+            let zero = text.trim().is_empty() || text.trim() == "0";
+            watch_zero.set_text(&if zero {
+                ctx.t_or(
+                    "wizards.appOperation.watchZeroDelayWarning",
+                    "Instant mode (0s) triggers sync immediately on change. For large files or multiple edits, 3–5s is recommended so writes can finish.",
+                )
+            } else {
+                String::new()
+            });
+        };
+        refresh_watch_zero(&watch_delay.text());
+        watch_delay.connect_changed(move |row| refresh_watch_zero(&row.text()));
+    }
     let watch_changed = adw::SwitchRow::new();
     watch_changed.set_title(&ctx.t_or(
         "automation.monitoring.changedOnlyShort",
@@ -4188,10 +6704,11 @@ pub fn quick_run_editor(
     ));
     let tray = adw::SwitchRow::new();
     tray.set_title(&ctx.t_or("flow.quickRun.editor.showOnTray", "Show on tray"));
-    let runtime_json = adw::EntryRow::new();
-    runtime_json.set_title(&ctx.t_or(
-        "flow.quickRun.editor.runtimeRemoteJson",
-        "Runtime remote JSON",
+    let runtime_current = Rc::new(RefCell::new(
+        existing
+            .as_ref()
+            .and_then(|qr| qr.config.rclone.get("runtimeRemote").cloned())
+            .unwrap_or_else(|| serde_json::json!({})),
     ));
     if let Some(qr) = &existing {
         name.set_text(&qr.name);
@@ -4228,7 +6745,11 @@ pub fn quick_run_editor(
             let row = adw::EntryRow::new();
             row.set_title(&ctx.t_or("wizards.appOperation.addSource", "Additional source"));
             if !copyurl {
-                attach_path_picker(&ctx, &row, crate::picker::FilePickerConfig::folders());
+                attach_path_picker(
+                    &ctx,
+                    &row,
+                    crate::picker::FilePickerConfig::folders().with_remote(&remote.text()),
+                );
             }
             row.set_text(extra);
             extra_sources.borrow_mut().push(row);
@@ -4253,9 +6774,6 @@ pub fn quick_run_editor(
         }
         watch_changed.set_active(qr.config.app.watch_changed_only);
         tray.set_active(qr.show_on_tray);
-        if let Some(value) = qr.config.rclone.get("runtimeRemote") {
-            runtime_json.set_text(&value.to_string());
-        }
         if let Some(idx) = OperationType::ALL
             .iter()
             .position(|o| *o == qr.operation_type)
@@ -4355,9 +6873,6 @@ pub fn quick_run_editor(
         .as_ref()
         .map(|qr| qr.operation_type)
         .unwrap_or(OperationType::Sync);
-    if initial_op != OperationType::Copyurl {
-        attach_path_picker(&ctx, &src, crate::picker::FilePickerConfig::folders());
-    }
     apply_quick_run_path_titles(&ctx, initial_op, &src, &dst);
     url_filename.set_visible(initial_op == OperationType::Copyurl);
     let src_kind = attach_path_kind(&ctx, &src, &remote.text());
@@ -4376,6 +6891,93 @@ pub fn quick_run_editor(
                 .unwrap_or(OperationType::Sync)
         }) as Rc<dyn Fn() -> OperationType>
     };
+    attach_path_picker(
+        &ctx,
+        &dst,
+        crate::picker::FilePickerConfig::folders().with_remote(&remote.text()),
+    );
+    let dest_status = gtk::Label::new(None);
+    dest_status.add_css_class("dim-label");
+    dest_status.set_xalign(0.0);
+    dest_status.set_wrap(true);
+    dest_status.set_visible(crate::path_inspection::shows_dest_status(initial_op));
+    let dest_status_row = adw::ActionRow::new();
+    dest_status_row.set_title(&ctx.t_or("remoteConfig.pathStatusTitle", "Path check"));
+    dest_status_row.add_suffix(&dest_status);
+    dest_status_row.set_visible(crate::path_inspection::shows_dest_status(initial_op));
+    let refresh_dest_status = {
+        let dest_status = dest_status.clone();
+        let dest_status_row = dest_status_row.clone();
+        let dst = dst.clone();
+        let ctx = ctx.clone();
+        let remote = remote.clone();
+        let current_op = current_op.clone();
+        Rc::new(move || {
+            let op = current_op();
+            dest_status_row.set_visible(crate::path_inspection::shows_dest_status(op));
+            let remote_name = remote.text().to_string();
+            let resolved = crate::path_kind::resolve_job_path(&dst.text(), &remote_name);
+            let status = crate::path_inspection::inspect_dest_ex(
+                &ctx.store.borrow(),
+                &resolved,
+                &remote_name,
+                op,
+                &ctx.snapshot.borrow().mounts,
+                ctx.client().as_ref(),
+                &ctx.engine_os(),
+            );
+            dest_status.set_text(&path_status_label(&ctx, &status));
+        }) as Rc<dyn Fn()>
+    };
+    refresh_dest_status();
+    {
+        let refresh_dest_status = refresh_dest_status.clone();
+        dst.connect_changed(move |_| refresh_dest_status());
+    }
+    let src_status = gtk::Label::new(None);
+    src_status.add_css_class("dim-label");
+    src_status.set_xalign(0.0);
+    src_status.set_wrap(true);
+    let src_status_row = adw::ActionRow::new();
+    src_status_row.set_title(&ctx.t_or("remoteConfig.pathStatusTitle", "Path check"));
+    src_status_row.add_suffix(&src_status);
+    let refresh_src_status = {
+        let ctx = ctx.clone();
+        let remote = remote.clone();
+        let src = src.clone();
+        let src_status = src_status.clone();
+        let src_status_row = src_status_row.clone();
+        let current_op = current_op.clone();
+        Rc::new(move || {
+            let op = current_op();
+            if !crate::path_inspection::shows_source_status(op) {
+                src_status_row.set_visible(false);
+                return;
+            }
+            let remote_name = remote.text().to_string();
+            let resolved = crate::path_kind::resolve_job_path(&src.text(), &remote_name);
+            let local = crate::path_kind::is_truly_local_path(&resolved, &ctx.engine_os());
+            src_status_row.set_visible(local);
+            if !local {
+                return;
+            }
+            let status = crate::path_inspection::inspect_dest_ex(
+                &ctx.store.borrow(),
+                &resolved,
+                &remote_name,
+                op,
+                &ctx.snapshot.borrow().mounts,
+                ctx.client().as_ref(),
+                &ctx.engine_os(),
+            );
+            src_status.set_text(&path_status_label(&ctx, &status));
+        }) as Rc<dyn Fn()>
+    };
+    refresh_src_status();
+    {
+        let refresh_src_status = refresh_src_status.clone();
+        src.connect_changed(move |_| refresh_src_status());
+    }
     let (guidance, refresh_guidance) = attach_operation_guidance(
         &ctx,
         false,
@@ -4388,6 +6990,7 @@ pub fn quick_run_editor(
     group.add(&op_row);
     group.add(&src_kind);
     group.add(&src);
+    group.add(&src_status_row);
     group.add(&url_filename);
     for (idx, row) in extra_sources.borrow().iter().enumerate() {
         group.add(row);
@@ -4401,6 +7004,7 @@ pub fn quick_run_editor(
         let extra_filenames = extra_filenames.clone();
         let group = group.clone();
         let ctx = ctx.clone();
+        let remote = remote.clone();
         let refresh_guidance = refresh_guidance.clone();
         let current_op = current_op.clone();
         add_src.connect_clicked(move |_| {
@@ -4408,7 +7012,11 @@ pub fn quick_run_editor(
             let row = adw::EntryRow::new();
             row.set_title(&ctx.t_or("wizards.appOperation.addSource", "Additional source"));
             if op != OperationType::Copyurl {
-                attach_path_picker(&ctx, &row, crate::picker::FilePickerConfig::folders());
+                attach_path_picker(
+                    &ctx,
+                    &row,
+                    crate::picker::FilePickerConfig::folders().with_remote(&remote.text()),
+                );
             }
             {
                 let refresh_guidance = refresh_guidance.clone();
@@ -4429,14 +7037,78 @@ pub fn quick_run_editor(
     add_src_row.add_suffix(&add_src);
     add_src_row.set_visible(initial_op.supports_multi_source());
     group.add(&add_src_row);
+    if initial_op != OperationType::Copyurl {
+        let extra_sources = extra_sources.clone();
+        let extra_filenames = extra_filenames.clone();
+        let group_for_pick = group.clone();
+        let ctx_pick = ctx.clone();
+        let src_row = src.clone();
+        let remote = remote.clone();
+        let refresh_guidance = refresh_guidance.clone();
+        let current_op = current_op.clone();
+        let mut cfg = crate::picker::FilePickerConfig::folders().with_remote(&remote.text());
+        cfg.multi = initial_op.supports_multi_source();
+        attach_path_picker_with(
+            &ctx,
+            &src,
+            cfg,
+            Some(Rc::new(move |extras| {
+                let title = ctx_pick.t_or("wizards.appOperation.addSource", "Additional source");
+                let op = current_op();
+                for path in extras {
+                    if path.is_empty() || src_row.text() == path.as_str() {
+                        continue;
+                    }
+                    if extra_sources
+                        .borrow()
+                        .iter()
+                        .any(|row| row.text() == path.as_str())
+                    {
+                        continue;
+                    }
+                    let row = adw::EntryRow::new();
+                    row.set_title(&title);
+                    row.set_text(&path);
+                    if op != OperationType::Copyurl {
+                        attach_path_picker(
+                            &ctx_pick,
+                            &row,
+                            crate::picker::FilePickerConfig::folders().with_remote(&remote.text()),
+                        );
+                    }
+                    {
+                        let refresh_guidance = refresh_guidance.clone();
+                        row.connect_changed(move |_| refresh_guidance());
+                    }
+                    group_for_pick.add(&row);
+                    extra_sources.borrow_mut().push(row);
+                    if op == OperationType::Copyurl {
+                        let name = quick_run_filename_row(&ctx_pick, "");
+                        group_for_pick.add(&name);
+                        extra_filenames.borrow_mut().push(name);
+                    }
+                    refresh_guidance();
+                }
+            })),
+        );
+    }
     group.add(&dst_kind);
     group.add(&dst);
+    group.add(&dest_status_row);
     group.add(&cron);
     group.add(&cron_presets);
     group.add(&auto);
     group.add(&watch);
     group.add(&watch_delay);
+    group.add(&watch_zero);
     group.add(&watch_changed);
+    {
+        let show = initial_op.is_automatable() && ctx.is_local_backend();
+        watch.set_visible(show);
+        watch_delay.set_visible(show);
+        watch_zero.set_visible(show);
+        watch_changed.set_visible(show);
+    }
     group.add(&tray);
     vfs_profile.set_visible(initial_op.supports_vfs());
     group.add(&vfs_profile);
@@ -4467,9 +7139,9 @@ pub fn quick_run_editor(
     group.add(&resync);
     let flags_group = adw::PreferencesGroup::new();
     flags_group.set_title(&ctx.t_or("flow.quickRun.editor.flags", "Operation flags"));
-    let flag_rows: Rc<RefCell<Vec<(String, adw::EntryRow, String)>>> =
+    let flag_rows: Rc<RefCell<Vec<super::flag_widget::FlagRow>>> =
         Rc::new(RefCell::new(Vec::new()));
-    let serve_flag_rows: Rc<RefCell<Vec<(String, String, adw::EntryRow, String)>>> =
+    let serve_flag_rows: Rc<RefCell<Vec<super::flag_widget::ServeFlagRow>>> =
         Rc::new(RefCell::new(Vec::new()));
     let initial_rclone = existing
         .as_ref()
@@ -4477,6 +7149,7 @@ pub fn quick_run_editor(
         .unwrap_or(serde_json::json!({}));
     let live_blocks = operation_flag_blocks(&ctx);
     populate_flag_rows(
+        &ctx,
         &flags_group,
         &flag_rows,
         initial_op,
@@ -4511,6 +7184,7 @@ pub fn quick_run_editor(
     flags_group.add(&mount_type);
     if initial_op == OperationType::Serve {
         populate_serve_flag_rows(
+            &ctx,
             &flags_group,
             &serve_flag_rows,
             &live_blocks,
@@ -4558,6 +7232,13 @@ pub fn quick_run_editor(
         let ctx_titles = ctx.clone();
         let group = group.clone();
         let vfs_profile = vfs_profile.clone();
+        let watch = watch.clone();
+        let watch_delay = watch_delay.clone();
+        let watch_zero = watch_zero.clone();
+        let watch_changed = watch_changed.clone();
+        let dest_status_row = dest_status_row.clone();
+        let refresh_dest_status = refresh_dest_status.clone();
+        let refresh_src_status = refresh_src_status.clone();
         op_row.connect_selected_notify(move |row| {
             let op = OperationType::ALL
                 .get(row.selected() as usize)
@@ -4574,6 +7255,14 @@ pub fn quick_run_editor(
                 op,
                 OperationType::Mount | OperationType::Serve | OperationType::Delete
             ));
+            dest_status_row.set_visible(crate::path_inspection::shows_dest_status(op));
+            refresh_dest_status();
+            refresh_src_status();
+            let show_watch = op.is_automatable() && ctx_titles.is_local_backend();
+            watch.set_visible(show_watch);
+            watch_delay.set_visible(show_watch);
+            watch_zero.set_visible(show_watch);
+            watch_changed.set_visible(show_watch);
             if op == OperationType::Copyurl {
                 while extra_filenames.borrow().len() < extra_sources.borrow().len() {
                     let name = quick_run_filename_row(&ctx_titles, "");
@@ -4586,9 +7275,10 @@ pub fn quick_run_editor(
             }
             clear_flag_rows(&flags_group, &flag_rows);
             clear_serve_flag_rows(&flags_group, &serve_flag_rows);
-            populate_flag_rows(&flags_group, &flag_rows, op, &rclone, &blocks);
+            populate_flag_rows(&ctx_titles, &flags_group, &flag_rows, op, &rclone, &blocks);
             if op == OperationType::Serve {
                 populate_serve_flag_rows(
+                    &ctx_titles,
                     &flags_group,
                     &serve_flag_rows,
                     &blocks,
@@ -4601,11 +7291,11 @@ pub fn quick_run_editor(
             refresh_guidance();
         });
     }
-    let vfs_flag_rows: Rc<RefCell<Vec<(String, adw::EntryRow, String)>>> =
+    let vfs_flag_rows: Rc<RefCell<Vec<super::flag_widget::FlagRow>>> =
         Rc::new(RefCell::new(Vec::new()));
-    let filter_flag_rows: Rc<RefCell<Vec<(String, adw::EntryRow, String)>>> =
+    let filter_flag_rows: Rc<RefCell<Vec<super::flag_widget::FlagRow>>> =
         Rc::new(RefCell::new(Vec::new()));
-    let backend_flag_rows: Rc<RefCell<Vec<(String, adw::EntryRow, String)>>> =
+    let backend_flag_rows: Rc<RefCell<Vec<super::flag_widget::FlagRow>>> =
         Rc::new(RefCell::new(Vec::new()));
     let vfs_flags = adw::PreferencesGroup::new();
     vfs_flags.set_title(&ctx.t_or("flow.quickRun.editor.tabVfs", "VFS"));
@@ -4613,11 +7303,118 @@ pub fn quick_run_editor(
     filter_flags.set_title(&ctx.t_or("flow.quickRun.editor.tabFilter", "Filter"));
     let backend_flags = adw::PreferencesGroup::new();
     backend_flags.set_title(&ctx.t_or("flow.quickRun.editor.tabBackend", "Backend"));
+    let runtime_flag_rows: Rc<RefCell<Vec<super::flag_widget::FlagRow>>> =
+        Rc::new(RefCell::new(Vec::new()));
     let runtime_flags = adw::PreferencesGroup::new();
     runtime_flags.set_title(&ctx.t_or("flow.quickRun.editor.tabRuntimeRemote", "Runtime Remote"));
-    runtime_flags.add(&runtime_json);
+    runtime_flags.set_description(Some(&ctx.t_or(
+        "wizards.remoteConfig.runtimeRemoteWarning.description",
+        "These settings dynamically override connection properties at runtime. They are not stored in rclone.conf.",
+    )));
+    let runtime_json_toggle = adw::SwitchRow::new();
+    runtime_json_toggle.set_title(&ctx.t_or("remoteConfig.jsonMode", "JSON mode"));
+    runtime_json_toggle.set_active(ctx.settings.borrow().runtime.show_json_mode);
+    runtime_flags.add(&runtime_json_toggle);
+    let runtime_empty = adw::ActionRow::new();
+    runtime_empty.set_title(&ctx.t_or(
+        "wizards.presets.noRemoteSelected",
+        "Please select a remote first",
+    ));
+    runtime_flags.add(&runtime_empty);
+    let runtime_editor = super::json_editor::JsonEditor::new(&ctx);
+    runtime_editor.set_restrict(ctx.settings.borrow().general.restrict);
+    runtime_editor
+        .root
+        .set_visible(runtime_json_toggle.is_active());
+    let runtime_json_row = adw::ActionRow::new();
+    runtime_json_row.set_title(&ctx.t_or("remoteConfig.jsonPayload", "JSON"));
+    runtime_json_row.set_activatable(false);
+    runtime_json_row.set_child(Some(&runtime_editor.root));
+    runtime_json_row.set_visible(runtime_json_toggle.is_active());
+    runtime_flags.add(&runtime_json_row);
+    let fill_runtime_rows = {
+        let ctx = ctx.clone();
+        let runtime_flags = runtime_flags.clone();
+        let runtime_flag_rows = runtime_flag_rows.clone();
+        let runtime_current = runtime_current.clone();
+        let runtime_editor = runtime_editor.clone();
+        let runtime_empty = runtime_empty.clone();
+        let runtime_json_toggle = runtime_json_toggle.clone();
+        let runtime_json_row = runtime_json_row.clone();
+        let remote = remote.clone();
+        Rc::new(move || {
+            let name = remote.text().to_string();
+            let current = runtime_current.borrow().clone();
+            populate_qr_runtime_rows(&ctx, &runtime_flags, &runtime_flag_rows, &name, &current);
+            if runtime_json_row
+                .parent()
+                .is_some_and(|parent| parent == runtime_flags)
+            {
+                runtime_flags.remove(&runtime_json_row);
+            }
+            runtime_flags.add(&runtime_json_row);
+            let remote_type = remote_type_of(ctx.clone(), &name);
+            let flags = super::remote_config::runtime_flags_for_type(&ctx, &remote_type);
+            runtime_editor.set_fields(
+                flags
+                    .iter()
+                    .filter(|flag| flag.field_name != "type" && flag.name != "type")
+                    .map(crate::json_editor::JsonFieldDef::from_flag)
+                    .collect(),
+            );
+            runtime_editor.set_value(&current);
+            let json_on = runtime_json_toggle.is_active();
+            for (_, row, _) in runtime_flag_rows.borrow().iter() {
+                row.set_visible(!json_on);
+            }
+            runtime_json_row.set_visible(json_on);
+            let empty = name.trim().is_empty() || runtime_flag_rows.borrow().is_empty();
+            runtime_empty.set_visible(empty && !json_on);
+        }) as Rc<dyn Fn()>
+    };
+    fill_runtime_rows();
+    {
+        let runtime_json_row = runtime_json_row.clone();
+        let runtime_editor = runtime_editor.clone();
+        let runtime_empty = runtime_empty.clone();
+        let runtime_flag_rows = runtime_flag_rows.clone();
+        runtime_json_toggle.connect_active_notify(move |row| {
+            let on = row.is_active();
+            runtime_json_row.set_visible(on);
+            runtime_editor.root.set_visible(on);
+            for (_, widget, _) in runtime_flag_rows.borrow().iter() {
+                widget.set_visible(!on);
+            }
+            runtime_empty.set_visible(!on && runtime_flag_rows.borrow().is_empty());
+            if on {
+                runtime_editor.set_value(&serde_json::Value::Object(collect_flag_object(
+                    &runtime_flag_rows.borrow(),
+                )));
+            }
+        });
+    }
+    {
+        let fill_runtime_rows = fill_runtime_rows.clone();
+        let runtime_current = runtime_current.clone();
+        let runtime_flag_rows = runtime_flag_rows.clone();
+        let runtime_editor = runtime_editor.clone();
+        let runtime_json_toggle = runtime_json_toggle.clone();
+        remote.connect_changed(move |_| {
+            let next = if runtime_json_toggle.is_active() {
+                runtime_editor
+                    .parsed()
+                    .map(serde_json::Value::Object)
+                    .unwrap_or_else(|_| runtime_current.borrow().clone())
+            } else {
+                serde_json::Value::Object(collect_flag_object(&runtime_flag_rows.borrow()))
+            };
+            *runtime_current.borrow_mut() = next;
+            fill_runtime_rows();
+        });
+    }
     let flag_stack = adw::ViewStack::new();
     flag_stack.set_vhomogeneous(false);
+    flag_stack.set_vexpand(true);
     flag_stack.add_titled(
         &flags_group,
         Some("operation"),
@@ -4764,7 +7561,9 @@ pub fn quick_run_editor(
         let vfs_flag_rows = vfs_flag_rows.clone();
         let filter_flag_rows = filter_flag_rows.clone();
         let backend_flag_rows = backend_flag_rows.clone();
-        let runtime_json = runtime_json.clone();
+        let runtime_flag_rows = runtime_flag_rows.clone();
+        let runtime_editor = runtime_editor.clone();
+        let runtime_json_toggle = runtime_json_toggle.clone();
         let flag_rows = flag_rows.clone();
         let serve_flag_rows = serve_flag_rows.clone();
         let serve = serve.clone();
@@ -4779,6 +7578,10 @@ pub fn quick_run_editor(
         let extra_sources = extra_sources.clone();
         let extra_filenames = extra_filenames.clone();
         let url_filename = url_filename.clone();
+        let remote = remote.clone();
+        let op_row = op_row.clone();
+        let src = src.clone();
+        let dst = dst.clone();
         save.connect_clicked(move |_| {
             let expr = cron.text().to_string();
             if !expr.is_empty() {
@@ -4812,9 +7615,20 @@ pub fn quick_run_editor(
             qr.name = name.text().to_string();
             qr.description = description.text().to_string();
             qr.remote_name = remote.text().to_string();
+            if qr.remote_name.trim().is_empty() && !ctx.store.borrow().remote_names().is_empty() {
+                toast_near(
+                    &remote,
+                    &ctx.t_or(
+                        "flow.quickRun.editor.selectRemoteFirst",
+                        "Select a remote first",
+                    ),
+                );
+                return;
+            }
             qr.operation_type = op;
             qr.config.app.auto_start = auto.is_active();
-            qr.config.app.watch_enabled = watch.is_active();
+            qr.config.app.watch_enabled =
+                watch.is_active() && op.is_automatable() && ctx.is_local_backend();
             qr.config.app.watch_delay = watch_delay.text().parse().unwrap_or(0);
             qr.config.app.watch_changed_only = watch_changed.is_active();
             qr.config.app.cron_enabled = !expr.is_empty();
@@ -4825,27 +7639,74 @@ pub fn quick_run_editor(
                 helper_selected(&backend_profile, &backend_names.borrow());
             qr.config.app.runtime_remote_profile =
                 helper_selected(&runtime_profile, &runtime_names.borrow());
-            save_helper_from_rows(
+            if let Some((_, field, msg)) = first_invalid_flag(
+                flag_rows
+                    .borrow()
+                    .iter()
+                    .map(|(field, row, type_name)| (field.clone(), row.clone(), type_name.clone())),
+            ) {
+                let err = adw::AlertDialog::new(
+                    Some(&ctx.t_or("remoteConfig.flags", "Flags")),
+                    Some(&format!("{field}: {msg}")),
+                );
+                err.add_response("ok", &ctx.t_or("common.ok", "OK"));
+                err.present(Some(&dialog));
+                return;
+            }
+            let selected_serve =
+                crate::operations::selected_or(&serve_types, serve.selected(), "http");
+            if let Some((_, field, msg)) =
+                first_invalid_flag(serve_flag_rows.borrow().iter().filter_map(
+                    |(serve_type, field, row, type_name)| {
+                        (serve_type == selected_serve).then_some((
+                            field.clone(),
+                            row.clone(),
+                            type_name.clone(),
+                        ))
+                    },
+                ))
+            {
+                let err = adw::AlertDialog::new(
+                    Some(&ctx.t_or("remoteConfig.flags", "Flags")),
+                    Some(&format!("{field}: {msg}")),
+                );
+                err.add_response("ok", &ctx.t_or("common.ok", "OK"));
+                err.present(Some(&dialog));
+                return;
+            }
+            if let Err(msg) = save_helper_from_rows(
                 &ctx,
                 &remote.text(),
                 "vfs",
                 &qr.config.app.vfs_profile,
                 &vfs_flag_rows.borrow(),
-            );
-            save_helper_from_rows(
-                &ctx,
-                &remote.text(),
-                "filter",
-                &qr.config.app.filter_profile,
-                &filter_flag_rows.borrow(),
-            );
-            save_helper_from_rows(
-                &ctx,
-                &remote.text(),
-                "backend",
-                &qr.config.app.backend_profile,
-                &backend_flag_rows.borrow(),
-            );
+            )
+            .and_then(|_| {
+                save_helper_from_rows(
+                    &ctx,
+                    &remote.text(),
+                    "filter",
+                    &qr.config.app.filter_profile,
+                    &filter_flag_rows.borrow(),
+                )
+            })
+            .and_then(|_| {
+                save_helper_from_rows(
+                    &ctx,
+                    &remote.text(),
+                    "backend",
+                    &qr.config.app.backend_profile,
+                    &backend_flag_rows.borrow(),
+                )
+            }) {
+                let err = adw::AlertDialog::new(
+                    Some(&ctx.t_or("remoteConfig.flags", "Flags")),
+                    Some(&msg),
+                );
+                err.add_response("ok", &ctx.t_or("common.ok", "OK"));
+                err.present(Some(&dialog));
+                return;
+            }
             qr.show_on_tray = tray.is_active();
             let mut sources = vec![src.text().to_string()];
             for row in extra_sources.borrow().iter() {
@@ -4889,11 +7750,41 @@ pub fn quick_run_editor(
                     )),
                 );
             }
-            let inline = runtime_json.text().to_string();
-            if !inline.trim().is_empty() {
-                if let Ok(value) = serde_json::from_str::<serde_json::Value>(inline.trim()) {
-                    flags.insert("runtimeRemote".into(), value);
+            let runtime_value = if runtime_json_toggle.is_active() {
+                match runtime_editor.parsed() {
+                    Ok(map) => serde_json::Value::Object(map),
+                    Err(msg) => {
+                        let err =
+                            adw::AlertDialog::new(
+                                Some(&ctx.t_or(
+                                    "flow.quickRun.editor.tabRuntimeRemote",
+                                    "Runtime Remote",
+                                )),
+                                Some(&msg),
+                            );
+                        err.add_response("ok", &ctx.t_or("common.ok", "OK"));
+                        err.present(Some(&dialog));
+                        return;
+                    }
                 }
+            } else {
+                if let Some((_, field, msg)) =
+                    first_invalid_flag(runtime_flag_rows.borrow().iter().map(
+                        |(field, row, type_name)| (field.clone(), row.clone(), type_name.clone()),
+                    ))
+                {
+                    let err = adw::AlertDialog::new(
+                        Some(&ctx.t_or("flow.quickRun.editor.tabRuntimeRemote", "Runtime Remote")),
+                        Some(&format!("{field}: {msg}")),
+                    );
+                    err.add_response("ok", &ctx.t_or("common.ok", "OK"));
+                    err.present(Some(&dialog));
+                    return;
+                }
+                serde_json::Value::Object(collect_flag_object(&runtime_flag_rows.borrow()))
+            };
+            if runtime_value.as_object().is_some_and(|map| !map.is_empty()) {
+                flags.insert("runtimeRemote".into(), runtime_value);
             }
             for (field, row, type_name) in flag_rows.borrow().iter() {
                 let text = row.text().to_string();
@@ -4905,8 +7796,6 @@ pub fn quick_run_editor(
                     crate::flags::parse_flag_value(type_name, &text),
                 );
             }
-            let selected_serve =
-                crate::operations::selected_or(&serve_types, serve.selected(), "http");
             for (serve_type, field, row, type_name) in serve_flag_rows.borrow().iter() {
                 if serve_type != selected_serve {
                     continue;
@@ -4934,6 +7823,16 @@ pub fn quick_run_editor(
             } else {
                 crate::path_kind::resolve_job_path(&dst.text(), &remote_name)
             };
+            if crate::path_inspection::mount_dest_is_invalid(op, &dest, &ctx.engine_os()) {
+                toast_near(
+                    &dst,
+                    &ctx.t_or(
+                        "wizards.appOperation.mountDestMustBeLocal",
+                        "Mount destination must be a local folder",
+                    ),
+                );
+                return;
+            }
             qr.config.rclone = assemble_rclone(op, &sources, &dest, flags);
             {
                 let mut store = ctx.store.borrow_mut();
@@ -4951,6 +7850,22 @@ pub fn quick_run_editor(
     let box_ = gtk::Box::new(gtk::Orientation::Vertical, 12);
     box_.set_margin_top(12);
     box_.set_margin_bottom(12);
+    box_.append(&quick_run_preset_bar(
+        &dialog,
+        ctx.clone(),
+        remote.clone(),
+        op_row.clone(),
+        src.clone(),
+        dst.clone(),
+        flag_rows.clone(),
+        vfs_flag_rows.clone(),
+        filter_flag_rows.clone(),
+        backend_flag_rows.clone(),
+        runtime_flag_rows.clone(),
+        runtime_editor.clone(),
+        runtime_json_toggle.clone(),
+        runtime_current.clone(),
+    ));
     box_.append(&group);
     box_.append(&guidance);
     box_.append(&cron_hint);
@@ -5018,17 +7933,44 @@ pub fn export_backup(
     }
     let note = adw::EntryRow::new();
     note.set_title(&ctx.t_or("modals.export.noteLabel", "Note"));
+    let encrypt = adw::SwitchRow::new();
+    encrypt.set_title(&ctx.t_or("modals.export.encryptBackup", "Encrypt backup"));
+    encrypt.set_subtitle(&ctx.t_or(
+        "modals.export.passwordLabel",
+        "Zip password (optional, 4+ chars)",
+    ));
     let password = adw::PasswordEntryRow::new();
     password.set_title(&ctx.t_or(
         "modals.export.passwordLabel",
         "Zip password (optional, 4+ chars)",
     ));
+    password.set_visible(false);
     let secrets = adw::SwitchRow::new();
     secrets.set_title(&ctx.t_or(
         "modals.export.includeSecrets",
         "Include secrets in rclone dump",
     ));
-    secrets.set_active(true);
+    secrets.set_active(false);
+    secrets.set_visible(false);
+    {
+        let password = password.clone();
+        let secrets = secrets.clone();
+        encrypt.connect_active_notify(move |row| {
+            let on = row.is_active();
+            password.set_visible(on);
+            secrets.set_visible(on);
+            if !on {
+                password.set_text("");
+                secrets.set_active(false);
+            }
+        });
+    }
+    let format_row = adw::ComboRow::new();
+    format_row.set_title(&ctx.t_or("modals.export.format", "Format"));
+    format_row.set_model(Some(&gtk::StringList::new(&[
+        &ctx.t_or("modals.export.formatZip", "Zip backup"),
+        &ctx.t_or("modals.export.formatConf", "rclone.conf"),
+    ])));
     let extra_backends = ctx.settings.borrow().core.extra_backends.clone();
     let mut backend_labels = vec!["local".to_string()];
     backend_labels.extend(
@@ -5044,6 +7986,61 @@ pub fn export_backup(
         "Dump remotes from this RC instance",
     ));
     backend_row.set_model(Some(&gtk::StringList::new(&backend_refs)));
+    let selected_profiles: Rc<RefCell<HashSet<String>>> =
+        Rc::new(RefCell::new(remotes.iter().cloned().collect()));
+    let profiles_group = adw::PreferencesGroup::new();
+    profiles_group.set_title(&ctx.t_or(
+        "modals.export.categories.remotes.label",
+        "Remotes to include",
+    ));
+    profiles_group.set_description(Some(&ctx.t_or(
+        "modals.export.profilesHint",
+        "Choose which remotes to include in a full backup.",
+    )));
+    for name in &remotes {
+        let row = adw::SwitchRow::new();
+        row.set_title(name);
+        row.set_active(true);
+        let selected_profiles = selected_profiles.clone();
+        let name = name.clone();
+        row.connect_active_notify(move |row| {
+            let mut selected = selected_profiles.borrow_mut();
+            if row.is_active() {
+                selected.insert(name.clone());
+            } else {
+                selected.remove(&name);
+            }
+        });
+        profiles_group.add(&row);
+    }
+    let refresh_profiles = {
+        let profiles_group = profiles_group.clone();
+        let type_row = type_row.clone();
+        let specific = specific.clone();
+        let remotes_len = remotes.len();
+        Rc::new(move || {
+            let full = type_row.selected() == 0;
+            profiles_group.set_visible(full && !specific.is_active() && remotes_len > 0);
+        })
+    };
+    {
+        let refresh = refresh_profiles.clone();
+        type_row.connect_selected_notify(move |_| refresh());
+    }
+    {
+        let refresh = refresh_profiles.clone();
+        specific.connect_active_notify(move |_| refresh());
+    }
+    refresh_profiles();
+    {
+        let password = password.clone();
+        let note = note.clone();
+        format_row.connect_selected_notify(move |row| {
+            let conf = row.selected() == 1;
+            password.set_sensitive(!conf);
+            note.set_sensitive(!conf);
+        });
+    }
     let save = gtk::Button::with_label(&ctx.t_or("modals.export.exportNow", "Choose file…"));
     save.add_css_class("suggested-action");
     {
@@ -5058,8 +8055,10 @@ pub fn export_backup(
         let note = note.clone();
         let password = password.clone();
         let secrets = secrets.clone();
+        let format_row = format_row.clone();
         let backend_row = backend_row.clone();
         let extra_backends = extra_backends.clone();
+        let selected_profiles = selected_profiles.clone();
         save.connect_clicked(move |_| {
             let mut export_type = categories
                 .get(type_row.selected() as usize)
@@ -5073,12 +8072,27 @@ pub fn export_backup(
             let note_text = note.text().to_string();
             let zip_pass = password.text().to_string();
             let include_secrets = secrets.is_active();
+            let as_conf = format_row.selected() == 1;
             let file_dialog = gtk::FileDialog::new();
-            file_dialog.set_initial_name(Some("rclone-manager-backup.zip"));
+            if as_conf {
+                let name = if specific.is_active() {
+                    remotes
+                        .get(remote_row.selected() as usize)
+                        .map(|name| format!("{name}.rclone.conf"))
+                        .unwrap_or_else(|| "rclone.conf".into())
+                } else {
+                    "rclone.conf".into()
+                };
+                file_dialog.set_initial_name(Some(&name));
+            } else {
+                file_dialog.set_initial_name(Some("rclone-manager-backup.zip"));
+            }
             let ctx = ctx.clone();
             let toast = toast.clone();
             let backend_row = backend_row.clone();
             let extra_backends = extra_backends.clone();
+            let specific = specific.clone();
+            let selected_profiles = selected_profiles.clone();
             file_dialog.save(
                 Some(&parent),
                 None::<gio::Cancellable>.as_ref(),
@@ -5105,8 +8119,23 @@ pub fn export_backup(
                                 })
                             };
                             let mut dump = dump_client
-                                .and_then(|c| c.dump_config().ok())
+                                .as_ref()
+                                .and_then(|c| {
+                                    if export_type == "backend" {
+                                        c.options_get().ok()
+                                    } else {
+                                        c.dump_config().ok()
+                                    }
+                                })
                                 .unwrap_or(serde_json::json!({}));
+                            let store = if !specific.is_active() && export_type == "FullBackup" {
+                                let names: Vec<String> =
+                                    selected_profiles.borrow().iter().cloned().collect();
+                                dump = crate::backup::filter_rclone_names(&dump, &names);
+                                crate::backup::filter_store_remotes(&ctx.store.borrow(), &names)
+                            } else {
+                                ctx.store.borrow().clone()
+                            };
                             if !include_secrets {
                                 if let Some(obj) = dump.as_object_mut() {
                                     for cfg in obj.values_mut() {
@@ -5125,6 +8154,17 @@ pub fn export_backup(
                                     }
                                 }
                             }
+                            if as_conf {
+                                let dump = crate::backup::filter_rclone_dump(&dump, &export_type);
+                                match crate::config_import::write_rclone_conf(&path, &dump) {
+                                    Ok(()) => toast.add_toast(adw::Toast::new(&ctx.t_or(
+                                        "modals.export.confSuccess",
+                                        "rclone.conf exported",
+                                    ))),
+                                    Err(e) => ctx.toast_error(&toast, &e),
+                                }
+                                return;
+                            }
                             let pw = if zip_pass.trim().len() >= 4 {
                                 Some(zip_pass.as_str())
                             } else {
@@ -5133,7 +8173,7 @@ pub fn export_backup(
                             match backup::create_backup(
                                 &path,
                                 &ctx.settings.borrow(),
-                                &ctx.store.borrow(),
+                                &store,
                                 &dump,
                                 &export_type,
                                 &note_text,
@@ -5145,7 +8185,7 @@ pub fn export_backup(
                                         "Backup created successfully",
                                     )))
                                 }
-                                Err(e) => toast.add_toast(adw::Toast::new(&e)),
+                                Err(e) => ctx.toast_error(&toast, &e),
                             }
                         }
                     }
@@ -5156,15 +8196,18 @@ pub fn export_backup(
     }
     let group = adw::PreferencesGroup::new();
     group.add(&type_row);
+    group.add(&format_row);
     group.add(&specific);
     group.add(&remote_row);
     group.add(&note);
+    group.add(&encrypt);
     group.add(&password);
     group.add(&secrets);
     group.add(&backend_row);
     let box_ = gtk::Box::new(gtk::Orientation::Vertical, 8);
     box_.set_margin_top(12);
     box_.append(&group);
+    box_.append(&profiles_group);
     box_.append(&save);
     dialog.set_child(Some(&box_));
     present_window_or_dialog(parent.upcast_ref(), &ctx, &dialog);
@@ -5191,6 +8234,210 @@ pub fn import_backup(
     );
 }
 
+pub fn import_rclone_config_picker(
+    parent: &(impl IsA<gtk::Window> + Clone),
+    ctx: AppCtx,
+    toast: adw::ToastOverlay,
+    on_done: Rc<dyn Fn()>,
+) {
+    let dialog = gtk::FileDialog::new();
+    let parent_widget = parent.clone();
+    dialog.open(
+        Some(parent),
+        None::<gio::Cancellable>.as_ref(),
+        move |result| {
+            if let Ok(file) = result {
+                if let Some(path) = file.path() {
+                    import_rclone_config(
+                        &parent_widget,
+                        ctx.clone(),
+                        toast.clone(),
+                        path,
+                        on_done.clone(),
+                    );
+                }
+            }
+        },
+    );
+}
+
+pub fn import_rclone_config(
+    parent: &(impl IsA<gtk::Window> + Clone),
+    ctx: AppCtx,
+    toast: adw::ToastOverlay,
+    path: std::path::PathBuf,
+    on_done: Rc<dyn Fn()>,
+) {
+    ctx.config_import_open.set(true);
+    let binary = ctx
+        .engine
+        .borrow()
+        .as_ref()
+        .map(|engine| engine.binary.clone());
+    let password =
+        crate::keyring::resolve_config_password(&ctx.settings.borrow().core.config_password);
+    let dump = crate::config_import::load_config_dump_with(binary.as_deref(), &path, &password);
+    let dialog = adw::Dialog::new();
+    dialog.set_title(&ctx.t_or("backup.importConfig.title", "Import rclone.conf"));
+    dialog.set_content_width(480);
+    dialog.set_content_height(520);
+    let page = adw::PreferencesPage::new();
+    let info = adw::PreferencesGroup::new();
+    info.set_title(&ctx.t_or(
+        "backup.importConfig.heading",
+        "Import remotes from this configuration file?",
+    ));
+    let file_row = adw::ActionRow::new();
+    file_row.set_title(&ctx.t_or("backup.importConfig.file", "File"));
+    file_row.set_subtitle(&path.display().to_string());
+    info.add(&file_row);
+    page.add(&info);
+
+    let remotes_group = adw::PreferencesGroup::new();
+    remotes_group.set_title(&ctx.t_or("backup.importConfig.remotes", "Remotes"));
+    let names = match &dump {
+        Ok(value) => crate::config_import::dump_remote_names(value),
+        Err(err) => {
+            let row = adw::ActionRow::new();
+            row.set_title(&ctx.t_or("backup.importConfig.empty", "No remotes found in this file"));
+            row.set_subtitle(&ctx.tf("backup.importConfig.failed", &[("error", err)]));
+            remotes_group.add(&row);
+            Vec::new()
+        }
+    };
+    if dump.is_ok() && names.is_empty() {
+        let row = adw::ActionRow::new();
+        row.set_title(&ctx.t_or("backup.importConfig.empty", "No remotes found in this file"));
+        remotes_group.add(&row);
+    }
+    for name in &names {
+        let row = adw::ActionRow::new();
+        row.set_title(name);
+        if let Ok(value) = &dump {
+            if let Some(kind) = value
+                .get(name)
+                .and_then(|cfg| cfg.get("type"))
+                .and_then(|x| x.as_str())
+            {
+                row.set_subtitle(kind);
+            }
+        }
+        remotes_group.add(&row);
+    }
+    page.add(&remotes_group);
+
+    let options = adw::PreferencesGroup::new();
+    let overwrite = adw::SwitchRow::new();
+    overwrite.set_title(&ctx.t_or(
+        "backup.importConfig.overwrite",
+        "Replace remotes that already exist",
+    ));
+    options.add(&overwrite);
+    page.add(&options);
+
+    let buttons = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+    buttons.set_halign(gtk::Align::End);
+    buttons.set_margin_top(12);
+    buttons.set_margin_end(12);
+    buttons.set_margin_bottom(12);
+    let cancel = gtk::Button::with_label(&ctx.t_or("backup.importConfig.cancel", "Cancel"));
+    let import = gtk::Button::with_label(&ctx.t_or("backup.importConfig.import", "Import"));
+    import.add_css_class("suggested-action");
+    import.set_sensitive(
+        dump.as_ref()
+            .ok()
+            .is_some_and(|v| v.as_object().is_some_and(|o| !o.is_empty())),
+    );
+    buttons.append(&cancel);
+    buttons.append(&import);
+
+    let content = gtk::Box::new(gtk::Orientation::Vertical, 0);
+    let scroll = gtk::ScrolledWindow::new();
+    scroll.set_vexpand(true);
+    scroll.set_child(Some(&page));
+    content.append(&scroll);
+    content.append(&buttons);
+    dialog.set_child(Some(&content));
+
+    {
+        let dialog = dialog.clone();
+        let ctx = ctx.clone();
+        cancel.connect_clicked(move |_| {
+            ctx.config_import_open.set(false);
+            dialog.close();
+        });
+    }
+    {
+        let dialog = dialog.clone();
+        let ctx = ctx.clone();
+        let toast = toast.clone();
+        let dump = dump.ok();
+        let overwrite = overwrite.clone();
+        import.connect_clicked(move |_| {
+            let Some(dump) = dump.clone() else {
+                ctx.config_import_open.set(false);
+                dialog.close();
+                return;
+            };
+            let existing = ctx
+                .client()
+                .and_then(|client| client.dump_config().ok())
+                .and_then(|value| {
+                    value.as_object().map(|obj| {
+                        obj.keys()
+                            .cloned()
+                            .collect::<std::collections::HashSet<_>>()
+                    })
+                })
+                .unwrap_or_default();
+            let Some(client) = ctx.client() else {
+                toast.add_toast(adw::Toast::new(
+                    &ctx.t_or("backup.importConfig.noEngine", "rclone is not running"),
+                ));
+                ctx.config_import_open.set(false);
+                dialog.close();
+                return;
+            };
+            let report =
+                crate::config_import::import_dump(&client, &dump, &existing, overwrite.is_active());
+            {
+                let mut store = ctx.store.borrow_mut();
+                for name in report.created.iter().chain(report.skipped.iter()) {
+                    store.remotes.entry(name.clone()).or_default();
+                }
+            }
+            ctx.persist();
+            ctx.refresh_runtime();
+            if report.failed.is_empty() && report.skipped.is_empty() {
+                toast.add_toast(adw::Toast::new(&ctx.tf(
+                    "backup.importConfig.success",
+                    &[("count", &report.created_count().to_string())],
+                )));
+            } else {
+                toast.add_toast(adw::Toast::new(&ctx.tf(
+                    "backup.importConfig.partial",
+                    &[
+                        ("created", &report.created_count().to_string()),
+                        ("skipped", &report.skipped_count().to_string()),
+                        ("failed", &report.failed_count().to_string()),
+                    ],
+                )));
+            }
+            ctx.config_import_open.set(false);
+            dialog.close();
+            on_done();
+        });
+    }
+    dialog.connect_closed({
+        let ctx = ctx.clone();
+        move |_| {
+            ctx.config_import_open.set(false);
+        }
+    });
+    let parent = parent.clone().upcast::<gtk::Window>();
+    dialog.present(Some(&parent));
+}
+
 pub fn restore_preview(
     parent: &(impl IsA<gtk::Window> + Clone),
     ctx: AppCtx,
@@ -5209,7 +8456,7 @@ pub fn restore_preview(
     let dialog = adw::Dialog::new();
     dialog.set_title(&ctx.t_or("backup.restore.title", "Restore Backup"));
     dialog.set_content_width(520);
-    dialog.set_content_height(640);
+    dialog.set_content_height(720);
     let page = adw::PreferencesPage::new();
     let info = adw::PreferencesGroup::new();
     info.set_title(&ctx.t_or("backup.restore.info", "Backup Information"));
@@ -5256,6 +8503,27 @@ pub fn restore_preview(
         info.add(&missing);
     }
     page.add(&info);
+    let options = adw::PreferencesGroup::new();
+    options.set_title(&ctx.t_or("backup.restore.options", "Restore Options"));
+    let password = adw::PasswordEntryRow::new();
+    password.set_title(&ctx.t_or(
+        "backup.restore.passwordPlaceholder",
+        "Enter your backup password",
+    ));
+    let mut scope_labels = vec![ctx.t_or("backup.restore.scope.all", "Restore Everything")];
+    if let Some(analysis) = &analysis {
+        scope_labels.extend(analysis.manifest.remotes.iter().cloned());
+    }
+    let scope_refs: Vec<&str> = scope_labels.iter().map(|s| s.as_str()).collect();
+    let scope = adw::ComboRow::new();
+    scope.set_title(&ctx.t_or("backup.restore.scope.profile", "Restore Specific Profile"));
+    scope.set_model(Some(&gtk::StringList::new(&scope_refs)));
+    let as_name = adw::EntryRow::new();
+    as_name.set_title(&ctx.t_or("backup.restore.restoreAs", "Restore as (optional rename)"));
+    options.add(&password);
+    options.add(&scope);
+    options.add(&as_name);
+    page.add(&options);
     if let Some(analysis) = &analysis {
         let contents = adw::PreferencesGroup::new();
         contents.set_title(&ctx.t_or("backup.restore.contents", "Backup Contents"));
@@ -5273,30 +8541,6 @@ pub fn restore_preview(
         }
         page.add(&contents);
     }
-    let options = adw::PreferencesGroup::new();
-    options.set_title(&ctx.t_or("backup.restore.options", "Restore Options"));
-    let password = adw::PasswordEntryRow::new();
-    password.set_title(&ctx.t_or(
-        "backup.restore.passwordPlaceholder",
-        "Enter your backup password",
-    ));
-    let mut scope_labels = vec![ctx.t_or("backup.restore.scope.all", "Restore Everything")];
-    if let Some(analysis) = &analysis {
-        scope_labels.extend(analysis.manifest.remotes.iter().cloned());
-    }
-    let scope_refs: Vec<&str> = scope_labels.iter().map(|s| s.as_str()).collect();
-    let scope = adw::ComboRow::new();
-    scope.set_title(&ctx.t_or("backup.restore.scope.profile", "Restore Specific Profile"));
-    scope.set_model(Some(&gtk::StringList::new(&scope_refs)));
-    let as_name = adw::EntryRow::new();
-    as_name.set_title(&ctx.t_or(
-        "backup.restore.selectProfile",
-        "Restore as (optional rename)",
-    ));
-    options.add(&password);
-    options.add(&scope);
-    options.add(&as_name);
-    page.add(&options);
     let restore =
         gtk::Button::with_label(&ctx.t_or("backup.restore.restoreAction", "Restore Backup"));
     restore.add_css_class("destructive-action");
@@ -5321,6 +8565,7 @@ pub fn restore_preview(
         let path = path.clone();
         let on_done = on_done.clone();
         let scope_labels = scope_labels.clone();
+        let parent_win = parent.clone().upcast::<gtk::Window>();
         restore.connect_clicked(move |_| {
             let pw = password.text().to_string();
             let pw = if pw.is_empty() {
@@ -5349,19 +8594,44 @@ pub fn restore_preview(
                     return;
                 }
             }
-            match backup::restore_backup_scoped(&path, pw, profile, restore_as) {
-                Ok((settings, store, rclone)) => {
-                    if let Some(settings) = settings {
-                        *ctx.settings.borrow_mut() = settings;
+            match backup::restore_backup_contents(&path, pw, profile, restore_as) {
+                Ok(restored) => {
+                    let export_type = analysis
+                        .as_ref()
+                        .map(|item| item.manifest.export_type.clone())
+                        .or_else(|| {
+                            backup::analyze_backup_with_password(&path, pw)
+                                .ok()
+                                .map(|item| item.manifest.export_type)
+                        })
+                        .unwrap_or_else(|| "FullBackup".into());
+                    let scoped = profile.is_some();
+                    let (settings, store) = backup::apply_restore(
+                        &ctx.settings.borrow(),
+                        &ctx.store.borrow(),
+                        restored.settings,
+                        restored.store,
+                        &export_type,
+                        scoped,
+                    );
+                    *ctx.settings.borrow_mut() = settings;
+                    *ctx.store.borrow_mut() = store;
+                    if let Some(backend) = restored.backend.as_ref() {
+                        if let Err(e) =
+                            crate::backend_options::import_dump(&ctx.backend_key(), backend)
+                        {
+                            log::warn!("restore backend.json failed: {e}");
+                        }
                     }
-                    if let Some(store) = store {
-                        *ctx.store.borrow_mut() = store;
-                    }
-                    if let (Some(dump), Some(client)) = (rclone, ctx.client()) {
+                    let mut create_errors = Vec::new();
+                    if let (Some(dump), Some(client)) = (restored.rclone, ctx.client()) {
                         if let Some(obj) = dump.as_object() {
                             for (name, cfg) in obj {
                                 if let Some(t) = cfg.get("type").and_then(|x| x.as_str()) {
-                                    let _ = client.create_remote(name, t, cfg.clone(), None);
+                                    let params = backup::rclone_create_params(cfg);
+                                    if let Err(e) = client.create_remote(name, t, params, None) {
+                                        create_errors.push(format!("{name}: {e}"));
+                                    }
                                 }
                             }
                         }
@@ -5370,11 +8640,24 @@ pub fn restore_preview(
                     ctx.restart_engine();
                     ctx.reload_automations();
                     ctx.refresh_runtime();
-                    toast.add_toast(adw::Toast::new(
-                        &ctx.t_or("backup.restoreSuccess", "Backup restored successfully"),
-                    ));
+                    if create_errors.is_empty() {
+                        toast.add_toast(adw::Toast::new(
+                            &ctx.t_or("backup.restoreSuccess", "Backup restored successfully"),
+                        ));
+                    } else {
+                        toast.add_toast(adw::Toast::new(&ctx.tf(
+                            "backup.restoreFailed",
+                            &[("error", &create_errors.join("; "))],
+                        )));
+                    }
                     dialog.close();
                     on_done();
+                    if crate::platform::is_standalone_dialog() {
+                        let win = parent_win.clone();
+                        glib::idle_add_local_once(move || {
+                            win.close();
+                        });
+                    }
                 }
                 Err(e) => toast.add_toast(adw::Toast::new(
                     &ctx.tf("backup.restoreFailed", &[("error", &e)]),
@@ -5393,6 +8676,51 @@ pub fn restore_preview(
     dialog.present(Some(&parent));
 }
 
+fn poll_properties_job(
+    ctx: AppCtx,
+    jobid: u64,
+    alive: Rc<Cell<bool>>,
+    on_done: impl Fn(Result<serde_json::Value, String>) + 'static,
+) {
+    let on_done = Rc::new(on_done);
+    glib::timeout_add_local(std::time::Duration::from_millis(250), move || {
+        if !alive.get() {
+            return glib::ControlFlow::Break;
+        }
+        let Some(client) = ctx.client() else {
+            return glib::ControlFlow::Continue;
+        };
+        match client.job_status(jobid) {
+            Ok(status) if job_is_finished(&status) => {
+                if let Some(err) = job_error_message(&status) {
+                    on_done(Err(err));
+                } else {
+                    let output = job_output(&status).cloned().unwrap_or(status);
+                    on_done(Ok(output));
+                }
+                glib::ControlFlow::Break
+            }
+            Ok(_) => glib::ControlFlow::Continue,
+            Err(e) => {
+                on_done(Err(e.to_string()));
+                glib::ControlFlow::Break
+            }
+        }
+    });
+}
+
+fn start_or_poll_properties_job(
+    ctx: AppCtx,
+    start: RcJobStart,
+    alive: Rc<Cell<bool>>,
+    on_done: impl Fn(Result<serde_json::Value, String>) + 'static,
+) {
+    match start {
+        RcJobStart::Ready(value) => on_done(Ok(value)),
+        RcJobStart::Job(id) => poll_properties_job(ctx, id, alive, on_done),
+    }
+}
+
 pub fn properties(
     parent: &impl IsA<gtk::Widget>,
     ctx: AppCtx,
@@ -5407,17 +8735,14 @@ pub fn properties(
     ) {
         return;
     }
+    let token = uuid::Uuid::new_v4().as_simple().to_string();
+    let read_group = properties_read_group(remote, path, &token[..8]);
+    let jobs_alive = Rc::new(Cell::new(true));
     let dialog = adw::Dialog::new();
     dialog.set_title(&ctx.t_or("fileBrowser.properties.title", "Properties"));
     dialog.set_content_width(520);
     dialog.set_content_height(640);
-    let location = if remote == "local" {
-        path.to_string()
-    } else if path.is_empty() {
-        format!("{remote}:")
-    } else {
-        format!("{remote}:{path}")
-    };
+    let location = crate::path_kind::format_location(remote, path, &ctx.engine_os());
     let starred =
         crate::settings::collection_contains(&ctx.settings.borrow().nautilus.starred, &location);
     let header = gtk::Box::new(gtk::Orientation::Horizontal, 8);
@@ -5466,7 +8791,7 @@ pub fn properties(
         (ctx.t_or("sidebar.remotes", "Remote"), remote.to_string()),
         (
             ctx.t_or("fileBrowser.properties.location", "Location"),
-            path.to_string(),
+            location.clone(),
         ),
         (ctx.t_or("modals.jobDetail.fields.type", "Type"), {
             let cat = crate::operations::FileTypeCategory::from_name(name, false);
@@ -5479,6 +8804,9 @@ pub fn properties(
         let row = adw::ActionRow::new();
         row.set_title(&title);
         row.set_subtitle(&value);
+        if title == ctx.t_or("fileBrowser.properties.location", "Location") {
+            add_copy_suffix(&ctx, &row, &value);
+        }
         list.append(&row);
     }
     let fs = if remote == "local" {
@@ -5519,6 +8847,14 @@ pub fn properties(
             }
         }
         if let Ok(about) = client.about(&fs) {
+            let storage_header = adw::ActionRow::new();
+            storage_header.set_title(&ctx.t_or(
+                crate::fileops::properties_section_title_key("storage"),
+                "Storage",
+            ));
+            storage_header.set_activatable(false);
+            storage_header.set_selectable(false);
+            list.append(&storage_header);
             for (key, label, fallback) in [
                 ("used", "fileBrowser.properties.used", "Used"),
                 ("free", "fileBrowser.properties.free", "Free"),
@@ -5550,17 +8886,59 @@ pub fn properties(
                 }
             }
         }
-        if let Ok(size) = client.size(&fs, path) {
-            let (count, bytes) = crate::rclone::parse_object_size(&size);
+        if is_dir {
+            let content_header = adw::ActionRow::new();
+            content_header.set_title(&ctx.t_or(
+                crate::fileops::properties_section_title_key("content"),
+                "Content Stats",
+            ));
+            content_header.set_activatable(false);
+            content_header.set_selectable(false);
+            list.append(&content_header);
+            let calculating = ctx.t_or(
+                "fileBrowser.properties.calculating",
+                "Calculating folder size...",
+            );
             let count_row = adw::ActionRow::new();
             count_row
                 .set_title(&ctx.t_or("fileBrowser.properties.containedFiles", "Contained files"));
-            count_row.set_subtitle(&count.to_string());
+            count_row.set_subtitle(&calculating);
             list.append(&count_row);
-            let row = adw::ActionRow::new();
-            row.set_title(&ctx.t_or("fileBrowser.properties.totalSize", "Total size"));
-            row.set_subtitle(&crate::rclone::format_bytes(bytes));
-            list.append(&row);
+            let size_row = adw::ActionRow::new();
+            size_row.set_title(&ctx.t_or("fileBrowser.properties.totalSize", "Total size"));
+            size_row.set_subtitle(&calculating);
+            list.append(&size_row);
+            match client.start_grouped_call(
+                "operations/size",
+                serde_json::json!({ "fs": fs, "remote": path }),
+                &read_group,
+            ) {
+                Ok(start) => {
+                    let ctx = ctx.clone();
+                    let count_row = count_row.clone();
+                    let size_row = size_row.clone();
+                    start_or_poll_properties_job(
+                        ctx.clone(),
+                        start,
+                        jobs_alive.clone(),
+                        move |result| match result {
+                            Ok(value) => {
+                                let (count, bytes) = crate::rclone::parse_object_size(&value);
+                                count_row.set_subtitle(&count.to_string());
+                                size_row.set_subtitle(&crate::rclone::format_bytes(bytes));
+                            }
+                            Err(e) => {
+                                count_row.set_subtitle(&e);
+                                size_row.set_subtitle(&e);
+                            }
+                        },
+                    );
+                }
+                Err(e) => {
+                    count_row.set_subtitle(&e.to_string());
+                    size_row.set_subtitle(&e.to_string());
+                }
+            }
         }
         let hashes = info
             .as_ref()
@@ -5654,6 +9032,7 @@ pub fn properties(
                 calc.set_valign(gtk::Align::Center);
                 {
                     let row = row.clone();
+                    let calc_btn = calc.clone();
                     let ctx = ctx.clone();
                     let fs = fs.clone();
                     let path = path.to_string();
@@ -5661,27 +9040,82 @@ pub fn properties(
                     let result_view = result_view.clone();
                     let result_row = result_row.clone();
                     let result_actions = result_actions.clone();
+                    let read_group = read_group.clone();
+                    let jobs_alive = jobs_alive.clone();
                     calc.connect_clicked(move |_| {
-                        if let Some(client) = ctx.client() {
-                            match client.hashsum(&fs, &path, &hash_type) {
-                                Ok(value) => match parse_hashsum_list(&value) {
-                                    Some(text) => {
-                                        result_view.buffer().set_text(&text);
-                                        result_row.set_visible(true);
-                                        result_actions.set_visible(true);
-                                        result_actions
-                                            .set_subtitle(&hash_type.to_ascii_uppercase());
-                                        row.set_subtitle(&ctx.t_or(
-                                            "fileBrowser.properties.generatedChecksums",
-                                            "Generated Checksums",
-                                        ));
-                                    }
-                                    None => row.set_subtitle(&ctx.t_or(
-                                        "fileBrowser.properties.noHashesFound",
-                                        "No hashes returned",
-                                    )),
-                                },
-                                Err(e) => row.set_subtitle(&e.to_string()),
+                        calc_btn.set_sensitive(false);
+                        row.set_subtitle(&ctx.t_or(
+                            crate::fileops::properties_hash_status_key(true, false),
+                            "Loading hash types...",
+                        ));
+                        let Some(client) = ctx.client() else {
+                            calc_btn.set_sensitive(true);
+                            return;
+                        };
+                        match client.start_grouped_call(
+                            "operations/hashsum",
+                            serde_json::json!({
+                                "fs": fs,
+                                "remote": path,
+                                "hashType": hash_type
+                            }),
+                            &read_group,
+                        ) {
+                            Ok(start) => {
+                                let row = row.clone();
+                                let calc_btn = calc_btn.clone();
+                                let ctx = ctx.clone();
+                                let hash_type = hash_type.clone();
+                                let result_view = result_view.clone();
+                                let result_row = result_row.clone();
+                                let result_actions = result_actions.clone();
+                                start_or_poll_properties_job(
+                                    ctx.clone(),
+                                    start,
+                                    jobs_alive.clone(),
+                                    move |result| {
+                                        calc_btn.set_sensitive(true);
+                                        match result {
+                                            Ok(value) => match parse_hashsum_list(&value) {
+                                                Some(text) => {
+                                                    result_view.buffer().set_text(&text);
+                                                    result_row.set_visible(true);
+                                                    result_actions.set_visible(true);
+                                                    result_actions.set_subtitle(
+                                                        &hash_type.to_ascii_uppercase(),
+                                                    );
+                                                    row.set_subtitle(&ctx.t_or(
+                                                        "fileBrowser.properties.generatedChecksums",
+                                                        "Generated Checksums",
+                                                    ));
+                                                }
+                                                None => row.set_subtitle(&ctx.t_or(
+                                                    "fileBrowser.properties.noHashesFound",
+                                                    "No hashes returned",
+                                                )),
+                                            },
+                                            Err(e) => row.set_subtitle(&format!(
+                                                "{}: {e}",
+                                                ctx.t_or(
+                                                    crate::fileops::properties_hash_status_key(
+                                                        false, true
+                                                    ),
+                                                    "Failed to load checksums",
+                                                )
+                                            )),
+                                        }
+                                    },
+                                );
+                            }
+                            Err(e) => {
+                                calc_btn.set_sensitive(true);
+                                row.set_subtitle(&format!(
+                                    "{}: {e}",
+                                    ctx.t_or(
+                                        crate::fileops::properties_hash_status_key(false, true),
+                                        "Failed to load checksums",
+                                    )
+                                ));
                             }
                         }
                     });
@@ -5705,19 +9139,77 @@ pub fn properties(
                     let fs = fs.clone();
                     let path = path.to_string();
                     let hash_type = hash_type.clone();
+                    let read_group = read_group.clone();
+                    let jobs_alive = jobs_alive.clone();
                     calc.connect_clicked(move |_| {
-                        if let Some(client) = ctx.client() {
-                            let value = client
-                                .hashsum_file(&fs, &path, &hash_type)
-                                .or_else(|_| client.hashsum(&fs, &path, &hash_type));
-                            match value {
-                                Ok(value) => {
-                                    row.set_subtitle(
-                                        &parse_hashsum(&value).unwrap_or_else(|| value.to_string()),
-                                    );
-                                    calc_btn.set_sensitive(false);
-                                }
-                                Err(e) => row.set_subtitle(&e.to_string()),
+                        calc_btn.set_sensitive(false);
+                        row.set_subtitle(&ctx.t_or(
+                            crate::fileops::properties_hash_status_key(true, false),
+                            "Loading hash types...",
+                        ));
+                        let Some(client) = ctx.client() else {
+                            calc_btn.set_sensitive(true);
+                            return;
+                        };
+                        let payload = serde_json::json!({
+                            "fs": fs,
+                            "remote": path,
+                            "hashType": hash_type
+                        });
+                        let start = client
+                            .start_grouped_call(
+                                "operations/hashsumfile",
+                                payload.clone(),
+                                &read_group,
+                            )
+                            .or_else(|_| {
+                                client.start_grouped_call(
+                                    "operations/hashsum",
+                                    payload,
+                                    &read_group,
+                                )
+                            });
+                        match start {
+                            Ok(start) => {
+                                let row = row.clone();
+                                let calc_btn = calc_btn.clone();
+                                let ctx_poll = ctx.clone();
+                                start_or_poll_properties_job(
+                                    ctx.clone(),
+                                    start,
+                                    jobs_alive.clone(),
+                                    move |result| match result {
+                                        Ok(value) => {
+                                            row.set_subtitle(
+                                                &parse_hashsum(&value)
+                                                    .unwrap_or_else(|| value.to_string()),
+                                            );
+                                            calc_btn.set_sensitive(false);
+                                        }
+                                        Err(e) => {
+                                            calc_btn.set_sensitive(true);
+                                            row.set_subtitle(&format!(
+                                                "{}: {e}",
+                                                ctx_poll.t_or(
+                                                    crate::fileops::properties_hash_status_key(
+                                                        false, true
+                                                    ),
+                                                    "Failed to load checksums",
+                                                )
+                                            ));
+                                        }
+                                    },
+                                );
+                            }
+                            Err(e) => {
+                                calc_btn.set_sensitive(true);
+                                row.set_subtitle(&format!(
+                                    "{}: {e}",
+                                    ctx.t_or(
+                                        crate::fileops::properties_hash_status_key(false, true),
+                                        "Failed to load checksums",
+                                    )
+                                ));
                             }
                         }
                     });
@@ -5852,6 +9344,17 @@ pub fn properties(
     scroll.set_vexpand(true);
     scroll.set_child(Some(&box_));
     dialog.set_child(Some(&scroll));
+    {
+        let ctx = ctx.clone();
+        let read_group = read_group.clone();
+        let jobs_alive = jobs_alive.clone();
+        dialog.connect_closed(move |_| {
+            jobs_alive.set(false);
+            if let Some(client) = ctx.client() {
+                let _ = client.job_stop_group(&read_group);
+            }
+        });
+    }
     dialog.present(Some(parent));
 }
 
@@ -5859,6 +9362,7 @@ pub fn job_detail(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, job_id: u64) {
     if try_spawn_standalone(&ctx, "job-detail", serde_json::json!({ "jobid": job_id })) {
         return;
     }
+    let toast_parent: gtk::Widget = parent.clone().upcast();
     let dialog = adw::Dialog::new();
     dialog.set_title(&ctx.tf("modals.jobDetail.title", &[("id", &job_id.to_string())]));
     dialog.set_content_width(640);
@@ -5873,6 +9377,31 @@ pub fn job_detail(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, job_id: u64) {
     transfers.add_css_class("boxed-list");
     let completed = gtk::ListBox::new();
     completed.add_css_class("boxed-list");
+    let checks = gtk::ListBox::new();
+    checks.add_css_class("boxed-list");
+    let paths = gtk::ListBox::new();
+    paths.add_css_class("boxed-list");
+    let transfer_stack = gtk::Stack::new();
+    transfer_stack.set_hexpand(true);
+    transfer_stack.set_size_request(-1, 180);
+    transfer_stack.add_titled(
+        &transfers,
+        Some("active"),
+        &ctx.t_or("modals.jobDetail.tabs.active", "Active"),
+    );
+    transfer_stack.add_titled(
+        &completed,
+        Some("completed"),
+        &ctx.t_or("fileBrowser.operations.completed", "Completed"),
+    );
+    transfer_stack.add_titled(
+        &checks,
+        Some("checks"),
+        &ctx.t_or("shared.transferActivity.titleCheck", "Check Activity"),
+    );
+    let transfer_switcher = gtk::StackSwitcher::new();
+    transfer_switcher.set_stack(Some(&transfer_stack));
+    transfer_switcher.set_halign(gtk::Align::Center);
     let filter = gtk::SearchEntry::new();
     filter.set_placeholder_text(Some(
         &ctx.t_or("modals.jobDetail.filterTransfers", "Filter transfers"),
@@ -5881,9 +9410,9 @@ pub fn job_detail(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, job_id: u64) {
     stop.add_css_class("destructive-action");
     {
         let ctx = ctx.clone();
-        stop.connect_clicked(move |_| {
+        stop.connect_clicked(move |btn| {
             if let Some(client) = ctx.client() {
-                let _ = client.job_stop(job_id);
+                ctx.toast_job_stop_result(btn, client.job_stop(job_id));
                 ctx.refresh_runtime();
             }
         });
@@ -5925,11 +9454,21 @@ pub fn job_detail(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, job_id: u64) {
     {
         let ctx = ctx.clone();
         let dialog = dialog.clone();
+        let toast_parent = toast_parent.clone();
         delete.connect_clicked(move |_| {
             ctx.store.borrow_mut().dismiss_job(job_id);
             ctx.persist();
             ctx.refresh_runtime();
+            let message = ctx.t_or(
+                crate::jobs::job_deleted_toast_key(),
+                "Job deleted successfully",
+            );
             dialog.close();
+            let ctx = ctx.clone();
+            let toast_parent = toast_parent.clone();
+            glib::idle_add_local_once(move || {
+                ctx.toast_near(&toast_parent, message);
+            });
         });
     }
     let box_ = gtk::Box::new(gtk::Orientation::Vertical, 8);
@@ -5945,21 +9484,14 @@ pub fn job_detail(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, job_id: u64) {
     overview_label.set_xalign(0.0);
     box_.append(&overview_label);
     box_.append(&meta);
+    let paths_label = gtk::Label::new(Some(&ctx.t_or("modals.jobDetail.sections.paths", "Paths")));
+    paths_label.add_css_class("heading");
+    paths_label.set_xalign(0.0);
+    box_.append(&paths_label);
+    box_.append(&paths);
     box_.append(&filter);
-    let xfer_label = gtk::Label::new(Some(
-        &ctx.t_or("generalOverview.jobs.transfers", "Active transfers"),
-    ));
-    xfer_label.add_css_class("heading");
-    xfer_label.set_xalign(0.0);
-    box_.append(&xfer_label);
-    box_.append(&transfers);
-    let done_label = gtk::Label::new(Some(
-        &ctx.t_or("fileBrowser.operations.completed", "Completed transfers"),
-    ));
-    done_label.add_css_class("heading");
-    done_label.set_xalign(0.0);
-    box_.append(&done_label);
-    box_.append(&completed);
+    box_.append(&transfer_switcher);
+    box_.append(&transfer_stack);
     let stats_label = gtk::Label::new(Some(
         &ctx.t_or("modals.jobDetail.sections.statistics", "Statistics"),
     ));
@@ -5967,6 +9499,29 @@ pub fn job_detail(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, job_id: u64) {
     stats_label.set_xalign(0.0);
     box_.append(&stats_label);
     box_.append(&stats);
+    let error_group = adw::PreferencesGroup::new();
+    error_group.set_title(&ctx.t_or("modals.jobDetail.sections.errors", "Error"));
+    error_group.set_visible(false);
+    let error_view = gtk::TextView::new();
+    error_view.set_editable(false);
+    error_view.set_monospace(true);
+    error_view.set_wrap_mode(gtk::WrapMode::WordChar);
+    error_view.set_hexpand(true);
+    let error_scroll = gtk::ScrolledWindow::new();
+    error_scroll.set_min_content_height(96);
+    error_scroll.set_child(Some(&error_view));
+    error_group.add(&error_scroll);
+    let copy_error = gtk::Button::with_label(&ctx.t_or("common.copy", "Copy"));
+    {
+        let error_view = error_view.clone();
+        copy_error.connect_clicked(move |_| {
+            if let Some(display) = gtk::gdk::Display::default() {
+                display.clipboard().set_text(&text_view_get(&error_view));
+            }
+        });
+    }
+    error_group.add(&copy_error);
+    box_.append(&error_group);
     let open_box = gtk::Box::new(gtk::Orientation::Horizontal, 8);
     let populate_opens: Rc<dyn Fn(&str, &str)> = Rc::new({
         let open_box = open_box.clone();
@@ -6026,8 +9581,14 @@ pub fn job_detail(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, job_id: u64) {
     scroll.set_vexpand(true);
     scroll.set_policy(gtk::PolicyType::Never, gtk::PolicyType::Automatic);
     scroll.set_child(Some(&box_));
-    dialog.set_child(Some(&scroll));
+    let toast = adw::ToastOverlay::new();
+    toast.set_child(Some(&scroll));
+    dialog.set_child(Some(&toast));
 
+    let active_limit = Rc::new(Cell::new(crate::jobs::ACTIVITY_PAGE));
+    let done_limit = Rc::new(Cell::new(crate::jobs::ACTIVITY_PAGE));
+    let check_limit = Rc::new(Cell::new(crate::jobs::ACTIVITY_PAGE));
+    let fill_cell: Rc<RefCell<Rc<dyn Fn()>>> = Rc::new(RefCell::new(Rc::new(|| {})));
     let fill = {
         let ctx = ctx.clone();
         let meta = meta.clone();
@@ -6037,7 +9598,17 @@ pub fn job_detail(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, job_id: u64) {
         let progress = progress.clone();
         let filter = filter.clone();
         let dialog = dialog.clone();
+        let toast = toast.clone();
         let populate_opens = populate_opens.clone();
+        let error_view = error_view.clone();
+        let error_group = error_group.clone();
+        let paths = paths.clone();
+        let checks = checks.clone();
+        let transfer_stack = transfer_stack.clone();
+        let active_limit = active_limit.clone();
+        let done_limit = done_limit.clone();
+        let check_limit = check_limit.clone();
+        let fill_cell = fill_cell.clone();
         move || {
             while let Some(child) = meta.first_child() {
                 meta.remove(&child);
@@ -6050,6 +9621,12 @@ pub fn job_detail(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, job_id: u64) {
             }
             while let Some(child) = completed.first_child() {
                 completed.remove(&child);
+            }
+            while let Some(child) = paths.first_child() {
+                paths.remove(&child);
+            }
+            while let Some(child) = checks.first_child() {
+                checks.remove(&child);
             }
             let rc_job = ctx.client().and_then(|client| {
                 let status = client.job_status(job_id).ok()?;
@@ -6103,7 +9680,35 @@ pub fn job_detail(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, job_id: u64) {
             };
             crate::jobs::decorate_job_transfers(&mut job, &registry, &siblings);
             crate::jobs::finalize_history_job(&mut job);
-            populate_opens(&job.src, &job.dst);
+            let dest = {
+                let alias = ctx.remote_cfg_alias(&job.remote);
+                let live_mount = crate::jobs::resolve_unmount_point(
+                    &ctx.snapshot.borrow().mounts,
+                    &job.remote,
+                    &alias,
+                    &crate::jobs::split_job_paths(&job.dst),
+                );
+                crate::jobs::job_detail_dest_path(&job.operation, &job.dst, live_mount.as_deref())
+            };
+            populate_opens(&job.src, &dest);
+            paths.append(&job_path_row(
+                &ctx,
+                &dialog,
+                &ctx.t_or(
+                    crate::jobs::job_detail_path_title_key(&job.operation, false),
+                    "Source",
+                ),
+                &job.src,
+            ));
+            paths.append(&job_path_row(
+                &ctx,
+                &dialog,
+                &ctx.t_or(
+                    crate::jobs::job_detail_path_title_key(&job.operation, true),
+                    "Destination",
+                ),
+                &dest,
+            ));
             let status_label = ctx.t_or(crate::jobs::job_status_key(&job.status), &job.status);
             let duration_label = if job.duration > 0.0 {
                 format!("{:.1}s", job.duration)
@@ -6191,23 +9796,23 @@ pub fn job_detail(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, job_id: u64) {
                     ctx.t_or("modals.jobDetail.fields.group", "Group"),
                     job.group.clone(),
                 ),
+                (
+                    ctx.t_or(crate::jobs::job_detail_remote_title_key(), "Remote Source"),
+                    job.remote.clone(),
+                ),
             ] {
                 let row = adw::ActionRow::new();
                 row.set_title(&title);
                 row.set_subtitle(&value);
                 row.set_subtitle_lines(2);
+                if title == ctx.t_or("modals.jobDetail.fields.group", "Group")
+                    || title == ctx.t_or("modals.jobDetail.fields.backend", "Backend")
+                {
+                    add_copy_suffix(&ctx, &row, &value);
+                }
                 meta.append(&row);
             }
             for (title, value) in [
-                (ctx.t_or("sidebar.remotes", "Remote"), job.remote.clone()),
-                (
-                    ctx.t_or("fileBrowser.operations.details.source", "Source"),
-                    job.src.clone(),
-                ),
-                (
-                    ctx.t_or("fileBrowser.operations.details.destination", "Destination"),
-                    job.dst.clone(),
-                ),
                 (
                     ctx.t_or("modals.jobDetail.fields.started", "Started"),
                     if crate::jobs::has_known_start_time(&job) {
@@ -6327,7 +9932,17 @@ pub fn job_detail(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, job_id: u64) {
                 row.set_title(&title);
                 row.set_subtitle(&value);
                 row.set_subtitle_lines(2);
+                if title == ctx.t_or("modals.jobDetail.fields.executeId", "Execute ID") {
+                    add_copy_suffix(&ctx, &row, &value);
+                }
                 stats.append(&row);
+            }
+            if let Some(err) = job.error.as_deref().filter(|e| !e.is_empty()) {
+                text_view_set(&error_view, &ctx.translate_error(err));
+                error_group.set_visible(true);
+            } else {
+                text_view_set(&error_view, "");
+                error_group.set_visible(false);
             }
             let query = filter.text().to_lowercase();
             append_transfer_rows(
@@ -6336,8 +9951,21 @@ pub fn job_detail(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, job_id: u64) {
                 &query,
                 true,
                 &ctx,
-                &dialog,
+                &toast,
                 &job.operation,
+                &job.remote,
+                job.id,
+                &job.src,
+                &job.dst,
+                active_limit.get(),
+                {
+                    let limit = active_limit.clone();
+                    let fill_cell = fill_cell.clone();
+                    Some(Rc::new(move || {
+                        limit.set(limit.get().saturating_add(crate::jobs::ACTIVITY_PAGE));
+                        fill_cell.borrow().clone()();
+                    }) as Rc<dyn Fn()>)
+                },
             );
             append_transfer_rows(
                 &completed,
@@ -6345,8 +9973,21 @@ pub fn job_detail(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, job_id: u64) {
                 &query,
                 false,
                 &ctx,
-                &dialog,
+                &toast,
                 &job.operation,
+                &job.remote,
+                job.id,
+                &job.src,
+                &job.dst,
+                done_limit.get(),
+                {
+                    let limit = done_limit.clone();
+                    let fill_cell = fill_cell.clone();
+                    Some(Rc::new(move || {
+                        limit.set(limit.get().saturating_add(crate::jobs::ACTIVITY_PAGE));
+                        fill_cell.borrow().clone()();
+                    }) as Rc<dyn Fn()>)
+                },
             );
             let check_source = crate::checks::check_source_from_job(&job.stats, &job.output);
             let results = crate::checks::visible_check_items(
@@ -6357,24 +9998,72 @@ pub fn job_detail(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, job_id: u64) {
                 &ctx.check_status_overrides.borrow(),
                 &query,
             );
-            if !results.is_empty() {
+            let active_n = job
+                .transferring
+                .as_array()
+                .map(|items| items.len())
+                .unwrap_or(0);
+            let done_n = job
+                .completed
+                .as_array()
+                .map(|items| items.len())
+                .unwrap_or(0);
+            let check_n = results.len();
+            transfer_stack.page(&transfers).set_title(&{
+                let n = active_n.to_string();
+                let label = ctx.tf("shared.transferActivity.tabs.active", &[("count", &n)]);
+                if label.contains("{{") {
+                    format!("Active ({n})")
+                } else {
+                    label
+                }
+            });
+            transfer_stack.page(&completed).set_title(&{
+                let n = done_n.to_string();
+                let label = ctx.tf("shared.transferActivity.tabs.recent", &[("count", &n)]);
+                if label.contains("{{") {
+                    format!("Completed ({n})")
+                } else {
+                    label
+                }
+            });
+            transfer_stack.page(&checks).set_title(&{
+                let n = check_n.to_string();
+                let label = ctx.tf("shared.transferActivity.tabs.recentCheck", &[("count", &n)]);
+                if label.contains("{{") {
+                    format!("Checked ({n})")
+                } else {
+                    label
+                }
+            });
+            if results.is_empty() {
                 let heading = adw::ActionRow::new();
-                heading.set_title(&format!(
-                    "{} · {}",
-                    ctx.t_or("shared.transferActivity.titleCheck", "Check Activity"),
-                    results.len()
-                ));
-                heading.set_subtitle(&ctx.t_or(
+                heading.set_title(&ctx.t_or(
                     "shared.transferActivity.empty.recentHintCheck",
                     "Checked files will appear here when the job completes",
                 ));
-                completed.append(&heading);
-                for item in results.into_iter().take(40) {
-                    completed.append(&check_result_row(&ctx, &item, &dialog));
+                checks.append(&heading);
+            } else {
+                let end = crate::jobs::activity_visible_end(results.len(), check_limit.get());
+                let remaining = crate::jobs::activity_remaining(results.len(), check_limit.get());
+                for item in &results[..end] {
+                    checks.append(&check_result_row(&ctx, item, &toast));
+                }
+                if remaining > 0 {
+                    checks.append(&activity_more_row(&ctx, remaining, {
+                        let limit = check_limit.clone();
+                        let fill_cell = fill_cell.clone();
+                        Rc::new(move || {
+                            limit.set(limit.get().saturating_add(crate::jobs::ACTIVITY_PAGE));
+                            fill_cell.borrow().clone()();
+                        })
+                    }));
                 }
             }
         }
     };
+    let fill: Rc<dyn Fn()> = Rc::new(fill);
+    *fill_cell.borrow_mut() = fill.clone();
     fill();
     {
         let fill = fill.clone();
@@ -6427,28 +10116,119 @@ fn append_open_job_paths(
     }
 }
 
+fn add_copy_suffix(ctx: &AppCtx, row: &adw::ActionRow, value: &str) {
+    if value.is_empty() || value == "—" {
+        return;
+    }
+    let copy = gtk::Button::from_icon_name("edit-copy-symbolic");
+    copy.set_valign(gtk::Align::Center);
+    copy.set_tooltip_text(Some(&ctx.t_or("common.copy", "Copy")));
+    let value = value.to_string();
+    copy.connect_clicked(move |_| {
+        if let Some(display) = gtk::gdk::Display::default() {
+            display.clipboard().set_text(&value);
+        }
+    });
+    row.add_suffix(&copy);
+}
+
+fn activity_more_row(ctx: &AppCtx, remaining: usize, on_more: Rc<dyn Fn()>) -> adw::ActionRow {
+    let row = adw::ActionRow::new();
+    row.set_title(&ctx.tf_or(
+        "nautilus.loadMore",
+        "Show {{count}} more",
+        &[("count", &remaining.to_string())],
+    ));
+    row.set_activatable(true);
+    row.connect_activated(move |_| on_more());
+    row
+}
+
+fn job_path_row(ctx: &AppCtx, dialog: &adw::Dialog, title: &str, value: &str) -> adw::ActionRow {
+    let row = adw::ActionRow::new();
+    row.set_title(title);
+    row.set_subtitle(if value.is_empty() { "—" } else { value });
+    row.set_subtitle_lines(3);
+    let parts = crate::jobs::split_job_paths(value);
+    if parts.len() > 1 {
+        let open = gtk::MenuButton::new();
+        open.set_icon_name("folder-open-symbolic");
+        open.set_valign(gtk::Align::Center);
+        open.set_tooltip_text(Some(&ctx.t_or("common.browse", "Open in Files")));
+        let popover = gtk::Popover::new();
+        let list = gtk::Box::new(gtk::Orientation::Vertical, 4);
+        for path in parts {
+            let btn = gtk::Button::with_label(&path);
+            btn.add_css_class("flat");
+            btn.set_halign(gtk::Align::Start);
+            let ctx = ctx.clone();
+            let dialog = dialog.clone();
+            let popover = popover.clone();
+            btn.connect_clicked(move |_| {
+                if let Some((remote, folder)) = browse_target(&path) {
+                    super::window::present_files_at(&dialog, &ctx, &remote, &folder);
+                    dialog.close();
+                }
+                popover.popdown();
+            });
+            list.append(&btn);
+        }
+        popover.set_child(Some(&list));
+        open.set_popover(Some(&popover));
+        row.add_prefix(&open);
+    } else if let Some(path) = parts.first().filter(|p| !p.is_empty()) {
+        let open = gtk::Button::from_icon_name("folder-open-symbolic");
+        open.set_valign(gtk::Align::Center);
+        open.set_tooltip_text(Some(&ctx.t_or("common.browse", "Open in Files")));
+        let ctx = ctx.clone();
+        let dialog = dialog.clone();
+        let path = path.clone();
+        open.connect_clicked(move |_| {
+            if let Some((remote, folder)) = browse_target(&path) {
+                super::window::present_files_at(&dialog, &ctx, &remote, &folder);
+                dialog.close();
+            }
+        });
+        row.add_prefix(&open);
+    }
+    add_copy_suffix(ctx, &row, value);
+    row
+}
+
+/// Angular transfer-activity footer: colored speed-dot + `N MiB/s`.
+fn transfer_speed_indicator(speed: f64, caption: &str) -> gtk::Box {
+    let row = gtk::Box::new(gtk::Orientation::Horizontal, 4);
+    row.set_valign(gtk::Align::Center);
+    let dot = gtk::Box::new(gtk::Orientation::Horizontal, 0);
+    dot.set_size_request(8, 8);
+    dot.set_valign(gtk::Align::Center);
+    dot.set_halign(gtk::Align::Center);
+    dot.add_css_class("speed-dot");
+    dot.add_css_class(crate::transfers::transfer_speed_class(speed));
+    row.append(&dot);
+    let label = gtk::Label::new(Some(caption));
+    label.add_css_class("caption");
+    label.add_css_class("monospace");
+    row.append(&label);
+    row
+}
+
 pub(crate) fn transfer_activity_row(
     ctx: &AppCtx,
     parsed: &crate::transfers::TransferRow,
     completed: bool,
     job_type: &str,
+    remote_name: &str,
     parent: &impl IsA<gtk::Widget>,
+    parent_job_id: u64,
+    job_src: &str,
+    job_dst: &str,
 ) -> gtk::ListBoxRow {
-    let wrap = gtk::Box::new(gtk::Orientation::Vertical, 4);
-    wrap.set_margin_top(4);
-    wrap.set_margin_bottom(4);
-    let row = adw::ActionRow::new();
-    row.set_title(&parsed.name);
-    let src = if parsed.src.is_empty() {
-        "—".into()
-    } else {
-        parsed.src.clone()
-    };
-    let dst = if parsed.dst.is_empty() {
-        "—".into()
-    } else {
-        parsed.dst.clone()
-    };
+    let wrap = gtk::Box::new(gtk::Orientation::Vertical, 6);
+    wrap.set_margin_top(6);
+    wrap.set_margin_bottom(6);
+    wrap.set_margin_start(8);
+    wrap.set_margin_end(8);
     let status = match crate::transfers::transfer_status(completed, parsed) {
         crate::transfers::TransferStatus::Preparing => {
             ctx.t_or("shared.transferActivity.status.preparing", "Preparing")
@@ -6466,26 +10246,186 @@ pub(crate) fn transfer_activity_row(
         ),
         crate::transfers::TransferStatus::Progress => format!("{}%", parsed.percentage),
     };
-    let meta = crate::transfers::transfer_meta_caption(parsed);
-    let subtitle = if meta.is_empty() {
-        format!("{status} · {src} → {dst}")
-    } else {
-        format!("{status} · {meta} · {src} → {dst}")
-    };
-    row.set_subtitle(&subtitle);
-    if !parsed.error.is_empty() {
-        row.add_css_class("error");
-        row.set_tooltip_text(Some(&parsed.error));
+    let header = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+    let icon = gtk::Image::from_icon_name("text-x-generic-symbolic");
+    icon.set_valign(gtk::Align::Center);
+    header.append(&icon);
+    let name = gtk::Label::new(Some(&parsed.name));
+    name.set_xalign(0.0);
+    name.set_hexpand(true);
+    name.set_ellipsize(gtk::pango::EllipsizeMode::End);
+    name.set_selectable(true);
+    name.set_tooltip_text(Some(&parsed.name));
+    {
+        let text = parsed.name.clone();
+        let toast = parent
+            .upcast_ref::<gtk::Widget>()
+            .downcast_ref::<adw::ToastOverlay>()
+            .cloned();
+        let copied = ctx.t_or("common.copied", "Copied to clipboard");
+        let click = gtk::GestureClick::new();
+        click.connect_released(move |_, _, _, _| {
+            if let Some(display) = gtk::gdk::Display::default() {
+                display.clipboard().set_text(&text);
+            }
+            if let Some(toast) = &toast {
+                toast.add_toast(adw::Toast::new(&copied));
+            }
+        });
+        name.add_controller(click);
     }
-    row.add_suffix(&transfer_row_actions(
-        ctx, parent, parsed, job_type, completed, None,
+    header.append(&name);
+    let badge = gtk::Label::new(Some(&status));
+    badge.add_css_class("caption");
+    badge.add_css_class("pill");
+    if !parsed.error.is_empty() {
+        badge.add_css_class("error");
+        badge.set_tooltip_text(Some(&parsed.error));
+        wrap.add_css_class("error");
+    } else if completed {
+        badge.add_css_class("success");
+    }
+    header.append(&badge);
+    let unique = crate::transfers::transfer_row_id(parsed);
+    let on_deleted = Some(Rc::new({
+        let ctx = ctx.clone();
+        let unique = unique.clone();
+        let wrap = wrap.clone();
+        move |_| {
+            ctx.hidden_transfer_ids.borrow_mut().insert(unique.clone());
+            wrap.set_visible(false);
+        }
+    }) as Rc<dyn Fn(bool)>);
+    header.append(&transfer_row_actions(
+        ctx,
+        parent,
+        parsed,
+        job_type,
+        completed,
+        remote_name,
+        on_deleted,
+        "",
     ));
-    wrap.append(&row);
+    let resolve_job = if crate::transfers::can_resolve_failed(completed, parsed) {
+        let snap = ctx.snapshot.borrow();
+        let meta = ctx.store.borrow();
+        crate::jobs::find_resolve_job(&snap.jobs, &meta.job_meta, &parsed.name)
+            .or_else(|| {
+                crate::jobs::find_resolve_job(&meta.job_history, &meta.job_meta, &parsed.name)
+            })
+            .cloned()
+    } else {
+        None
+    };
+    if crate::transfers::can_resolve_failed(completed, parsed) {
+        let resolve = gtk::Button::from_icon_name("go-next-symbolic");
+        resolve.set_valign(gtk::Align::Center);
+        resolve.add_css_class("flat");
+        resolve.set_tooltip_text(Some(&ctx.t_or(
+            "shared.transferActivity.actions.resolveToDst",
+            "Copy to Destination",
+        )));
+        if resolve_job
+            .as_ref()
+            .is_some_and(crate::jobs::job_is_running)
+        {
+            resolve.set_sensitive(false);
+        }
+        let ctx = ctx.clone();
+        let parsed = parsed.clone();
+        let parent = parent.upcast_ref::<gtk::Widget>().clone();
+        let job_src = job_src.to_string();
+        let job_dst = job_dst.to_string();
+        resolve.connect_clicked(move |_| {
+            resolve_failed_transfer(&ctx, &parsed, parent_job_id, &job_src, &job_dst, &parent);
+        });
+        header.append(&resolve);
+    }
+    wrap.append(&header);
+
+    let (src_path, dst_path) = crate::transfers::transfer_card_paths(parsed, job_src, job_dst);
+    let paths = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+    let src_pill = gtk::Label::new(Some(crate::transfers::transfer_path_display(&src_path)));
+    src_pill.set_xalign(0.0);
+    src_pill.set_hexpand(true);
+    src_pill.set_ellipsize(gtk::pango::EllipsizeMode::Middle);
+    src_pill.set_selectable(true);
+    src_pill.add_css_class("monospace");
+    src_pill.add_css_class("dim-label");
+    src_pill.set_tooltip_text(Some(crate::transfers::transfer_path_display(&src_path)));
+    paths.append(&src_pill);
+    let arrow = gtk::Image::from_icon_name("go-next-symbolic");
+    arrow.add_css_class("dim-label");
+    paths.append(&arrow);
+    let dst_pill = gtk::Label::new(Some(crate::transfers::transfer_path_display(&dst_path)));
+    dst_pill.set_xalign(0.0);
+    dst_pill.set_hexpand(true);
+    dst_pill.set_ellipsize(gtk::pango::EllipsizeMode::Middle);
+    dst_pill.set_selectable(true);
+    dst_pill.add_css_class("monospace");
+    dst_pill.add_css_class("dim-label");
+    dst_pill.set_tooltip_text(Some(crate::transfers::transfer_path_display(&dst_path)));
+    paths.append(&dst_pill);
+    wrap.append(&paths);
+
+    let footer = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+    let size = crate::transfers::transfer_size_caption(parsed);
+    if !size.is_empty() {
+        let left = gtk::Label::new(Some(&size));
+        left.set_xalign(0.0);
+        left.set_hexpand(true);
+        left.add_css_class("caption");
+        left.add_css_class("dim-label");
+        footer.append(&left);
+    }
+    let right = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+    right.set_halign(gtk::Align::End);
+    right.set_hexpand(true);
+    let speed = crate::transfers::transfer_speed_caption(parsed);
+    if crate::transfers::transfer_speed_dot_visible(parsed.speed) && !speed.is_empty() {
+        right.append(&transfer_speed_indicator(parsed.speed, &speed));
+    }
+    let mut right_parts = Vec::new();
+    if !completed {
+        let eta = crate::transfers::transfer_eta_caption(parsed);
+        if !eta.is_empty() {
+            right_parts.push(eta);
+        }
+    }
+    if let Some(at) = parsed.completed_at {
+        let (key, count) = crate::checks::relative_time_parts(at, chrono::Utc::now());
+        right_parts.push(if count == 0 {
+            ctx.t_or(key, "Just now")
+        } else {
+            ctx.tf(key, &[("count", &count.to_string())])
+        });
+        if let Some(started) = parsed.started_at {
+            let elapsed = crate::transfers::transfer_elapsed_caption(started, at);
+            if !elapsed.is_empty() {
+                right_parts.push(elapsed);
+            }
+        }
+    }
+    if !right_parts.is_empty() {
+        let extra = gtk::Label::new(Some(&right_parts.join(" · ")));
+        extra.set_xalign(1.0);
+        extra.add_css_class("caption");
+        extra.add_css_class("dim-label");
+        right.append(&extra);
+    }
+    if right.first_child().is_some() {
+        footer.append(&right);
+    }
+    if footer.first_child().is_some() {
+        wrap.append(&footer);
+    }
     if !completed {
         let bar = gtk::ProgressBar::new();
         bar.set_fraction((parsed.percentage as f64 / 100.0).clamp(0.0, 1.0));
         bar.set_hexpand(true);
         wrap.append(&bar);
+    } else if let Some(job) = resolve_job {
+        append_resolve_progress(ctx, &wrap, &job);
     }
     let list_row = gtk::ListBoxRow::new();
     list_row.set_child(Some(&wrap));
@@ -6498,8 +10438,14 @@ fn append_transfer_rows(
     query: &str,
     active: bool,
     ctx: &AppCtx,
-    parent: &adw::Dialog,
+    parent: &impl IsA<gtk::Widget>,
     job_type: &str,
+    remote_name: &str,
+    parent_job_id: u64,
+    job_src: &str,
+    job_dst: &str,
+    limit: usize,
+    on_more: Option<Rc<dyn Fn()>>,
 ) {
     let empty_title = if active {
         ctx.t_or(
@@ -6530,22 +10476,45 @@ fn append_transfer_rows(
         list.append(&row);
         return;
     };
-    let mut shown = 0;
+    let hidden = ctx.hidden_transfer_ids.borrow();
+    let mut matched = Vec::new();
     for item in arr {
-        let parsed = if active {
+        let mut parsed = if active {
             crate::transfers::parse_transfer_row(item)
         } else {
             crate::transfers::parse_completed_transfer_row(item)
         };
+        crate::transfers::qualify_transfer_row(&mut parsed, job_src, job_dst);
+        if hidden.contains(&crate::transfers::transfer_row_id(&parsed)) {
+            continue;
+        }
         if !query.is_empty() && !parsed.name.to_lowercase().contains(query) {
             continue;
         }
-        list.append(&transfer_activity_row(
-            ctx, &parsed, !active, job_type, parent,
-        ));
-        shown += 1;
+        matched.push(parsed);
     }
-    if shown == 0 {
+    drop(hidden);
+    let end = crate::jobs::activity_visible_end(matched.len(), limit);
+    let remaining = crate::jobs::activity_remaining(matched.len(), limit);
+    for parsed in &matched[..end] {
+        list.append(&transfer_activity_row(
+            ctx,
+            parsed,
+            !active,
+            job_type,
+            remote_name,
+            parent,
+            parent_job_id,
+            job_src,
+            job_dst,
+        ));
+    }
+    if remaining > 0 {
+        if let Some(on_more) = on_more {
+            list.append(&activity_more_row(ctx, remaining, on_more));
+        }
+    }
+    if matched.is_empty() {
         let row = adw::ActionRow::new();
         row.set_title(&empty_title);
         row.set_subtitle(&empty_hint);
@@ -6559,30 +10528,30 @@ pub(crate) fn transfer_row_actions(
     parsed: &crate::transfers::TransferRow,
     job_type: &str,
     completed: bool,
+    remote_name: &str,
     on_deleted: Option<Rc<dyn Fn(bool)>>,
+    status: &str,
 ) -> gtk::Box {
     let actions = gtk::Box::new(gtk::Orientation::Horizontal, 8);
     actions.set_valign(gtk::Align::Center);
-    if !parsed.src.is_empty() {
+    for (path, is_fallback) in
+        crate::transfers::transfer_action_paths(&parsed.src, &parsed.dst, remote_name, &parsed.name)
+    {
+        let is_source = is_fallback || path == parsed.src;
         actions.append(&transfer_side_actions(
             ctx,
             parent,
-            &parsed.src,
+            &path,
             job_type,
-            true,
-            true,
+            if is_fallback {
+                true
+            } else {
+                completed || is_source
+            },
+            is_source,
+            is_fallback,
             on_deleted.clone(),
-        ));
-    }
-    if !parsed.dst.is_empty() {
-        actions.append(&transfer_side_actions(
-            ctx,
-            parent,
-            &parsed.dst,
-            job_type,
-            completed,
-            false,
-            on_deleted,
+            status,
         ));
     }
     actions
@@ -6595,30 +10564,40 @@ fn transfer_side_actions(
     job_type: &str,
     allow_dest_ops: bool,
     is_source: bool,
+    is_fallback: bool,
     on_deleted: Option<Rc<dyn Fn(bool)>>,
+    status: &str,
 ) -> gtk::Box {
     let side = gtk::Box::new(gtk::Orientation::Horizontal, 2);
     side.add_css_class("linked");
     side.set_valign(gtk::Align::Center);
-    let copy_url = if is_source {
-        crate::transfers::can_copy_url_source(path, job_type, path_fs_info(ctx, path).as_ref())
+    let info = path_fs_info(ctx, path);
+    let copy_url = if is_fallback {
+        crate::transfers::remote_name_from_path(path).is_some_and(|remote| {
+            crate::transfers::can_copy_url_fallback(&remote, path, job_type, info.as_ref(), status)
+        })
+    } else if is_source {
+        crate::transfers::can_copy_url_source(path, job_type, info.as_ref(), status)
     } else {
-        crate::transfers::can_copy_url_dest(
-            path,
-            job_type,
-            allow_dest_ops,
-            path_fs_info(ctx, path).as_ref(),
-        )
+        crate::transfers::can_copy_url_dest(path, job_type, allow_dest_ops, info.as_ref(), status)
     };
-    let can_download = if is_source {
-        crate::transfers::can_download_source(path, job_type)
+    let can_download = if is_fallback {
+        crate::transfers::remote_name_from_path(path).is_some_and(|remote| {
+            crate::transfers::can_download_fallback(&remote, path, job_type, status)
+        })
+    } else if is_source {
+        crate::transfers::can_download_source(path, job_type, status)
     } else {
-        crate::transfers::can_download_dest(path, job_type, allow_dest_ops)
+        crate::transfers::can_download_dest(path, job_type, allow_dest_ops, status)
     };
-    let can_delete = if is_source {
-        crate::transfers::can_delete_source(job_type) && !path.is_empty()
+    let can_delete = if is_fallback {
+        crate::transfers::remote_name_from_path(path).is_some_and(|remote| {
+            crate::transfers::can_delete_fallback(&remote, path, job_type, status)
+        })
+    } else if is_source {
+        crate::transfers::can_delete_source(job_type, status) && !path.is_empty()
     } else {
-        crate::transfers::can_delete_dest(job_type, allow_dest_ops) && !path.is_empty()
+        crate::transfers::can_delete_dest(job_type, allow_dest_ops, status) && !path.is_empty()
     };
     if let Some((remote, _rest)) = crate::transfers::browse_for(path) {
         let open = gtk::Button::from_icon_name("folder-open-symbolic");
@@ -6649,8 +10628,19 @@ fn transfer_side_actions(
             ));
             link.set_valign(gtk::Align::Center);
             let ctx = ctx.clone();
+            let parent = parent.clone();
+            if is_fallback {
+                link.set_widget_name("transfer-fallback-copy-url");
+            }
             link.connect_clicked(move |_| {
                 let Some(client) = ctx.client() else {
+                    add_action_toast(
+                        &parent,
+                        &ctx.t_or(
+                            "shared.transferActivity.actions.failCopyUrl",
+                            "Failed to generate download URL",
+                        ),
+                    );
                     return;
                 };
                 let full = if rest.is_empty() {
@@ -6661,10 +10651,26 @@ fn transfer_side_actions(
                     format!("{remote}:{rest}")
                 };
                 let (fs, remote_path) = crate::transfers::fs_and_remote(&full);
-                if let Ok(url) = client.public_link(&fs, &remote_path) {
-                    if let Some(display) = gtk::gdk::Display::default() {
-                        display.clipboard().set_text(&url);
+                match client.public_link(&fs, &remote_path) {
+                    Ok(url) => {
+                        if let Some(display) = gtk::gdk::Display::default() {
+                            display.clipboard().set_text(&url);
+                        }
+                        add_action_toast(
+                            &parent,
+                            &ctx.t_or(
+                                "shared.transferActivity.actions.successCopyUrl",
+                                "Download URL copied to clipboard",
+                            ),
+                        );
                     }
+                    Err(_) => add_action_toast(
+                        &parent,
+                        &ctx.t_or(
+                            "shared.transferActivity.actions.failCopyUrl",
+                            "Failed to generate download URL",
+                        ),
+                    ),
                 }
             });
             side.append(&link);
@@ -6677,6 +10683,9 @@ fn transfer_side_actions(
                 &ctx.t_or("shared.transferActivity.actions.download", "Download File"),
             ));
             dl.set_valign(gtk::Align::Center);
+            if is_fallback {
+                dl.set_widget_name("transfer-fallback-download");
+            }
             let ctx = ctx.clone();
             let parent = parent.clone();
             dl.connect_clicked(move |_| {
@@ -6697,6 +10706,9 @@ fn transfer_side_actions(
             ctx.t_or("nautilus.modals.delete.title", "Delete destination")
         }));
         del.set_valign(gtk::Align::Center);
+        if is_fallback {
+            del.set_widget_name("transfer-fallback-delete");
+        }
         let ctx = ctx.clone();
         let parent = parent.clone();
         let path = path.to_string();
@@ -6738,26 +10750,57 @@ pub(crate) fn confirm_delete_path(
     alert.add_response("delete", &ctx.t_or("common.delete", "Delete"));
     alert.set_response_appearance("delete", adw::ResponseAppearance::Destructive);
     let path = path.to_string();
-    alert.connect_response(None, move |_, response| {
-        if response != "delete" {
-            return;
-        }
-        let Some(client) = ctx.client() else {
-            return;
-        };
-        let (fs, remote) = crate::transfers::fs_and_remote(&path);
-        let ok = client
-            .purge(&fs, &remote)
-            .or_else(|_| client.delete_file(&fs, &remote))
-            .is_ok();
-        if ok {
-            if let Some(cb) = &on_done {
-                cb();
+    let parent = parent.clone();
+    alert.connect_response(None, {
+        let parent = parent.clone();
+        move |_, response| {
+            if response != "delete" {
+                return;
             }
+            let Some(client) = ctx.client() else {
+                return;
+            };
+            let (fs, remote) = crate::transfers::fs_and_remote(&path);
+            let ok = client
+                .purge(&fs, &remote)
+                .or_else(|_| client.delete_file(&fs, &remote))
+                .is_ok();
+            if ok {
+                if let Some(cb) = &on_done {
+                    cb();
+                }
+            } else {
+                add_action_toast(
+                    &parent,
+                    &ctx.t_or(
+                        "shared.transferActivity.messages.resolveFailed",
+                        "Failed to delete file",
+                    ),
+                );
+            }
+            ctx.refresh_runtime();
         }
-        ctx.refresh_runtime();
     });
-    alert.present(Some(parent));
+    alert.present(Some(&parent));
+}
+
+fn add_action_toast(parent: &impl IsA<gtk::Widget>, message: &str) {
+    let toast = adw::Toast::new(message);
+    toast.set_button_label(Some("OK"));
+    if let Some(overlay) = parent
+        .ancestor(adw::ToastOverlay::static_type())
+        .and_downcast::<adw::ToastOverlay>()
+    {
+        overlay.add_toast(toast);
+        return;
+    }
+    if let Ok(overlay) = parent
+        .clone()
+        .upcast::<gtk::Widget>()
+        .downcast::<adw::ToastOverlay>()
+    {
+        overlay.add_toast(toast);
+    }
 }
 
 fn pdf_panel(path: Option<std::path::PathBuf>, name: &str, ctx: &AppCtx) -> gtk::Box {
@@ -6814,9 +10857,13 @@ fn pdf_panel(path: Option<std::path::PathBuf>, name: &str, ctx: &AppCtx) -> gtk:
         let nav = gtk::Box::new(gtk::Orientation::Horizontal, 8);
         nav.set_halign(gtk::Align::Center);
         let prev = gtk::Button::from_icon_name("go-previous-symbolic");
-        prev.set_tooltip_text(Some("Previous page"));
+        prev.set_tooltip_text(Some(
+            &ctx.t_or("fileBrowser.fileViewer.previousPage", "Previous page"),
+        ));
         let next = gtk::Button::from_icon_name("go-next-symbolic");
-        next.set_tooltip_text(Some("Next page"));
+        next.set_tooltip_text(Some(
+            &ctx.t_or("fileBrowser.fileViewer.nextPage", "Next page"),
+        ));
         {
             let show = show.clone();
             let page = page.clone();
@@ -6842,6 +10889,10 @@ fn pdf_panel(path: Option<std::path::PathBuf>, name: &str, ctx: &AppCtx) -> gtk:
         }
         let open =
             gtk::Button::with_label(&ctx.t_or("fileBrowser.fileViewer.openNative", "Open native"));
+        open.set_tooltip_text(Some(&ctx.t_or(
+            "fileBrowser.fileViewer.openNativeTooltip",
+            "Open in default external application",
+        )));
         open.add_css_class("suggested-action");
         let p = path.clone();
         open.connect_clicked(move |_| {
@@ -6852,13 +10903,256 @@ fn pdf_panel(path: Option<std::path::PathBuf>, name: &str, ctx: &AppCtx) -> gtk:
     box_
 }
 
+fn build_markdown_preview(source: &str, images: Option<&(AppCtx, String, String)>) -> gtk::Widget {
+    let parts = crate::markdown::preview_parts(source);
+    let has_rich = parts.iter().any(|part| {
+        matches!(
+            part,
+            crate::markdown::PreviewPart::Image { .. } | crate::markdown::PreviewPart::Link { .. }
+        )
+    }) || crate::markdown::split_autolinks(source)
+        .iter()
+        .any(|part| matches!(part, crate::markdown::PreviewPart::Link { .. }));
+    if !has_rich {
+        let preview = gtk::TextView::new();
+        preview.set_editable(false);
+        preview.set_wrap_mode(gtk::WrapMode::WordChar);
+        preview.set_hexpand(true);
+        preview
+            .buffer()
+            .set_text(&crate::markdown::to_preview(source));
+        return preview.upcast();
+    }
+    let box_ = gtk::Box::new(gtk::Orientation::Vertical, 8);
+    box_.set_hexpand(true);
+    box_.set_valign(gtk::Align::Start);
+    let flow = gtk::Box::new(gtk::Orientation::Vertical, 4);
+    flow.set_hexpand(true);
+    let flush_text = |text_buf: &mut String, flow: &gtk::Box| {
+        let trimmed = text_buf.trim();
+        if trimmed.is_empty() {
+            text_buf.clear();
+            return;
+        }
+        for part in crate::markdown::split_autolinks(trimmed) {
+            match part {
+                crate::markdown::PreviewPart::Text(text) => {
+                    let view = gtk::TextView::new();
+                    view.set_editable(false);
+                    view.set_wrap_mode(gtk::WrapMode::WordChar);
+                    view.set_hexpand(true);
+                    view.set_vexpand(false);
+                    view.set_valign(gtk::Align::Start);
+                    view.buffer().set_text(&text);
+                    flow.append(&view);
+                }
+                crate::markdown::PreviewPart::Link { label, href } => {
+                    append_markdown_link(flow, &label, &href, images);
+                }
+                crate::markdown::PreviewPart::Image { .. } => {}
+            }
+        }
+        text_buf.clear();
+    };
+    let mut text_buf = String::new();
+    for part in parts {
+        match part {
+            crate::markdown::PreviewPart::Text(text) => text_buf.push_str(&text),
+            crate::markdown::PreviewPart::Link { label, href } => {
+                flush_text(&mut text_buf, &flow);
+                append_markdown_link(&flow, &label, &href, images);
+            }
+            crate::markdown::PreviewPart::Image { alt, href } => {
+                flush_text(&mut text_buf, &flow);
+                if let Some((ctx, remote, file_path)) = images {
+                    if let Some(path) = materialize_preview_image(ctx, remote, file_path, &href) {
+                        let image = gtk::Image::from_file(&path);
+                        image.set_pixel_size(200);
+                        image.set_hexpand(true);
+                        image.set_halign(gtk::Align::Start);
+                        if !alt.is_empty() {
+                            image.set_tooltip_text(Some(&alt));
+                        }
+                        let frame = gtk::Frame::new(Some(if alt.is_empty() {
+                            href.as_str()
+                        } else {
+                            alt.as_str()
+                        }));
+                        frame.set_halign(gtk::Align::Start);
+                        frame.set_child(Some(&image));
+                        flow.append(&frame);
+                    }
+                }
+                if !alt.is_empty() {
+                    let cap = gtk::Label::new(Some(&alt));
+                    cap.set_xalign(0.0);
+                    cap.add_css_class("dim-label");
+                    cap.set_wrap(true);
+                    flow.append(&cap);
+                }
+            }
+        }
+    }
+    flush_text(&mut text_buf, &flow);
+    box_.append(&flow);
+    box_.upcast()
+}
+
+fn append_markdown_link(
+    host: &gtk::Box,
+    label: &str,
+    href: &str,
+    nav: Option<&(AppCtx, String, String)>,
+) {
+    let title = if label.is_empty() { href } else { label };
+    if crate::markdown::is_web_href(href) {
+        let link = gtk::LinkButton::with_label(href, title);
+        link.set_uri(href);
+        link.set_halign(gtk::Align::Start);
+        host.append(&link);
+        return;
+    }
+    if let Some((ctx, remote, file_path)) = nav {
+        let resolved = crate::markdown::resolve_relative_path(file_path, href);
+        let btn = gtk::Button::with_label(title);
+        btn.add_css_class("flat");
+        btn.set_halign(gtk::Align::Start);
+        btn.set_tooltip_text(Some(&resolved));
+        let ctx = ctx.clone();
+        let host = host.clone();
+        let open_remote = if crate::markdown::is_passthrough_ref(&resolved)
+            && resolved.contains(':')
+            && !resolved.starts_with('/')
+        {
+            crate::rclone::split_remote_path(&resolved).0
+        } else {
+            remote.clone()
+        };
+        let path = if open_remote == "local" && crate::markdown::is_passthrough_ref(&resolved) {
+            resolved.clone()
+        } else if crate::markdown::is_passthrough_ref(&resolved)
+            && resolved.contains(':')
+            && !resolved.starts_with('/')
+        {
+            crate::rclone::split_remote_path(&resolved).1
+        } else {
+            resolved.clone()
+        };
+        let file_name = path
+            .rsplit('/')
+            .next()
+            .filter(|s| !s.is_empty())
+            .unwrap_or(path.as_str())
+            .to_string();
+        {
+            let host = host.clone();
+            btn.connect_clicked(move |_| {
+                file_viewer(
+                    &host,
+                    ctx.clone(),
+                    &open_remote,
+                    &path,
+                    &file_name,
+                    false,
+                    &[],
+                    None,
+                );
+            });
+        }
+        host.append(&btn);
+        return;
+    }
+    let label = gtk::Label::new(Some(title));
+    label.set_xalign(0.0);
+    label.add_css_class("dim-label");
+    host.append(&label);
+}
+
+fn materialize_preview_image(
+    ctx: &AppCtx,
+    remote: &str,
+    file_path: &str,
+    href: &str,
+) -> Option<std::path::PathBuf> {
+    use std::io::Read;
+    match crate::markdown::resolve_preview_source(remote, file_path, href) {
+        crate::markdown::PreviewSource::Path(path) => {
+            let path = std::path::PathBuf::from(path);
+            path.is_file().then_some(path)
+        }
+        crate::markdown::PreviewSource::Url(url) => {
+            let dest = markdown_preview_cache_path("http", &url);
+            if dest.is_file() {
+                return Some(dest);
+            }
+            let resp = ureq::get(&url)
+                .timeout(std::time::Duration::from_secs(8))
+                .call()
+                .ok()?;
+            let mut bytes = Vec::new();
+            resp.into_reader()
+                .take(8_000_000)
+                .read_to_end(&mut bytes)
+                .ok()?;
+            std::fs::write(&dest, bytes).ok()?;
+            Some(dest)
+        }
+        crate::markdown::PreviewSource::RemotePath(path) => {
+            let dest = markdown_preview_cache_path(remote, &path);
+            if dest.is_file() && dest.metadata().ok()?.len() > 32 {
+                return Some(dest);
+            }
+            let client = ctx.client()?;
+            if let Ok(bytes) = client.preview_bytes(remote, &path, 8_000_000) {
+                if bytes.len() > 32 && std::fs::write(&dest, &bytes).is_ok() {
+                    return Some(dest);
+                }
+            }
+            let fs = crate::rclone::remote_fs(remote, "");
+            client
+                .copy_file(&fs, &path, "/", &dest.to_string_lossy())
+                .ok()?;
+            dest.is_file().then_some(dest)
+        }
+    }
+}
+
+fn markdown_preview_cache_path(remote: &str, path: &str) -> std::path::PathBuf {
+    use sha2::{Digest, Sha256};
+    let mut hasher = Sha256::new();
+    hasher.update(remote.as_bytes());
+    hasher.update(b"\0");
+    hasher.update(path.as_bytes());
+    let digest = hex_encode(&hasher.finalize());
+    let ext = std::path::Path::new(path)
+        .extension()
+        .and_then(|e| e.to_str())
+        .filter(|e| e.chars().all(|c| c.is_ascii_alphanumeric()))
+        .unwrap_or("img");
+    std::env::temp_dir().join(format!("rclone-md-preview-{digest}.{ext}"))
+}
+
+fn hex_encode(bytes: &[u8]) -> String {
+    bytes.iter().map(|b| format!("{b:02x}")).collect()
+}
+
+fn sync_line_gutter(view: &gtk::TextView, gutter: &gtk::TextView) {
+    gutter.buffer().set_text(&crate::textfix::line_gutter_text(
+        view.buffer().line_count(),
+    ));
+}
+
 fn attach_text_preview(
     parent: &gtk::Box,
+    ctx: &AppCtx,
     name: &str,
     text: &str,
     editable: bool,
     save_path: Option<&str>,
     remote_save: Option<(AppCtx, String, String)>,
+    md_images: Option<(AppCtx, String, String)>,
+    toolbar: Option<&gtk::Box>,
+    toast: Option<&adw::ToastOverlay>,
 ) {
     let shown = if text.len() > 200_000 {
         format!("{}\n\n… truncated …", &text[..200_000])
@@ -6868,72 +11162,118 @@ fn attach_text_preview(
     let view = gtk::TextView::new();
     view.set_monospace(true);
     view.set_editable(editable);
+    view.set_hexpand(true);
+    view.set_wrap_mode(gtk::WrapMode::None);
     apply_syntax_highlight(&view, name, &shown);
     attach_live_syntax(&view, name);
+    let gutter = gtk::TextView::new();
+    gutter.set_editable(false);
+    gutter.set_can_focus(false);
+    gutter.set_cursor_visible(false);
+    gutter.set_monospace(true);
+    gutter.set_wrap_mode(gtk::WrapMode::None);
+    gutter.add_css_class("dim-label");
+    gutter.set_left_margin(8);
+    gutter.set_right_margin(8);
+    sync_line_gutter(&view, &gutter);
+    {
+        let view = view.clone();
+        let gutter = gutter.clone();
+        view.buffer().connect_changed(move |_| {
+            sync_line_gutter(&view, &gutter);
+        });
+    }
+    let editor = gtk::Box::new(gtk::Orientation::Horizontal, 0);
+    editor.append(&gutter);
+    editor.append(&view);
     let source_scroll = gtk::ScrolledWindow::new();
     source_scroll.set_vexpand(true);
-    source_scroll.set_child(Some(&view));
+    source_scroll.set_child(Some(&editor));
+    let chrome = toolbar.cloned().unwrap_or_else(|| {
+        let bar = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+        parent.append(&bar);
+        bar
+    });
+    let wrap = gtk::ToggleButton::new();
+    wrap.set_icon_name("format-justify-left-symbolic");
+    wrap.set_tooltip_text(Some(
+        &ctx.t_or("fileBrowser.fileViewer.wrapLines", "Wrap lines"),
+    ));
+    wrap.set_valign(gtk::Align::Center);
+    {
+        let view = view.clone();
+        let gutter = gutter.clone();
+        wrap.connect_toggled(move |btn| {
+            if btn.is_active() {
+                view.set_wrap_mode(gtk::WrapMode::WordChar);
+                gutter.set_visible(false);
+            } else {
+                view.set_wrap_mode(gtk::WrapMode::None);
+                gutter.set_visible(true);
+            }
+        });
+    }
+    chrome.append(&wrap);
     if crate::markdown::is_markdown(name) {
-        let preview = gtk::TextView::new();
-        preview.set_editable(false);
-        preview.set_wrap_mode(gtk::WrapMode::WordChar);
-        preview
-            .buffer()
-            .set_text(&crate::markdown::to_preview(&shown));
+        let preview = build_markdown_preview(&shown, md_images.as_ref());
         let preview_scroll = gtk::ScrolledWindow::new();
         preview_scroll.set_vexpand(true);
+        preview_scroll.set_min_content_height(280);
+        preview_scroll.set_policy(gtk::PolicyType::Never, gtk::PolicyType::Automatic);
         preview_scroll.set_child(Some(&preview));
         let stack = gtk::Stack::new();
         stack.add_named(&source_scroll, Some("source"));
         stack.add_named(&preview_scroll, Some("preview"));
         let toggle = gtk::ToggleButton::with_label(
-            &remote_save
-                .as_ref()
-                .map(|(ctx, _, _)| ctx.t_or("fileBrowser.fileViewer.showPreview", "Preview"))
-                .unwrap_or_else(|| "Preview".into()),
+            &ctx.t_or("fileBrowser.fileViewer.showPreview", "Preview"),
         );
-        // Label is set by caller context; keep short so the toggle fits the toolbar.
+        toggle.set_valign(gtk::Align::Center);
         {
             let stack = stack.clone();
+            let ctx = ctx.clone();
             toggle.connect_toggled(move |btn| {
                 stack.set_visible_child_name(if btn.is_active() { "preview" } else { "source" });
+                btn.set_label(&ctx.t_or(
+                    if btn.is_active() {
+                        "fileBrowser.fileViewer.showRawText"
+                    } else {
+                        "fileBrowser.fileViewer.showPreview"
+                    },
+                    if btn.is_active() {
+                        "Show Raw Text"
+                    } else {
+                        "Preview"
+                    },
+                ));
             });
         }
-        parent.append(&toggle);
+        chrome.append(&toggle);
         parent.append(&stack);
     } else {
         parent.append(&source_scroll);
     }
     if editable && (save_path.is_some() || remote_save.is_some()) {
         view.set_editable(false);
-        let edit = gtk::Button::with_label(
-            &remote_save
-                .as_ref()
-                .map(|(ctx, _, _)| ctx.t_or("fileBrowser.fileViewer.edit", "Edit"))
-                .unwrap_or_else(|| "Edit".into()),
-        );
-        let save = gtk::Button::with_label(
-            &remote_save
-                .as_ref()
-                .map(|(ctx, _, _)| ctx.t_or("fileBrowser.fileViewer.save", "Save"))
-                .unwrap_or_else(|| "Save".into()),
-        );
+        let edit = gtk::Button::with_label(&ctx.t_or("fileBrowser.fileViewer.edit", "Edit"));
+        edit.set_valign(gtk::Align::Center);
+        let save = gtk::Button::with_label(&ctx.t_or("fileBrowser.fileViewer.save", "Save"));
         save.add_css_class("suggested-action");
         save.set_sensitive(false);
-        let cancel = gtk::Button::with_label(
-            &remote_save
-                .as_ref()
-                .map(|(ctx, _, _)| ctx.t_or("fileBrowser.fileViewer.cancel", "Cancel"))
-                .unwrap_or_else(|| "Cancel".into()),
-        );
+        save.set_visible(false);
+        save.set_valign(gtk::Align::Center);
+        let cancel = gtk::Button::with_label(&ctx.t_or("fileBrowser.fileViewer.cancel", "Cancel"));
         cancel.set_sensitive(false);
+        cancel.set_visible(false);
+        cancel.set_valign(gtk::Align::Center);
         {
             let view = view.clone();
             let save = save.clone();
             let cancel = cancel.clone();
             edit.connect_clicked(move |_| {
                 view.set_editable(true);
+                save.set_visible(true);
                 save.set_sensitive(true);
+                cancel.set_visible(true);
                 cancel.set_sensitive(true);
             });
         }
@@ -6946,11 +11286,16 @@ fn attach_text_preview(
                 view.buffer().set_text(&original);
                 view.set_editable(false);
                 save.set_sensitive(false);
+                save.set_visible(false);
                 cancel_btn.set_sensitive(false);
+                cancel_btn.set_visible(false);
             });
         }
         let view = view.clone();
         let local = save_path.map(|p| p.to_string());
+        let toast = toast.cloned();
+        let notify_ctx = ctx.clone();
+        let cancel_for_save = cancel.clone();
         save.connect_clicked(move |btn| {
             let buffer = view.buffer();
             let text = buffer.text(&buffer.start_iter(), &buffer.end_iter(), false);
@@ -6978,19 +11323,32 @@ fn attach_text_preview(
             }
             view.set_editable(false);
             btn.set_sensitive(false);
-            if ok {
-                let label = remote_save
-                    .as_ref()
-                    .map(|(ctx, _, _)| ctx.t_or("common.ok", "OK"))
-                    .unwrap_or_else(|| "OK".into());
-                btn.set_label(&label);
+            btn.set_visible(false);
+            cancel_for_save.set_sensitive(false);
+            cancel_for_save.set_visible(false);
+            let message = notify_ctx.t_or(
+                if ok {
+                    "fileBrowser.fileViewer.saveSuccess"
+                } else {
+                    "fileBrowser.fileViewer.saveError"
+                },
+                if ok {
+                    "File saved successfully"
+                } else {
+                    "Failed to save file"
+                },
+            );
+            if let Some(toast) = &toast {
+                let toast_msg = adw::Toast::new(&message);
+                toast_msg.set_timeout(5);
+                toast.add_toast(toast_msg);
+            } else {
+                notify_ctx.notify(&message, "");
             }
         });
-        let bar = gtk::Box::new(gtk::Orientation::Horizontal, 8);
-        bar.append(&edit);
-        bar.append(&cancel);
-        bar.append(&save);
-        parent.append(&bar);
+        chrome.append(&edit);
+        chrome.append(&cancel);
+        chrome.append(&save);
     }
 }
 
@@ -7052,9 +11410,10 @@ fn append_markdown_targets(
         } else {
             let open = gtk::Button::from_icon_name("document-open-symbolic");
             open.set_valign(gtk::Align::Center);
-            open.set_tooltip_text(Some(
-                &ctx.t_or("fileBrowser.fileViewer.openNative", "Open in External App"),
-            ));
+            open.set_tooltip_text(Some(&ctx.t_or(
+                "fileBrowser.fileViewer.openNativeTooltip",
+                "Open in default external application",
+            )));
             let ctx = ctx.clone();
             let parent = dialog_parent.clone();
             let open_remote = if crate::markdown::is_passthrough_ref(&resolved)
@@ -7090,6 +11449,7 @@ fn append_markdown_targets(
                     &file_name,
                     false,
                     &[],
+                    None,
                 );
             });
             row.add_suffix(&open);
@@ -7103,6 +11463,8 @@ fn attach_remote_stream_preview(
     parent: &gtk::Box,
     url: &str,
     category: crate::operations::FileTypeCategory,
+    name: &str,
+    ctx: &AppCtx,
 ) {
     let file = gio::File::for_uri(url);
     if matches!(category, crate::operations::FileTypeCategory::Image) {
@@ -7120,6 +11482,20 @@ fn attach_remote_stream_preview(
         video.set_vexpand(true);
         video.set_autoplay(true);
         parent.append(&video);
+        let key = if matches!(category, crate::operations::FileTypeCategory::Video) {
+            "fileBrowser.fileViewer.videoLabel"
+        } else {
+            "fileBrowser.fileViewer.audioLabel"
+        };
+        let fallback = if matches!(category, crate::operations::FileTypeCategory::Video) {
+            "Video: {{name}}"
+        } else {
+            "Audio: {{name}}"
+        };
+        let label = gtk::Label::new(Some(&ctx.tf_or(key, fallback, &[("name", name)])));
+        label.add_css_class("dim-label");
+        label.set_xalign(0.0);
+        parent.append(&label);
     }
 }
 
@@ -7158,6 +11534,32 @@ fn append_download_preview_button(
     actions.append(&fetch);
 }
 
+fn materialize_remote_pdf(
+    client: &crate::rclone::RcClient,
+    remote: &str,
+    path: &str,
+    name: &str,
+    fs: &str,
+    remote_size: Option<i64>,
+) -> Option<std::path::PathBuf> {
+    let limit = crate::media::REMOTE_PREVIEW_WARN_BYTES.max(1) as u64;
+    if let Ok(bytes) = client.preview_bytes(remote, path, limit) {
+        if crate::media::looks_like_pdf(&bytes) {
+            if let Some(dest) = crate::media::write_preview_temp(name, &bytes) {
+                return Some(dest);
+            }
+        }
+    }
+    if crate::media::should_warn_remote_preview(remote_size) {
+        return None;
+    }
+    let dest = std::env::temp_dir().join(name.replace(['/', '\\', ':'], "_"));
+    client
+        .copy_file(fs, path, "/", &dest.to_string_lossy())
+        .ok()
+        .and_then(|_| dest.is_file().then_some(dest))
+}
+
 fn attach_local_media_preview(
     parent: &gtk::Box,
     local: &std::path::Path,
@@ -7180,7 +11582,25 @@ fn attach_local_media_preview(
         video.set_autoplay(true);
         parent.append(&video);
         if matches!(category, crate::operations::FileTypeCategory::Audio) {
+            let label = gtk::Label::new(Some(&ctx.tf_or(
+                "fileBrowser.fileViewer.audioLabel",
+                "Audio: {{name}}",
+                &[("name", name)],
+            )));
+            label.add_css_class("dim-label");
+            label.set_xalign(0.0);
+            parent.append(&label);
             attach_audio_cover(parent, Some(local), None);
+        }
+        if matches!(category, crate::operations::FileTypeCategory::Video) {
+            let label = gtk::Label::new(Some(&ctx.tf_or(
+                "fileBrowser.fileViewer.videoLabel",
+                "Video: {{name}}",
+                &[("name", name)],
+            )));
+            label.add_css_class("dim-label");
+            label.set_xalign(0.0);
+            parent.append(&label);
         }
     }
     if matches!(category, crate::operations::FileTypeCategory::Pdf) {
@@ -7234,6 +11654,7 @@ pub fn file_viewer(
     name: &str,
     is_dir: bool,
     siblings: &[(String, bool)],
+    on_navigate: Option<Rc<dyn Fn(&str)>>,
 ) {
     if try_spawn_standalone(
         &ctx,
@@ -7247,6 +11668,7 @@ pub fn file_viewer(
     ) {
         return;
     }
+    let siblings = crate::listing::resolve_siblings(ctx.client().as_ref(), remote, path, siblings);
     let dialog = adw::Dialog::new();
     dialog.set_title(name);
     dialog.set_content_width(720);
@@ -7298,8 +11720,9 @@ pub fn file_viewer(
         let remote = remote.to_string();
         let path = path.to_string();
         let name = name.to_string();
-        let siblings = siblings.to_vec();
+        let siblings = siblings.clone();
         let dialog = dialog.clone();
+        let on_navigate = on_navigate.clone();
         prev.connect_clicked(move |_| {
             let Some(i) = siblings.iter().position(|(n, _)| n == name.as_str()) else {
                 return;
@@ -7310,6 +11733,9 @@ pub fn file_viewer(
             let (prev_name, prev_dir) = siblings[i - 1].clone();
             let parent_path = crate::rclone::parent_remote_path(&path);
             let next_path = crate::rclone::join_remote_path(&parent_path, &prev_name);
+            if let Some(cb) = on_navigate.as_ref() {
+                cb(&prev_name);
+            }
             dialog.close();
             file_viewer(
                 &parent,
@@ -7319,6 +11745,7 @@ pub fn file_viewer(
                 &prev_name,
                 prev_dir,
                 &siblings,
+                on_navigate.clone(),
             );
         });
     }
@@ -7328,8 +11755,9 @@ pub fn file_viewer(
         let remote = remote.to_string();
         let path = path.to_string();
         let name = name.to_string();
-        let siblings = siblings.to_vec();
+        let siblings = siblings.clone();
         let dialog = dialog.clone();
+        let on_navigate = on_navigate.clone();
         next.connect_clicked(move |_| {
             let Some(i) = siblings.iter().position(|(n, _)| n == name.as_str()) else {
                 return;
@@ -7340,6 +11768,9 @@ pub fn file_viewer(
             let (next_name, next_dir) = siblings[i + 1].clone();
             let parent_path = crate::rclone::parent_remote_path(&path);
             let next_path = crate::rclone::join_remote_path(&parent_path, &next_name);
+            if let Some(cb) = on_navigate.as_ref() {
+                cb(&next_name);
+            }
             dialog.close();
             file_viewer(
                 &parent,
@@ -7349,16 +11780,29 @@ pub fn file_viewer(
                 &next_name,
                 next_dir,
                 &siblings,
+                on_navigate.clone(),
             );
+        });
+    }
+    let close = gtk::Button::from_icon_name("window-close-symbolic");
+    close.set_tooltip_text(Some(
+        &ctx.t_or("fileBrowser.fileViewer.closeViewer", "Close viewer"),
+    ));
+    {
+        let dialog = dialog.clone();
+        close.connect_clicked(move |_| {
+            dialog.close();
         });
     }
     nav.append(&prev);
     nav.append(&pos);
     nav.append(&next);
+    nav.append(&close);
     {
         let keys = gtk::EventControllerKey::new();
         let prev = prev.clone();
         let next = next.clone();
+        let dialog_keys = dialog.clone();
         keys.connect_key_pressed(move |_, key, _, _| {
             if key == gtk::gdk::Key::Left || key == gtk::gdk::Key::KP_Left {
                 prev.emit_clicked();
@@ -7366,6 +11810,17 @@ pub fn file_viewer(
             }
             if key == gtk::gdk::Key::Right || key == gtk::gdk::Key::KP_Right {
                 next.emit_clicked();
+                return glib::Propagation::Stop;
+            }
+            if key == gtk::gdk::Key::Escape {
+                if let Some(focus) = dialog_keys.focus() {
+                    if let Ok(view) = focus.downcast::<gtk::TextView>() {
+                        if view.is_editable() {
+                            return glib::Propagation::Stop;
+                        }
+                    }
+                }
+                dialog_keys.close();
                 return glib::Propagation::Stop;
             }
             glib::Propagation::Proceed
@@ -7381,6 +11836,10 @@ pub fn file_viewer(
     let open = gtk::Button::with_label(
         &ctx.t_or("fileBrowser.fileViewer.openNative", "Open in External App"),
     );
+    open.set_tooltip_text(Some(&ctx.t_or(
+        "fileBrowser.fileViewer.openNativeTooltip",
+        "Open in default external application",
+    )));
     {
         let parent = parent.clone();
         let ctx = ctx.clone();
@@ -7416,16 +11875,24 @@ pub fn file_viewer(
             }
         });
     }
-    let download =
-        gtk::Button::with_label(&ctx.t_or("fileBrowser.fileViewer.download", "Download"));
+    let download = gtk::Button::with_label(&{
+        let label = ctx.tf("fileBrowser.fileViewer.download", &[("name", name)]);
+        if label.contains("{{") {
+            format!("Download {name}")
+        } else {
+            label
+        }
+    });
     {
-        let parent = parent.clone();
+        let host = download.clone();
         let ctx = ctx.clone();
         let remote = remote.to_string();
         let path = path.to_string();
         let name = name.to_string();
         download.connect_clicked(move |_| {
-            download_file(&parent, ctx.clone(), &remote, &path, &name);
+            // Host is the viewer button so toasts land on the dialog overlay,
+            // not the main window underneath the AdwDialog.
+            download_file(&host, ctx.clone(), &remote, &path, &name);
         });
     }
     let box_ = gtk::Box::new(gtk::Orientation::Vertical, 12);
@@ -7435,6 +11902,64 @@ pub fn file_viewer(
     actions.append(&open);
     actions.append(&download);
     box_.append(&actions);
+    let toast = adw::ToastOverlay::new();
+    let content_stack = gtk::Stack::new();
+    let loading = adw::StatusPage::new();
+    loading.set_title(&ctx.t_or("fileBrowser.fileViewer.loadingContent", "Loading content"));
+    let spinner = gtk::Spinner::new();
+    spinner.set_spinning(true);
+    spinner.set_halign(gtk::Align::Center);
+    spinner.set_size_request(48, 48);
+    loading.set_child(Some(&spinner));
+    content_stack.add_named(&loading, Some("loading"));
+    content_stack.add_named(&box_, Some("body"));
+    content_stack.set_visible_child_name("loading");
+    toast.set_child(Some(&content_stack));
+    dialog.set_child(Some(&toast));
+    dialog.present(Some(parent));
+    let parent = parent.clone();
+    let ctx = ctx.clone();
+    let remote = remote.to_string();
+    let path = path.to_string();
+    let name = name.to_string();
+    let box_ = box_.clone();
+    let info = info.clone();
+    let actions = actions.clone();
+    let toast = toast.clone();
+    let content_stack = content_stack.clone();
+    glib::idle_add_local_once(move || {
+        populate_file_viewer_body(
+            &parent,
+            &ctx,
+            &remote,
+            &path,
+            &name,
+            is_dir,
+            category,
+            &box_,
+            &info,
+            &actions,
+            &toast,
+            remote_size,
+        );
+        content_stack.set_visible_child_name("body");
+    });
+}
+
+fn populate_file_viewer_body(
+    parent: &impl IsA<gtk::Widget>,
+    ctx: &AppCtx,
+    remote: &str,
+    path: &str,
+    name: &str,
+    is_dir: bool,
+    category: crate::operations::FileTypeCategory,
+    box_: &gtk::Box,
+    info: &gtk::Label,
+    actions: &gtk::Box,
+    toast: &adw::ToastOverlay,
+    remote_size: Option<i64>,
+) {
     if is_dir {
         let size_label = gtk::Label::new(Some(&ctx.t_or(
             "fileBrowser.fileViewer.calculatingFolderSize",
@@ -7585,7 +12110,7 @@ pub fn file_viewer(
                                             "fileBrowser.fileViewer.errorExtract",
                                             "Failed to extract archive",
                                         )),
-                                        Some(&e.to_string()),
+                                        Some(&ctx.translate_error(&e.to_string())),
                                     );
                                     toast.add_response("ok", &ctx.t("common.ok"));
                                     toast.present(Some(&parent));
@@ -7621,7 +12146,9 @@ pub fn file_viewer(
         if let Some(client) = ctx.client() {
             let fs = remote_fs(remote, "");
             if matches!(category, crate::operations::FileTypeCategory::Text) {
-                if let Ok(text) = client.cat(&fs, path, Some(crate::rclone::CAT_PREVIEW_BYTES)) {
+                if let Ok(text) =
+                    client.preview_text(remote, path, Some(crate::rclone::CAT_PREVIEW_BYTES))
+                {
                     let text = crate::textfix::repair_text(&text);
                     if crate::textfix::looks_like_binary(&text) {
                         info.set_text(
@@ -7634,14 +12161,50 @@ pub fn file_viewer(
                         ));
                         attach_text_preview(
                             &box_,
+                            &ctx,
                             name,
                             &text,
                             true,
                             None,
                             Some((ctx.clone(), fs, path.to_string())),
+                            Some((ctx.clone(), remote.to_string(), path.to_string())),
+                            Some(&actions),
+                            Some(&toast),
                         );
                         append_markdown_targets(&box_, name, &text, remote, path, &ctx, parent);
                     }
+                } else {
+                    info.set_text(&ctx.tf_or(
+                        "fileBrowser.fileViewer.errorLoadFile",
+                        "Failed to load {{name}}",
+                        &[("name", name)],
+                    ));
+                }
+            } else if matches!(category, crate::operations::FileTypeCategory::Pdf) {
+                if let Some(dest) =
+                    materialize_remote_pdf(&client, remote, path, name, &fs, remote_size)
+                {
+                    info.set_text(&ctx.t_or(
+                        "fileBrowser.fileViewer.remotePdfPreview",
+                        "Remote PDF preview",
+                    ));
+                    preview_path = Some(dest);
+                } else if crate::media::should_warn_remote_preview(remote_size) {
+                    let size_label = remote_size
+                        .map(crate::rclone::format_bytes)
+                        .unwrap_or_else(|| "?".into());
+                    info.set_text(&ctx.tf(
+                        "fileBrowser.fileViewer.largeRemotePreview",
+                        &[("size", &size_label)],
+                    ));
+                    if info.text().contains("{{") {
+                        info.set_text(&format!(
+                            "This remote file is {size_label}. Downloading the whole file for preview may take a while."
+                        ));
+                    }
+                    append_download_preview_button(
+                        &actions, &ctx, &box_, &fs, path, name, category,
+                    );
                 }
             } else if category.can_stream_preview()
                 && client.probe_rc_serve(&client.rc_serve_url(remote, path))
@@ -7651,7 +12214,7 @@ pub fn file_viewer(
                     "fileBrowser.fileViewer.remoteStream",
                     "Streaming remote preview",
                 ));
-                attach_remote_stream_preview(&box_, &url, category);
+                attach_remote_stream_preview(&box_, &url, category, name, &ctx);
                 if matches!(category, crate::operations::FileTypeCategory::Audio) {
                     attach_audio_cover(&box_, None, Some((&ctx, remote, path, name)));
                 }
@@ -7674,6 +12237,11 @@ pub fn file_viewer(
                 append_download_preview_button(&actions, &ctx, &box_, &fs, path, name, category);
             } else {
                 let dest = std::env::temp_dir().join(name);
+                info.set_text(&ctx.tf_or(
+                    "fileBrowser.fileViewer.downloading",
+                    "Downloading {{name}}",
+                    &[("name", name)],
+                ));
                 if client
                     .copy_file(&fs, path, "/", &dest.to_string_lossy())
                     .is_ok()
@@ -7686,6 +12254,11 @@ pub fn file_viewer(
                         info.set_text(&format!("Downloaded preview to {}", dest.display()));
                     }
                     preview_path = Some(dest);
+                } else {
+                    info.set_text(&ctx.t_or(
+                        "fileBrowser.fileViewer.errorDownload",
+                        "Error downloading file",
+                    ));
                 }
             }
         }
@@ -7704,11 +12277,15 @@ pub fn file_viewer(
             } else {
                 attach_text_preview(
                     &box_,
+                    &ctx,
                     name,
                     &text,
                     true,
                     Some(&local.to_string_lossy()),
                     None,
+                    Some((ctx.clone(), remote.to_string(), path.to_string())),
+                    Some(&actions),
+                    Some(&toast),
                 );
                 append_markdown_targets(&box_, name, &text, remote, path, &ctx, parent);
             }
@@ -7748,8 +12325,6 @@ pub fn file_viewer(
         page.set_description(Some(name));
         box_.append(&page);
     }
-    dialog.set_child(Some(&box_));
-    dialog.present(Some(parent));
 }
 
 fn metadata_item_row(ctx: &AppCtx, key: &str, meta: &serde_json::Value) -> adw::ActionRow {
@@ -7800,6 +12375,24 @@ fn metadata_item_row(ctx: &AppCtx, key: &str, meta: &serde_json::Value) -> adw::
     row
 }
 
+fn add_about_row(group: &adw::PreferencesGroup, title: &str, subtitle: &str) -> adw::ActionRow {
+    let row = adw::ActionRow::new();
+    row.set_title(title);
+    if !subtitle.is_empty() {
+        row.set_subtitle(subtitle);
+    }
+    group.add(&row);
+    row
+}
+
+fn remove_pref_rows(group: &adw::PreferencesGroup, rows: &mut Vec<adw::ActionRow>) {
+    for row in rows.drain(..) {
+        if row.parent().is_some_and(|parent| parent == *group) {
+            group.remove(&row);
+        }
+    }
+}
+
 pub fn remote_about(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, remote: &str) {
     if try_spawn_standalone(
         &ctx,
@@ -7817,7 +12410,15 @@ pub fn remote_about(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, remote: &str) {
     dialog.set_content_height(640);
     let page = adw::PreferencesPage::new();
     let usage = adw::PreferencesGroup::new();
-    usage.set_title(&ctx.t_or("fileBrowser.remoteAbout.tabs.overview", "Usage"));
+    usage.set_title(&ctx.t_or("fileBrowser.remoteAbout.tabs.overview", "Overview"));
+    let reload = gtk::Button::from_icon_name("view-refresh-symbolic");
+    reload.add_css_class("flat");
+    reload.set_valign(gtk::Align::Center);
+    reload.set_tooltip_text(Some(
+        &ctx.t_or("fileBrowser.remoteAbout.reloadUsage", "Reload Usage"),
+    ));
+    usage.set_header_suffix(Some(&reload));
+    let info_group = adw::PreferencesGroup::new();
     let features = adw::PreferencesGroup::new();
     features.set_title(&ctx.t_or("fileBrowser.remoteAbout.tabs.features", "Features"));
     let hashes = adw::PreferencesGroup::new();
@@ -7829,102 +12430,141 @@ pub fn remote_about(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, remote: &str) {
         "gtk/remote-about/{remote}-{}",
         chrono::Utc::now().timestamp_millis()
     );
-    if let Some(client) = ctx.client() {
-        match client.about(&fs) {
-            Ok(about) => {
-                for (key, label, fallback) in [
-                    ("used", "fileBrowser.remoteAbout.usedSpace", "Used Space"),
-                    ("free", "fileBrowser.remoteAbout.freeSpace", "Free Space"),
-                    ("total", "fileBrowser.remoteAbout.totalSpace", "Total Space"),
-                    ("trashed", "fileBrowser.remoteAbout.trashed", "Trashed"),
-                ] {
-                    if let Some(value) = about.get(key).and_then(|x| x.as_i64()) {
-                        let row = adw::ActionRow::new();
-                        row.set_title(&ctx.t_or(label, fallback));
-                        row.set_subtitle(&crate::rclone::format_bytes(value));
-                        usage.add(&row);
-                    }
-                }
-                for (key, value) in about.as_object().cloned().unwrap_or_default() {
-                    if matches!(key.as_str(), "used" | "free" | "total" | "trashed") {
-                        continue;
-                    }
-                    let row = adw::ActionRow::new();
-                    row.set_title(&key);
-                    row.set_subtitle(&value.to_string());
-                    usage.add(&row);
-                }
-            }
-            Err(e) => {
-                let row = adw::ActionRow::new();
-                row.set_title(&ctx.t_or(
-                    "fileBrowser.remoteAbout.usageUnavailable",
-                    "Unable to query disk usage",
+    let usage_rows: Rc<RefCell<Vec<adw::ActionRow>>> = Rc::new(RefCell::new(Vec::new()));
+    let fill_usage = {
+        let ctx = ctx.clone();
+        let usage = usage.clone();
+        let usage_rows = usage_rows.clone();
+        let fs = fs.clone();
+        Rc::new(move || {
+            let mut rows = usage_rows.borrow_mut();
+            remove_pref_rows(&usage, &mut rows);
+            let Some(client) = ctx.client() else {
+                rows.push(add_about_row(
+                    &usage,
+                    &ctx.t_or(
+                        "fileBrowser.remoteAbout.error",
+                        "Failed to load remote information.",
+                    ),
+                    "",
                 ));
-                row.set_subtitle(&e.to_string());
-                usage.add(&row);
+                return;
+            };
+            match client.about(&fs) {
+                Ok(about) => {
+                    for (key, label, fallback) in [
+                        ("total", "fileBrowser.remoteAbout.totalSpace", "Total Space"),
+                        ("used", "fileBrowser.remoteAbout.usedSpace", "Used Space"),
+                        ("free", "fileBrowser.remoteAbout.freeSpace", "Free Space"),
+                        ("trashed", "fileBrowser.remoteAbout.trashed", "Trashed"),
+                    ] {
+                        if let Some(value) = about.get(key).and_then(|x| x.as_i64()) {
+                            rows.push(add_about_row(
+                                &usage,
+                                &ctx.t_or(label, fallback),
+                                &crate::rclone::format_bytes(value),
+                            ));
+                        }
+                    }
+                    for (key, value) in about.as_object().cloned().unwrap_or_default() {
+                        if matches!(key.as_str(), "used" | "free" | "total" | "trashed") {
+                            continue;
+                        }
+                        rows.push(add_about_row(&usage, &key, &value.to_string()));
+                    }
+                }
+                Err(e) => {
+                    rows.push(add_about_row(
+                        &usage,
+                        &ctx.t_or(
+                            "fileBrowser.remoteAbout.usageUnavailable",
+                            "Unable to query disk usage",
+                        ),
+                        &e.to_string(),
+                    ));
+                }
             }
-        }
-        match client.size(&fs, "") {
-            Ok(size) => {
-                let row = adw::ActionRow::new();
-                row.set_title(&ctx.t_or("fileBrowser.remoteAbout.objects", "Objects"));
-                let count = size.get("count").and_then(|x| x.as_i64()).unwrap_or(0);
-                let bytes = size.get("bytes").and_then(|x| x.as_i64()).unwrap_or(0);
-                row.set_subtitle(&format!("{count} · {}", crate::rclone::format_bytes(bytes)));
-                usage.add(&row);
+            match client.size(&fs, "") {
+                Ok(size) => {
+                    let count = size.get("count").and_then(|x| x.as_i64()).unwrap_or(0);
+                    let bytes = size.get("bytes").and_then(|x| x.as_i64()).unwrap_or(0);
+                    rows.push(add_about_row(
+                        &usage,
+                        &ctx.t_or("fileBrowser.remoteAbout.objectCount", "Object Count"),
+                        &crate::fileops::remote_about_object_subtitle(count, bytes),
+                    ));
+                }
+                Err(e) => {
+                    rows.push(add_about_row(
+                        &usage,
+                        &ctx.t_or("fileBrowser.remoteAbout.objectCount", "Object Count"),
+                        &e.to_string(),
+                    ));
+                }
             }
-            Err(e) => {
-                let row = adw::ActionRow::new();
-                row.set_title(&ctx.t_or("fileBrowser.properties.size", "Size"));
-                row.set_subtitle(&e.to_string());
-                usage.add(&row);
-            }
-        }
+        }) as Rc<dyn Fn()>
+    };
+    fill_usage();
+    {
+        let fill_usage = fill_usage.clone();
+        reload.connect_clicked(move |_| fill_usage());
+    }
+    let remote_type = remote_type_of(ctx.clone(), remote);
+    let type_label = crate::fileops::remote_about_type_display(&remote_type)
+        .unwrap_or_else(|| ctx.t_or("fileBrowser.remoteAbout.unknown", "Unknown"));
+    let _type_row = add_about_row(
+        &info_group,
+        &ctx.t_or("fileBrowser.remoteAbout.type", "Type"),
+        &type_label,
+    );
+    if let Some(client) = ctx.client() {
         let info = ctx.fs_info(remote).or_else(|| client.fs_info(&fs).ok());
         if let Some(info) = info {
-            let name = adw::ActionRow::new();
-            name.set_title(&ctx.t("common.name"));
-            name.set_subtitle(&info.name);
-            usage.add(&name);
-            let root = adw::ActionRow::new();
-            root.set_title(&ctx.t_or("fileBrowser.remoteAbout.root", "Root"));
             let root_text = if info.root.is_empty() {
                 "/".to_string()
             } else {
                 info.root.clone()
             };
-            root.set_subtitle(&root_text);
-            usage.add(&root);
-            let precision = adw::ActionRow::new();
-            precision.set_title(&ctx.t_or(
-                "fileBrowser.remoteAbout.timePrecision",
-                "Timestamp precision",
-            ));
-            let precision_text = nanoseconds_to_duration(info.precision);
-            precision.set_subtitle(&precision_text);
-            usage.add(&precision);
+            let _root_row = add_about_row(
+                &info_group,
+                &ctx.t_or("fileBrowser.remoteAbout.rootPath", "Root Path"),
+                &root_text,
+            );
+            let _precision_row = add_about_row(
+                &info_group,
+                &ctx.t_or("fileBrowser.remoteAbout.timePrecision", "Time Precision"),
+                &nanoseconds_to_duration(info.precision),
+            );
             if info.hashes.is_empty() {
-                let row = adw::ActionRow::new();
-                row.set_title(&ctx.t_or("fileBrowser.remoteAbout.noneSupported", "None"));
-                hashes.add(&row);
+                let _none = add_about_row(
+                    &hashes,
+                    &ctx.t_or("fileBrowser.remoteAbout.noneSupported", "None supported"),
+                    "",
+                );
             } else {
                 for hash in &info.hashes {
-                    let row = adw::ActionRow::new();
-                    row.set_title(&hash.to_ascii_uppercase());
-                    hashes.add(&row);
+                    let _hash = add_about_row(&hashes, &hash.to_ascii_uppercase(), "");
                 }
             }
+            let mut feature_count = 0;
             for (key, value) in &info.features {
                 if key == "IsLocal" {
                     continue;
                 }
-                let row = adw::ActionRow::new();
-                row.set_title(key);
                 let yes = ctx.t_or("fileBrowser.remoteAbout.yes", "Yes");
                 let no = ctx.t_or("fileBrowser.remoteAbout.no", "No");
-                row.set_subtitle(if *value { &yes } else { &no });
-                features.add(&row);
+                let _feat = add_about_row(&features, key, if *value { &yes } else { &no });
+                feature_count += 1;
+            }
+            if feature_count == 0 {
+                let _empty = add_about_row(
+                    &features,
+                    &ctx.t_or(
+                        "fileBrowser.remoteAbout.noFeatureInfo",
+                        "No feature information available.",
+                    ),
+                    "",
+                );
             }
             let (system_items, standard_items) = group_metadata_info(&info.metadata);
             let metadata_system = adw::PreferencesGroup::new();
@@ -7942,14 +12582,17 @@ pub fn remote_about(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, remote: &str) {
                 metadata_standard.add(&metadata_item_row(&ctx, key, meta));
             }
             if system_items.is_empty() && standard_items.is_empty() {
-                let row = adw::ActionRow::new();
-                row.set_title(&ctx.t_or(
-                    "fileBrowser.remoteAbout.noMetadata",
-                    "No metadata specifications available.",
-                ));
-                metadata.add(&row);
+                let _empty_meta = add_about_row(
+                    &metadata,
+                    &ctx.t_or(
+                        "fileBrowser.remoteAbout.noMetadata",
+                        "No metadata specifications available.",
+                    ),
+                    "",
+                );
             }
             page.add(&usage);
+            page.add(&info_group);
             page.add(&hashes);
             page.add(&features);
             if !system_items.is_empty() {
@@ -7963,12 +12606,14 @@ pub fn remote_about(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, remote: &str) {
             }
         } else {
             page.add(&usage);
+            page.add(&info_group);
             page.add(&hashes);
             page.add(&features);
             page.add(&metadata);
         }
     } else {
         page.add(&usage);
+        page.add(&info_group);
         page.add(&hashes);
         page.add(&features);
         page.add(&metadata);
@@ -7995,13 +12640,18 @@ pub(crate) fn download_file(
     path: &str,
     name: &str,
 ) {
-    let Some(win) = parent.root().and_downcast::<gtk::Window>() else {
+    let Some(win) = parent.root().and_downcast::<gtk::Window>().or_else(|| {
+        parent
+            .ancestor(gtk::Window::static_type())
+            .and_downcast::<gtk::Window>()
+    }) else {
         return;
     };
     let dialog = gtk::FileDialog::new();
     dialog.set_initial_name(Some(name));
     let remote = remote.to_string();
     let path = path.to_string();
+    let toast_host = parent.clone();
     dialog.save(
         Some(&win),
         None::<gio::Cancellable>.as_ref(),
@@ -8026,6 +12676,11 @@ pub(crate) fn download_file(
                 path
             };
             let dest_path = dest.to_string_lossy().into_owned();
+            let file_name = dest
+                .file_name()
+                .and_then(|n| n.to_str())
+                .unwrap_or("file")
+                .to_string();
             match client.start_job(
                 "operations/copyfile",
                 serde_json::json!({
@@ -8045,109 +12700,442 @@ pub(crate) fn download_file(
                             remote: remote.clone(),
                             backend: ctx.backend_key(),
                             target: dest_path,
+                            operation: "copy".into(),
                             ..Default::default()
                         },
                     );
                     ctx.persist();
                     ctx.refresh_runtime();
+                    add_action_toast(
+                        &toast_host,
+                        &ctx.tf(
+                            crate::fileops::download_progress_toast_key(),
+                            &[("name", &file_name)],
+                        ),
+                    );
+                    let toast_host = toast_host.clone();
+                    let ctx = ctx.clone();
+                    glib::timeout_add_local(std::time::Duration::from_millis(250), move || {
+                        let Some(client) = ctx.client() else {
+                            return glib::ControlFlow::Continue;
+                        };
+                        match client.job_status(id) {
+                            Ok(status) if crate::rclone::job_is_finished(&status) => {
+                                let ok = crate::fileops::download_job_succeeded(&status);
+                                add_action_toast(
+                                    &toast_host,
+                                    &ctx.t_or(
+                                        crate::fileops::download_result_toast_key(ok),
+                                        if ok {
+                                            "File downloaded successfully"
+                                        } else {
+                                            "Failed to download file"
+                                        },
+                                    ),
+                                );
+                                ctx.refresh_runtime();
+                                glib::ControlFlow::Break
+                            }
+                            Ok(_) => glib::ControlFlow::Continue,
+                            Err(e) => {
+                                log::warn!("download status failed: {e}");
+                                add_action_toast(
+                                    &toast_host,
+                                    &ctx.t_or(
+                                        crate::fileops::download_result_toast_key(false),
+                                        "Failed to download file",
+                                    ),
+                                );
+                                glib::ControlFlow::Break
+                            }
+                        }
+                    });
                 }
-                Err(e) => log::warn!("download failed: {e}"),
+                Err(e) => {
+                    log::warn!("download failed: {e}");
+                    add_action_toast(
+                        &toast_host,
+                        &ctx.t_or(
+                            crate::fileops::download_result_toast_key(false),
+                            "Failed to download file",
+                        ),
+                    );
+                }
             }
         },
     );
 }
 
 pub fn templates(parent: &impl IsA<gtk::Widget>, ctx: AppCtx) {
-    if try_spawn_standalone(&ctx, "template-manager", serde_json::json!({})) {
+    templates_open(parent, ctx, false);
+}
+
+pub fn templates_with_on_change(
+    parent: &impl IsA<gtk::Widget>,
+    ctx: AppCtx,
+    on_change: Rc<dyn Fn()>,
+) {
+    templates_open_ex(parent, ctx, false, Some(on_change));
+}
+
+pub fn templates_capture_for_remote(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, remote: &str) {
+    templates_capture_for_remote_ex(parent, ctx, remote, None);
+}
+
+pub fn templates_capture_for_remote_ex(
+    parent: &impl IsA<gtk::Widget>,
+    ctx: AppCtx,
+    remote: &str,
+    on_change: Option<Rc<dyn Fn()>>,
+) {
+    if try_spawn_standalone(
+        &ctx,
+        "template-manager",
+        serde_json::json!({ "mode": "save", "remote": remote }),
+    ) {
         return;
     }
     let dialog = adw::Dialog::new();
-    dialog.set_title(&ctx.t_or("titlebar.menu.templates", "Templates"));
-    dialog.set_content_width(560);
-    dialog.set_content_height(480);
+    dialog.set_title(&ctx.t_or("templates.saveAsTemplate", "Capture template"));
+    dialog.set_content_width(640);
+    dialog.set_content_height(640);
+    let on_saved = {
+        let dialog = dialog.clone();
+        let on_change = on_change.clone();
+        Rc::new(move || {
+            dialog.close();
+            if let Some(cb) = &on_change {
+                cb();
+            }
+        }) as Rc<dyn Fn()>
+    };
+    dialog.set_child(Some(&build_capture_page(
+        parent,
+        ctx.clone(),
+        on_saved,
+        Some(remote),
+    )));
+    present_templates_dialog(parent, &ctx, &dialog, on_change);
+}
+
+pub fn templates_open(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, save: bool) {
+    templates_open_ex(parent, ctx, save, None);
+}
+
+fn templates_open_ex(
+    parent: &impl IsA<gtk::Widget>,
+    ctx: AppCtx,
+    save: bool,
+    on_change: Option<Rc<dyn Fn()>>,
+) {
+    if try_spawn_standalone(
+        &ctx,
+        "template-manager",
+        serde_json::json!({ "mode": if save { "save" } else { "manage" } }),
+    ) {
+        return;
+    }
+    let dialog = adw::Dialog::new();
+    dialog.set_title(&ctx.t_or("templates.title", "Templates"));
+    dialog.set_content_width(640);
+    dialog.set_content_height(560);
+    let stack = adw::ViewStack::new();
+    let switcher = adw::ViewSwitcher::new();
+    switcher.set_stack(Some(&stack));
+    switcher.set_policy(adw::ViewSwitcherPolicy::Wide);
+
     let list = gtk::ListBox::new();
     list.add_css_class("boxed-list");
-    for template in ctx.store.borrow().templates.clone() {
+    let search = gtk::SearchEntry::new();
+    search.set_placeholder_text(Some(&ctx.t_or("templates.search", "Search templates…")));
+    let rebuild_slot: Rc<RefCell<Option<Rc<dyn Fn()>>>> = Rc::new(RefCell::new(None));
+    let rebuild_manage = {
+        let ctx = ctx.clone();
+        let parent = parent.clone();
+        let list = list.clone();
+        let search = search.clone();
+        let rebuild_slot = rebuild_slot.clone();
+        Rc::new(move || {
+            let on_deleted = {
+                let rebuild_slot = rebuild_slot.clone();
+                Rc::new(move || {
+                    if let Some(rebuild) = rebuild_slot.borrow().clone() {
+                        rebuild();
+                    }
+                }) as Rc<dyn Fn()>
+            };
+            fill_manage_template_list(&ctx, &parent, &list, &search.text(), on_deleted);
+        }) as Rc<dyn Fn()>
+    };
+    *rebuild_slot.borrow_mut() = Some(rebuild_manage.clone());
+    {
+        let rebuild = rebuild_manage.clone();
+        search.connect_search_changed(move |_| rebuild());
+    }
+    rebuild_manage();
+    let manage_page = gtk::Box::new(gtk::Orientation::Vertical, 8);
+    manage_page.set_margin_top(8);
+    manage_page.set_margin_start(12);
+    manage_page.set_margin_end(12);
+    manage_page.append(&search);
+    manage_page.append(&scrolled_list(&list));
+
+    let on_saved = {
+        let rebuild = rebuild_manage.clone();
+        let stack = stack.clone();
+        Rc::new(move || {
+            rebuild();
+            stack.set_visible_child_name("manage");
+        }) as Rc<dyn Fn()>
+    };
+    let save_page = build_capture_page(parent, ctx.clone(), on_saved, None);
+    stack.add_titled(
+        &save_page,
+        Some("save"),
+        &ctx.t_or("templates.newTitle", "New Template"),
+    );
+    stack.add_titled(
+        &manage_page,
+        Some("manage"),
+        &ctx.t_or("templates.manageTitle", "Manage Templates"),
+    );
+    stack.set_visible_child_name(if save { "save" } else { "manage" });
+
+    let box_ = gtk::Box::new(gtk::Orientation::Vertical, 8);
+    box_.set_margin_top(8);
+    box_.append(&switcher);
+    box_.append(&stack);
+    dialog.set_child(Some(&box_));
+    present_templates_dialog(parent, &ctx, &dialog, on_change);
+}
+
+fn present_templates_dialog(
+    parent: &impl IsA<gtk::Widget>,
+    ctx: &AppCtx,
+    dialog: &adw::Dialog,
+    on_change: Option<Rc<dyn Fn()>>,
+) {
+    if let Some(cb) = on_change {
+        dialog.connect_closed(move |_| cb());
+    }
+    present_window_or_dialog(parent, ctx, dialog);
+}
+
+pub(crate) fn combo_selected_label(row: &adw::ComboRow) -> Option<String> {
+    let list = row.model()?.downcast::<gtk::StringList>().ok()?;
+    let text = list.string(row.selected())?.to_string();
+    if text.is_empty() || text == "—" {
+        None
+    } else {
+        Some(text)
+    }
+}
+
+/// Angular `preset-template-bar`: one MenuButton, apply-by-name on click.
+pub(crate) fn template_picker_bar(
+    parent: &impl IsA<gtk::Widget>,
+    ctx: AppCtx,
+    include_save: bool,
+    apply_defaults: Rc<dyn Fn()>,
+    apply_template: Rc<dyn Fn(&UserTemplate)>,
+    on_save: Option<Rc<dyn Fn(Rc<dyn Fn()>)>>,
+) -> gtk::Box {
+    let box_ = gtk::Box::new(gtk::Orientation::Vertical, 6);
+    box_.set_margin_start(8);
+    box_.set_margin_end(8);
+    let title = gtk::Label::new(Some(
+        &ctx.t_or("templates.presetTitle", "Presets & Templates"),
+    ));
+    title.add_css_class("heading");
+    title.set_xalign(0.0);
+    let button = gtk::MenuButton::new();
+    button.set_label(&ctx.t_or("templates.presetTitle", "Presets & Templates"));
+    button.set_always_show_arrow(true);
+    button.set_halign(gtk::Align::Start);
+    let popover = gtk::Popover::new();
+    let list = gtk::Box::new(gtk::Orientation::Vertical, 2);
+    list.set_margin_top(6);
+    list.set_margin_bottom(6);
+    list.set_margin_start(6);
+    list.set_margin_end(6);
+    popover.set_child(Some(&list));
+    button.set_popover(Some(&popover));
+    let refresh_slot: Rc<RefCell<Rc<dyn Fn()>>> = Rc::new(RefCell::new(Rc::new(|| {})));
+    let refresh = {
+        let refresh_slot = refresh_slot.clone();
+        Rc::new(move || refresh_slot.borrow()()) as Rc<dyn Fn()>
+    };
+    *refresh_slot.borrow_mut() = {
+        let ctx = ctx.clone();
+        let parent = parent.clone();
+        let list = list.clone();
+        let popover = popover.clone();
+        let apply_defaults = apply_defaults.clone();
+        let apply_template = apply_template.clone();
+        let on_save = on_save.clone();
+        let refresh = refresh.clone();
+        Rc::new(move || {
+            while let Some(child) = list.first_child() {
+                list.remove(&child);
+            }
+            let defaults = gtk::Button::with_label(
+                &ctx.t_or("templates.applyPresets", "Apply Default Presets"),
+            );
+            defaults.add_css_class("flat");
+            defaults.set_halign(gtk::Align::Fill);
+            {
+                let apply_defaults = apply_defaults.clone();
+                let popover = popover.clone();
+                defaults.connect_clicked(move |_| {
+                    popover.popdown();
+                    apply_defaults();
+                });
+            }
+            list.append(&defaults);
+            let templates = ctx.store.borrow().templates.clone();
+            if !templates.is_empty() {
+                list.append(&gtk::Separator::new(gtk::Orientation::Horizontal));
+                let heading = gtk::Label::new(Some(
+                    &ctx.t_or("templates.userTemplates", "Saved User Templates"),
+                ));
+                heading.add_css_class("dim-label");
+                heading.set_xalign(0.0);
+                heading.set_margin_start(8);
+                heading.set_margin_top(4);
+                heading.set_margin_bottom(2);
+                list.append(&heading);
+                for template in templates {
+                    let item = gtk::Button::with_label(&template.name);
+                    item.add_css_class("flat");
+                    item.set_halign(gtk::Align::Fill);
+                    item.set_tooltip_text(Some(&template.name));
+                    {
+                        let apply_template = apply_template.clone();
+                        let popover = popover.clone();
+                        item.connect_clicked(move |_| {
+                            popover.popdown();
+                            apply_template(&template);
+                        });
+                    }
+                    list.append(&item);
+                }
+            }
+            list.append(&gtk::Separator::new(gtk::Orientation::Horizontal));
+            if include_save {
+                if let Some(on_save) = on_save.clone() {
+                    let save = gtk::Button::with_label(&ctx.t_or(
+                        "templates.saveAsTemplate",
+                        "Save Current Settings as Template...",
+                    ));
+                    save.add_css_class("flat");
+                    save.set_halign(gtk::Align::Fill);
+                    {
+                        let on_save = on_save.clone();
+                        let popover = popover.clone();
+                        let refresh = refresh.clone();
+                        save.connect_clicked(move |_| {
+                            popover.popdown();
+                            on_save(refresh.clone());
+                        });
+                    }
+                    list.append(&save);
+                }
+            }
+            let manage = gtk::Button::with_label(
+                &ctx.t_or("templates.manageTemplates", "Manage Templates..."),
+            );
+            manage.add_css_class("flat");
+            manage.set_halign(gtk::Align::Fill);
+            {
+                let ctx = ctx.clone();
+                let parent = parent.clone();
+                let popover = popover.clone();
+                let refresh = refresh.clone();
+                manage.connect_clicked(move |_| {
+                    popover.popdown();
+                    templates_with_on_change(&parent, ctx.clone(), refresh.clone());
+                });
+            }
+            list.append(&manage);
+        }) as Rc<dyn Fn()>
+    };
+    refresh();
+    box_.append(&title);
+    box_.append(&button);
+    box_
+}
+
+fn fill_manage_template_list(
+    ctx: &AppCtx,
+    parent: &impl IsA<gtk::Widget>,
+    list: &gtk::ListBox,
+    query: &str,
+    on_deleted: Rc<dyn Fn()>,
+) {
+    while let Some(child) = list.first_child() {
+        list.remove(&child);
+    }
+    let templates: Vec<UserTemplate> = ctx
+        .store
+        .borrow()
+        .templates
+        .iter()
+        .filter(|item| crate::user_templates::template_matches_query(item, query))
+        .cloned()
+        .collect();
+    for template in templates {
         let row = adw::ActionRow::new();
         row.set_title(&template.name);
-        row.set_subtitle(&template.description);
-        let apply = gtk::Button::with_label(&ctx.t_or("remoteConfig.applyTemplate", "Apply"));
-        apply.set_valign(gtk::Align::Center);
-        apply.add_css_class("suggested-action");
-        let delete = gtk::Button::from_icon_name("user-trash-symbolic");
-        delete.set_valign(gtk::Align::Center);
+        row.set_subtitle(&template_row_subtitle(ctx, &template));
+        row.set_activatable(true);
         {
             let ctx = ctx.clone();
             let parent = parent.clone();
+            let template = template.clone();
+            row.connect_activated(move |_| {
+                edit_template(&parent, ctx.clone(), Some(template.clone()));
+            });
+        }
+        let apply = gtk::Button::with_label(&ctx.t_or("remoteConfig.applyTemplate", "Apply"));
+        apply.set_valign(gtk::Align::Center);
+        apply.add_css_class("suggested-action");
+        let edit = gtk::Button::from_icon_name("document-edit-symbolic");
+        edit.set_valign(gtk::Align::Center);
+        edit.set_tooltip_text(Some(&ctx.t_or("common.edit", "Edit")));
+        {
+            let ctx = ctx.clone();
+            let parent = parent.clone();
+            let template = template.clone();
+            edit.connect_clicked(move |_| {
+                edit_template(&parent, ctx.clone(), Some(template.clone()));
+            });
+        }
+        let delete = gtk::Button::from_icon_name("user-trash-symbolic");
+        delete.set_valign(gtk::Align::Center);
+        delete.set_tooltip_text(Some(
+            &ctx.t_or("templates.deleteTemplate", "Delete template"),
+        ));
+        {
+            let ctx = ctx.clone();
+            let parent = parent.clone();
+            let name = template.name.clone();
             let values = template.values.clone();
             apply.connect_clicked(move |_| {
-                if crate::user_templates::is_categorized(&values) {
-                    if let Some(name) = ctx.selected_remote.borrow().clone() {
-                        let applied = crate::user_templates::apply_if_categorized(
-                            ctx.store.borrow_mut().remotes.get_mut(&name),
-                            &values,
-                            true,
-                        );
-                        if applied > 0 {
-                            ctx.persist();
-                        }
-                    }
-                    let toast = adw::AlertDialog::new(
-                        Some(&ctx.t_or("templates.applySuccess", "Template applied")),
-                        Some(&ctx.t_or(
-                            "templates.applySuccess",
-                            "Helper and operation profiles were updated from this template.",
-                        )),
-                    );
-                    toast.add_response("ok", &ctx.t("common.ok"));
-                    toast.present(Some(&parent));
-                    return;
-                }
-                if let Some(client) = ctx.client() {
-                    match client.options_set(values.clone()) {
-                        Ok(_) => {
-                            let toast = adw::AlertDialog::new(
-                                Some(&ctx.t_or("templates.applySuccess", "Template applied")),
-                                Some(&ctx.t_or(
-                                    "templates.applySuccess",
-                                    "Current rclone options were updated from this template.",
-                                )),
-                            );
-                            toast.add_response("ok", &ctx.t("common.ok"));
-                            toast.present(Some(&parent));
-                        }
-                        Err(e) => {
-                            let err = adw::AlertDialog::new(
-                                Some(&ctx.t_or("common.error", "Apply failed")),
-                                Some(&e.to_string()),
-                            );
-                            err.add_response("ok", &ctx.t("common.ok"));
-                            err.present(Some(&parent));
-                        }
-                    }
-                } else if let Some(name) = ctx.selected_remote.borrow().clone() {
-                    if let Some(meta) = ctx.store.borrow_mut().remotes.get_mut(&name) {
-                        for profiles in meta.profiles.values_mut() {
-                            for profile in profiles.values_mut() {
-                                merge_template_into(&mut profile.rclone, &values);
-                            }
-                        }
-                    }
-                    ctx.persist();
-                }
+                apply_user_template(&parent, &ctx, &name, &values);
             });
         }
         {
             let ctx = ctx.clone();
             let id = template.id.clone();
-            let parent = parent.clone();
+            let on_deleted = on_deleted.clone();
             delete.connect_clicked(move |_| {
                 ctx.store.borrow_mut().templates.retain(|t| t.id != id);
                 ctx.persist();
-                templates(&parent, ctx.clone());
+                on_deleted();
             });
         }
         row.add_suffix(&apply);
+        row.add_suffix(&edit);
         row.add_suffix(&delete);
         list.append(&row);
     }
@@ -8156,21 +13144,62 @@ pub fn templates(parent: &impl IsA<gtk::Widget>, ctx: AppCtx) {
         row.set_title(&ctx.t_or("templates.noUserTemplates", "No saved templates"));
         list.append(&row);
     }
-    let add = gtk::Button::with_label(
-        &ctx.t_or("templates.saveAsTemplate", "Save current flags as template"),
-    );
-    {
-        let ctx = ctx.clone();
-        let parent = parent.clone();
-        add.connect_clicked(move |_| {
-            capture_template(&parent, ctx.clone());
-        });
+}
+
+fn apply_user_template(
+    parent: &impl IsA<gtk::Widget>,
+    ctx: &AppCtx,
+    name: &str,
+    values: &serde_json::Value,
+) {
+    let title = ctx
+        .t_or(
+            "templates.applySuccess",
+            "Template \"{{name}}\" applied successfully.",
+        )
+        .replace("{{name}}", name);
+    if crate::user_templates::is_categorized(values) {
+        if let Some(remote) = ctx.selected_remote.borrow().clone() {
+            let applied = crate::user_templates::apply_if_categorized(
+                ctx.store.borrow_mut().remotes.get_mut(&remote),
+                values,
+                true,
+            );
+            if applied > 0 {
+                ctx.persist();
+            }
+        }
+        let toast = adw::AlertDialog::new(Some(&title), Some(&title));
+        toast.add_response("ok", &ctx.t("common.ok"));
+        toast.present(Some(parent));
+        return;
     }
-    let box_ = gtk::Box::new(gtk::Orientation::Vertical, 8);
-    box_.append(&scrolled_list(&list));
-    box_.append(&add);
-    dialog.set_child(Some(&box_));
-    present_window_or_dialog(parent, &ctx, &dialog);
+    if let Some(client) = ctx.client() {
+        match client.options_set(values.clone()) {
+            Ok(_) => {
+                let toast = adw::AlertDialog::new(Some(&title), Some(&title));
+                toast.add_response("ok", &ctx.t("common.ok"));
+                toast.present(Some(parent));
+            }
+            Err(e) => {
+                let err = adw::AlertDialog::new(
+                    Some(&ctx.t_or("common.error", "Apply failed")),
+                    Some(&e.to_string()),
+                );
+                err.add_response("ok", &ctx.t("common.ok"));
+                err.present(Some(parent));
+            }
+        }
+    } else if let Some(remote) = ctx.selected_remote.borrow().clone() {
+        if let Some(meta) = ctx.store.borrow_mut().remotes.get_mut(&remote) {
+            for profiles in meta.profiles.values_mut() {
+                for profile in profiles.values_mut() {
+                    merge_template_into(&mut profile.rclone, values);
+                }
+            }
+        }
+        ctx.persist();
+    }
 }
 
 pub fn archive_create(
@@ -8275,6 +13304,7 @@ pub fn archive_create(
                             "file-manager",
                             &ctx.backend_key(),
                             "",
+                            "archivecreate",
                         ),
                     );
                     ctx.store
@@ -8370,6 +13400,7 @@ pub fn copy_url_into(
                             "file-manager",
                             &ctx.backend_key(),
                             "",
+                            "copyurl",
                         ),
                     );
                     ctx.store
@@ -8447,29 +13478,32 @@ pub fn helper_profiles(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, remote: &str
     let name = adw::EntryRow::new();
     name.set_title(&ctx.t_or("wizards.cliImport.profileName", "Profile name"));
     name.set_text("default");
-    let json_view = gtk::TextView::new();
-    json_view.set_monospace(true);
-    json_view.set_wrap_mode(gtk::WrapMode::Word);
+    let editor = super::json_editor::JsonEditor::new(&ctx);
+    if let Some(key) = crate::json_editor::info_banner_key(None, Some("vfs")) {
+        editor.set_info(Some(&ctx.t_or(key, "")));
+    }
     let load = {
         let ctx = ctx.clone();
         let remote = remote.to_string();
         let name = name.clone();
-        let json_view = json_view.clone();
+        let editor = editor.clone();
         let kind = kind.clone();
         move || {
             let kind_name = ["vfs", "filter", "backend", "runtime"]
                 .get(kind.selected() as usize)
                 .copied()
                 .unwrap_or("vfs");
-            let text = ctx
+            if let Some(key) = crate::json_editor::info_banner_key(None, Some(kind_name)) {
+                editor.set_info(Some(&ctx.t_or(key, "")));
+            }
+            let value = ctx
                 .store
                 .borrow()
                 .remotes
                 .get(&remote)
                 .and_then(|m| m.helper_profile(kind_name, &name.text()))
-                .map(|v| serde_json::to_string_pretty(&v).unwrap_or_else(|_| "{}".into()))
-                .unwrap_or_else(|| "{}".into());
-            json_view.buffer().set_text(&text);
+                .unwrap_or_else(|| serde_json::json!({}));
+            editor.set_value(&value);
         }
     };
     load();
@@ -8484,17 +13518,17 @@ pub fn helper_profiles(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, remote: &str
         let ctx = ctx.clone();
         let remote = remote.to_string();
         let name = name.clone();
-        let json_view = json_view.clone();
+        let editor = editor.clone();
         let kind = kind.clone();
         save.connect_clicked(move |_| {
             let kind_name = ["vfs", "filter", "backend", "runtime"]
                 .get(kind.selected() as usize)
                 .copied()
                 .unwrap_or("vfs");
-            let buffer = json_view.buffer();
-            let text = buffer.text(&buffer.start_iter(), &buffer.end_iter(), false);
-            let value = serde_json::from_str::<serde_json::Value>(text.as_str())
-                .unwrap_or(serde_json::json!({}));
+            let value = match editor.parsed() {
+                Ok(map) => serde_json::Value::Object(map),
+                Err(_) => serde_json::json!({}),
+            };
             let key = name.text().to_string();
             if key.is_empty() {
                 return;
@@ -8521,14 +13555,11 @@ pub fn helper_profiles(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, remote: &str
     let group = adw::PreferencesGroup::new();
     group.add(&kind);
     group.add(&name);
-    let scroll = gtk::ScrolledWindow::new();
-    scroll.set_vexpand(true);
-    scroll.set_min_content_height(240);
-    scroll.set_child(Some(&json_view));
+    editor.root.set_vexpand(true);
     let box_ = gtk::Box::new(gtk::Orientation::Vertical, 8);
     box_.set_margin_top(12);
     box_.append(&group);
-    box_.append(&scroll);
+    box_.append(&editor.root);
     box_.append(&save);
     dialog.set_child(Some(&box_));
     present_window_or_dialog(parent, &ctx, &dialog);
@@ -8555,6 +13586,8 @@ pub fn item_order(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, on_done: Rc<dyn F
         list: &gtk::ListBox,
         names: &Rc<RefCell<Vec<String>>>,
         hidden: &Rc<RefCell<Vec<String>>>,
+        subtitle: &str,
+        drag_tip: &str,
     ) {
         while let Some(child) = list.first_child() {
             list.remove(&child);
@@ -8563,7 +13596,7 @@ pub fn item_order(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, on_done: Rc<dyn F
         for (idx, name) in current.iter().enumerate() {
             let row = adw::SwitchRow::new();
             row.set_title(name);
-            row.set_subtitle("Visible in sidebar and overview");
+            row.set_subtitle(subtitle);
             row.set_active(!hidden.borrow().iter().any(|n| n == name));
             {
                 let hidden = hidden.clone();
@@ -8586,6 +13619,8 @@ pub fn item_order(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, on_done: Rc<dyn F
                 let names = names.clone();
                 let hidden = hidden.clone();
                 let list = list.clone();
+                let subtitle = subtitle.to_string();
+                let drag_tip = drag_tip.to_string();
                 let idx = idx;
                 up.connect_clicked(move |_| {
                     {
@@ -8594,13 +13629,15 @@ pub fn item_order(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, on_done: Rc<dyn F
                             names.swap(idx, idx - 1);
                         }
                     }
-                    refill(&list, &names, &hidden);
+                    refill(&list, &names, &hidden, &subtitle, &drag_tip);
                 });
             }
             {
                 let names = names.clone();
                 let hidden = hidden.clone();
                 let list = list.clone();
+                let subtitle = subtitle.to_string();
+                let drag_tip = drag_tip.to_string();
                 let idx = idx;
                 down.connect_clicked(move |_| {
                     {
@@ -8609,15 +13646,61 @@ pub fn item_order(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, on_done: Rc<dyn F
                             names.swap(idx, idx + 1);
                         }
                     }
-                    refill(&list, &names, &hidden);
+                    refill(&list, &names, &hidden, &subtitle, &drag_tip);
                 });
             }
             row.add_suffix(&up);
             row.add_suffix(&down);
+            let handle = drag_handle_button_with_tip(drag_tip);
+            row.add_prefix(&handle);
+            {
+                let names = names.clone();
+                let hidden = hidden.clone();
+                let list = list.clone();
+                let subtitle = subtitle.to_string();
+                let drag_tip = drag_tip.to_string();
+                attach_id_drag_drop_on(
+                    &handle,
+                    &row,
+                    name.clone(),
+                    Rc::new(move |from, to| {
+                        {
+                            let mut names = names.borrow_mut();
+                            let Some(from_idx) = names.iter().position(|n| n == &from) else {
+                                return;
+                            };
+                            let Some(to_idx) = names.iter().position(|n| n == &to) else {
+                                return;
+                            };
+                            crate::action_order::move_index(&mut names, from_idx, to_idx);
+                        }
+                        refill(&list, &names, &hidden, &subtitle, &drag_tip);
+                    }),
+                );
+            }
             list.append(&row);
         }
     }
-    refill(&list, &names, &hidden);
+    let visible_subtitle = ctx.t_or(
+        "titlebar.menu.remoteVisible",
+        "Visible in sidebar and overview",
+    );
+    let drag_tip = ctx.t_or("common.dragToReorder", "Drag to reorder");
+    refill(&list, &names, &hidden, &visible_subtitle, &drag_tip);
+    let reset = gtk::Button::with_label(&ctx.t("common.reset"));
+    {
+        let names = names.clone();
+        let hidden = hidden.clone();
+        let list = list.clone();
+        let visible_subtitle = visible_subtitle.clone();
+        let drag_tip = drag_tip.clone();
+        let defaults = all_names.clone();
+        reset.connect_clicked(move |_| {
+            *names.borrow_mut() = defaults.clone();
+            hidden.borrow_mut().clear();
+            refill(&list, &names, &hidden, &visible_subtitle, &drag_tip);
+        });
+    }
     let save = gtk::Button::with_label(&ctx.t("common.save"));
     save.add_css_class("suggested-action");
     {
@@ -8635,8 +13718,12 @@ pub fn item_order(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, on_done: Rc<dyn F
         });
     }
     let box_ = gtk::Box::new(gtk::Orientation::Vertical, 8);
+    let bar = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+    bar.set_halign(gtk::Align::End);
+    bar.append(&reset);
+    bar.append(&save);
     box_.append(&scrolled_list(&list));
-    box_.append(&save);
+    box_.append(&bar);
     dialog.set_child(Some(&box_));
     dialog.present(Some(parent));
 }
@@ -8746,6 +13833,29 @@ pub fn configure_sidebar(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, on_done: R
             }
             row.add_suffix(&up);
             row.add_suffix(&down);
+            {
+                let names = names.clone();
+                let hidden = hidden.clone();
+                let list = list.clone();
+                let labels = labels.clone();
+                attach_id_drag_drop(
+                    &row,
+                    name.clone(),
+                    Rc::new(move |from, to| {
+                        {
+                            let mut names = names.borrow_mut();
+                            let Some(from_idx) = names.iter().position(|n| n == &from) else {
+                                return;
+                            };
+                            let Some(to_idx) = names.iter().position(|n| n == &to) else {
+                                return;
+                            };
+                            crate::action_order::move_index(&mut names, from_idx, to_idx);
+                        }
+                        refill(&list, &names, &hidden, &labels);
+                    }),
+                );
+            }
             list.append(&row);
         }
     }
@@ -8784,30 +13894,23 @@ fn scrolled_list(list: &gtk::ListBox) -> gtk::ScrolledWindow {
 
 fn operation_flag_blocks(ctx: &AppCtx) -> Vec<crate::flags::FlagBlock> {
     ctx.client()
-        .and_then(|c| c.options_info().ok())
-        .map(|info| crate::flags::parse_options_info(&info))
+        .map(|c| c.option_flag_blocks())
         .unwrap_or_default()
 }
 
-fn flag_value_row(flag: &crate::flags::FlagOption, rclone: &serde_json::Value) -> adw::EntryRow {
-    let row = adw::EntryRow::new();
-    row.set_title(&flag.name);
-    if !flag.help.is_empty() {
-        row.set_tooltip_text(Some(&flag.help));
-    }
-    let current = rclone
-        .get(&flag.field_name)
-        .map(|v| v.to_string().trim_matches('"').to_string())
-        .unwrap_or_else(|| flag.default_str.clone());
-    row.set_text(&current);
-    row
+fn flag_value_row(
+    ctx: &AppCtx,
+    flag: &crate::flags::FlagOption,
+    rclone: &serde_json::Value,
+) -> super::flag_widget::FlagWidget {
+    super::flag_widget::FlagWidget::from_flag(ctx, flag, rclone)
 }
 
 fn attach_cli_import(
     ctx: &AppCtx,
     parent: &impl IsA<gtk::Widget>,
     flags_group: &adw::PreferencesGroup,
-    flag_rows: Rc<RefCell<Vec<(String, adw::EntryRow, String)>>>,
+    flag_rows: Rc<RefCell<Vec<super::flag_widget::FlagRow>>>,
     src: Option<adw::EntryRow>,
     dst: Option<adw::EntryRow>,
     serve: Option<adw::ComboRow>,
@@ -8907,6 +14010,32 @@ pub(super) fn present_cli_import(
     dialog.set_title(&ctx.t_or("wizards.cliImport.title", "Import from CLI"));
     dialog.set_content_width(560);
     dialog.set_content_height(640);
+    let on_apply = Rc::new(on_apply);
+    let widget = cli_import_widget(
+        ctx,
+        Rc::new(RefCell::new(options)),
+        Rc::new({
+            let dialog = dialog.clone();
+            move |apply| {
+                on_apply(apply);
+                dialog.close();
+            }
+        }),
+    );
+    let scroll_all = gtk::ScrolledWindow::new();
+    scroll_all.set_vexpand(true);
+    scroll_all.set_child(Some(&widget));
+    dialog.set_child(Some(&scroll_all));
+    dialog.present(Some(parent));
+}
+
+/// Angular `app-cli-import` body: paste, preview, and apply. Hosted in a dialog
+/// or the remote-config slide-down overlay.
+pub(super) fn cli_import_widget(
+    ctx: AppCtx,
+    options: Rc<RefCell<CliImportOptions>>,
+    on_apply: Rc<dyn Fn(CliImportApply)>,
+) -> gtk::Widget {
     let box_ = gtk::Box::new(gtk::Orientation::Vertical, 10);
     box_.set_margin_top(12);
     box_.set_margin_bottom(12);
@@ -8923,7 +14052,7 @@ pub(super) fn present_cli_import(
     let view = gtk::TextView::new();
     view.set_wrap_mode(gtk::WrapMode::WordChar);
     view.set_monospace(true);
-    view.buffer().set_text(&options.initial_cli);
+    view.buffer().set_text(&options.borrow().initial_cli);
     let scroll = gtk::ScrolledWindow::new();
     scroll.set_min_content_height(110);
     scroll.set_child(Some(&view));
@@ -8944,7 +14073,7 @@ pub(super) fn present_cli_import(
     box_.append(&actions);
     let results = gtk::Box::new(gtk::Orientation::Vertical, 10);
     box_.append(&results);
-    let apply_btn = gtk::Button::with_label(&if options.is_quick_run {
+    let apply_btn = gtk::Button::with_label(&if options.borrow().is_quick_run {
         ctx.t_or("wizards.cliImport.applyToTask", "Apply to Task")
     } else {
         ctx.t_or("wizards.cliImport.applyConfig", "Apply to Profile")
@@ -8955,9 +14084,9 @@ pub(super) fn present_cli_import(
     let selected = Rc::new(RefCell::new(HashSet::<String>::new()));
     let import_source = Rc::new(Cell::new(true));
     let import_dest = Rc::new(Cell::new(true));
-    let profile_mode = Rc::new(Cell::new(if options.is_quick_run {
+    let profile_mode = Rc::new(Cell::new(if options.borrow().is_quick_run {
         ProfileMode::Patch
-    } else if options.can_create_new {
+    } else if options.borrow().can_create_new {
         ProfileMode::New
     } else {
         ProfileMode::Patch
@@ -9012,6 +14141,7 @@ pub(super) fn present_cli_import(
                 return;
             }
             let blocks = operation_flag_blocks(&ctx);
+            let options = options.borrow().clone();
             let runtime = if options.remote_type.is_empty() {
                 Vec::new()
             } else {
@@ -9069,13 +14199,13 @@ pub(super) fn present_cli_import(
         let profile_mode = profile_mode.clone();
         let profile_name = profile_name.clone();
         let options = options.clone();
-        let dialog = dialog.clone();
         apply_btn.connect_clicked(move |_| {
             let Some(result) = last_result.borrow().clone() else {
                 return;
             };
             let mode = profile_mode.get();
             let name = profile_name.borrow().trim().to_string();
+            let options = options.borrow().clone();
             if !options.is_quick_run {
                 match mode {
                     ProfileMode::New if options.can_create_new && name.is_empty() => return,
@@ -9096,14 +14226,9 @@ pub(super) fn present_cli_import(
                 return;
             }
             on_apply(apply);
-            dialog.close();
         });
     }
-    let scroll_all = gtk::ScrolledWindow::new();
-    scroll_all.set_vexpand(true);
-    scroll_all.set_child(Some(&box_));
-    dialog.set_child(Some(&scroll_all));
-    dialog.present(Some(parent));
+    box_.upcast()
 }
 
 fn fill_cli_preview(
@@ -9399,7 +14524,7 @@ fn fill_cli_preview(
 pub(super) fn apply_cli_to_form(
     apply: &CliImportApply,
     flags_group: Option<&adw::PreferencesGroup>,
-    flag_rows: &Rc<RefCell<Vec<(String, adw::EntryRow, String)>>>,
+    flag_rows: &Rc<RefCell<Vec<super::flag_widget::FlagRow>>>,
     src: Option<&adw::EntryRow>,
     dst: Option<&adw::EntryRow>,
     serve: Option<&adw::ComboRow>,
@@ -9420,10 +14545,8 @@ pub(super) fn apply_cli_to_form(
         }) {
             row.set_text(&value_as_text(value));
         } else if let Some(group) = flags_group {
-            let row = adw::EntryRow::new();
-            row.set_title(field);
-            row.set_text(&value_as_text(value));
-            group.add(&row);
+            let row = super::flag_widget::FlagWidget::plain_entry(field, &value_as_text(value));
+            row.add_to(group);
             rows.push((field.clone(), row, String::new()));
         }
     }
@@ -9442,27 +14565,28 @@ pub(super) fn apply_cli_to_form(
 
 fn clear_flag_rows(
     flags_group: &adw::PreferencesGroup,
-    flag_rows: &Rc<RefCell<Vec<(String, adw::EntryRow, String)>>>,
+    flag_rows: &Rc<RefCell<Vec<super::flag_widget::FlagRow>>>,
 ) {
     for (_, row, _) in flag_rows.borrow().iter() {
-        flags_group.remove(row);
+        row.remove_from(flags_group);
     }
     flag_rows.borrow_mut().clear();
 }
 
 fn clear_serve_flag_rows(
     flags_group: &adw::PreferencesGroup,
-    serve_flag_rows: &Rc<RefCell<Vec<(String, String, adw::EntryRow, String)>>>,
+    serve_flag_rows: &Rc<RefCell<Vec<super::flag_widget::ServeFlagRow>>>,
 ) {
     for (_, _, row, _) in serve_flag_rows.borrow().iter() {
-        flags_group.remove(row);
+        row.remove_from(flags_group);
     }
     serve_flag_rows.borrow_mut().clear();
 }
 
 fn populate_flag_rows(
+    ctx: &AppCtx,
     flags_group: &adw::PreferencesGroup,
-    flag_rows: &Rc<RefCell<Vec<(String, adw::EntryRow, String)>>>,
+    flag_rows: &Rc<RefCell<Vec<super::flag_widget::FlagRow>>>,
     op: OperationType,
     rclone: &serde_json::Value,
     blocks: &[crate::flags::FlagBlock],
@@ -9471,8 +14595,8 @@ fn populate_flag_rows(
         if op == OperationType::Serve && flag.field_name == "type" {
             continue;
         }
-        let row = flag_value_row(&flag, rclone);
-        flags_group.add(&row);
+        let row = flag_value_row(ctx, &flag, rclone);
+        row.add_to(flags_group);
         flag_rows
             .borrow_mut()
             .push((flag.field_name, row, flag.type_name));
@@ -9480,8 +14604,9 @@ fn populate_flag_rows(
 }
 
 fn populate_serve_flag_rows(
+    ctx: &AppCtx,
     flags_group: &adw::PreferencesGroup,
-    serve_flag_rows: &Rc<RefCell<Vec<(String, String, adw::EntryRow, String)>>>,
+    serve_flag_rows: &Rc<RefCell<Vec<super::flag_widget::ServeFlagRow>>>,
     blocks: &[crate::flags::FlagBlock],
     rclone: &serde_json::Value,
     serve: &adw::ComboRow,
@@ -9489,11 +14614,11 @@ fn populate_serve_flag_rows(
 ) {
     for serve_type in serve_types {
         for flag in crate::flags::collect_serve_flags(blocks, serve_type) {
-            let row = flag_value_row(&flag, rclone);
+            let mut row = flag_value_row(ctx, &flag, rclone);
             row.set_title(&format!("{serve_type} · {}", flag.name));
             let selected = crate::operations::selected_or(serve_types, serve.selected(), "http");
             row.set_visible(serve_type == selected);
-            flags_group.add(&row);
+            row.add_to(flags_group);
             serve_flag_rows.borrow_mut().push((
                 serve_type.clone(),
                 flag.field_name,
@@ -9532,6 +14657,23 @@ pub(super) fn check_result_row(
     let wrap = gtk::Box::new(gtk::Orientation::Vertical, 4);
     let row = adw::ActionRow::new();
     row.set_title(&item.name);
+    row.set_activatable(true);
+    {
+        let name = item.name.clone();
+        let copied = ctx.t_or("common.copied", "Copied to clipboard");
+        let toast = parent
+            .upcast_ref::<gtk::Widget>()
+            .downcast_ref::<adw::ToastOverlay>()
+            .cloned();
+        row.connect_activated(move |_| {
+            if let Some(display) = gtk::gdk::Display::default() {
+                display.clipboard().set_text(&name);
+            }
+            if let Some(toast) = &toast {
+                toast.add_toast(adw::Toast::new(&copied));
+            }
+        });
+    }
     let status = check_status_label(ctx, &item.status);
     let subtitle = if let Some(at) = item.completed_at {
         let (key, count) = crate::checks::relative_time_parts(at, chrono::Utc::now());
@@ -9589,7 +14731,14 @@ pub(super) fn check_result_row(
         let item = item.clone();
         let parent = parent.clone();
         resolve.connect_clicked(move |_| {
-            let go = || resolve_check_item(&ctx, &item, kind);
+            let go: Rc<dyn Fn()> = {
+                let ctx = ctx.clone();
+                let item = item.clone();
+                let parent = parent.clone();
+                Rc::new(move || {
+                    toast_check_resolve(&parent, &ctx, resolve_check_item(&ctx, &item, kind))
+                })
+            };
             if item.needs_overwrite_confirm() {
                 let title = ctx.t_or(
                     "shared.transferActivity.actions.resolveOverwriteTitle",
@@ -9609,11 +14758,10 @@ pub(super) fn check_result_row(
                     ),
                 );
                 confirm.set_response_appearance("ok", adw::ResponseAppearance::Destructive);
-                let ctx = ctx.clone();
-                let item = item.clone();
+                let go = go.clone();
                 confirm.connect_response(None, move |_, response| {
                     if response == "ok" {
-                        resolve_check_item(&ctx, &item, kind);
+                        go();
                     }
                 });
                 confirm.present(Some(&parent));
@@ -9651,50 +14799,169 @@ pub(super) fn check_result_row(
             }
         }) as Rc<dyn Fn(bool)>
     };
+    let check_remote = crate::transfers::remote_name_from_path(&item.src_fs)
+        .or_else(|| crate::transfers::remote_name_from_path(&item.dst_fs))
+        .unwrap_or_default();
+    let job_type = if item.job_type.is_empty() {
+        "check"
+    } else {
+        item.job_type.as_str()
+    };
     row.add_suffix(&transfer_row_actions(
         ctx,
         parent,
         &parsed,
-        "copy",
+        job_type,
         true,
+        &check_remote,
         Some(on_deleted),
+        &item.status,
     ));
     wrap.append(&row);
     if let Some(job) = resolve_job {
-        if crate::jobs::job_is_running(&job) {
-            let bytes = crate::jobs::stats_i64(&job.stats, &["bytes"]);
-            let size = crate::jobs::stats_i64(&job.stats, &["totalBytes", "total_bytes"]);
-            let speed = crate::jobs::stats_f64(&job.stats, &["speed"]);
-            let eta = crate::jobs::stats_i64(&job.stats, &["eta"]);
-            let preparing = crate::checks::resolve_is_preparing(job.progress, bytes);
-            let bar = gtk::ProgressBar::new();
-            bar.set_show_text(true);
-            if preparing {
-                bar.pulse();
-                bar.set_text(Some(
-                    &ctx.t_or("shared.transferActivity.status.preparing", "Preparing"),
-                ));
-            } else {
-                bar.set_fraction(job.progress.clamp(0.0, 1.0));
-                bar.set_text(Some(&crate::checks::format_resolve_progress(
-                    bytes, size, speed, eta,
-                )));
-            }
-            wrap.append(&bar);
-        } else if job.status == "failed" || job.error.is_some() {
-            let err = gtk::Label::new(Some(&job.error.unwrap_or_else(|| job.status.clone())));
-            err.add_css_class("error");
-            err.set_xalign(0.0);
-            err.set_wrap(true);
-            wrap.append(&err);
-        }
+        append_resolve_progress(ctx, &wrap, &job);
     }
     wrap
 }
 
-fn resolve_check_item(ctx: &AppCtx, item: &crate::checks::CheckResult, kind: &str) {
+fn append_resolve_progress(ctx: &AppCtx, wrap: &gtk::Box, job: &crate::store::JobInfo) {
+    if crate::jobs::job_is_running(job) {
+        let bytes = crate::jobs::stats_i64(&job.stats, &["bytes"]);
+        let size = crate::jobs::stats_i64(&job.stats, &["totalBytes", "total_bytes"]);
+        let speed = crate::jobs::stats_f64(&job.stats, &["speed"]);
+        let eta = crate::jobs::stats_i64(&job.stats, &["eta"]);
+        let preparing = crate::checks::resolve_is_preparing(job.progress, bytes);
+        let bar = gtk::ProgressBar::new();
+        bar.set_show_text(true);
+        if preparing {
+            bar.pulse();
+            bar.set_text(Some(
+                &ctx.t_or("shared.transferActivity.status.preparing", "Preparing"),
+            ));
+        } else {
+            bar.set_fraction(job.progress.clamp(0.0, 1.0));
+            bar.set_text(Some(&crate::checks::format_resolve_progress(
+                bytes, size, speed, eta,
+            )));
+        }
+        wrap.append(&bar);
+        if crate::transfers::transfer_speed_dot_visible(speed) {
+            let caption = format!("{}/s", crate::rclone::format_bytes(speed.round() as i64));
+            wrap.append(&transfer_speed_indicator(speed, &caption));
+        }
+    } else if job.status == "failed" || job.error.is_some() {
+        let err = gtk::Label::new(Some(
+            &job.error.clone().unwrap_or_else(|| job.status.clone()),
+        ));
+        err.add_css_class("error");
+        err.set_xalign(0.0);
+        err.set_wrap(true);
+        wrap.append(&err);
+    }
+}
+
+fn resolve_failed_transfer(
+    ctx: &AppCtx,
+    parsed: &crate::transfers::TransferRow,
+    parent_job_id: u64,
+    job_src: &str,
+    job_dst: &str,
+    parent: &impl IsA<gtk::Widget>,
+) {
     let Some(client) = ctx.client() else {
         return;
+    };
+    let Some((src_fs, src_remote, dst_fs, dst_remote)) = crate::transfers::copyfile_sides_with_job(
+        &parsed.src,
+        &parsed.dst,
+        &parsed.name,
+        job_src,
+        job_dst,
+    ) else {
+        add_action_toast(
+            parent,
+            &ctx.tf(
+                "shared.transferActivity.messages.resolveFailed",
+                &[("error", "missing source or destination")],
+            ),
+        );
+        return;
+    };
+    let payload = serde_json::json!({
+        "srcFs": src_fs,
+        "srcRemote": src_remote,
+        "dstFs": dst_fs,
+        "dstRemote": dst_remote,
+    });
+    match client.start_job("operations/copyfile", payload) {
+        Ok(id) => {
+            let (remote, _) = crate::rclone::split_remote_path(&src_fs);
+            crate::jobs::remember_started(
+                &mut ctx.store.borrow_mut().job_meta,
+                &format!("#{id}"),
+                crate::store::JobMeta {
+                    origin: "transfer-resolve".into(),
+                    profile: "default".into(),
+                    remote,
+                    backend: ctx.backend_key(),
+                    quick_run_id: String::new(),
+                    execute_id: uuid::Uuid::new_v4().to_string(),
+                    parent_job_id: if parent_job_id == 0 {
+                        None
+                    } else {
+                        Some(parent_job_id)
+                    },
+                    target: parsed.name.clone(),
+                    operation: "copy".into(),
+                    ..Default::default()
+                },
+            );
+            ctx.persist();
+            ctx.refresh_runtime();
+            add_action_toast(
+                parent,
+                &ctx.tf(
+                    "shared.transferActivity.messages.resolveStarted",
+                    &[("name", &parsed.name)],
+                ),
+            );
+        }
+        Err(e) => add_action_toast(
+            parent,
+            &ctx.tf(
+                "shared.transferActivity.messages.resolveFailed",
+                &[("error", &e.to_string())],
+            ),
+        ),
+    }
+}
+
+fn toast_check_resolve(parent: &impl IsA<gtk::Widget>, ctx: &AppCtx, result: Result<(), String>) {
+    match result {
+        Ok(()) => add_action_toast(
+            parent,
+            &ctx.t_or(
+                crate::checks::resolve_sync_toast_key(true),
+                "File sync operation started successfully",
+            ),
+        ),
+        Err(e) => add_action_toast(
+            parent,
+            &ctx.tf(
+                crate::checks::resolve_sync_toast_key(false),
+                &[("error", &ctx.translate_error(&e))],
+            ),
+        ),
+    }
+}
+
+fn resolve_check_item(
+    ctx: &AppCtx,
+    item: &crate::checks::CheckResult,
+    kind: &str,
+) -> Result<(), String> {
+    let Some(client) = ctx.client() else {
+        return Err(ctx.t_or("errors.engineOffline", "rclone engine is offline"));
     };
     let (src_fs, dst_fs) = if kind == "copy_dst_to_src" {
         (item.dst_fs.as_str(), item.src_fs.as_str())
@@ -9722,32 +14989,482 @@ fn resolve_check_item(ctx: &AppCtx, item: &crate::checks::CheckResult, kind: &st
                     execute_id: uuid::Uuid::new_v4().to_string(),
                     parent_job_id: item.job_id,
                     target: item.name.clone(),
+                    operation: "copy".into(),
                     ..Default::default()
                 },
             );
             ctx.persist();
             ctx.refresh_runtime();
+            Ok(())
         }
         Err(e) => {
             if let Err(fallback) = client.copy_file(src_fs, &item.name, dst_fs, &item.name) {
                 log::warn!("check resolve failed: {e}; fallback {fallback}");
+                Err(fallback.to_string())
             } else {
                 ctx.refresh_runtime();
+                Ok(())
             }
         }
     }
 }
 
+fn template_keys_label(ctx: &AppCtx, count: usize) -> String {
+    if count == 0 {
+        ctx.t_or("templates.zeroKeys", "0 keys")
+    } else if count == 1 {
+        ctx.t_or("templates.keyCount", "{{count}} key")
+            .replace("{{count}}", "1")
+    } else {
+        ctx.t_or("templates.keysCount", "{{count}} keys")
+            .replace("{{count}}", &count.to_string())
+    }
+}
+
+fn template_row_subtitle(ctx: &AppCtx, template: &UserTemplate) -> String {
+    let keys = template_keys_label(ctx, crate::user_templates::leaf_count(&template.values));
+    let desc = template.description.trim();
+    if desc.is_empty() {
+        keys
+    } else {
+        format!("{desc} · {keys}")
+    }
+}
+
+fn template_selected_count_label(ctx: &AppCtx, selected: usize, total: usize) -> String {
+    ctx.t_or(
+        "templates.selectedCount",
+        "{{selected}} / {{total}} selected",
+    )
+    .replace("{{selected}}", &selected.to_string())
+    .replace("{{total}}", &total.to_string())
+}
+
+fn update_template_key_count(
+    ctx: &AppCtx,
+    rows: &Rc<RefCell<Vec<(String, adw::SwitchRow)>>>,
+    count: &gtk::Label,
+) {
+    let rows = rows.borrow();
+    let total = rows.len();
+    let selected = rows.iter().filter(|(_, row)| row.is_active()).count();
+    count.set_label(&template_selected_count_label(ctx, selected, total));
+}
+
+fn selected_capture_remote(combo: &adw::ComboRow, remotes: &[String]) -> String {
+    let idx = combo.selected() as usize;
+    if idx == 0 {
+        String::new()
+    } else {
+        remotes
+            .get(idx.saturating_sub(1))
+            .cloned()
+            .unwrap_or_default()
+    }
+}
+
+fn capture_source_value(ctx: &AppCtx, remote: &str, categories: &[&str]) -> serde_json::Value {
+    if !remote.is_empty() {
+        if let Some(meta) = ctx.store.borrow().remotes.get(remote) {
+            let from_meta = crate::user_templates::capture_from_meta(meta, categories);
+            if from_meta.as_object().is_some_and(|obj| !obj.is_empty()) {
+                return from_meta;
+            }
+        }
+    }
+    let current = ctx
+        .client()
+        .and_then(|c| c.options_get().ok())
+        .unwrap_or(serde_json::json!({}));
+    let blocks = operation_flag_blocks(ctx);
+    crate::flags::filter_options_for_categories(&current, &blocks, categories)
+}
+
+fn populate_template_key_rows(
+    ctx: &AppCtx,
+    list: &gtk::ListBox,
+    rows: &Rc<RefCell<Vec<(String, adw::SwitchRow)>>>,
+    count: &gtk::Label,
+    source: &serde_json::Value,
+) {
+    while let Some(child) = list.first_child() {
+        list.remove(&child);
+    }
+    rows.borrow_mut().clear();
+    let mut grouped: std::collections::BTreeMap<String, Vec<(String, String)>> =
+        std::collections::BTreeMap::new();
+    for (path, value) in crate::user_templates::flatten_leaf_paths(source) {
+        let category = path.split('.').next().unwrap_or(path.as_str()).to_string();
+        grouped.entry(category).or_default().push((path, value));
+    }
+    for (category, entries) in grouped {
+        let expander = adw::ExpanderRow::new();
+        expander.set_title(&category);
+        expander.set_subtitle(&template_keys_label(ctx, entries.len()));
+        expander.set_expanded(true);
+        for (path, value) in entries {
+            let leaf = path
+                .strip_prefix(&format!("{category}."))
+                .unwrap_or(path.as_str());
+            let row = adw::SwitchRow::builder()
+                .title(leaf)
+                .subtitle(&value)
+                .active(true)
+                .build();
+            row.set_widget_name(&path);
+            {
+                let ctx = ctx.clone();
+                let rows = rows.clone();
+                let count = count.clone();
+                row.connect_active_notify(move |_| {
+                    update_template_key_count(&ctx, &rows, &count);
+                });
+            }
+            expander.add_row(&row);
+            rows.borrow_mut().push((path, row));
+        }
+        list.append(&expander);
+    }
+    if rows.borrow().is_empty() {
+        let empty = adw::ActionRow::new();
+        empty.set_title(&ctx.t_or("templates.noCatKeys", "No settings in this selection yet."));
+        empty.set_sensitive(false);
+        list.append(&empty);
+    }
+    update_template_key_count(ctx, rows, count);
+}
+
+fn persist_user_template(ctx: &AppCtx, template: UserTemplate) {
+    {
+        let mut store = ctx.store.borrow_mut();
+        crate::user_templates::upsert_template(&mut store.templates, template);
+    }
+    ctx.persist();
+}
+
+fn template_error(parent: &impl IsA<gtk::Widget>, ctx: &AppCtx, message: &str) {
+    let err = adw::AlertDialog::new(Some(&ctx.t_or("common.error", "Error")), Some(message));
+    err.add_response("ok", &ctx.t("common.ok"));
+    err.present(Some(parent));
+}
+
+fn edit_template(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, existing: Option<UserTemplate>) {
+    let dialog = adw::Dialog::new();
+    dialog.set_title(&if existing.is_some() {
+        ctx.t_or("templates.manageTitle", "Edit template")
+    } else {
+        ctx.t_or("templates.newTitle", "New template")
+    });
+    dialog.set_content_width(640);
+    dialog.set_content_height(640);
+    let name = adw::EntryRow::new();
+    name.set_title(&ctx.t_or("templates.templateName", "Name"));
+    name.set_text(
+        existing
+            .as_ref()
+            .map(|item| item.name.as_str())
+            .unwrap_or(""),
+    );
+    let description = adw::EntryRow::new();
+    description.set_title(&ctx.t_or("templates.templateDesc", "Description (optional)"));
+    description.set_text(
+        existing
+            .as_ref()
+            .map(|item| item.description.as_str())
+            .unwrap_or(""),
+    );
+    let group = adw::PreferencesGroup::new();
+    group.add(&name);
+    group.add(&description);
+    let initial = existing
+        .as_ref()
+        .map(|item| item.values.clone())
+        .unwrap_or_else(|| serde_json::json!({}));
+    let source = Rc::new(RefCell::new(initial.clone()));
+    let key_rows: Rc<RefCell<Vec<(String, adw::SwitchRow)>>> = Rc::new(RefCell::new(Vec::new()));
+    let keys_list = gtk::ListBox::new();
+    keys_list.add_css_class("boxed-list");
+    keys_list.set_selection_mode(gtk::SelectionMode::None);
+    let count = gtk::Label::new(None);
+    count.add_css_class("dim-label");
+    count.set_xalign(0.0);
+    let key_search = gtk::SearchEntry::new();
+    key_search.set_placeholder_text(Some(&ctx.t_or("templates.search", "Search keys…")));
+    populate_template_key_rows(&ctx, &keys_list, &key_rows, &count, &initial);
+    {
+        let key_rows = key_rows.clone();
+        key_search.connect_search_changed(move |entry| {
+            filter_template_key_rows(&key_rows.borrow(), &entry.text());
+        });
+    }
+    let select_all =
+        gtk::Button::with_label(&ctx.t_or("templates.selectAllKeys", "Select all keys"));
+    {
+        let key_rows = key_rows.clone();
+        select_all.connect_clicked(move |_| {
+            for (_, row) in key_rows.borrow().iter() {
+                if row.is_visible() {
+                    row.set_active(true);
+                }
+            }
+        });
+    }
+    let deselect_all =
+        gtk::Button::with_label(&ctx.t_or("templates.deselectAllKeys", "Deselect all keys"));
+    {
+        let key_rows = key_rows.clone();
+        deselect_all.connect_clicked(move |_| {
+            for (_, row) in key_rows.borrow().iter() {
+                if row.is_visible() {
+                    row.set_active(false);
+                }
+            }
+        });
+    }
+    let apply_presets =
+        gtk::Button::with_label(&ctx.t_or("templates.applyPresets", "Apply Default Presets"));
+    {
+        let ctx = ctx.clone();
+        let source = source.clone();
+        let keys_list = keys_list.clone();
+        let key_rows = key_rows.clone();
+        let count = count.clone();
+        let key_search = key_search.clone();
+        apply_presets.connect_clicked(move |_| {
+            let presets = crate::presets::default_template_presets(std::env::consts::OS);
+            crate::user_templates::merge_values(&mut source.borrow_mut(), &presets, true);
+            populate_template_key_rows(&ctx, &keys_list, &key_rows, &count, &source.borrow());
+            filter_template_key_rows(&key_rows.borrow(), &key_search.text());
+        });
+    }
+    let key_buttons = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+    key_buttons.append(&select_all);
+    key_buttons.append(&deselect_all);
+    key_buttons.append(&apply_presets);
+    let keys_scroll = gtk::ScrolledWindow::new();
+    keys_scroll.set_min_content_height(180);
+    keys_scroll.set_vexpand(true);
+    keys_scroll.set_child(Some(&keys_list));
+    let add_key = adw::EntryRow::new();
+    add_key.set_title(&ctx.t_or("templates.key", "Key"));
+    add_key.set_text("vfs.dir_cache_time");
+    let add_value = adw::EntryRow::new();
+    add_value.set_title(&ctx.t_or("templates.value", "Value"));
+    let add_btn = gtk::Button::with_label(&ctx.t_or("templates.addKey", "Add Key"));
+    add_btn.set_valign(gtk::Align::Center);
+    {
+        let ctx = ctx.clone();
+        let source = source.clone();
+        let keys_list = keys_list.clone();
+        let key_rows = key_rows.clone();
+        let count = count.clone();
+        let key_search = key_search.clone();
+        let add_key = add_key.clone();
+        let add_value = add_value.clone();
+        add_btn.connect_clicked(move |_| {
+            let path = add_key.text().trim().to_string();
+            if path.is_empty() {
+                return;
+            }
+            crate::user_templates::set_leaf(
+                &mut source.borrow_mut(),
+                &path,
+                serde_json::json!(add_value.text().to_string()),
+            );
+            populate_template_key_rows(&ctx, &keys_list, &key_rows, &count, &source.borrow());
+            filter_template_key_rows(&key_rows.borrow(), &key_search.text());
+        });
+    }
+    let add_box = gtk::Box::new(gtk::Orientation::Vertical, 4);
+    add_box.append(&add_key);
+    add_box.append(&add_value);
+    add_box.append(&add_btn);
+    let json_view = gtk::TextView::new();
+    json_view.set_monospace(true);
+    json_view.set_wrap_mode(gtk::WrapMode::WordChar);
+    json_view.set_hexpand(true);
+    json_view.set_vexpand(true);
+    let json_scroll = gtk::ScrolledWindow::new();
+    json_scroll.set_min_content_height(180);
+    json_scroll.set_vexpand(true);
+    json_scroll.set_child(Some(&json_view));
+    let view_stack = gtk::Stack::new();
+    view_stack.add_named(&keys_scroll, Some("visual"));
+    view_stack.add_named(&json_scroll, Some("json"));
+    view_stack.set_visible_child_name("visual");
+    let visual_btn = gtk::ToggleButton::with_label(&ctx.t_or("templates.visualView", "Visual"));
+    let json_btn = gtk::ToggleButton::with_label(&ctx.t_or("templates.jsonView", "JSON"));
+    json_btn.set_group(Some(&visual_btn));
+    visual_btn.set_active(true);
+    {
+        let view_stack = view_stack.clone();
+        let json_view = json_view.clone();
+        let source = source.clone();
+        let key_rows = key_rows.clone();
+        let ctx = ctx.clone();
+        let keys_list = keys_list.clone();
+        let count = count.clone();
+        let key_search = key_search.clone();
+        visual_btn.connect_toggled(move |btn| {
+            if !btn.is_active() {
+                return;
+            }
+            if let Ok(map) = crate::flags::parse_json_object(&text_view_get(&json_view)) {
+                *source.borrow_mut() = serde_json::Value::Object(map);
+                populate_template_key_rows(&ctx, &keys_list, &key_rows, &count, &source.borrow());
+                filter_template_key_rows(&key_rows.borrow(), &key_search.text());
+            }
+            view_stack.set_visible_child_name("visual");
+        });
+    }
+    {
+        let view_stack = view_stack.clone();
+        let json_view = json_view.clone();
+        let source = source.clone();
+        let key_rows = key_rows.clone();
+        json_btn.connect_toggled(move |btn| {
+            if !btn.is_active() {
+                return;
+            }
+            let paths: Vec<String> = key_rows
+                .borrow()
+                .iter()
+                .filter(|(_, row)| row.is_active())
+                .map(|(path, _)| path.clone())
+                .collect();
+            let values = crate::user_templates::filter_by_paths(&source.borrow(), &paths);
+            text_view_set(
+                &json_view,
+                &serde_json::to_string_pretty(&values).unwrap_or_else(|_| "{}".into()),
+            );
+            view_stack.set_visible_child_name("json");
+        });
+    }
+    let view_switch = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+    view_switch.append(&visual_btn);
+    view_switch.append(&json_btn);
+    let save = gtk::Button::with_label(&ctx.t("common.save"));
+    save.add_css_class("suggested-action");
+    {
+        let ctx = ctx.clone();
+        let parent = parent.clone();
+        let dialog = dialog.clone();
+        let name = name.clone();
+        let description = description.clone();
+        let source = source.clone();
+        let key_rows = key_rows.clone();
+        let view_stack = view_stack.clone();
+        let json_view = json_view.clone();
+        let existing_id = existing.as_ref().map(|item| item.id.clone());
+        let created_at = existing
+            .as_ref()
+            .map(|item| item.created_at.clone())
+            .unwrap_or_else(|| chrono::Utc::now().to_rfc3339());
+        let icon = existing
+            .as_ref()
+            .map(|item| item.icon.clone())
+            .unwrap_or_else(|| "emblem-ok-symbolic".into());
+        save.connect_clicked(move |_| {
+            let title = name.text().to_string();
+            if title.trim().is_empty() {
+                template_error(&parent, &ctx, &ctx.t_or("templates.templateName", "Name"));
+                return;
+            }
+            let values = if view_stack.visible_child_name().as_deref() == Some("json") {
+                match crate::flags::parse_json_object(&text_view_get(&json_view)) {
+                    Ok(map) => serde_json::Value::Object(map),
+                    Err(e) => {
+                        template_error(&parent, &ctx, &e);
+                        return;
+                    }
+                }
+            } else {
+                let paths: Vec<String> = key_rows
+                    .borrow()
+                    .iter()
+                    .filter(|(_, row)| row.is_active())
+                    .map(|(path, _)| path.clone())
+                    .collect();
+                crate::user_templates::filter_by_paths(&source.borrow(), &paths)
+            };
+            persist_user_template(
+                &ctx,
+                UserTemplate {
+                    id: existing_id
+                        .clone()
+                        .unwrap_or_else(|| uuid::Uuid::new_v4().to_string()),
+                    name: title,
+                    description: description.text().to_string(),
+                    icon: icon.clone(),
+                    created_at: created_at.clone(),
+                    updated_at: chrono::Utc::now().to_rfc3339(),
+                    values,
+                },
+            );
+            dialog.close();
+            templates(&parent, ctx.clone());
+        });
+    }
+    let box_ = gtk::Box::new(gtk::Orientation::Vertical, 8);
+    box_.set_margin_top(12);
+    box_.set_margin_start(12);
+    box_.set_margin_end(12);
+    box_.append(&group);
+    box_.append(&count);
+    box_.append(&key_search);
+    box_.append(&key_buttons);
+    box_.append(&add_box);
+    box_.append(&view_switch);
+    box_.append(&view_stack);
+    box_.append(&save);
+    dialog.set_child(Some(&box_));
+    dialog.present(Some(parent));
+}
+
 fn capture_template(parent: &impl IsA<gtk::Widget>, ctx: AppCtx) {
     let dialog = adw::Dialog::new();
     dialog.set_title(&ctx.t_or("templates.saveAsTemplate", "Capture template"));
-    dialog.set_content_width(420);
+    dialog.set_content_width(560);
+    dialog.set_content_height(640);
+    let on_saved = {
+        let dialog = dialog.clone();
+        let parent = parent.clone();
+        let ctx = ctx.clone();
+        Rc::new(move || {
+            dialog.close();
+            templates(&parent, ctx.clone());
+        }) as Rc<dyn Fn()>
+    };
+    dialog.set_child(Some(&build_capture_page(parent, ctx, on_saved, None)));
+    dialog.present(Some(parent));
+}
+
+fn build_capture_page(
+    parent: &impl IsA<gtk::Widget>,
+    ctx: AppCtx,
+    on_saved: Rc<dyn Fn()>,
+    initial_remote: Option<&str>,
+) -> gtk::Box {
     let name = adw::EntryRow::new();
     name.set_title(&ctx.t_or("templates.templateName", "Name"));
     name.set_text(&format!(
         "Template {}",
         chrono::Local::now().format("%Y-%m-%d %H:%M")
     ));
+    let description = adw::EntryRow::new();
+    description.set_title(&ctx.t_or("templates.templateDesc", "Description (optional)"));
+    let remotes = ctx.store.borrow().remote_names();
+    let mut remote_labels = vec![ctx.t_or("settings.rcloneFlags.title", "Current rclone options")];
+    remote_labels.extend(remotes.iter().cloned());
+    let remote_refs: Vec<&str> = remote_labels.iter().map(|s| s.as_str()).collect();
+    let remote = adw::ComboRow::new();
+    remote.set_title(&ctx.t_or("remote.profiles", "Source"));
+    remote.set_model(Some(&gtk::StringList::new(&remote_refs)));
+    if let Some(name) = initial_remote {
+        if let Some(idx) = remotes.iter().position(|r| r == name) {
+            remote.set_selected((idx + 1) as u32);
+        }
+    }
     let categories = [
         (
             "backend",
@@ -9762,12 +15479,20 @@ fn capture_template(parent: &impl IsA<gtk::Widget>, ctx: AppCtx) {
             "mount",
             ctx.t_or("general.remoteConfig.steps.mount", "Mount"),
         ),
-        ("copy", ctx.t_or("general.remoteConfig.steps.copy", "Copy")),
-        ("sync", ctx.t_or("general.remoteConfig.steps.sync", "Sync")),
+        ("copy", ctx.t_or("actions.copy", "Copy")),
+        ("sync", ctx.t_or("actions.sync", "Sync")),
+        ("move", ctx.t_or("actions.move", "Move")),
+        ("bisync", ctx.t_or("actions.bisync", "Bisync")),
+        ("serve", ctx.t_or("actions.serve", "Serve")),
+        ("check", ctx.t_or("actions.check", "Check")),
+        ("delete", ctx.t_or("actions.delete", "Delete")),
+        ("copyurl", ctx.t_or("actions.copyurl", "Copy URL")),
         (
-            "check",
-            ctx.t_or("general.remoteConfig.steps.check", "Check"),
+            "archivecreate",
+            ctx.t_or("actions.archivecreate", "Archive"),
         ),
+        ("cryptcheck", ctx.t_or("actions.cryptcheck", "Cryptcheck")),
+        ("remote", ctx.t_or("remote.profiles", "Remote")),
         (
             "network",
             ctx.t_or(
@@ -9789,52 +15514,286 @@ fn capture_template(parent: &impl IsA<gtk::Widget>, ctx: AppCtx) {
     let group = adw::PreferencesGroup::new();
     group.set_title(&ctx.t_or("templates.selectAllKeys", "Categories to include"));
     group.add(&name);
+    group.add(&description);
+    group.add(&remote);
     for (_, row) in &switches {
         group.add(row);
     }
-    let save = gtk::Button::with_label(&ctx.t("common.save"));
-    save.add_css_class("suggested-action");
-    {
+    let key_rows: Rc<RefCell<Vec<(String, adw::SwitchRow)>>> = Rc::new(RefCell::new(Vec::new()));
+    let source = Rc::new(RefCell::new(serde_json::json!({})));
+    let keys_list = gtk::ListBox::new();
+    keys_list.add_css_class("boxed-list");
+    keys_list.set_selection_mode(gtk::SelectionMode::None);
+    let count = gtk::Label::new(None);
+    count.add_css_class("dim-label");
+    count.set_xalign(0.0);
+    let key_search = gtk::SearchEntry::new();
+    key_search.set_placeholder_text(Some(&ctx.t_or("templates.search", "Search keys…")));
+    let rebuild = {
         let ctx = ctx.clone();
-        let parent = parent.clone();
-        let dialog = dialog.clone();
-        let name = name.clone();
+        let remote = remote.clone();
+        let remotes = remotes.clone();
         let switches = switches.clone();
-        save.connect_clicked(move |_| {
+        let keys_list = keys_list.clone();
+        let key_rows = key_rows.clone();
+        let source = source.clone();
+        let count = count.clone();
+        let key_search = key_search.clone();
+        Rc::new(move || {
             let selected: Vec<&str> = switches
                 .iter()
                 .filter(|(_, row)| row.is_active())
                 .map(|(id, _)| *id)
                 .collect();
-            let current = ctx
-                .client()
-                .and_then(|c| c.options_get().ok())
-                .unwrap_or(serde_json::json!({}));
-            let blocks = operation_flag_blocks(&ctx);
-            let values = crate::flags::filter_options_for_categories(&current, &blocks, &selected);
-            ctx.store
-                .borrow_mut()
-                .templates
-                .push(crate::store::UserTemplate {
+            let remote_name = selected_capture_remote(&remote, &remotes);
+            let value = capture_source_value(&ctx, &remote_name, &selected);
+            *source.borrow_mut() = value.clone();
+            populate_template_key_rows(&ctx, &keys_list, &key_rows, &count, &value);
+            filter_template_key_rows(&key_rows.borrow(), &key_search.text());
+        }) as Rc<dyn Fn()>
+    };
+    rebuild();
+    {
+        let rebuild = rebuild.clone();
+        remote.connect_selected_notify(move |_| rebuild());
+    }
+    for (_, row) in &switches {
+        let rebuild = rebuild.clone();
+        row.connect_active_notify(move |_| rebuild());
+    }
+    {
+        let key_rows = key_rows.clone();
+        key_search.connect_search_changed(move |entry| {
+            filter_template_key_rows(&key_rows.borrow(), &entry.text());
+        });
+    }
+    let select_all =
+        gtk::Button::with_label(&ctx.t_or("templates.selectAllKeys", "Select all keys"));
+    {
+        let key_rows = key_rows.clone();
+        select_all.connect_clicked(move |_| {
+            for (_, row) in key_rows.borrow().iter() {
+                if row.is_visible() {
+                    row.set_active(true);
+                }
+            }
+        });
+    }
+    let deselect_all =
+        gtk::Button::with_label(&ctx.t_or("templates.deselectAllKeys", "Deselect all keys"));
+    {
+        let key_rows = key_rows.clone();
+        deselect_all.connect_clicked(move |_| {
+            for (_, row) in key_rows.borrow().iter() {
+                if row.is_visible() {
+                    row.set_active(false);
+                }
+            }
+        });
+    }
+    let apply_presets =
+        gtk::Button::with_label(&ctx.t_or("templates.applyPresets", "Apply Default Presets"));
+    apply_presets.set_tooltip_text(Some(
+        &ctx.t_or("templates.applyPresets", "Apply Default Presets"),
+    ));
+    {
+        let ctx = ctx.clone();
+        let source = source.clone();
+        let keys_list = keys_list.clone();
+        let key_rows = key_rows.clone();
+        let count = count.clone();
+        let key_search = key_search.clone();
+        apply_presets.connect_clicked(move |_| {
+            let presets = crate::presets::default_template_presets(std::env::consts::OS);
+            crate::user_templates::merge_values(&mut source.borrow_mut(), &presets, true);
+            populate_template_key_rows(&ctx, &keys_list, &key_rows, &count, &source.borrow());
+            filter_template_key_rows(&key_rows.borrow(), &key_search.text());
+        });
+    }
+    let key_buttons = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+    key_buttons.append(&select_all);
+    key_buttons.append(&deselect_all);
+    key_buttons.append(&apply_presets);
+    let keys_scroll = gtk::ScrolledWindow::new();
+    keys_scroll.set_min_content_height(180);
+    keys_scroll.set_max_content_height(260);
+    keys_scroll.set_vexpand(true);
+    keys_scroll.set_child(Some(&keys_list));
+    let add_key = adw::EntryRow::new();
+    add_key.set_title(&ctx.t_or("templates.key", "Key"));
+    add_key.set_text("vfs.dir_cache_time");
+    let add_value = adw::EntryRow::new();
+    add_value.set_title(&ctx.t_or("templates.value", "Value"));
+    let add_btn = gtk::Button::with_label(&ctx.t_or("templates.addKey", "Add Key"));
+    add_btn.set_valign(gtk::Align::Center);
+    {
+        let ctx = ctx.clone();
+        let source = source.clone();
+        let keys_list = keys_list.clone();
+        let key_rows = key_rows.clone();
+        let count = count.clone();
+        let key_search = key_search.clone();
+        let add_key = add_key.clone();
+        let add_value = add_value.clone();
+        add_btn.connect_clicked(move |_| {
+            let path = add_key.text().trim().to_string();
+            if path.is_empty() {
+                return;
+            }
+            crate::user_templates::set_leaf(
+                &mut source.borrow_mut(),
+                &path,
+                serde_json::json!(add_value.text().to_string()),
+            );
+            populate_template_key_rows(&ctx, &keys_list, &key_rows, &count, &source.borrow());
+            filter_template_key_rows(&key_rows.borrow(), &key_search.text());
+        });
+    }
+    let add_box = gtk::Box::new(gtk::Orientation::Vertical, 4);
+    add_box.append(&add_key);
+    add_box.append(&add_value);
+    add_box.append(&add_btn);
+    let json_view = gtk::TextView::new();
+    json_view.set_monospace(true);
+    json_view.set_wrap_mode(gtk::WrapMode::WordChar);
+    json_view.set_hexpand(true);
+    json_view.set_vexpand(true);
+    let json_scroll = gtk::ScrolledWindow::new();
+    json_scroll.set_min_content_height(180);
+    json_scroll.set_vexpand(true);
+    json_scroll.set_child(Some(&json_view));
+    let view_stack = gtk::Stack::new();
+    view_stack.add_named(&keys_scroll, Some("visual"));
+    view_stack.add_named(&json_scroll, Some("json"));
+    view_stack.set_visible_child_name("visual");
+    let visual_btn = gtk::ToggleButton::with_label(&ctx.t_or("templates.visualView", "Visual"));
+    let json_btn = gtk::ToggleButton::with_label(&ctx.t_or("templates.jsonView", "JSON"));
+    json_btn.set_group(Some(&visual_btn));
+    visual_btn.set_active(true);
+    {
+        let view_stack = view_stack.clone();
+        let json_view = json_view.clone();
+        let source = source.clone();
+        let key_rows = key_rows.clone();
+        let ctx = ctx.clone();
+        let keys_list = keys_list.clone();
+        let count = count.clone();
+        let key_search = key_search.clone();
+        visual_btn.connect_toggled(move |btn| {
+            if !btn.is_active() {
+                return;
+            }
+            if let Ok(map) = crate::flags::parse_json_object(&text_view_get(&json_view)) {
+                *source.borrow_mut() = serde_json::Value::Object(map);
+                populate_template_key_rows(&ctx, &keys_list, &key_rows, &count, &source.borrow());
+                filter_template_key_rows(&key_rows.borrow(), &key_search.text());
+            }
+            view_stack.set_visible_child_name("visual");
+        });
+    }
+    {
+        let view_stack = view_stack.clone();
+        let json_view = json_view.clone();
+        let source = source.clone();
+        let key_rows = key_rows.clone();
+        json_btn.connect_toggled(move |btn| {
+            if !btn.is_active() {
+                return;
+            }
+            let paths: Vec<String> = key_rows
+                .borrow()
+                .iter()
+                .filter(|(_, row)| row.is_active())
+                .map(|(path, _)| path.clone())
+                .collect();
+            let values = crate::user_templates::filter_by_paths(&source.borrow(), &paths);
+            text_view_set(
+                &json_view,
+                &serde_json::to_string_pretty(&values).unwrap_or_else(|_| "{}".into()),
+            );
+            view_stack.set_visible_child_name("json");
+        });
+    }
+    let view_switch = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+    view_switch.append(&visual_btn);
+    view_switch.append(&json_btn);
+    let save = gtk::Button::with_label(&ctx.t("common.save"));
+    save.add_css_class("suggested-action");
+    {
+        let ctx = ctx.clone();
+        let parent = parent.clone();
+        let name = name.clone();
+        let description = description.clone();
+        let key_rows = key_rows.clone();
+        let source = source.clone();
+        let view_stack = view_stack.clone();
+        let json_view = json_view.clone();
+        save.connect_clicked(move |_| {
+            let title = name.text().to_string();
+            if title.trim().is_empty() {
+                template_error(&parent, &ctx, &ctx.t_or("templates.templateName", "Name"));
+                return;
+            }
+            let values = if view_stack.visible_child_name().as_deref() == Some("json") {
+                match crate::flags::parse_json_object(&text_view_get(&json_view)) {
+                    Ok(map) => serde_json::Value::Object(map),
+                    Err(e) => {
+                        template_error(&parent, &ctx, &e);
+                        return;
+                    }
+                }
+            } else {
+                let paths: Vec<String> = key_rows
+                    .borrow()
+                    .iter()
+                    .filter(|(_, row)| row.is_active())
+                    .map(|(path, _)| path.clone())
+                    .collect();
+                crate::user_templates::filter_by_paths(&source.borrow(), &paths)
+            };
+            persist_user_template(
+                &ctx,
+                UserTemplate {
                     id: uuid::Uuid::new_v4().to_string(),
-                    name: name.text().to_string(),
-                    description: format!("Captured {} categories", selected.len()),
+                    name: title,
+                    description: description.text().to_string(),
                     icon: "emblem-ok-symbolic".into(),
                     created_at: chrono::Utc::now().to_rfc3339(),
                     updated_at: chrono::Utc::now().to_rfc3339(),
                     values,
-                });
-            ctx.persist();
-            dialog.close();
-            templates(&parent, ctx.clone());
+                },
+            );
+            on_saved();
         });
     }
     let box_ = gtk::Box::new(gtk::Orientation::Vertical, 8);
-    box_.set_margin_top(12);
-    box_.append(&group);
+    box_.set_margin_top(8);
+    box_.set_margin_start(12);
+    box_.set_margin_end(12);
+    let cats_scroll = gtk::ScrolledWindow::new();
+    cats_scroll.set_min_content_height(140);
+    cats_scroll.set_max_content_height(200);
+    cats_scroll.set_child(Some(&group));
+    box_.append(&cats_scroll);
+    box_.append(&count);
+    box_.append(&key_search);
+    box_.append(&key_buttons);
+    box_.append(&add_box);
+    box_.append(&view_switch);
+    box_.append(&view_stack);
     box_.append(&save);
-    dialog.set_child(Some(&box_));
-    dialog.present(Some(parent));
+    box_
+}
+
+fn filter_template_key_rows(rows: &[(String, adw::SwitchRow)], query: &str) {
+    let needle = query.trim().to_ascii_lowercase();
+    for (path, row) in rows {
+        let value = row.subtitle().unwrap_or_default().to_ascii_lowercase();
+        let show = needle.is_empty()
+            || path.to_ascii_lowercase().contains(&needle)
+            || value.contains(&needle);
+        row.set_visible(show);
+    }
 }
 
 pub(crate) fn present_window_or_dialog(
@@ -9888,7 +15847,7 @@ fn refresh_helper_combo(row: &adw::ComboRow, names: &[String], selected: &str) {
 fn populate_helper_flag_rows(
     ctx: &AppCtx,
     group: &adw::PreferencesGroup,
-    rows: &Rc<RefCell<Vec<(String, adw::EntryRow, String)>>>,
+    rows: &Rc<RefCell<Vec<super::flag_widget::FlagRow>>>,
     kind: &str,
     blocks: &[crate::flags::FlagBlock],
     remote: &str,
@@ -9906,8 +15865,8 @@ fn populate_helper_flag_rows(
         .and_then(|meta| meta.helper_profile(kind, selected))
         .unwrap_or_else(|| serde_json::json!({}));
     for (_, option) in crate::flags::options_for_category(blocks, kind) {
-        let row = flag_value_row(option, &current);
-        group.add(&row);
+        let row = flag_value_row(ctx, option, &current);
+        row.add_to(group);
         rows.borrow_mut()
             .push((option.field_name.clone(), row, option.type_name.clone()));
     }
@@ -9918,10 +15877,13 @@ fn save_helper_from_rows(
     remote: &str,
     kind: &str,
     name: &str,
-    rows: &[(String, adw::EntryRow, String)],
-) {
+    rows: &[super::flag_widget::FlagRow],
+) -> Result<(), String> {
     if remote.is_empty() || name.is_empty() {
-        return;
+        return Ok(());
+    }
+    if let Some((_, field, msg)) = first_invalid_flag(rows.iter().cloned()) {
+        return Err(format!("{field}: {msg}"));
     }
     let mut map = serde_json::Map::new();
     for (field, row, type_name) in rows {
@@ -9937,6 +15899,7 @@ fn save_helper_from_rows(
     if let Some(meta) = ctx.store.borrow_mut().remotes.get_mut(remote) {
         meta.upsert_helper(kind, name, serde_json::Value::Object(map));
     }
+    Ok(())
 }
 
 pub(crate) fn helper_combo(title: &str, names: &[String], selected: &str) -> adw::ComboRow {
@@ -9990,6 +15953,221 @@ fn apply_quick_run_path_titles(
         ),
     });
     dst.set_visible(op != OperationType::Delete);
+}
+
+fn populate_qr_runtime_rows(
+    ctx: &AppCtx,
+    group: &adw::PreferencesGroup,
+    rows: &Rc<RefCell<Vec<super::flag_widget::FlagRow>>>,
+    remote: &str,
+    current: &serde_json::Value,
+) {
+    clear_flag_rows(group, rows);
+    let remote_type = remote_type_of(ctx.clone(), remote);
+    for flag in super::remote_config::runtime_flags_for_type(ctx, &remote_type) {
+        if flag.field_name == "type" || flag.name == "type" {
+            continue;
+        }
+        let row = super::flag_widget::FlagWidget::from_flag(ctx, &flag, current);
+        row.add_to(group);
+        rows.borrow_mut()
+            .push((flag.field_name, row, flag.type_name));
+    }
+}
+
+fn collect_flag_object(
+    rows: &[super::flag_widget::FlagRow],
+) -> serde_json::Map<String, serde_json::Value> {
+    let mut map = serde_json::Map::new();
+    for (field, row, type_name) in rows {
+        if field == "type" {
+            continue;
+        }
+        let text = row.text();
+        if text.is_empty() {
+            continue;
+        }
+        map.insert(
+            field.clone(),
+            crate::flags::parse_flag_value(type_name, &text),
+        );
+    }
+    map
+}
+
+fn apply_values_to_flag_rows(
+    rows: &[super::flag_widget::FlagRow],
+    values: &serde_json::Map<String, serde_json::Value>,
+) {
+    if values.is_empty() {
+        return;
+    }
+    for (field, row, type_name) in rows {
+        if let Some(value) = crate::user_templates::lookup_flag_value(values, field) {
+            let text = crate::value_mapper::machine_to_human(value, type_name, "");
+            if !text.is_empty() && text != "null" {
+                row.set_text(&text);
+            }
+        }
+    }
+}
+
+fn apply_quick_run_form_patch(
+    patch: &crate::user_templates::QuickRunFormPatch,
+    op: OperationType,
+    src: &adw::EntryRow,
+    dst: &adw::EntryRow,
+    flag_rows: &[super::flag_widget::FlagRow],
+    vfs_rows: &[super::flag_widget::FlagRow],
+    filter_rows: &[super::flag_widget::FlagRow],
+    backend_rows: &[super::flag_widget::FlagRow],
+    runtime_rows: &[super::flag_widget::FlagRow],
+    runtime_editor: &super::json_editor::JsonEditor,
+    json_mode: bool,
+    runtime_current: &Rc<RefCell<serde_json::Value>>,
+) {
+    apply_values_to_flag_rows(vfs_rows, &patch.vfs);
+    apply_values_to_flag_rows(filter_rows, &patch.filter);
+    apply_values_to_flag_rows(backend_rows, &patch.backend);
+    apply_values_to_flag_rows(flag_rows, &patch.operation);
+    if op == OperationType::Mount {
+        apply_values_to_flag_rows(flag_rows, &patch.mount);
+    }
+    if let Some(source) = &patch.source {
+        src.set_text(source);
+    }
+    if let Some(dest) = &patch.dest {
+        dst.set_text(dest);
+    }
+    if json_mode {
+        let mut map = runtime_editor.parsed().unwrap_or_else(|_| {
+            runtime_current
+                .borrow()
+                .as_object()
+                .cloned()
+                .unwrap_or_default()
+        });
+        for (key, value) in &patch.runtime {
+            map.insert(key.clone(), value.clone());
+        }
+        let value = serde_json::Value::Object(map);
+        runtime_editor.set_value(&value);
+        *runtime_current.borrow_mut() = value;
+    } else {
+        apply_values_to_flag_rows(runtime_rows, &patch.runtime);
+        *runtime_current.borrow_mut() =
+            serde_json::Value::Object(collect_flag_object(runtime_rows));
+    }
+}
+
+fn quick_run_preset_bar(
+    parent: &impl IsA<gtk::Widget>,
+    ctx: AppCtx,
+    remote: adw::EntryRow,
+    op_row: adw::ComboRow,
+    src: adw::EntryRow,
+    dst: adw::EntryRow,
+    flag_rows: Rc<RefCell<Vec<super::flag_widget::FlagRow>>>,
+    vfs_flag_rows: Rc<RefCell<Vec<super::flag_widget::FlagRow>>>,
+    filter_flag_rows: Rc<RefCell<Vec<super::flag_widget::FlagRow>>>,
+    backend_flag_rows: Rc<RefCell<Vec<super::flag_widget::FlagRow>>>,
+    runtime_flag_rows: Rc<RefCell<Vec<super::flag_widget::FlagRow>>>,
+    runtime_editor: super::json_editor::JsonEditor,
+    runtime_json_toggle: adw::SwitchRow,
+    runtime_current: Rc<RefCell<serde_json::Value>>,
+) -> gtk::Box {
+    let current_op = {
+        let op_row = op_row.clone();
+        Rc::new(move || {
+            OperationType::ALL
+                .get(op_row.selected() as usize)
+                .copied()
+                .unwrap_or(OperationType::Sync)
+        })
+    };
+    let apply_patch = {
+        let src = src.clone();
+        let dst = dst.clone();
+        let flag_rows = flag_rows.clone();
+        let vfs_flag_rows = vfs_flag_rows.clone();
+        let filter_flag_rows = filter_flag_rows.clone();
+        let backend_flag_rows = backend_flag_rows.clone();
+        let runtime_flag_rows = runtime_flag_rows.clone();
+        let runtime_editor = runtime_editor.clone();
+        let runtime_json_toggle = runtime_json_toggle.clone();
+        let runtime_current = runtime_current.clone();
+        let current_op = current_op.clone();
+        Rc::new(move |patch: crate::user_templates::QuickRunFormPatch| {
+            apply_quick_run_form_patch(
+                &patch,
+                current_op(),
+                &src,
+                &dst,
+                &flag_rows.borrow(),
+                &vfs_flag_rows.borrow(),
+                &filter_flag_rows.borrow(),
+                &backend_flag_rows.borrow(),
+                &runtime_flag_rows.borrow(),
+                &runtime_editor,
+                runtime_json_toggle.is_active(),
+                &runtime_current,
+            );
+        }) as Rc<dyn Fn(crate::user_templates::QuickRunFormPatch)>
+    };
+    let apply_defaults = {
+        let ctx = ctx.clone();
+        let remote = remote.clone();
+        let parent = parent.clone();
+        let apply_patch = apply_patch.clone();
+        let current_op = current_op.clone();
+        Rc::new(move || {
+            let name = remote.text().to_string();
+            if name.trim().is_empty() {
+                let warn = adw::AlertDialog::new(
+                    Some(&ctx.t_or(
+                        "wizards.presets.noRemoteSelected",
+                        "Please select a remote first",
+                    )),
+                    None::<&str>,
+                );
+                warn.add_response("ok", &ctx.t_or("common.ok", "OK"));
+                warn.present(Some(&parent));
+                return;
+            }
+            let remote_type = remote_type_of(ctx.clone(), &name);
+            let presets = crate::presets::resolve_presets(&remote_type, None, std::env::consts::OS);
+            apply_patch(crate::user_templates::default_presets_patch(
+                &presets,
+                current_op(),
+            ));
+            let toast = adw::AlertDialog::new(
+                Some(&ctx.t_or(
+                    "wizards.presets.applied",
+                    "Default presets applied successfully",
+                )),
+                None::<&str>,
+            );
+            toast.add_response("ok", &ctx.t_or("common.ok", "OK"));
+            toast.present(Some(&parent));
+        }) as Rc<dyn Fn()>
+    };
+    let apply_template = {
+        let ctx = ctx.clone();
+        let parent = parent.clone();
+        let apply_patch = apply_patch.clone();
+        let current_op = current_op.clone();
+        Rc::new(move |template: &UserTemplate| {
+            apply_patch(crate::user_templates::template_form_patch(
+                &template.values,
+                current_op(),
+            ));
+            let msg = ctx.tf("templates.applySuccess", &[("name", &template.name)]);
+            let toast = adw::AlertDialog::new(Some(&msg), None::<&str>);
+            toast.add_response("ok", &ctx.t_or("common.ok", "OK"));
+            toast.present(Some(&parent));
+        }) as Rc<dyn Fn(&UserTemplate)>
+    };
+    template_picker_bar(parent, ctx, false, apply_defaults, apply_template, None)
 }
 
 pub(crate) fn path_status_label(
@@ -10365,16 +16543,89 @@ fn cron_schedule_preview(ctx: &AppCtx, expression: &str) -> String {
     lines.join("\n")
 }
 
+pub(crate) fn toast_near(widget: &impl IsA<gtk::Widget>, message: &str) {
+    let mut current = widget.clone().upcast::<gtk::Widget>();
+    loop {
+        if let Ok(overlay) = current.clone().downcast::<adw::ToastOverlay>() {
+            overlay.add_toast(adw::Toast::new(message));
+            return;
+        }
+        match current.parent() {
+            Some(parent) => current = parent,
+            None => {
+                if let Some(root) = widget.root() {
+                    if let Ok(win) = root.downcast::<gtk::Window>() {
+                        let dialog = adw::AlertDialog::new(None, Some(message));
+                        dialog.add_response("ok", "OK");
+                        dialog.present(Some(&win));
+                    }
+                }
+                return;
+            }
+        }
+    }
+}
+
+fn attach_remote_chooser(ctx: &AppCtx, row: &adw::EntryRow) {
+    let names = ctx.store.borrow().remote_names();
+    if names.is_empty() {
+        row.set_tooltip_text(Some(&ctx.t_or(
+            "flow.quickRun.editor.selectRemoteFirst",
+            "Select a remote first",
+        )));
+        return;
+    }
+    let btn = gtk::MenuButton::new();
+    btn.set_icon_name("go-down-symbolic");
+    btn.set_valign(gtk::Align::Center);
+    btn.set_tooltip_text(Some(&ctx.t_or("flow.quickRun.editor.remote", "Remote")));
+    let pop = gtk::Popover::new();
+    let list = gtk::ListBox::new();
+    list.add_css_class("boxed-list");
+    for name in names {
+        let item = adw::ActionRow::new();
+        item.set_title(&name);
+        item.set_activatable(true);
+        let row_c = row.clone();
+        let pop_c = pop.clone();
+        let picked = name.clone();
+        item.connect_activated(move |_| {
+            row_c.set_text(&picked);
+            pop_c.popdown();
+        });
+        list.append(&item);
+    }
+    let scroll = gtk::ScrolledWindow::new();
+    scroll.set_min_content_height(80);
+    scroll.set_max_content_height(280);
+    scroll.set_propagate_natural_width(true);
+    scroll.set_child(Some(&list));
+    pop.set_child(Some(&scroll));
+    btn.set_popover(Some(&pop));
+    row.add_suffix(&btn);
+}
+
 pub(crate) fn attach_path_picker(
     ctx: &AppCtx,
     row: &adw::EntryRow,
     config: crate::picker::FilePickerConfig,
+) {
+    attach_path_picker_with(ctx, row, config, None);
+}
+
+pub(crate) fn attach_path_picker_with(
+    ctx: &AppCtx,
+    row: &adw::EntryRow,
+    config: crate::picker::FilePickerConfig,
+    on_extra: Option<Rc<dyn Fn(Vec<String>)>>,
 ) {
     let btn = gtk::Button::from_icon_name("folder-open-symbolic");
     btn.set_valign(gtk::Align::Center);
     btn.set_tooltip_text(Some(&ctx.t_or("common.browse", "Browse")));
     let ctx = ctx.clone();
     let picked = row.clone();
+    let auto_ctx = ctx.clone();
+    let auto_config = config.clone();
     btn.connect_clicked(move |_| {
         let mut config = config.clone();
         if config.initial_location.is_none() && !picked.text().is_empty() {
@@ -10399,12 +16650,23 @@ pub(crate) fn attach_path_picker(
                     },
                 );
             } else {
+                let require_empty = config.require_empty;
+                let ctx = ctx.clone();
                 dialog.select_folder(
                     Some(&win),
                     None::<gio::Cancellable>.as_ref(),
                     move |result| {
                         if let Ok(file) = result {
                             if let Some(path) = file.path() {
+                                if let Some(key) =
+                                    crate::picker::local_folder_pick_error(&path, require_empty)
+                                {
+                                    toast_near(
+                                        &row,
+                                        &ctx.t_or(key, "Selected folder is not empty"),
+                                    );
+                                    return;
+                                }
                                 row.set_text(&path.to_string_lossy());
                             }
                         }
@@ -10414,16 +16676,327 @@ pub(crate) fn attach_path_picker(
             return;
         }
         let row = picked.clone();
+        let on_extra = on_extra.clone();
         ctx.request_picker(
             config.clone(),
             Rc::new(move |result| {
                 if !result.cancelled {
                     row.set_text(&result.formatted_path());
+                    if let Some(on_extra) = &on_extra {
+                        let extras = result.extra_formatted_paths();
+                        if !extras.is_empty() {
+                            on_extra(extras);
+                        }
+                    }
                 }
             }),
         );
     });
     row.add_suffix(&btn);
+    attach_path_autocomplete(&auto_ctx, row, &auto_config);
+}
+
+pub(crate) fn row_is_editing(widget: &impl IsA<gtk::Widget>) -> bool {
+    let widget = widget.as_ref();
+    widget.has_focus() || widget.has_css_class("focused") || widget_tree_has_focus(widget)
+}
+
+fn widget_tree_has_focus(widget: &gtk::Widget) -> bool {
+    if widget.has_focus() {
+        return true;
+    }
+    let mut child = widget.first_child();
+    while let Some(node) = child {
+        if widget_tree_has_focus(&node) {
+            return true;
+        }
+        child = node.next_sibling();
+    }
+    false
+}
+
+pub(crate) fn attach_example_typeahead(
+    ctx: &AppCtx,
+    search: &adw::EntryRow,
+    combo: &adw::ComboRow,
+    examples: &[(String, String)],
+) {
+    let examples = examples.to_vec();
+    let popover = gtk::Popover::new();
+    popover.set_parent(search);
+    popover.set_autohide(true);
+    popover.set_has_arrow(false);
+    popover.set_position(gtk::PositionType::Bottom);
+    let list = gtk::ListBox::new();
+    list.add_css_class("boxed-list");
+    let scroll = gtk::ScrolledWindow::new();
+    scroll.set_min_content_height(80);
+    scroll.set_max_content_height(280);
+    scroll.set_propagate_natural_width(true);
+    scroll.set_child(Some(&list));
+    popover.set_child(Some(&scroll));
+    {
+        let popover = popover.clone();
+        search.connect_destroy(move |_| popover.unparent());
+    }
+    let applying = Rc::new(Cell::new(false));
+    let generation = Rc::new(Cell::new(0u32));
+    let fill = {
+        let search = search.clone();
+        let combo = combo.clone();
+        let list = list.clone();
+        let popover = popover.clone();
+        let applying = applying.clone();
+        let examples = examples.clone();
+        let empty_label = ctx.t_or(
+            "wizards.remoteConfig.noMatchingProviders",
+            "No matching providers",
+        );
+        Rc::new(move || {
+            if !row_is_editing(&search) {
+                popover.popdown();
+                return;
+            }
+            while let Some(child) = list.first_child() {
+                list.remove(&child);
+            }
+            let hits = crate::config_search::filter_example_choices(&search.text(), &examples);
+            if hits.is_empty() {
+                let empty = adw::ActionRow::new();
+                empty.set_activatable(false);
+                empty.set_title(&empty_label);
+                list.append(&empty);
+            }
+            for idx in hits.into_iter().take(40) {
+                let Some((value, help)) = examples.get(idx) else {
+                    continue;
+                };
+                let item = adw::ActionRow::new();
+                let title = crate::config_search::example_choice_label(value, help);
+                item.set_title(&title);
+                if !help.is_empty() {
+                    item.set_subtitle(help);
+                }
+                item.set_activatable(true);
+                let search = search.clone();
+                let combo = combo.clone();
+                let applying = applying.clone();
+                let popover = popover.clone();
+                let selected = idx as u32;
+                item.connect_activated(move |_| {
+                    applying.set(true);
+                    search.set_text(&title);
+                    combo.set_selected(selected);
+                    applying.set(false);
+                    popover.popdown();
+                });
+                list.append(&item);
+            }
+            popover.popup();
+        })
+    };
+    {
+        let fill = fill.clone();
+        let applying = applying.clone();
+        let generation = generation.clone();
+        search.connect_changed(move |_| {
+            if applying.get() {
+                return;
+            }
+            let next = generation.get().wrapping_add(1);
+            generation.set(next);
+            let fill = fill.clone();
+            let generation = generation.clone();
+            glib::timeout_add_local(std::time::Duration::from_millis(160), move || {
+                if generation.get() == next {
+                    fill();
+                }
+                glib::ControlFlow::Break
+            });
+        });
+    }
+    {
+        let fill = fill.clone();
+        search.connect_notify_local(Some("has-focus"), move |row, _| {
+            if row.has_focus() {
+                fill();
+            }
+        });
+    }
+}
+
+fn attach_path_autocomplete(
+    ctx: &AppCtx,
+    row: &adw::EntryRow,
+    config: &crate::picker::FilePickerConfig,
+) {
+    let popover = gtk::Popover::new();
+    popover.set_parent(row);
+    popover.set_autohide(true);
+    popover.set_has_arrow(false);
+    popover.set_position(gtk::PositionType::Bottom);
+    let list = gtk::ListBox::new();
+    list.add_css_class("boxed-list");
+    let scroll = gtk::ScrolledWindow::new();
+    scroll.set_min_content_height(80);
+    scroll.set_max_content_height(240);
+    scroll.set_propagate_natural_width(true);
+    scroll.set_child(Some(&list));
+    popover.set_child(Some(&scroll));
+    {
+        let popover = popover.clone();
+        row.connect_destroy(move |_| popover.unparent());
+    }
+    let default_remote = if config.mode == crate::picker::PickerMode::Local {
+        String::new()
+    } else if !config.default_remote.is_empty() {
+        config.default_remote.clone()
+    } else {
+        config.allowed_remotes.first().cloned().unwrap_or_default()
+    };
+    let folders_only = config.selection == crate::picker::PickerSelection::Folders;
+    let applying = Rc::new(Cell::new(false));
+    let generation = Rc::new(Cell::new(0u32));
+    let fill = {
+        let ctx = ctx.clone();
+        let row = row.clone();
+        let list = list.clone();
+        let popover = popover.clone();
+        let applying = applying.clone();
+        let default_remote = default_remote.clone();
+        Rc::new(move || {
+            if !row_is_editing(&row) {
+                popover.popdown();
+                return;
+            }
+            while let Some(child) = list.first_child() {
+                list.remove(&child);
+            }
+            let query = crate::path_autocomplete::parse_autocomplete_query(
+                &row.text(),
+                &default_remote,
+                &ctx.engine_os(),
+            );
+            if query.can_go_up() {
+                let up = adw::ActionRow::new();
+                up.set_title(&ctx.t_or("wizards.appOperation.upFolder", "Up Folder"));
+                up.set_activatable(true);
+                let parent = query.parent_path.clone();
+                let row = row.clone();
+                up.connect_activated(move |_| {
+                    row.set_text(&parent);
+                    row.grab_focus();
+                });
+                list.append(&up);
+            }
+            let entries = if query.is_local
+                && (ctx.engine_os() == std::env::consts::OS || ctx.client().is_none())
+            {
+                crate::path_autocomplete::list_local_entries(
+                    &query.listed_path,
+                    &query.prefix,
+                    folders_only,
+                )
+            } else if let Some(client) = ctx.client() {
+                let (fs, remote) = crate::path_autocomplete::list_target(&query);
+                match client.list_dir(&fs, &remote) {
+                    Ok(listing) => crate::path_autocomplete::entries_from_listing(
+                        &listing,
+                        &query.listed_path,
+                        query.is_local,
+                        &query.prefix,
+                        folders_only,
+                    ),
+                    Err(_) => Vec::new(),
+                }
+            } else {
+                Vec::new()
+            };
+            if entries.is_empty() && !query.can_go_up() {
+                let empty = adw::ActionRow::new();
+                empty.set_activatable(false);
+                empty.set_title(&ctx.t_or(
+                    "wizards.appOperation.noItemsFound",
+                    "No items found in this directory.",
+                ));
+                list.append(&empty);
+            }
+            for entry in entries {
+                let item = adw::ActionRow::new();
+                item.set_title(&entry.name);
+                let subtitle = if entry.is_dir {
+                    ctx.t_or("nautilus.selection.folder", "folder")
+                } else {
+                    ctx.t_or("nautilus.selection.item", "item")
+                };
+                item.set_subtitle(&subtitle);
+                item.set_activatable(true);
+                if entry.is_dir {
+                    item.add_prefix(&gtk::Image::from_icon_name("folder-symbolic"));
+                } else {
+                    item.add_prefix(&gtk::Image::from_icon_name("text-x-generic-symbolic"));
+                }
+                let row = row.clone();
+                let applying = applying.clone();
+                let popover = popover.clone();
+                let path = entry.path.clone();
+                let is_dir = entry.is_dir;
+                item.connect_activated(move |_| {
+                    if is_dir {
+                        row.set_text(&path);
+                        row.grab_focus();
+                        return;
+                    }
+                    applying.set(true);
+                    row.set_text(&path);
+                    applying.set(false);
+                    popover.popdown();
+                });
+                list.append(&item);
+            }
+            if row.text().is_empty() && default_remote.is_empty() && !query.is_local {
+                popover.popdown();
+                return;
+            }
+            popover.popup();
+        })
+    };
+    {
+        let fill = fill.clone();
+        let applying = applying.clone();
+        let generation = generation.clone();
+        row.connect_changed(move |_| {
+            if applying.get() {
+                return;
+            }
+            let next = generation.get().wrapping_add(1);
+            generation.set(next);
+            let fill = fill.clone();
+            let generation = generation.clone();
+            glib::timeout_add_local(std::time::Duration::from_millis(200), move || {
+                if generation.get() == next {
+                    fill();
+                }
+                glib::ControlFlow::Break
+            });
+        });
+    }
+}
+
+pub(crate) fn first_invalid_flag(
+    rows: impl IntoIterator<Item = super::flag_widget::FlagRow>,
+) -> Option<(super::flag_widget::FlagWidget, String, String)> {
+    for (field, row, type_name) in rows {
+        let text = row.text();
+        match crate::validators::validate_flag_text(&type_name, &text) {
+            Ok(()) => row.set_error(false),
+            Err(msg) => {
+                row.set_error(true);
+                return Some((row, field, msg));
+            }
+        }
+    }
+    None
 }
 
 fn ensure_syntax_tags(buffer: &gtk::TextBuffer) {
@@ -10467,9 +17040,20 @@ fn apply_syntax_highlight(view: &gtk::TextView, name: &str, text: &str) {
 
 fn attach_live_syntax(view: &gtk::TextView, name: &str) {
     let name = name.to_string();
+    let gen = Rc::new(Cell::new(0u64));
     view.buffer().connect_changed(move |buffer| {
-        let text = buffer.text(&buffer.start_iter(), &buffer.end_iter(), false);
-        paint_syntax(buffer, &name, text.as_str());
+        let n = gen.get().wrapping_add(1);
+        gen.set(n);
+        let gen = gen.clone();
+        let buffer = buffer.clone();
+        let name = name.clone();
+        glib::timeout_add_local_once(std::time::Duration::from_millis(80), move || {
+            if gen.get() != n {
+                return;
+            }
+            let text = buffer.text(&buffer.start_iter(), &buffer.end_iter(), false);
+            paint_syntax(&buffer, &name, text.as_str());
+        });
     });
 }
 
@@ -10496,6 +17080,18 @@ const ORIGINS: &[&str] = &[
     "flow",
     "quickrun",
 ];
+
+fn action_kind_label(ctx: &AppCtx, kind: &str) -> String {
+    ctx.t_or(&format!("alerts.action.{kind}"), kind)
+}
+
+fn severity_label(ctx: &AppCtx, severity: &str) -> String {
+    ctx.t_or(&format!("alerts.severityLevels.{severity}"), severity)
+}
+
+fn origin_label(ctx: &AppCtx, origin: &str) -> String {
+    ctx.t_or(&format!("alerts.origins.{origin}"), origin)
+}
 
 fn alert_rule_editor(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, existing_id: Option<String>) {
     let dialog = adw::Dialog::new();
@@ -10532,7 +17128,12 @@ fn alert_rule_editor(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, existing_id: O
     );
     let severity = adw::ComboRow::new();
     severity.set_title(&ctx.t_or("alerts.rule.severityMin", "Minimum severity"));
-    severity.set_model(Some(&gtk::StringList::new(SEVERITIES)));
+    let severity_labels: Vec<String> = SEVERITIES
+        .iter()
+        .map(|sev| severity_label(&ctx, sev))
+        .collect();
+    let severity_refs: Vec<&str> = severity_labels.iter().map(|s| s.as_str()).collect();
+    severity.set_model(Some(&gtk::StringList::new(&severity_refs)));
     if let Some(rule) = &existing {
         if let Some(idx) = SEVERITIES
             .iter()
@@ -10609,6 +17210,9 @@ fn alert_rule_editor(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, existing_id: O
         &ORIGINS.iter().map(|s| (*s).to_string()).collect::<Vec<_>>(),
         existing.as_ref().map(|r| r.origin_filter.as_slice()),
     );
+    for (id, row) in &origin_switches {
+        row.set_title(&origin_label(&ctx, id));
+    }
     let event_switches: Vec<(AlertEventKind, adw::SwitchRow)> = EVENT_KINDS
         .iter()
         .map(|kind| {
@@ -10728,13 +17332,16 @@ fn alert_rule_editor(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, existing_id: O
 
     let page = adw::PreferencesPage::new();
     let general = adw::PreferencesGroup::new();
-    general.set_title(&ctx.t_or("alerts.ruleLabel", "Rule"));
+    general.set_title(&ctx.t_or("alerts.action.basicInfo", "Basic Information"));
     general.add(&name);
     general.add(&enabled);
     general.add(&auto_ack);
-    general.add(&severity);
-    general.add(&cooldown);
     page.add(&general);
+    let filters = adw::PreferencesGroup::new();
+    filters.set_title(&ctx.t_or("alerts.rule.filters", "Filters"));
+    filters.add(&severity);
+    filters.add(&cooldown);
+    page.add(&filters);
     let remotes_group = adw::PreferencesGroup::new();
     remotes_group.set_title(&ctx.t_or("alerts.rule.remoteFilter", "Remotes"));
     remotes_group.set_description(Some(&ctx.t_or(
@@ -10792,7 +17399,7 @@ fn alert_action_editor(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, existing_id:
     let dialog = adw::Dialog::new();
     dialog.set_title(&ctx.t_or("alerts.action.editorTitle", "Alert action"));
     dialog.set_content_width(520);
-    dialog.set_content_height(620);
+    dialog.set_content_height(680);
     let existing = existing_id.as_ref().and_then(|id| {
         ctx.store
             .borrow()
@@ -10815,11 +17422,45 @@ fn alert_action_editor(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, existing_id:
     enabled.set_active(existing.as_ref().map(|a| a.enabled).unwrap_or(true));
     let kind = adw::ComboRow::new();
     kind.set_title(&ctx.t_or("alerts.action.kind", "Kind"));
-    kind.set_model(Some(&gtk::StringList::new(ACTION_KINDS)));
+    let kind_labels: Vec<String> = ACTION_KINDS
+        .iter()
+        .map(|k| action_kind_label(&ctx, k))
+        .collect();
+    let kind_refs: Vec<&str> = kind_labels.iter().map(|s| s.as_str()).collect();
+    kind.set_model(Some(&gtk::StringList::new(&kind_refs)));
+    kind.set_visible(false);
     if let Some(action) = &existing {
         if let Some(idx) = ACTION_KINDS.iter().position(|k| *k == action.kind) {
             kind.set_selected(idx as u32);
         }
+    }
+    let kind_chips = gtk::FlowBox::new();
+    kind_chips.set_max_children_per_line(4);
+    kind_chips.set_selection_mode(gtk::SelectionMode::None);
+    kind_chips.set_homogeneous(false);
+    kind_chips.set_column_spacing(6);
+    kind_chips.set_row_spacing(6);
+    let mut kind_first: Option<gtk::ToggleButton> = None;
+    for (idx, kind_id) in ACTION_KINDS.iter().enumerate() {
+        let btn = gtk::ToggleButton::with_label(&kind_labels[idx]);
+        btn.set_tooltip_text(Some(*kind_id));
+        if let Some(first) = &kind_first {
+            btn.set_group(Some(first));
+        } else {
+            kind_first = Some(btn.clone());
+        }
+        if idx as u32 == kind.selected() {
+            btn.set_active(true);
+        }
+        {
+            let kind = kind.clone();
+            btn.connect_toggled(move |btn| {
+                if btn.is_active() {
+                    kind.set_selected(idx as u32);
+                }
+            });
+        }
+        kind_chips.append(&btn);
     }
     let url = adw::EntryRow::new();
     url.set_title(&ctx.t_or("alerts.action.url", "URL"));
@@ -10833,6 +17474,77 @@ fn alert_action_editor(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, existing_id:
     extra2.set_title(&ctx.t_or("alerts.action.from", "From"));
     let headers = adw::EntryRow::new();
     headers.set_title(&ctx.t_or("alerts.action.headers", "Headers (Key: Value)"));
+    headers.set_visible(false);
+    let header_list = gtk::Box::new(gtk::Orientation::Vertical, 4);
+    let header_rows: Rc<RefCell<Vec<(adw::EntryRow, adw::EntryRow)>>> =
+        Rc::new(RefCell::new(Vec::new()));
+    let add_header_row = {
+        let header_list = header_list.clone();
+        let header_rows = header_rows.clone();
+        let ctx = ctx.clone();
+        Rc::new(move |key: String, value: String| {
+            let key_row = adw::EntryRow::new();
+            key_row.set_title(&ctx.t_or("alerts.action.headerKey", "Header Name"));
+            key_row.set_text(&key);
+            let value_row = adw::EntryRow::new();
+            value_row.set_title(&ctx.t_or("alerts.action.headerValue", "Value"));
+            value_row.set_text(&value);
+            let remove = gtk::Button::from_icon_name("user-trash-symbolic");
+            remove.set_valign(gtk::Align::Center);
+            remove.set_tooltip_text(Some(&ctx.t_or("templates.removeKey", "Remove")));
+            value_row.add_suffix(&remove);
+            header_list.append(&key_row);
+            header_list.append(&value_row);
+            header_rows
+                .borrow_mut()
+                .push((key_row.clone(), value_row.clone()));
+            {
+                let header_list = header_list.clone();
+                let header_rows = header_rows.clone();
+                let key_row = key_row.clone();
+                let value_row = value_row.clone();
+                remove.connect_clicked(move |_| {
+                    header_list.remove(&key_row);
+                    header_list.remove(&value_row);
+                    header_rows
+                        .borrow_mut()
+                        .retain(|(k, v)| !k.eq(&key_row) && !v.eq(&value_row));
+                });
+            }
+        }) as Rc<dyn Fn(String, String)>
+    };
+    if let Some(action) = &existing {
+        for (key, value) in crate::store::header_pairs(&action.config) {
+            add_header_row(key, value);
+        }
+    }
+    if header_rows.borrow().is_empty() {
+        add_header_row(String::new(), String::new());
+    }
+    let add_header = gtk::Button::with_label(&ctx.t_or("alerts.action.addHeader", "Add header"));
+    {
+        let add_header_row = add_header_row.clone();
+        add_header.connect_clicked(move |_| add_header_row(String::new(), String::new()));
+    }
+    header_list.append(&add_header);
+    let refill_headers = {
+        let header_list = header_list.clone();
+        let header_rows = header_rows.clone();
+        let add_header_row = add_header_row.clone();
+        Rc::new(move |text: String| {
+            for (key_row, value_row) in header_rows.borrow().iter() {
+                header_list.remove(key_row);
+                header_list.remove(value_row);
+            }
+            header_rows.borrow_mut().clear();
+            for (key, value) in crate::store::header_pairs_from_text(&text) {
+                add_header_row(key, value);
+            }
+            if header_rows.borrow().is_empty() {
+                add_header_row(String::new(), String::new());
+            }
+        }) as Rc<dyn Fn(String)>
+    };
     let telegram_mode = adw::ComboRow::new();
     telegram_mode.set_title(&ctx.t_or("alerts.action.telegramMode", "Telegram mode"));
     let telegram_bot = ctx.t_or("alerts.action.telegram_bot", "Bot API");
@@ -10896,10 +17608,13 @@ fn alert_action_editor(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, existing_id:
     );
     let encryption = adw::ComboRow::new();
     encryption.set_title(&ctx.t_or("alerts.action.encryption", "Encryption"));
+    let enc_none = ctx.t_or("alerts.action.encryptionNone", "None");
+    let enc_tls = ctx.t_or("alerts.action.encryptionTls", "TLS (Port 465)");
+    let enc_starttls = ctx.t_or("alerts.action.encryptionStarttls", "StartTLS (Port 587)");
     encryption.set_model(Some(&gtk::StringList::new(&[
-        "None",
-        "TLS (Port 465)",
-        "StartTLS (Port 587)",
+        enc_none.as_str(),
+        enc_tls.as_str(),
+        enc_starttls.as_str(),
     ])));
     encryption.set_selected(
         match existing
@@ -10964,9 +17679,11 @@ fn alert_action_editor(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, existing_id:
     presets.append(&slack_btn);
     let wa_provider = adw::ComboRow::new();
     wa_provider.set_title(&ctx.t_or("alerts.action.whatsappProvider", "WhatsApp provider"));
+    let wa_call = ctx.t_or("alerts.action.callMeBot", "CallMeBot");
+    let wa_custom = ctx.t_or("alerts.action.customGateway", "Custom gateway");
     wa_provider.set_model(Some(&gtk::StringList::new(&[
-        "CallMeBot",
-        "Custom gateway",
+        wa_call.as_str(),
+        wa_custom.as_str(),
     ])));
     if existing
         .as_ref()
@@ -10976,8 +17693,22 @@ fn alert_action_editor(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, existing_id:
     {
         wa_provider.set_selected(1);
     }
-    let body = adw::EntryRow::new();
-    body.set_title(&ctx.t_or("alerts.action.bodyTemplate", "Body template"));
+    let body_group = adw::PreferencesGroup::new();
+    body_group.set_title(&ctx.t_or("alerts.action.bodyTemplate", "Body template"));
+    let body = gtk::TextView::new();
+    body.set_wrap_mode(gtk::WrapMode::WordChar);
+    body.set_hexpand(true);
+    body.set_monospace(true);
+    body.set_top_margin(8);
+    body.set_bottom_margin(8);
+    body.set_left_margin(8);
+    body.set_right_margin(8);
+    let body_scroll = gtk::ScrolledWindow::new();
+    body_scroll.set_min_content_height(128);
+    body_scroll.set_propagate_natural_height(true);
+    body_scroll.set_child(Some(&body));
+    body_scroll.add_css_class("card");
+    body_group.add(&body_scroll);
     if let Some(action) = &existing {
         url.set_text(&action_cfg(action, &["url", "broker_url", "smtp_server"]));
         method.set_text(&action_cfg(action, &["method", "topic", "smtp_port"]));
@@ -10997,7 +17728,8 @@ fn alert_action_editor(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, existing_id:
         }
         headers.set_text(&crate::store::headers_to_text(&action.config));
         env_vars.set_text(&crate::store::env_vars_to_text(&action.config));
-        body.set_text(
+        text_view_set(
+            &body,
             action
                 .config
                 .get("body_template")
@@ -11005,7 +17737,7 @@ fn alert_action_editor(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, existing_id:
                 .unwrap_or("{{title}}: {{body}}"),
         );
     } else {
-        body.set_text("{{title}}: {{body}}");
+        text_view_set(&body, "{{title}}: {{body}}");
     }
     let retries = adw::SpinRow::with_range(0.0, 5.0, 1.0);
     retries.set_title(&ctx.t_or("alerts.action.retryCount", "Retry count"));
@@ -11033,12 +17765,12 @@ fn alert_action_editor(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, existing_id:
                 return;
             }
             if let Some(key) = crate::store::ALERT_TEMPLATE_KEYS.get(row.selected() as usize) {
-                let current = body.text().to_string();
+                let current = text_view_get(&body);
                 if !current.contains(key) {
                     if current.is_empty() {
-                        body.set_text(key);
+                        text_view_set(&body, key);
                     } else {
-                        body.set_text(&format!("{current} {key}"));
+                        text_view_set(&body, &format!("{current} {key}"));
                     }
                 }
             }
@@ -11059,7 +17791,7 @@ fn alert_action_editor(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, existing_id:
         let token = token.clone();
         let extra = extra.clone();
         let extra2 = extra2.clone();
-        let headers = headers.clone();
+        let header_rows = header_rows.clone();
         let body = body.clone();
         let retries = retries.clone();
         let timeout = timeout.clone();
@@ -11102,8 +17834,15 @@ fn alert_action_editor(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, existing_id:
                     token: token.text().to_string(),
                     extra: extra.text().to_string(),
                     extra2: extra2.text().to_string(),
-                    headers: headers.text().to_string(),
-                    body: body.text().to_string(),
+                    headers: {
+                        let pairs: Vec<(String, String)> = header_rows
+                            .borrow()
+                            .iter()
+                            .map(|(k, v)| (k.text().to_string(), v.text().to_string()))
+                            .collect();
+                        crate::store::pairs_to_header_text(&pairs)
+                    },
+                    body: text_view_get(&body),
                     retry_count: retries.value() as u32,
                     timeout_secs: timeout.value() as u32,
                     tls_verify: tls_verify.is_active(),
@@ -11154,8 +17893,11 @@ fn alert_action_editor(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, existing_id:
             event.origin = "test".into();
             crate::store::dispatch_action(&action, &event);
             let toast = adw::AlertDialog::new(
-                Some("Test sent"),
-                Some("The action was invoked with a sample event."),
+                Some(&ctx.t_or("alerts.testAction", "Test action")),
+                Some(&ctx.t_or(
+                    "alerts.testActionSuccess",
+                    "Alert action test completed successfully.",
+                )),
             );
             toast.add_response("ok", &ctx.t_or("common.ok", "OK"));
             toast.present(Some(&parent));
@@ -11198,20 +17940,42 @@ fn alert_action_editor(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, existing_id:
         let method = method.clone();
         let body = body.clone();
         let headers = headers.clone();
+        let header_rows = header_rows.clone();
+        let refill_headers = refill_headers.clone();
         discord_btn.connect_clicked(move |_| {
             method.set_text("POST");
-            body.set_text(&crate::store::webhook_preset_body("discord"));
-            headers.set_text(&crate::store::ensure_content_type_json(&headers.text()));
+            text_view_set(&body, &crate::store::webhook_preset_body("discord"));
+            let current = crate::store::pairs_to_header_text(
+                &header_rows
+                    .borrow()
+                    .iter()
+                    .map(|(k, v)| (k.text().to_string(), v.text().to_string()))
+                    .collect::<Vec<_>>(),
+            );
+            let next = crate::store::ensure_content_type_json(&current);
+            headers.set_text(&next);
+            refill_headers(next);
         });
     }
     {
         let method = method.clone();
         let body = body.clone();
         let headers = headers.clone();
+        let header_rows = header_rows.clone();
+        let refill_headers = refill_headers.clone();
         slack_btn.connect_clicked(move |_| {
             method.set_text("POST");
-            body.set_text(&crate::store::webhook_preset_body("slack"));
-            headers.set_text(&crate::store::ensure_content_type_json(&headers.text()));
+            text_view_set(&body, &crate::store::webhook_preset_body("slack"));
+            let current = crate::store::pairs_to_header_text(
+                &header_rows
+                    .borrow()
+                    .iter()
+                    .map(|(k, v)| (k.text().to_string(), v.text().to_string()))
+                    .collect::<Vec<_>>(),
+            );
+            let next = crate::store::ensure_content_type_json(&current);
+            headers.set_text(&next);
+            refill_headers(next);
         });
     }
     let sync_fields = {
@@ -11221,6 +17985,7 @@ fn alert_action_editor(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, existing_id:
         let extra = extra.clone();
         let extra2 = extra2.clone();
         let headers = headers.clone();
+        let header_list = header_list.clone();
         let timeout = timeout.clone();
         let tls_verify = tls_verify.clone();
         let subject = subject.clone();
@@ -11233,7 +17998,7 @@ fn alert_action_editor(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, existing_id:
         let browse = browse.clone();
         let presets = presets.clone();
         let telegram_mode = telegram_mode.clone();
-        let body = body.clone();
+        let body_group = body_group.clone();
         let wa_provider = wa_provider.clone();
         let ctx = ctx.clone();
         move |selected: &str| {
@@ -11256,10 +18021,11 @@ fn alert_action_editor(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, existing_id:
                     extra.set_visible(false);
                     extra2.set_visible(false);
                     headers.set_visible(false);
+                    header_list.set_visible(false);
                     timeout.set_visible(false);
                     tls_verify.set_visible(false);
-                    body.set_visible(true);
-                    body.set_title(
+                    body_group.set_visible(true);
+                    body_group.set_title(
                         &ctx.t_or("alerts.action.messageTemplate", "Toast body template"),
                     );
                 }
@@ -11273,11 +18039,13 @@ fn alert_action_editor(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, existing_id:
                     token.set_visible(false);
                     extra.set_visible(false);
                     extra2.set_visible(false);
-                    headers.set_visible(true);
+                    headers.set_visible(false);
+                    header_list.set_visible(true);
                     timeout.set_visible(true);
                     tls_verify.set_visible(true);
-                    body.set_visible(true);
-                    body.set_title(&ctx.t_or("alerts.action.bodyTemplate", "JSON / body template"));
+                    body_group.set_visible(true);
+                    body_group
+                        .set_title(&ctx.t_or("alerts.action.bodyTemplate", "JSON / body template"));
                 }
                 "telegram" => {
                     wa_provider.set_visible(false);
@@ -11291,10 +18059,12 @@ fn alert_action_editor(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, existing_id:
                     extra.set_title(&ctx.t_or("alerts.action.chatId", "Chat ID"));
                     extra2.set_visible(false);
                     headers.set_visible(false);
+                    header_list.set_visible(false);
                     timeout.set_visible(true);
                     tls_verify.set_visible(false);
-                    body.set_visible(true);
-                    body.set_title(&ctx.t_or("alerts.action.messageTemplate", "Message template"));
+                    body_group.set_visible(true);
+                    body_group
+                        .set_title(&ctx.t_or("alerts.action.messageTemplate", "Message template"));
                 }
                 "whatsapp" => {
                     wa_provider.set_visible(true);
@@ -11309,10 +18079,12 @@ fn alert_action_editor(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, existing_id:
                     extra.set_title(&ctx.t_or("alerts.action.phone", "Phone number"));
                     extra2.set_visible(false);
                     headers.set_visible(false);
+                    header_list.set_visible(false);
                     timeout.set_visible(true);
                     tls_verify.set_visible(false);
-                    body.set_visible(true);
-                    body.set_title(&ctx.t_or("alerts.action.messageTemplate", "Message template"));
+                    body_group.set_visible(true);
+                    body_group
+                        .set_title(&ctx.t_or("alerts.action.messageTemplate", "Message template"));
                 }
                 "script" => {
                     wa_provider.set_visible(false);
@@ -11325,10 +18097,11 @@ fn alert_action_editor(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, existing_id:
                     extra2.set_visible(true);
                     extra2.set_title(&ctx.t_or("alerts.action.args", "Arguments"));
                     headers.set_visible(false);
+                    header_list.set_visible(false);
                     timeout.set_visible(true);
                     tls_verify.set_visible(false);
-                    body.set_visible(true);
-                    body.set_title(&ctx.t_or("alerts.action.bodyTemplate", "Stdin template"));
+                    body_group.set_visible(true);
+                    body_group.set_title(&ctx.t_or("alerts.action.bodyTemplate", "Stdin template"));
                 }
                 "email" => {
                     wa_provider.set_visible(false);
@@ -11344,10 +18117,11 @@ fn alert_action_editor(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, existing_id:
                     extra2.set_visible(true);
                     extra2.set_title(&ctx.t_or("alerts.action.from", "From"));
                     headers.set_visible(false);
+                    header_list.set_visible(false);
                     timeout.set_visible(true);
                     tls_verify.set_visible(false);
-                    body.set_visible(true);
-                    body.set_title(&ctx.t_or("alerts.action.bodyTemplate", "Body template"));
+                    body_group.set_visible(true);
+                    body_group.set_title(&ctx.t_or("alerts.action.bodyTemplate", "Body template"));
                 }
                 "mqtt" => {
                     wa_provider.set_visible(false);
@@ -11361,10 +18135,12 @@ fn alert_action_editor(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, existing_id:
                     extra.set_visible(false);
                     extra2.set_visible(false);
                     headers.set_visible(false);
+                    header_list.set_visible(false);
                     timeout.set_visible(true);
                     tls_verify.set_visible(false);
-                    body.set_visible(true);
-                    body.set_title(&ctx.t_or("alerts.action.bodyTemplate", "Payload template"));
+                    body_group.set_visible(true);
+                    body_group
+                        .set_title(&ctx.t_or("alerts.action.bodyTemplate", "Payload template"));
                 }
                 _ => {}
             }
@@ -11407,41 +18183,77 @@ fn alert_action_editor(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, existing_id:
             sync_fields(selected);
         });
     }
-    let group = adw::PreferencesGroup::new();
-    group.add(&name);
-    group.add(&enabled);
-    group.add(&kind);
-    group.add(&wa_provider);
-    group.add(&telegram_mode);
-    group.add(&url);
-    group.add(&method);
-    group.add(&token);
-    group.add(&username);
-    group.add(&extra);
-    group.add(&extra2);
-    group.add(&headers);
-    group.add(&timeout);
-    group.add(&tls_verify);
-    group.add(&subject);
-    group.add(&encryption);
-    group.add(&qos);
-    group.add(&mqtt_tls);
-    group.add(&retain);
-    group.add(&env_vars);
-    group.add(&body);
-    group.add(&retries);
-    group.add(&keys);
+    let basic = adw::PreferencesGroup::new();
+    basic.set_title(&ctx.t_or("alerts.action.basicInfo", "Basic Information"));
+    basic.add(&name);
+    basic.add(&enabled);
+    basic.add(&kind);
+    let kind_heading = gtk::Label::new(Some(&ctx.t_or("alerts.action.kind", "Kind")));
+    kind_heading.add_css_class("heading");
+    kind_heading.set_xalign(0.0);
+    let kind_box = gtk::Box::new(gtk::Orientation::Vertical, 8);
+    kind_box.set_margin_top(8);
+    kind_box.set_margin_bottom(8);
+    kind_box.set_margin_start(12);
+    kind_box.set_margin_end(12);
+    kind_box.append(&kind_heading);
+    kind_box.append(&kind_chips);
+    basic.add(&kind_box);
+    let config = adw::PreferencesGroup::new();
+    config.set_title(&ctx.t_or("alerts.action.configuration", "Configuration"));
+    config.add(&presets);
+    config.add(&wa_provider);
+    config.add(&telegram_mode);
+    config.add(&url);
+    config.add(&method);
+    config.add(&token);
+    config.add(&username);
+    config.add(&extra);
+    config.add(&extra2);
+    config.add(&headers);
+    config.add(&timeout);
+    config.add(&tls_verify);
+    config.add(&subject);
+    config.add(&encryption);
+    config.add(&qos);
+    config.add(&mqtt_tls);
+    config.add(&retain);
+    config.add(&env_vars);
+    config.add(&retries);
+    config.add(&keys);
+    let headers_group = adw::PreferencesGroup::new();
+    headers_group.set_title(&ctx.t_or("alerts.action.headers", "Headers"));
+    headers_group.add(&header_list);
     let buttons = gtk::Box::new(gtk::Orientation::Horizontal, 8);
     buttons.append(&test);
     buttons.append(&save);
     buttons.append(&delete);
     let box_ = gtk::Box::new(gtk::Orientation::Vertical, 8);
     box_.set_margin_top(12);
-    box_.append(&presets);
-    box_.append(&group);
+    let page = adw::PreferencesPage::new();
+    page.add(&basic);
+    page.add(&config);
+    page.add(&headers_group);
+    page.add(&body_group);
+    let scroll = gtk::ScrolledWindow::new();
+    scroll.set_vexpand(true);
+    scroll.set_propagate_natural_height(true);
+    scroll.set_child(Some(&page));
+    box_.append(&scroll);
     box_.append(&buttons);
     dialog.set_child(Some(&box_));
     dialog.present(Some(parent));
+}
+
+fn text_view_get(view: &gtk::TextView) -> String {
+    let buffer = view.buffer();
+    buffer
+        .text(&buffer.start_iter(), &buffer.end_iter(), false)
+        .to_string()
+}
+
+fn text_view_set(view: &gtk::TextView, text: &str) {
+    view.buffer().set_text(text);
 }
 
 fn action_cfg(action: &AlertAction, keys: &[&str]) -> String {
@@ -11492,10 +18304,7 @@ fn selected_or_all(rows: &[(String, adw::SwitchRow)]) -> Vec<String> {
 
 pub fn password_prompt(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, toast: adw::ToastOverlay) {
     let dialog = adw::AlertDialog::new(
-        Some(&ctx.t_or(
-            "modals.backend.security.configPassword",
-            "rclone.conf password",
-        )),
+        Some(&ctx.t_or("shared.passwordManager.label", "Configuration Password")),
         Some(&ctx.t_or(
             "repair.passwordPrompt",
             "Enter the rclone.conf password to unlock the engine.",
@@ -11504,14 +18313,23 @@ pub fn password_prompt(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, toast: adw::
     let box_ = gtk::Box::new(gtk::Orientation::Vertical, 8);
     let entry = gtk::PasswordEntry::new();
     entry.set_show_peek_icon(true);
-    let remember_label = ctx.t_or(
-        "modals.backend.security.systemKeychain",
-        "Remember in the system keyring",
-    );
+    entry.set_tooltip_text(Some(&ctx.t_or(
+        "shared.passwordManager.placeholder",
+        "Enter your rclone config password",
+    )));
+    let remember_label = ctx.t_or("shared.passwordManager.remember", "Remember password");
     let remember = gtk::CheckButton::with_label(&remember_label);
     remember.set_active(true);
+    let keychain_hint = gtk::Label::new(Some(&ctx.t_or(
+        "shared.passwordManager.keychain",
+        "Stored in system keychain",
+    )));
+    keychain_hint.add_css_class("dim-label");
+    keychain_hint.set_halign(gtk::Align::Start);
+    keychain_hint.set_wrap(true);
     box_.append(&entry);
     box_.append(&remember);
+    box_.append(&keychain_hint);
     dialog.set_extra_child(Some(&box_));
     dialog.add_response("cancel", &ctx.t("common.cancel"));
     let unlock = ctx.t_or("repair.unlock", "Unlock");
@@ -11529,7 +18347,7 @@ pub fn password_prompt(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, toast: adw::
             let password = entry.text().to_string();
             if password.is_empty() {
                 toast.add_toast(adw::Toast::new(
-                    &ctx.t_or("repair.passwordEmpty", "Password is empty"),
+                    &ctx.t_or("shared.passwordManager.required", "Password required"),
                 ));
                 return;
             }
@@ -11545,7 +18363,7 @@ pub fn password_prompt(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, toast: adw::
                     Ok(_) => toast.add_toast(adw::Toast::new(
                         &ctx.t_or("repair.passwordUnlocked", "Config unlocked"),
                     )),
-                    Err(e) => toast.add_toast(adw::Toast::new(&e.to_string())),
+                    Err(e) => ctx.toast_error(&toast, &e.to_string()),
                 }
             }
             ctx.restart_engine();
@@ -11574,6 +18392,9 @@ pub fn repair(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, toast: adw::ToastOver
     );
     let list = gtk::ListBox::new();
     list.add_css_class("boxed-list");
+    let needs_config = issues
+        .iter()
+        .any(|issue| issue.kind == crate::repair::RepairKind::PasswordRequired);
     if issues.is_empty() {
         let row = adw::ActionRow::new();
         row.set_title(&ctx.t_or("repair.noIssues", "No issues detected"));
@@ -11692,14 +18513,216 @@ pub fn repair(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, toast: adw::ToastOver
         row.add_suffix(&btn);
         list.append(&row);
     }
-    let install = gtk::Button::with_label(&ctx.t_or("repair.installRclone", "Install rclone"));
+    if !needs_config {
+        let row = adw::ActionRow::new();
+        row.set_title(&ctx.t_or("shared.passwordManager.label", "Configuration Password"));
+        row.set_subtitle(&ctx.t_or(
+            "repair.passwordPrompt",
+            "Enter the rclone.conf password to unlock the engine.",
+        ));
+        let btn = gtk::Button::with_label(&ctx.t_or("repair.unlock", "Unlock"));
+        btn.set_valign(gtk::Align::Center);
+        btn.add_css_class("suggested-action");
+        {
+            let ctx = ctx.clone();
+            let toast = toast.clone();
+            let parent = parent.clone();
+            btn.connect_clicked(move |_| {
+                password_prompt(&parent, ctx.clone(), toast.clone());
+            });
+        }
+        row.add_suffix(&btn);
+        list.append(&row);
+    }
+    let box_ = gtk::Box::new(gtk::Orientation::Vertical, 8);
+    box_.set_margin_top(16);
+    box_.set_margin_start(16);
+    box_.set_margin_end(16);
+    box_.set_margin_bottom(16);
+    let scroll = gtk::ScrolledWindow::new();
+    scroll.set_vexpand(true);
+    scroll.set_min_content_height(180);
+    scroll.set_child(Some(&list));
+    box_.append(&scroll);
+
+    let show_advanced = Rc::new(Cell::new(false));
+    let show_config = Rc::new(Cell::new(false));
+    let install_opts = Rc::new(super::installation_options::InstallationOptions::new(
+        &ctx,
+        InstallationMode::Install,
+        true,
+    ));
+    let config_opts = Rc::new(super::installation_options::InstallationOptions::new(
+        &ctx,
+        InstallationMode::Config,
+        false,
+    ));
+    install_opts.root.set_visible(false);
+    config_opts.root.set_visible(false);
+
+    let advanced = gtk::Button::with_label(&ctx.t_or("repairSheet.showAdvanced", "Show Advanced"));
+    advanced.add_css_class("flat");
+    {
+        let ctx = ctx.clone();
+        let show_advanced = show_advanced.clone();
+        let install_opts = install_opts.clone();
+        advanced.connect_clicked(move |btn| {
+            let next = !show_advanced.get();
+            show_advanced.set(next);
+            install_opts.root.set_visible(next);
+            btn.set_label(&ctx.t_or(
+                if next {
+                    "repairSheet.hideAdvanced"
+                } else {
+                    "repairSheet.showAdvanced"
+                },
+                if next {
+                    "Hide Advanced"
+                } else {
+                    "Show Advanced"
+                },
+            ));
+        });
+    }
+    box_.append(&advanced);
+    box_.append(&install_opts.root);
+
+    let config_toggle = gtk::Button::with_label(
+        &ctx.t_or("repairSheet.useDifferentConfig", "Use Different Config"),
+    );
+    config_toggle.add_css_class("flat");
+    config_toggle.set_visible(needs_config);
+    {
+        let ctx = ctx.clone();
+        let show_config = show_config.clone();
+        let config_opts = config_opts.clone();
+        config_toggle.connect_clicked(move |btn| {
+            let next = !show_config.get();
+            show_config.set(next);
+            config_opts.root.set_visible(next);
+            btn.set_label(&ctx.t_or(
+                if next {
+                    "repairSheet.hideConfigOptions"
+                } else {
+                    "repairSheet.useDifferentConfig"
+                },
+                if next {
+                    "Hide Options"
+                } else {
+                    "Use Different Config"
+                },
+            ));
+        });
+    }
+    box_.append(&config_toggle);
+    box_.append(&config_opts.root);
+
+    let install =
+        gtk::Button::with_label(&ctx.t_or("repairSheet.actions.installRclone", "Install rclone"));
+    install.add_css_class("suggested-action");
+    let refresh_install = {
+        let ctx = ctx.clone();
+        let install = install.clone();
+        let install_opts = install_opts.clone();
+        let config_opts = config_opts.clone();
+        let show_advanced = show_advanced.clone();
+        let show_config = show_config.clone();
+        Rc::new(move || {
+            if show_config.get() {
+                let data = config_opts.data();
+                install.set_label(&ctx.t_or(config_action_key(&data), "Use This Config"));
+                install.set_sensitive(installation_valid(InstallationMode::Config, &data));
+                install.set_tooltip_text(
+                    repair_tooltip_key(InstallationMode::Config, &data)
+                        .map(|key| ctx.t_or(key, ""))
+                        .as_deref(),
+                );
+            } else if show_advanced.get() {
+                let data = install_opts.data();
+                install.set_label(&ctx.t_or(install_action_key(&data), "Install rclone"));
+                install.set_sensitive(installation_valid(InstallationMode::Install, &data));
+                install.set_tooltip_text(
+                    repair_tooltip_key(InstallationMode::Install, &data)
+                        .map(|key| ctx.t_or(key, ""))
+                        .as_deref(),
+                );
+            } else {
+                install.set_label(&ctx.t_or("repairSheet.actions.installRclone", "Install rclone"));
+                install.set_sensitive(true);
+                install.set_tooltip_text(None::<&str>);
+            }
+        })
+    };
+    install_opts.connect_changed({
+        let refresh_install = refresh_install.clone();
+        move |_| refresh_install()
+    });
+    config_opts.connect_changed({
+        let refresh_install = refresh_install.clone();
+        move |_| refresh_install()
+    });
+    {
+        let refresh_install = refresh_install.clone();
+        advanced.connect_clicked(move |_| refresh_install());
+    }
+    {
+        let refresh_install = refresh_install.clone();
+        config_toggle.connect_clicked(move |_| refresh_install());
+    }
     {
         let ctx = ctx.clone();
         let toast = toast.clone();
         let parent = parent.clone();
+        let install_opts = install_opts.clone();
+        let config_opts = config_opts.clone();
+        let show_advanced = show_advanced.clone();
+        let show_config = show_config.clone();
+        let refresh_install = refresh_install.clone();
         install.connect_clicked(move |_| {
+            if show_config.get() {
+                let data = config_opts.data();
+                if !installation_valid(InstallationMode::Config, &data) {
+                    return;
+                }
+                let path = if data.location == InstallLocation::Custom {
+                    data.custom_path
+                } else {
+                    String::new()
+                };
+                crate::repair::set_config_path_flag(
+                    &mut ctx.settings.borrow_mut().core.rclone_additional_flags,
+                    &path,
+                );
+                ctx.persist();
+                ctx.restart_engine();
+                toast.add_toast(adw::Toast::new(
+                    &ctx.t_or("repairSheet.progress.configuring", "Configuring..."),
+                ));
+                return;
+            }
+            if show_advanced.get() {
+                let data = install_opts.data();
+                if !installation_valid(InstallationMode::Install, &data) {
+                    return;
+                }
+                if data.location == InstallLocation::Existing {
+                    ctx.settings.borrow_mut().core.rclone_binary = data.existing_binary;
+                    ctx.persist();
+                    ctx.restart_engine();
+                    toast.add_toast(adw::Toast::new(
+                        &ctx.t_or("repairSheet.progress.configuring", "Configuring..."),
+                    ));
+                    return;
+                }
+                if let Some(dest) = rclone_install_dest(data.location, &data.custom_path) {
+                    start_rclone_update_to(&parent, ctx.clone(), toast.clone(), dest);
+                    ctx.restart_engine();
+                }
+                return;
+            }
             install_rclone_update(&parent, ctx.clone(), toast.clone());
             ctx.restart_engine();
+            refresh_install();
         });
     }
     let browse = gtk::Button::with_label(&ctx.t_or("repair.chooseBinary", "Choose binary…"));
@@ -11722,20 +18745,11 @@ pub fn repair(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, toast: adw::ToastOver
             ctx.restart_engine();
         });
     }
-    let box_ = gtk::Box::new(gtk::Orientation::Vertical, 8);
-    box_.set_margin_top(16);
-    box_.set_margin_start(16);
-    box_.set_margin_end(16);
-    box_.set_margin_bottom(16);
-    let scroll = gtk::ScrolledWindow::new();
-    scroll.set_vexpand(true);
-    scroll.set_min_content_height(220);
-    scroll.set_child(Some(&list));
-    box_.append(&scroll);
     box_.append(&install);
     box_.append(&browse);
     box_.append(&config_btn);
     box_.append(&restart);
+    dialog.set_content_height(640);
     dialog.set_child(Some(&box_));
     present_window_or_dialog(parent, &ctx, &dialog);
 }
@@ -11784,6 +18798,177 @@ fn restore_or_pick_config(parent: &impl IsA<gtk::Widget>, ctx: AppCtx) {
     );
 }
 
+/// Angular `app-obscure-tool`: obscure a secret, copy the result, apply to a field.
+#[derive(Clone)]
+pub(crate) struct ObscureTool {
+    pub input: adw::PasswordEntryRow,
+    pub result: adw::EntryRow,
+    pub target: adw::ComboRow,
+    pub actions: adw::ActionRow,
+    fields: Rc<RefCell<Vec<(String, String)>>>,
+}
+
+impl ObscureTool {
+    pub fn add_to_box(&self, host: &gtk::Box) {
+        host.append(&self.input);
+        host.append(&self.result);
+        host.append(&self.target);
+        host.append(&self.actions);
+    }
+
+    pub fn add_to_group(&self, group: &adw::PreferencesGroup) {
+        group.add(&self.input);
+        group.add(&self.result);
+        group.add(&self.target);
+        group.add(&self.actions);
+    }
+
+    /// Full-width slide-in panel (Angular `app-obscure-tool`), not a sidebar strip.
+    pub fn panel(&self, ctx: &AppCtx) -> adw::PreferencesPage {
+        let page = adw::PreferencesPage::new();
+        let group = adw::PreferencesGroup::new();
+        group.set_title(&ctx.t_or("wizards.obscure.title", "Obscure Password"));
+        group.set_description(Some(&ctx.t_or(
+            "wizards.obscure.description",
+            "Obscures a clear string using rclone's standard obscuring algorithm so it can be safely saved to configuration files or parameters.",
+        )));
+        self.add_to_group(&group);
+        page.add(&group);
+        page
+    }
+
+    pub fn refresh_targets(&self) {
+        let fields = self.fields.borrow();
+        let labels: Vec<String> = fields
+            .iter()
+            .map(|(key, label)| {
+                if label.is_empty() || label == key {
+                    key.clone()
+                } else {
+                    format!("{label} ({key})")
+                }
+            })
+            .collect();
+        let refs: Vec<&str> = labels.iter().map(|s| s.as_str()).collect();
+        self.target.set_model(Some(&gtk::StringList::new(&refs)));
+        self.target.set_visible(!fields.is_empty());
+        self.target.set_sensitive(!fields.is_empty());
+    }
+}
+
+pub(crate) fn obscure_tool(
+    ctx: &AppCtx,
+    fields: Rc<RefCell<Vec<(String, String)>>>,
+    on_apply: Rc<dyn Fn(&str, &str)>,
+) -> ObscureTool {
+    let input = adw::PasswordEntryRow::new();
+    input.set_title(&ctx.t_or("wizards.obscure.clearPlaceholder", "Obscure a secret"));
+    let result = adw::EntryRow::new();
+    result.set_title(&ctx.t_or("wizards.obscure.resultTitle", "Obscured value"));
+    result.set_editable(false);
+    result.set_visible(false);
+    let copy = gtk::Button::from_icon_name("edit-copy-symbolic");
+    copy.set_valign(gtk::Align::Center);
+    copy.set_tooltip_text(Some(&ctx.t_or("modals.oauth.copyLink", "Copy")));
+    {
+        let result = result.clone();
+        copy.connect_clicked(move |_| {
+            if let Some(display) = gtk::gdk::Display::default() {
+                display.clipboard().set_text(&result.text());
+            }
+        });
+    }
+    result.add_suffix(&copy);
+    let target = adw::ComboRow::new();
+    target.set_title(&ctx.t_or(
+        "wizards.obscure.applyToField",
+        "Apply obscured value to field",
+    ));
+    target.set_visible(false);
+    let actions = adw::ActionRow::new();
+    actions.set_title(&ctx.t_or("wizards.obscure.title", "Obscure"));
+    let clear = gtk::Button::with_label(&ctx.t_or("common.clear", "Clear"));
+    clear.set_valign(gtk::Align::Center);
+    let obscure_btn = gtk::Button::with_label(&ctx.t_or("wizards.obscure.action", "Obscure"));
+    obscure_btn.set_valign(gtk::Align::Center);
+    obscure_btn.add_css_class("suggested-action");
+    let apply = gtk::Button::with_label(&ctx.t_or("wizards.obscure.apply", "Apply"));
+    apply.set_valign(gtk::Align::Center);
+    apply.set_sensitive(false);
+    {
+        let input = input.clone();
+        let result = result.clone();
+        let apply = apply.clone();
+        clear.connect_clicked(move |_| {
+            input.set_text("");
+            result.set_text("");
+            result.set_visible(false);
+            apply.set_sensitive(false);
+        });
+    }
+    {
+        let ctx = ctx.clone();
+        let input = input.clone();
+        let result = result.clone();
+        let apply = apply.clone();
+        obscure_btn.connect_clicked(move |_| {
+            let raw = input.text().trim().to_string();
+            if raw.is_empty() {
+                result.set_text("");
+                result.set_visible(false);
+                apply.set_sensitive(false);
+                return;
+            }
+            let Some(client) = ctx.client() else {
+                return;
+            };
+            match client.obscure(&raw) {
+                Ok(out) => {
+                    result.set_text(&out);
+                    result.set_visible(true);
+                    apply.set_sensitive(true);
+                    if let Some(display) = gtk::gdk::Display::default() {
+                        display.clipboard().set_text(&out);
+                    }
+                }
+                Err(e) => {
+                    result.set_text(&e.to_string());
+                    result.set_visible(true);
+                    apply.set_sensitive(false);
+                }
+            }
+        });
+    }
+    {
+        let result = result.clone();
+        let target = target.clone();
+        let fields = fields.clone();
+        apply.connect_clicked(move |_| {
+            let value = result.text().to_string();
+            if value.is_empty() {
+                return;
+            }
+            let idx = target.selected() as usize;
+            let Some(key) = fields.borrow().get(idx).map(|(key, _)| key.clone()) else {
+                return;
+            };
+            on_apply(&key, &value);
+        });
+    }
+    actions.add_suffix(&clear);
+    actions.add_suffix(&obscure_btn);
+    actions.add_suffix(&apply);
+    let tool = ObscureTool {
+        input,
+        result,
+        target,
+        actions,
+        fields,
+    };
+    tool.refresh_targets();
+    tool
+}
+
 pub fn multi_rename(
     parent: &impl IsA<gtk::Widget>,
     ctx: AppCtx,
@@ -11793,7 +18978,12 @@ pub fn multi_rename(
     on_done: Rc<dyn Fn()>,
 ) {
     let dialog = adw::Dialog::new();
-    dialog.set_title(&ctx.t_or("nautilus.contextMenu.renameMultiple", "Rename items"));
+    let count = names.len().to_string();
+    dialog.set_title(&ctx.tf_or(
+        "nautilus.modals.multiRename.title",
+        "Rename items",
+        &[("count", &count)],
+    ));
     dialog.set_content_width(560);
     dialog.set_content_height(620);
     let mode = adw::ComboRow::new();
@@ -11844,10 +19034,19 @@ pub fn multi_rename(
         let names = names.clone();
         let preview = preview.clone();
         let plan_slots = plan_slots.clone();
+        let start = start.clone();
+        let step = step.clone();
+        let pad = pad.clone();
+        let ctx = ctx.clone();
         move || {
             while let Some(child) = preview.first_child() {
                 preview.remove(&child);
             }
+            let header = adw::ActionRow::new();
+            header.set_title(&ctx.t_or("nautilus.modals.multiRename.original", "Original name"));
+            header.set_subtitle(&ctx.t_or("nautilus.modals.multiRename.newName", "New name"));
+            header.set_sensitive(false);
+            preview.append(&header);
             let slots = plan_slots.borrow();
             let plan = RenamePlan {
                 mode: if slots.6.selected() == 0 {
@@ -11863,15 +19062,26 @@ pub fn multi_rename(
                 counter_padding: slots.5.text().parse().unwrap_or(2),
                 case_sensitive: slots.7.is_active(),
             };
+            let show_counters = crate::rename::counter_controls_visible(&plan.mode, &plan.template);
+            start.set_visible(show_counters);
+            step.set_visible(show_counters);
+            pad.set_visible(show_counters);
             let date = chrono::Local::now().format("%Y-%m-%d").to_string();
+            let error_label = ctx.t_or(
+                "nautilus.modals.multiRename.duplicateOrInvalid",
+                "Duplicate or invalid name",
+            );
             for row in rename_preview(&names, &plan, &date) {
                 let item = adw::ActionRow::new();
                 item.set_title(&row.original);
-                item.set_subtitle(&if row.has_error {
-                    format!("{} (invalid)", row.new_name)
-                } else {
-                    row.new_name
-                });
+                item.set_subtitle(&crate::fileops::multi_rename_preview_subtitle(
+                    &row.new_name,
+                    row.has_error,
+                    &error_label,
+                ));
+                if row.has_error {
+                    item.add_css_class("error");
+                }
                 preview.append(&item);
             }
         }
@@ -11911,6 +19121,9 @@ pub fn multi_rename(
     ] {
         let chip = gtk::Button::with_label(&label);
         chip.add_css_class("pill");
+        chip.set_tooltip_text(Some(
+            &ctx.t_or("nautilus.modals.multiRename.addPlaceholder", "Add"),
+        ));
         let template = template.clone();
         let refresh_preview = refresh_preview.clone();
         chip.connect_clicked(move |_| {

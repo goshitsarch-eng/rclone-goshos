@@ -2,7 +2,10 @@
 //! `start_profile_batch` / `parse_common_config`.
 
 use crate::operations::OperationType;
-use crate::rclone::{format_bytes, remote_fs, MountedRemote, RcClient, RcError, ServeItem};
+use crate::rclone::{
+    format_bytes, parent_remote_path, remote_fs, split_remote_path, MountedRemote, RcClient,
+    RcError, ServeItem,
+};
 use crate::store::{quick_run_paths, JobInfo, JobMeta, ProfileConfig, QuickRun, RemoteMeta};
 use chrono::{DateTime, Utc};
 use serde_json::{json, Map, Value};
@@ -124,13 +127,39 @@ pub fn active_open_paths(
         if let Some(point) = mount_point.filter(|s| !s.trim().is_empty()) {
             push(&mut paths, point);
         } else {
-            push(&mut paths, dst);
+            for part in split_job_paths(dst) {
+                push(&mut paths, &part);
+            }
         }
         return paths;
     }
-    push(&mut paths, src);
-    push(&mut paths, dst);
+    for part in split_job_paths(src) {
+        push(&mut paths, &part);
+    }
+    for part in split_job_paths(dst) {
+        push(&mut paths, &part);
+    }
     paths
+}
+
+/// Angular `isFolderOpeningAction` without op/profile filters.
+pub fn is_folder_opening(opening: &std::collections::HashSet<String>, remote: &str) -> bool {
+    let remote = remote.trim();
+    !remote.is_empty() && opening.contains(remote)
+}
+
+/// Start a folder-open action. Returns false when one is already in flight.
+pub fn begin_folder_open(opening: &mut std::collections::HashSet<String>, remote: &str) -> bool {
+    let remote = remote.trim();
+    if remote.is_empty() || opening.contains(remote) {
+        return false;
+    }
+    opening.insert(remote.to_string());
+    true
+}
+
+pub fn end_folder_open(opening: &mut std::collections::HashSet<String>, remote: &str) {
+    opening.remove(remote.trim());
 }
 
 /// Operations currently running for a remote (mount / serve / jobs).
@@ -191,15 +220,18 @@ pub fn extra_flags(rclone: &Value) -> Map<String, Value> {
     let skip = [
         "source",
         "srcFs",
+        "srcRemote",
         "path1",
         "fs",
         "dest",
         "dstFs",
+        "dstRemote",
         "path2",
         "mountPoint",
         "url",
         "type",
         "addr",
+        "remote",
         "filenames",
         "format",
         "prefix",
@@ -315,6 +347,159 @@ pub fn default_dest(remote: &str, rclone: &Value, op: OperationType) -> String {
     })
 }
 
+/// Split `remote:path` (or a local path) the way Tauri `parse_fs` does.
+pub fn parse_transfer_fs(path: &str) -> Option<(String, String)> {
+    let trimmed = path.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    let bytes = trimmed.as_bytes();
+    let is_windows_drive =
+        bytes.len() > 2 && bytes[1] == b':' && (bytes[2] == b'\\' || bytes[2] == b'/');
+    if is_windows_drive || trimmed.starts_with('/') {
+        return Some((trimmed.to_string(), String::new()));
+    }
+    let split_idx = trimmed.find(':')?;
+    let base = &trimmed[..=split_idx];
+    let root = &trimmed[split_idx + 1..];
+    if base.starts_with(':') {
+        return None;
+    }
+    if base.len() <= 2 {
+        return Some((trimmed.to_string(), String::new()));
+    }
+    Some((base.to_string(), root.to_string()))
+}
+
+fn split_file_sides(path: &str) -> Option<(String, String)> {
+    let (fs, remote) = parse_transfer_fs(path)?;
+    if !remote.is_empty() {
+        let remote = if fs.ends_with(':') {
+            remote.trim_start_matches('/').to_string()
+        } else {
+            remote
+        };
+        return Some((fs, remote));
+    }
+    let normalized = fs.replace('\\', "/");
+    let (parent, name) = normalized.rsplit_once('/')?;
+    if name.is_empty() {
+        return None;
+    }
+    let parent = if parent.is_empty() {
+        "/".into()
+    } else {
+        parent.to_string()
+    };
+    Some((parent, name.to_string()))
+}
+
+fn dest_file_sides(dest: &str, filename: &str) -> Option<(String, String)> {
+    let (fs, root) = parse_transfer_fs(dest)?;
+    let root = if fs.ends_with(':') {
+        root.trim_start_matches('/').to_string()
+    } else {
+        root
+    };
+    let dst_remote = if root.is_empty() || root.ends_with('/') || root.ends_with('\\') {
+        if root.is_empty() {
+            filename.to_string()
+        } else {
+            format!("{}/{filename}", root.trim_end_matches(['/', '\\']))
+        }
+    } else if source_looks_like_file(&format!("x:{root}")) {
+        root
+    } else {
+        format!("{root}/{filename}")
+    };
+    Some((fs, dst_remote))
+}
+
+/// Heuristic used when `operations/stat` is unavailable.
+pub fn source_looks_like_file(path: &str) -> bool {
+    let trimmed = path.trim();
+    if trimmed.is_empty()
+        || trimmed.ends_with('/')
+        || trimmed.ends_with('\\')
+        || trimmed.ends_with(':')
+    {
+        return false;
+    }
+    let leaf = match parse_transfer_fs(trimmed) {
+        Some((_, remote)) if !remote.is_empty() => remote
+            .rsplit(['/', '\\'])
+            .next()
+            .unwrap_or(&remote)
+            .to_string(),
+        _ => trimmed
+            .replace('\\', "/")
+            .rsplit('/')
+            .next()
+            .unwrap_or(trimmed)
+            .to_string(),
+    };
+    leaf.contains('.') && leaf != "." && leaf != ".."
+}
+
+/// Prefer rclone `operations/stat`; fall back to the path heuristic.
+pub fn source_is_directory(client: Option<&RcClient>, path: &str) -> bool {
+    let trimmed = path.trim();
+    if trimmed.is_empty()
+        || trimmed.ends_with('/')
+        || trimmed.ends_with('\\')
+        || trimmed.ends_with(':')
+    {
+        return true;
+    }
+    if let Some(client) = client {
+        if let Some((fs, remote)) = parse_transfer_fs(trimmed) {
+            match client.stat(&fs, &remote) {
+                Ok(Some(item)) => return item.is_dir,
+                Ok(None) | Err(_) => {}
+            }
+        }
+    }
+    !source_looks_like_file(trimmed)
+}
+
+fn file_transfer_request(
+    op: OperationType,
+    source: &str,
+    dest: &str,
+    mut body: Value,
+) -> Result<JobRequest, String> {
+    let (src_fs, src_remote) = split_file_sides(source)
+        .ok_or_else(|| format!("Could not parse source '{source}' as a file path"))?;
+    if src_remote.is_empty() {
+        return Err(format!("Could not parse source '{source}' as a file path"));
+    }
+    let filename = src_remote
+        .rsplit(['/', '\\'])
+        .next()
+        .unwrap_or(&src_remote)
+        .to_string();
+    let (dst_fs, dst_remote) = dest_file_sides(dest, &filename)
+        .ok_or_else(|| format!("Could not parse destination '{dest}' as a file path"))?;
+    let obj = body.as_object_mut().unwrap();
+    obj.insert("srcFs".into(), json!(src_fs));
+    obj.insert("srcRemote".into(), json!(src_remote));
+    obj.insert("dstFs".into(), json!(dst_fs));
+    obj.insert("dstRemote".into(), json!(dst_remote));
+    let endpoint = match op {
+        OperationType::Copy => "operations/copyfile",
+        OperationType::Move => "operations/movefile",
+        _ => {
+            return Err(format!(
+                "{op} does not support single-file operations/copyfile"
+            ))
+        }
+    };
+    Ok(JobRequest::Async {
+        endpoint,
+        params: body,
+    })
+}
+
 pub fn build_job_params(
     op: OperationType,
     remote: &str,
@@ -322,6 +507,18 @@ pub fn build_job_params(
     dest: &str,
     rclone: &Value,
 ) -> Result<JobRequest, String> {
+    build_job_params_ex(op, remote, source, dest, rclone, None)
+}
+
+pub fn build_job_params_ex(
+    op: OperationType,
+    remote: &str,
+    source: &str,
+    dest: &str,
+    rclone: &Value,
+    is_dir: Option<bool>,
+) -> Result<JobRequest, String> {
+    let is_dir = is_dir.unwrap_or_else(|| !source_looks_like_file(source));
     let flags = extra_flags(rclone);
     let mut body = Value::Object(flags);
     let obj = body.as_object_mut().unwrap();
@@ -378,6 +575,16 @@ pub fn build_job_params(
             })
         }
         OperationType::Delete => {
+            if !is_dir {
+                if let Some((fs, remote_path)) = split_file_sides(source) {
+                    obj.insert("fs".into(), json!(fs));
+                    obj.insert("remote".into(), json!(remote_path));
+                    return Ok(JobRequest::Async {
+                        endpoint: "operations/deletefile",
+                        params: body,
+                    });
+                }
+            }
             obj.insert(
                 "fs".into(),
                 json!(if source.is_empty() {
@@ -501,10 +708,13 @@ pub fn build_job_params(
         }
         other => {
             if source.is_empty() {
-                return Err(format!("{other} requires a source path"));
+                return Err(start_failed_error(other, "", "source path required"));
             }
             if dest.is_empty() && other != OperationType::Delete {
-                return Err(format!("{other} requires a destination path"));
+                return Err(start_failed_error(other, "", "destination path required"));
+            }
+            if !is_dir && matches!(other, OperationType::Copy | OperationType::Move) {
+                return file_transfer_request(other, source, dest, body);
             }
             obj.insert("srcFs".into(), json!(source));
             obj.insert("dstFs".into(), json!(dest));
@@ -558,9 +768,26 @@ pub fn start_request(client: &RcClient, request: &JobRequest) -> Result<String, 
                 .archive_create(&crate::rclone::archive_create_opts_from_payload(params))
                 .map(|id| format!("#{id}"))
         }
-        JobRequest::Async { endpoint, params } => client
-            .start_job(endpoint, params.clone())
-            .map(|id| format!("#{id}")),
+        JobRequest::Async { endpoint, params } => {
+            let id = client.start_job(endpoint, params.clone())?;
+            if let Ok(status) = client.job_status(id) {
+                let finished = status
+                    .get("finished")
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(false);
+                if finished {
+                    if let Some(err) = status
+                        .get("error")
+                        .and_then(|v| v.as_str())
+                        .map(str::trim)
+                        .filter(|s| !s.is_empty())
+                    {
+                        return Err(RcError::message(err.to_string()));
+                    }
+                }
+            }
+            Ok(format!("#{id}"))
+        }
         JobRequest::Mount {
             fs,
             mount_point,
@@ -689,6 +916,110 @@ pub fn preferred_mount_profile_name(meta: Option<&RemoteMeta>) -> String {
         .unwrap_or_else(|| "default".into())
 }
 
+/// True when an rclone fs string belongs to `remote` (`drive`, `drive:`, `drive:path`).
+pub fn fs_belongs_to_remote(fs: &str, remote: &str) -> bool {
+    let fs = fs.trim();
+    let remote = remote.trim();
+    if remote.is_empty() || fs.is_empty() {
+        return false;
+    }
+    fs == remote
+        || fs == format!("{remote}:")
+        || fs.starts_with(&format!("{remote}:"))
+        || fs.contains(&format!("/{remote}"))
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct RemoteActivity {
+    pub mount_profiles: Vec<String>,
+    pub serve_labels: Vec<String>,
+    pub serve_first: Option<(String, String, String)>,
+    pub jobs: usize,
+}
+
+impl RemoteActivity {
+    pub fn mounts(&self) -> usize {
+        self.mount_profiles.len()
+    }
+
+    pub fn serves(&self) -> usize {
+        self.serve_labels.len()
+    }
+}
+
+fn profile_or_default(profile: &str) -> String {
+    if profile.trim().is_empty() {
+        "default".into()
+    } else {
+        profile.to_string()
+    }
+}
+
+/// Profile-aware mount/serve/job activity for sidebar badges (Angular
+/// `mountedWithProfile` / `servingWithProfile`).
+pub fn remote_activity(
+    remote: &str,
+    mounts: &[crate::rclone::MountedRemote],
+    serves: &[crate::rclone::ServeItem],
+    jobs: &[crate::store::JobInfo],
+) -> RemoteActivity {
+    let mount_profiles: Vec<String> = mounts
+        .iter()
+        .filter(|item| fs_belongs_to_remote(&item.fs, remote))
+        .map(|item| profile_or_default(&item.profile))
+        .collect();
+    let matched_serves: Vec<&ServeItem> = serves
+        .iter()
+        .filter(|item| fs_belongs_to_remote(&item.fs, remote))
+        .collect();
+    let serve_labels: Vec<String> = matched_serves
+        .iter()
+        .map(|item| profile_or_default(&item.profile))
+        .collect();
+    let serve_first = matched_serves.first().map(|item| {
+        (
+            profile_or_default(&item.profile),
+            item.serve_type.clone(),
+            item.addr.clone(),
+        )
+    });
+    let jobs = jobs
+        .iter()
+        .filter(|job| {
+            (job.remote == remote || fs_belongs_to_remote(&job.src, remote))
+                && (job_is_running(job) || job_is_pending(job))
+        })
+        .count();
+    RemoteActivity {
+        mount_profiles,
+        serve_labels,
+        serve_first,
+        jobs,
+    }
+}
+
+pub fn remote_activity_counts(
+    remote: &str,
+    mounts: &[crate::rclone::MountedRemote],
+    serves: &[crate::rclone::ServeItem],
+    jobs: &[crate::store::JobInfo],
+) -> (usize, usize, usize) {
+    let activity = remote_activity(remote, mounts, serves, jobs);
+    (activity.mounts(), activity.serves(), activity.jobs)
+}
+
+/// `(valid, apply_enabled)` for the dashboard/Flow custom bandwidth row.
+/// Apply is enabled only when the draft is valid and differs from the saved limit.
+pub fn bandwidth_entry_state(saved: &str, draft: &str) -> (bool, bool) {
+    let valid = crate::validators::validate_bandwidth_limit(draft).is_ok();
+    let dirty = normalize_bandwidth(draft) != normalize_bandwidth(saved);
+    (valid, valid && dirty)
+}
+
+pub fn bandwidth_draft_text(draft: Option<&str>, saved: &str) -> String {
+    draft.unwrap_or(saved).to_string()
+}
+
 pub fn origin_label_key(origin: &str) -> &'static str {
     match origin.trim().to_ascii_lowercase().as_str() {
         "quick-run" | "quickrun" | "flow" => "generalOverview.jobs.originQuickRun",
@@ -721,6 +1052,18 @@ pub fn automation_origin(id: &str) -> &'static str {
     }
 }
 
+/// Overview origin chips. `automation` means every scheduled item.
+pub fn automation_matches_filter(id: &str, filter: &str) -> bool {
+    let filter = filter.trim();
+    if filter.is_empty()
+        || filter.eq_ignore_ascii_case("all")
+        || filter.eq_ignore_ascii_case("automation")
+    {
+        return true;
+    }
+    origin_matches(automation_origin(id), filter)
+}
+
 pub fn start_profile(
     client: &RcClient,
     remote: &str,
@@ -728,6 +1071,36 @@ pub fn start_profile(
     profile: &ProfileConfig,
     meta: Option<&RemoteMeta>,
     origin: &str,
+) -> Result<String, String> {
+    start_profile_ex(client, remote, op, profile, meta, origin, None)
+}
+
+pub fn directory_only_source_error(
+    op: OperationType,
+    source: &str,
+    is_dir: bool,
+) -> Option<String> {
+    if matches!(
+        op,
+        OperationType::Sync | OperationType::Bisync | OperationType::Check
+    ) && !is_dir
+    {
+        Some(format!(
+            "{op:?} only supports directories, not files: {source}"
+        ))
+    } else {
+        None
+    }
+}
+
+pub fn start_profile_ex(
+    client: &RcClient,
+    remote: &str,
+    op: OperationType,
+    profile: &ProfileConfig,
+    meta: Option<&RemoteMeta>,
+    origin: &str,
+    scoped: Option<&[(String, String)]>,
 ) -> Result<String, String> {
     let mut rclone = flatten_rclone(&profile.rclone);
     apply_helper_options(&mut rclone, profile, meta);
@@ -754,7 +1127,7 @@ pub fn start_profile(
         }
     }
     if sources.is_empty() && !matches!(op, OperationType::Mount | OperationType::Serve) {
-        return Err(format!("{op} requires a source path"));
+        return Err(start_failed_error(op, remote, "source path required"));
     }
     if sources.is_empty() {
         sources.push(String::new());
@@ -768,8 +1141,25 @@ pub fn start_profile(
                 .collect()
         })
         .unwrap_or_default();
+    let pairs: Vec<(String, String)> = if op != OperationType::Bisync {
+        if let Some(scoped) = scoped.filter(|pairs| !pairs.is_empty()) {
+            scoped.to_vec()
+        } else {
+            sources
+                .iter()
+                .cloned()
+                .map(|source| (source, dest.clone()))
+                .collect()
+        }
+    } else {
+        sources
+            .iter()
+            .cloned()
+            .map(|source| (source, dest.clone()))
+            .collect()
+    };
     let mut ids = Vec::new();
-    for (index, source) in sources.into_iter().enumerate() {
+    for (index, (source, pair_dest)) in pairs.into_iter().enumerate() {
         let mut item = rclone.clone();
         if op == OperationType::Copyurl {
             if let Some(name) = filenames
@@ -783,7 +1173,11 @@ pub fn start_profile(
                 }
             }
         }
-        let request = build_job_params(op, remote, &source, &dest, &item)?;
+        let is_dir = source_is_directory(Some(client), &source);
+        if let Some(err) = directory_only_source_error(op, &source, is_dir) {
+            return Err(err);
+        }
+        let request = build_job_params_ex(op, remote, &source, &pair_dest, &item, Some(is_dir))?;
         ids.push(start_request(client, &request).map_err(|e| e.to_string())?);
     }
     Ok(ids.join(", "))
@@ -838,6 +1232,11 @@ pub fn apply_job_meta(job: &mut JobInfo, meta: Option<&JobMeta>) {
     if !meta.group.is_empty() && (job.group.is_empty() || job.group.starts_with("job/")) {
         job.group = meta.group.clone();
     }
+    if !meta.operation.is_empty()
+        && (job.operation.is_empty() || is_opaque_job_operation(&job.operation))
+    {
+        job.operation = meta.operation.clone();
+    }
 }
 
 pub fn is_overview_job(job: &JobInfo) -> bool {
@@ -874,12 +1273,15 @@ pub fn job_from_meta(id: u64, meta: &JobMeta) -> JobInfo {
         .sum();
     let count = items.len() as i64;
     let snapshot = meta.transfer_snapshot.clone();
-    let operation = match meta.origin.as_str() {
-        "filemanager" | "files" | "check-resolve" => "copy",
-        other if !other.is_empty() => other,
-        _ => "job",
-    }
-    .to_string();
+    let operation = if !meta.operation.is_empty() {
+        meta.operation.clone()
+    } else {
+        match meta.origin.as_str() {
+            "filemanager" | "files" | "check-resolve" | "transfer-resolve" => "copy".into(),
+            other if !other.is_empty() => other.to_string(),
+            _ => "job".into(),
+        }
+    };
     let mut job = JobInfo {
         id,
         operation: operation.clone(),
@@ -957,11 +1359,21 @@ fn merge_rc_with_stored(mut rc: JobInfo, stored: JobInfo) -> JobInfo {
     if rc.duration <= 0.0 && stored.duration > 0.0 {
         rc.duration = stored.duration;
     }
-    if (transfer_list_empty(&rc.completed) || completed_needs_sizes(&rc.completed))
-        && !transfer_list_empty(&stored.completed)
-    {
-        rc.completed = stored.completed;
+    if !transfer_list_empty(&stored.completed) {
+        let rc_n = rc.completed.as_array().map(|rows| rows.len()).unwrap_or(0);
+        let stored_n = stored
+            .completed
+            .as_array()
+            .map(|rows| rows.len())
+            .unwrap_or(0);
+        let prefer_stored = transfer_list_empty(&rc.completed)
+            || completed_needs_sizes(&rc.completed)
+            || (stored_n > rc_n && !job_is_running(&rc) && !job_is_pending(&rc));
+        if prefer_stored {
+            rc.completed = stored.completed;
+        }
     }
+    scope_job_transfers(&mut rc);
     rc
 }
 
@@ -996,6 +1408,224 @@ pub fn format_job_speed(bytes_per_sec: f64) -> String {
     }
 }
 
+pub fn job_speed_eta(job: &JobInfo) -> (String, String) {
+    let speed = stats_f64(&job.stats, &["speed"]);
+    let eta = stats_f64(&job.stats, &["eta", "etaSeconds"]);
+    (
+        format_job_speed(speed),
+        crate::rclone::format_eta_seconds(eta.round() as i64),
+    )
+}
+
+/// Name + percent/speed subtitle for the Files ops expander.
+pub fn job_error_text(job: &JobInfo) -> Option<String> {
+    job.error
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(|s| s.to_string())
+}
+
+pub fn job_failed_transfers(job: &JobInfo, limit: usize) -> Vec<(String, String)> {
+    let Some(items) = job.completed.as_array() else {
+        return Vec::new();
+    };
+    items
+        .iter()
+        .map(crate::transfers::parse_completed_transfer_row)
+        .filter(|row| !row.error.is_empty())
+        .take(limit)
+        .map(|row| (row.name, row.error))
+        .collect()
+}
+
+pub fn job_transfer_previews(job: &JobInfo, limit: usize) -> Vec<(String, String)> {
+    let Some(items) = job.transferring.as_array() else {
+        return Vec::new();
+    };
+    items
+        .iter()
+        .take(limit)
+        .map(|item| {
+            let row = crate::transfers::parse_transfer_row(item);
+            let speed = format_job_speed(row.speed);
+            (row.name, format!("{}% · {speed}", row.percentage.max(0)))
+        })
+        .collect()
+}
+
+/// Name + size/error for Files ops completed-file list (Angular `stats.completed`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct JobCompletedPreview {
+    pub name: String,
+    pub detail: String,
+    pub failed: bool,
+}
+
+pub fn is_delete_like_operation(operation: &str) -> bool {
+    matches!(
+        operation.to_ascii_lowercase().as_str(),
+        "delete" | "cleanup" | "rmdirs"
+    )
+}
+
+pub fn job_transferred_label_key(operation: &str) -> &'static str {
+    match operation.to_ascii_lowercase().as_str() {
+        "delete" | "cleanup" | "rmdirs" => "fileBrowser.operations.details.deletedFiles",
+        "move" | "rename" => "fileBrowser.operations.details.movedFiles",
+        "copy" | "copyurl" => "fileBrowser.operations.details.copiedFiles",
+        "sync" | "bisync" => "fileBrowser.operations.details.syncedFiles",
+        "upload" => "fileBrowser.operations.details.uploadedFiles",
+        _ => "fileBrowser.operations.details.processedFiles",
+    }
+}
+
+pub fn job_completed_previews(job: &JobInfo, limit: usize) -> Vec<JobCompletedPreview> {
+    let Some(items) = job.completed.as_array() else {
+        return Vec::new();
+    };
+    items
+        .iter()
+        .map(crate::transfers::parse_completed_transfer_row)
+        .take(limit)
+        .map(|row| {
+            let failed = !row.error.is_empty();
+            let size = if row.size > 0 { row.size } else { row.bytes };
+            let detail = if failed {
+                row.error
+            } else if size > 0 {
+                format_bytes(size)
+            } else {
+                String::new()
+            };
+            JobCompletedPreview {
+                name: row.name,
+                detail,
+                failed,
+            }
+        })
+        .collect()
+}
+
+pub fn is_terminal_job_status(status: &str) -> bool {
+    matches!(
+        status.to_ascii_lowercase().as_str(),
+        "completed" | "failed" | "stopped"
+    )
+}
+
+/// Jobs that just entered a terminal status (Angular `listenToJobCacheChanged`).
+pub fn terminal_job_transitions(previous: &[JobInfo], current: &[JobInfo]) -> Vec<JobInfo> {
+    if previous.is_empty() {
+        return Vec::new();
+    }
+    let mut out = Vec::new();
+    for job in current {
+        if !is_terminal_job_status(&job.status) {
+            continue;
+        }
+        let prev = previous
+            .iter()
+            .find(|item| item.id == job.id)
+            .map(|item| item.status.as_str())
+            .unwrap_or("");
+        if !is_terminal_job_status(prev) {
+            out.push(job.clone());
+        }
+    }
+    for job in previous {
+        if current.iter().all(|item| item.id != job.id) {
+            out.push(finalize_dropped_job(job));
+        }
+    }
+    out
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AffectedListing {
+    pub remote: String,
+    pub path: String,
+}
+
+fn normalize_listing_remote(remote: &str) -> String {
+    let trimmed = remote.trim();
+    if trimmed.is_empty() || trimmed == "/" {
+        "local".into()
+    } else {
+        trimmed.to_string()
+    }
+}
+
+fn normalize_listing_path(path: &str) -> String {
+    path.trim().trim_matches('/').to_string()
+}
+
+fn parse_job_listing_path(raw: &str, fallback_remote: &str) -> Option<(String, String)> {
+    let raw = raw.trim();
+    if raw.is_empty() {
+        return None;
+    }
+    if !raw.contains(':') && !raw.starts_with('/') {
+        return Some((normalize_listing_remote(fallback_remote), raw.to_string()));
+    }
+    let (remote, path) = split_remote_path(raw);
+    Some((normalize_listing_remote(&remote), path))
+}
+
+/// Destination/source folder plus its parent (Angular `addAffected`).
+pub fn job_affected_listings(job: &JobInfo) -> Vec<AffectedListing> {
+    let mut out = Vec::new();
+    let mut push = |raw: &str| {
+        let Some((remote, path)) = parse_job_listing_path(raw, &job.remote) else {
+            return;
+        };
+        let parent = parent_remote_path(&path);
+        out.push(AffectedListing {
+            remote: remote.clone(),
+            path,
+        });
+        out.push(AffectedListing {
+            remote,
+            path: parent,
+        });
+    };
+    push(&job.src);
+    push(&job.dst);
+    out
+}
+
+pub fn listing_is_affected(remote: &str, path: &str, affected: &[AffectedListing]) -> bool {
+    let remote = normalize_listing_remote(remote);
+    let path = normalize_listing_path(path);
+    affected.iter().any(|item| {
+        normalize_listing_remote(&item.remote) == remote
+            && normalize_listing_path(&item.path) == path
+    })
+}
+
+/// Indexes of open listings (tabs / panes) that a finished job should refresh.
+pub fn open_listings_needing_refresh(
+    open: &[(String, String)],
+    affected: &[AffectedListing],
+) -> Vec<usize> {
+    open.iter()
+        .enumerate()
+        .filter(|(_, (remote, path))| listing_is_affected(remote, path, affected))
+        .map(|(idx, _)| idx)
+        .collect()
+}
+
+pub fn ops_panel_signature(jobs: &[JobInfo], history: &[JobInfo]) -> String {
+    let mut parts = Vec::with_capacity(jobs.len() + history.len().min(12));
+    for job in jobs {
+        parts.push(format!("{}:{}", job.id, job.status));
+    }
+    for job in history.iter().take(12) {
+        parts.push(format!("h{}:{}", job.id, job.status));
+    }
+    parts.join(",")
+}
+
 pub fn job_status_key(status: &str) -> &'static str {
     match status {
         "running" => "detailShared.jobs.status.running",
@@ -1005,6 +1635,135 @@ pub fn job_status_key(status: &str) -> &'static str {
         "preparing" | "starting" => "generalOverview.jobs.starting",
         _ => "detailShared.jobs.status.unknown",
     }
+}
+
+/// Angular `JobsPanel` row: type, `#id`, profile, progress, dry-run, relative time.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct JobPanelRow {
+    pub operation: String,
+    pub id_label: String,
+    pub profile: String,
+    pub status: String,
+    pub progress_pct: Option<u32>,
+    pub bytes: i64,
+    pub total_bytes: i64,
+    pub dry_run: bool,
+    pub duration_secs: i64,
+    pub relative: Option<(&'static str, i64)>,
+    pub error: String,
+    pub can_stop: bool,
+    pub has_footer: bool,
+}
+
+pub fn job_panel_row(job: &JobInfo, now: DateTime<Utc>) -> JobPanelRow {
+    let bytes = stats_i64(&job.stats, &["bytes"]);
+    let total_bytes = stats_i64(&job.stats, &["totalBytes"]);
+    let is_mount = job.operation.eq_ignore_ascii_case("mount");
+    let progress_pct = if !is_mount && total_bytes > 0 {
+        Some(
+            ((bytes as f64 / total_bytes as f64) * 100.0)
+                .round()
+                .clamp(0.0, 100.0) as u32,
+        )
+    } else {
+        None
+    };
+    let duration_secs = if job.duration > 0.0 {
+        job.duration.round().max(0.0) as i64
+    } else if has_known_start_time(job) {
+        now.signed_duration_since(job.start_time)
+            .num_seconds()
+            .max(0)
+    } else {
+        0
+    };
+    let relative = if has_known_start_time(job) {
+        Some(crate::checks::relative_time_parts(job.start_time, now))
+    } else {
+        None
+    };
+    let error = job
+        .error
+        .clone()
+        .or_else(|| {
+            job.stats
+                .get("lastError")
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string())
+        })
+        .unwrap_or_default();
+    let can_stop = job_is_running(job) || job_is_pending(job);
+    JobPanelRow {
+        operation: job.operation.clone(),
+        id_label: format!("#{}", job.id),
+        profile: job.profile.clone(),
+        status: job.status.clone(),
+        progress_pct,
+        bytes,
+        total_bytes,
+        dry_run: job.dry_run,
+        duration_secs,
+        relative,
+        error,
+        can_stop,
+        has_footer: progress_pct.is_some()
+            || job.dry_run
+            || duration_secs > 0
+            || relative.is_some(),
+    }
+}
+
+/// Angular `quick-run-card` status pills (cron / watcher / autostart).
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct QuickRunCardBadges {
+    pub cron: bool,
+    pub cron_expression: String,
+    pub watcher: bool,
+    pub watcher_changed_only: bool,
+    pub autostart: bool,
+}
+
+pub fn quick_run_card_badges(qr: &QuickRun) -> QuickRunCardBadges {
+    QuickRunCardBadges {
+        cron: qr.config.app.cron_enabled && !qr.config.app.cron_expression.is_empty(),
+        cron_expression: qr.config.app.cron_expression.clone(),
+        watcher: qr.config.app.watch_enabled,
+        watcher_changed_only: qr.config.app.watch_changed_only,
+        autostart: qr.config.app.auto_start,
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct QuickRunFolder {
+    pub kind: &'static str,
+    pub path: String,
+}
+
+/// Source/destination folders the Angular card can open in Files.
+pub fn quick_run_openable_folders(qr: &QuickRun) -> Vec<QuickRunFolder> {
+    let (src, dst) = qr.paths();
+    let mut out = Vec::new();
+    if let Some(src) = src {
+        for path in split_job_paths(&src) {
+            if !path.is_empty() {
+                out.push(QuickRunFolder {
+                    kind: "source",
+                    path,
+                });
+            }
+        }
+    }
+    if let Some(dst) = dst {
+        for path in split_job_paths(&dst) {
+            if !path.is_empty() {
+                out.push(QuickRunFolder {
+                    kind: "destination",
+                    path,
+                });
+            }
+        }
+    }
+    out
 }
 
 pub fn job_origin_key(origin: &str) -> &'static str {
@@ -1027,16 +1786,35 @@ pub fn find_stored_job(
     meta: &HashMap<u64, JobMeta>,
     id: u64,
 ) -> Option<JobInfo> {
-    find_job_by_id(live, history, id).or_else(|| meta.get(&id).map(|item| job_from_meta(id, item)))
+    let live_job = live.iter().find(|job| job.id == id).cloned();
+    let history_job = history
+        .iter()
+        .find(|job| job.id == id)
+        .cloned()
+        .or_else(|| meta.get(&id).map(|item| job_from_meta(id, item)));
+    match (live_job, history_job) {
+        (Some(live_job), Some(history_job)) => Some(merge_rc_with_stored(live_job, history_job)),
+        (Some(live_job), None) => Some(live_job),
+        (None, history_job) => history_job,
+    }
 }
 
 pub fn history_with_meta(history: &[JobInfo], meta: &HashMap<u64, JobMeta>) -> Vec<JobInfo> {
+    let patched: Vec<JobInfo> = history
+        .iter()
+        .cloned()
+        .map(|mut job| {
+            let id = job.id;
+            apply_job_meta(&mut job, meta.get(&id));
+            job
+        })
+        .collect();
     let extra: Vec<JobInfo> = meta
         .iter()
-        .filter(|(id, _)| history.iter().all(|job| job.id != **id))
+        .filter(|(id, _)| patched.iter().all(|job| job.id != **id))
         .map(|(id, item)| job_from_meta(*id, item))
         .collect();
-    merge_job_lists(history, &extra)
+    merge_job_lists(&patched, &extra)
 }
 
 pub fn merge_job_lists(live: &[JobInfo], history: &[JobInfo]) -> Vec<JobInfo> {
@@ -1055,6 +1833,7 @@ pub fn merge_overview_jobs(
     history: &[JobInfo],
     remote: &str,
     profile: Option<&str>,
+    operation: Option<OperationType>,
 ) -> Vec<JobInfo> {
     let matches = |job: &JobInfo| {
         is_overview_job(job)
@@ -1062,6 +1841,7 @@ pub fn merge_overview_jobs(
             && profile.is_none_or(|wanted| {
                 job.profile == wanted || job.profile.is_empty() || job.profile == "default"
             })
+            && overview_operation_matches(job, operation, profile)
     };
     let mut out: Vec<JobInfo> = live.iter().filter(|job| matches(job)).cloned().collect();
     let ids: HashSet<u64> = out.iter().map(|job| job.id).collect();
@@ -1073,6 +1853,55 @@ pub fn merge_overview_jobs(
     }
     out.sort_by(|a, b| b.start_time.cmp(&a.start_time).then(b.id.cmp(&a.id)));
     out
+}
+
+pub fn job_completed_items(job: &JobInfo) -> Option<&[Value]> {
+    job.completed
+        .as_array()
+        .filter(|rows| !rows.is_empty())
+        .map(Vec::as_slice)
+        .or_else(|| {
+            job.stats
+                .get("completed")
+                .and_then(|value| value.as_array())
+                .filter(|rows| !rows.is_empty())
+                .map(Vec::as_slice)
+        })
+}
+
+pub fn job_has_transfer_activity(job: &JobInfo) -> bool {
+    !transfer_list_empty(&job.transferring)
+        || !transfer_list_empty(&job.completed)
+        || job
+            .stats
+            .get("completed")
+            .is_some_and(|value| !transfer_list_empty(value))
+        || job
+            .stats
+            .get("transferring")
+            .is_some_and(|value| !transfer_list_empty(value))
+}
+
+/// Angular `getLatestJobForRemote`, preferring a live job and then the newest
+/// job that actually has transfer rows (rclone 1.60 leftover `job/<id>`
+/// stubs can be newer than the copy that transferred files).
+pub fn latest_overview_job(
+    live: &[JobInfo],
+    history: &[JobInfo],
+    remote: &str,
+    profile: Option<&str>,
+    operation: Option<OperationType>,
+) -> Option<JobInfo> {
+    let jobs = merge_overview_jobs(live, history, remote, profile, operation);
+    jobs.iter()
+        .find(|job| job_is_running(job) || job_is_pending(job))
+        .cloned()
+        .or_else(|| {
+            jobs.iter()
+                .find(|job| job_has_transfer_activity(job))
+                .cloned()
+        })
+        .or_else(|| jobs.into_iter().next())
 }
 
 pub fn job_status_value(job: &JobInfo) -> Value {
@@ -1143,14 +1972,27 @@ fn transfer_row_bytes(item: &Value) -> u64 {
         .unwrap_or(0)
 }
 
+fn transfer_row_has_error(item: &Value) -> bool {
+    item.get("error")
+        .or_else(|| item.get("lastError"))
+        .and_then(|value| value.as_str())
+        .is_some_and(|error| !error.is_empty())
+}
+
 fn completed_needs_sizes(value: &Value) -> bool {
     value.as_array().is_some_and(|arr| {
-        arr.iter()
-            .any(|item| transfer_row_size(item) > 0 && transfer_row_bytes(item) == 0)
+        arr.iter().any(|item| {
+            !transfer_row_has_error(item)
+                && transfer_row_size(item) > 0
+                && transfer_row_bytes(item) == 0
+        })
     })
 }
 
 fn finalize_completed_item(item: &Value) -> Value {
+    if transfer_row_has_error(item) {
+        return item.clone();
+    }
     let size = transfer_row_size(item);
     let bytes = transfer_row_bytes(item);
     let mut item = item.clone();
@@ -1321,6 +2163,7 @@ pub fn decorate_job_transfers(
     if let Some(updated) = jobs.into_iter().find(|item| item.id == job.id) {
         *job = updated;
     }
+    scope_job_transfers(job);
 }
 
 fn apply_hydrated_rows(
@@ -1353,6 +2196,7 @@ pub fn job_meta_for(
     origin: &str,
     backend: &str,
     quick_run_id: &str,
+    operation: &str,
 ) -> JobMeta {
     JobMeta {
         origin: origin.to_string(),
@@ -1368,12 +2212,21 @@ pub fn job_meta_for(
         parent_job_id: None,
         target: String::new(),
         group: String::new(),
+        operation: operation.to_string(),
         transfer_snapshot: json!([]),
     }
 }
 
 pub fn path_has_leaf(path: &str, name: &str) -> bool {
     !name.is_empty() && crate::checks::leaf_name(path) == name
+}
+
+pub fn is_resolve_origin(origin: &str) -> bool {
+    matches!(origin, "check-resolve" | "transfer-resolve")
+}
+
+pub fn should_toast_job_failure(job: &JobInfo) -> bool {
+    is_managed_job(job)
 }
 
 pub fn find_resolve_job<'a>(
@@ -1384,8 +2237,8 @@ pub fn find_resolve_job<'a>(
     let mut best = None;
     for job in jobs {
         let item = meta.get(&job.id);
-        let is_resolve = job.origin == "check-resolve"
-            || item.map(|m| m.origin == "check-resolve").unwrap_or(false);
+        let is_resolve = is_resolve_origin(&job.origin)
+            || item.map(|m| is_resolve_origin(&m.origin)).unwrap_or(false);
         if !is_resolve {
             continue;
         }
@@ -1539,6 +2392,48 @@ pub fn action_in_progress(
     })
 }
 
+/// Job Detail path-row title: mount dest uses Mount Point, others Source/Destination.
+pub fn job_detail_path_title_key(operation: &str, dest: bool) -> &'static str {
+    if dest && job_operation_matches(operation, OperationType::Mount) {
+        "modals.jobDetail.fields.mountPoint"
+    } else if dest {
+        "fileBrowser.operations.details.destination"
+    } else {
+        "fileBrowser.operations.details.source"
+    }
+}
+
+/// Job Detail remote field (Angular `fields.remoteSource`).
+pub fn job_detail_remote_title_key() -> &'static str {
+    "modals.jobDetail.fields.remoteSource"
+}
+
+/// Manual `job/stop` confirmation (Angular `backendSuccess.job.stopped`).
+pub fn job_stopped_toast_key() -> &'static str {
+    "backendSuccess.job.stopped"
+}
+
+/// Failed `job/stop` (Angular `backendErrors.job.executionFailed`).
+pub fn job_stop_failed_toast_key() -> &'static str {
+    "backendErrors.job.executionFailed"
+}
+
+fn start_failed_error(op: OperationType, remote: &str, error: &str) -> String {
+    crate::i18n::localized_message(
+        "operations.failedStart",
+        &[
+            ("type", op.api_label()),
+            ("remote", remote),
+            ("error", error),
+        ],
+    )
+}
+
+/// Remove-from-history confirmation (Angular `backendSuccess.job.deleted`).
+pub fn job_deleted_toast_key() -> &'static str {
+    "backendSuccess.job.deleted"
+}
+
 pub fn job_operation_matches(job_op: &str, op: OperationType) -> bool {
     let key = op.as_str();
     let lower = job_op.to_ascii_lowercase();
@@ -1546,6 +2441,34 @@ pub fn job_operation_matches(job_op: &str, op: OperationType) -> bool {
         return true;
     }
     lower.split(['/', ':', ' ', '.']).any(|part| part == key)
+}
+
+/// rclone 1.60 finished jobs are stored as `job/<id>` (the RC group), not `copy`.
+pub fn is_opaque_job_operation(operation: &str) -> bool {
+    operation == "job" || operation.starts_with("job/")
+}
+
+fn overview_operation_matches(
+    job: &JobInfo,
+    operation: Option<OperationType>,
+    profile: Option<&str>,
+) -> bool {
+    let Some(op) = operation else {
+        return true;
+    };
+    if job_operation_matches(&job.operation, op) {
+        return true;
+    }
+    // Viewing a named profile: treat opaque leftovers as that operation so
+    // Transfer Activity follows the latest profile job instead of an older
+    // `copy`-labeled leftover (e.g. 42424).
+    is_opaque_job_operation(&job.operation)
+        && profile.is_some_and(|wanted| {
+            !wanted.is_empty()
+                && (job.profile == wanted
+                    || (wanted == "default"
+                        && (job.profile.is_empty() || job.profile == "default")))
+        })
 }
 
 pub fn job_belongs_to_remote(job: &JobInfo, remote: &str) -> bool {
@@ -1581,10 +2504,96 @@ pub fn find_active_mount<'a>(
     mounts: &'a [MountedRemote],
     remote: &str,
 ) -> Option<&'a MountedRemote> {
-    let prefix = format!("{remote}:");
+    find_active_mount_for(mounts, remote, "")
+}
+
+pub fn find_active_mount_for<'a>(
+    mounts: &'a [MountedRemote],
+    remote: &str,
+    alias: &str,
+) -> Option<&'a MountedRemote> {
     mounts
         .iter()
-        .find(|m| m.fs == remote || m.fs == prefix || m.fs.starts_with(&prefix))
+        .find(|m| crate::store::mount_matches_remote(&m.fs, &m.mount_point, remote, alias))
+}
+
+fn paths_equivalent_point(left: &str, right: &str) -> bool {
+    left.trim_end_matches('/') == right.trim_end_matches('/')
+}
+
+/// Mount-point candidates when RC/list matching misses (alias remotes, default dest).
+pub fn mount_unmount_fallbacks(remote: &str, profile: Option<&ProfileConfig>) -> Vec<String> {
+    let mut out = Vec::new();
+    if let Some(profile) = profile {
+        let dest = default_dest(remote, &profile.rclone, OperationType::Mount);
+        if !dest.is_empty() {
+            out.push(dest);
+        }
+    }
+    let suggested = crate::path_inspection::suggest_default_mount_path(
+        remote,
+        &crate::store::AppStore::default(),
+    );
+    if !suggested.is_empty()
+        && !out
+            .iter()
+            .any(|point| paths_equivalent_point(point, &suggested))
+    {
+        out.push(suggested);
+    }
+    out
+}
+
+/// Resolve a live mount point for `remote`, including alias + host fuse fallbacks.
+pub fn resolve_unmount_point(
+    mounts: &[MountedRemote],
+    remote: &str,
+    alias: &str,
+    fallbacks: &[String],
+) -> Option<String> {
+    resolve_unmount_point_in(
+        mounts,
+        remote,
+        alias,
+        fallbacks,
+        &crate::rclone::host_fuse_mounts(),
+    )
+}
+
+pub fn resolve_unmount_point_in(
+    mounts: &[MountedRemote],
+    remote: &str,
+    alias: &str,
+    fallbacks: &[String],
+    host_mounts: &[MountedRemote],
+) -> Option<String> {
+    if let Some(mount) = find_active_mount_for(mounts, remote, alias) {
+        return Some(mount.mount_point.clone());
+    }
+    if alias.is_empty() {
+        if let Some(mount) = find_active_mount(mounts, remote) {
+            return Some(mount.mount_point.clone());
+        }
+    }
+    for extra in host_mounts {
+        if crate::store::mount_matches_remote(&extra.fs, &extra.mount_point, remote, alias) {
+            return Some(extra.mount_point.clone());
+        }
+    }
+    for point in fallbacks {
+        let point = point.trim();
+        if point.is_empty() {
+            continue;
+        }
+        if mounts
+            .iter()
+            .chain(host_mounts.iter())
+            .any(|mount| paths_equivalent_point(&mount.mount_point, point))
+        {
+            return Some(point.to_string());
+        }
+    }
+    None
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -1607,6 +2616,46 @@ impl ProfileUsage {
     }
 }
 
+/// Angular `computeProfileActionState(..., 'rename')`: only sync/job
+/// profiles are blocked while a job is active. Mount/serve stay
+/// renameable so the runtime cache can cascade.
+pub fn profile_rename_blocked(op: Option<OperationType>, usage: &ProfileUsage) -> bool {
+    match op {
+        Some(op) if op.is_sync_type() => usage.jobs > 0,
+        _ => false,
+    }
+}
+
+/// Angular `displayLimit` page size for transfer/check tables.
+pub const ACTIVITY_PAGE: usize = 50;
+
+pub fn activity_visible_end(total: usize, limit: usize) -> usize {
+    total.min(limit.max(1))
+}
+
+pub fn activity_remaining(total: usize, limit: usize) -> usize {
+    total.saturating_sub(activity_visible_end(total, limit))
+}
+
+pub fn rename_mounts_profile(
+    mounts: &mut [MountedRemote],
+    remote: &str,
+    from: &str,
+    to: &str,
+) -> usize {
+    if from.is_empty() || from == to {
+        return 0;
+    }
+    let mut updated = 0;
+    for mount in mounts {
+        if fs_belongs_to_remote(&mount.fs, remote) && mount.profile == from {
+            mount.profile = to.to_string();
+            updated += 1;
+        }
+    }
+    updated
+}
+
 pub fn profile_usage(
     jobs: &[JobInfo],
     mounts: &[MountedRemote],
@@ -1614,6 +2663,7 @@ pub fn profile_usage(
     remote: &str,
     profile: &str,
     op: Option<OperationType>,
+    alias: &str,
 ) -> ProfileUsage {
     let mut usage = ProfileUsage::default();
     match op {
@@ -1621,8 +2671,12 @@ pub fn profile_usage(
             if find_active_job(jobs, remote, op, profile).is_some() {
                 usage.jobs = 1;
             }
-            if op == OperationType::Mount && find_active_mount(mounts, remote).is_some() {
-                usage.mounts = 1;
+            if op == OperationType::Mount {
+                if let Some(mount) = find_active_mount_for(mounts, remote, alias) {
+                    if mount.profile.is_empty() || mount.profile == profile {
+                        usage.mounts = 1;
+                    }
+                }
             }
             if op == OperationType::Serve && find_active_serve(serves, remote).is_some() {
                 usage.serves = 1;
@@ -1637,8 +2691,10 @@ pub fn profile_usage(
                         && (job.profile.is_empty() || job.profile == profile)
                 })
                 .count();
-            if find_active_mount(mounts, remote).is_some() {
-                usage.mounts = 1;
+            if let Some(mount) = find_active_mount_for(mounts, remote, alias) {
+                if mount.profile.is_empty() || mount.profile == profile {
+                    usage.mounts = 1;
+                }
             }
             if find_active_serve(serves, remote).is_some() {
                 usage.serves = 1;
@@ -1712,32 +2768,198 @@ pub fn stop_profile(
     mounts: &[MountedRemote],
     serves: &[ServeItem],
 ) -> Result<String, String> {
+    stop_profile_ex(client, remote, op, profile, jobs, mounts, serves, "", &[])
+}
+
+pub fn stop_profile_ex(
+    client: &RcClient,
+    remote: &str,
+    op: OperationType,
+    profile: &str,
+    jobs: &[JobInfo],
+    mounts: &[MountedRemote],
+    serves: &[ServeItem],
+    alias: &str,
+    fallbacks: &[String],
+) -> Result<String, String> {
     match op {
         OperationType::Mount => {
-            let mount = find_active_mount(mounts, remote)
-                .ok_or_else(|| format!("{remote} is not mounted"))?;
+            let point = resolve_unmount_point(mounts, remote, alias, fallbacks)
+                .ok_or_else(|| crate::i18n::localized_message("mount.notMounted", &[]))?;
             client
-                .unmount(&mount.mount_point)
-                .map(|_| format!("Unmounted {}", mount.mount_point))
-                .map_err(|e| e.to_string())
+                .unmount(&point)
+                .map(|_| {
+                    crate::i18n::localized_message("mount.successUnmount", &[("remote", remote)])
+                })
+                .map_err(|e| {
+                    crate::i18n::localized_message(
+                        job_stop_failed_toast_key(),
+                        &[("error", &e.to_string())],
+                    )
+                })
         }
         OperationType::Serve => {
             let serve = find_active_serve(serves, remote)
-                .ok_or_else(|| format!("{remote} is not serving"))?;
+                .ok_or_else(|| crate::i18n::localized_message("serve.noActive", &[]))?;
             client
                 .serve_stop(&serve.id)
-                .map(|_| format!("Stopped serve {}", serve.addr))
-                .map_err(|e| e.to_string())
+                .map(|_| crate::i18n::localized_message("serve.successStop", &[("id", &serve.id)]))
+                .map_err(|e| {
+                    crate::i18n::localized_message(
+                        "serve.failedStop",
+                        &[("id", &serve.id), ("error", &e.to_string())],
+                    )
+                })
         }
         _ => {
-            let job = find_active_job(jobs, remote, op, profile)
-                .ok_or_else(|| format!("No running {op} for {remote}/{profile}"))?;
+            let job = find_active_job(jobs, remote, op, profile).ok_or_else(|| {
+                crate::i18n::localized_message(
+                    job_stop_failed_toast_key(),
+                    &[("error", &format!("No running {op} for {remote}/{profile}"))],
+                )
+            })?;
             client
                 .job_stop(job.id)
-                .map(|_| format!("Stopped job #{}", job.id))
-                .map_err(|e| e.to_string())
+                .map(|_| crate::i18n::localized_message(job_stopped_toast_key(), &[]))
+                .map_err(|e| {
+                    crate::i18n::localized_message(
+                        job_stop_failed_toast_key(),
+                        &[("error", &e.to_string())],
+                    )
+                })
         }
     }
+}
+
+/// Drop rclone `core/stats` leftovers that belong to a different job.
+/// rclone 1.60 often returns the global transfer list when a finished
+/// group's stats are gone, which mixed e.g. `#14781` files into `#22718`.
+pub fn transfer_item_matches_job(item: &Value, job: &JobInfo) -> bool {
+    if let Some(id) = item
+        .get("jobid")
+        .or_else(|| item.get("id"))
+        .and_then(|value| value.as_u64())
+    {
+        if id != 0 {
+            return id == job.id;
+        }
+    }
+    if let Some(group) = item.get("group").and_then(|value| value.as_str()) {
+        if !group.is_empty() {
+            if group == job.group || group == format!("job/{}", job.id) {
+                return true;
+            }
+            if group.starts_with("job/") {
+                return false;
+            }
+        }
+    }
+    let parsed = crate::transfers::parse_completed_transfer_row(item);
+    if path_belongs_to_job(&parsed.src, job)
+        || path_belongs_to_job(&parsed.dst, job)
+        || path_belongs_to_job(&parsed.name, job)
+    {
+        return true;
+    }
+    let foreign_src = path_looks_located(&parsed.src) && !path_belongs_to_job(&parsed.src, job);
+    let foreign_dst = path_looks_located(&parsed.dst) && !path_belongs_to_job(&parsed.dst, job);
+    !foreign_src && !foreign_dst
+}
+
+fn path_looks_located(path: &str) -> bool {
+    let path = path.trim();
+    path.contains(':') || path.starts_with('/') || path.starts_with('\\')
+}
+
+fn path_belongs_to_job(path: &str, job: &JobInfo) -> bool {
+    let path = path.trim();
+    if path.is_empty() || path == "—" {
+        return false;
+    }
+    let mut bases = vec![&job.src, &job.dst];
+    if job.src.is_empty() && job.dst.is_empty() {
+        bases.push(&job.remote);
+    }
+    for base in bases {
+        let base = base.trim().trim_end_matches('/');
+        if base.is_empty() {
+            continue;
+        }
+        if path == base
+            || path.starts_with(&format!("{base}/"))
+            || path.starts_with(&format!("{base}:"))
+            || (base.ends_with(':') && path.starts_with(base))
+        {
+            return true;
+        }
+    }
+    false
+}
+
+pub fn filter_transfer_list(list: &Value, job: &JobInfo) -> Value {
+    let Some(arr) = list.as_array() else {
+        return list.clone();
+    };
+    if job.src.is_empty() && job.dst.is_empty() && job.remote.is_empty() && job.group.is_empty() {
+        return list.clone();
+    }
+    Value::Array(
+        arr.iter()
+            .filter(|item| transfer_item_matches_job(item, job))
+            .cloned()
+            .collect(),
+    )
+}
+
+pub fn scope_job_transfers(job: &mut JobInfo) {
+    let transferring = filter_transfer_list(&job.transferring, job);
+    let completed = filter_transfer_list(&job.completed, job);
+    let stats_transferring = job
+        .stats
+        .get("transferring")
+        .cloned()
+        .map(|value| filter_transfer_list(&value, job));
+    let stats_completed = job
+        .stats
+        .get("completed")
+        .cloned()
+        .map(|value| filter_transfer_list(&value, job));
+    job.transferring = transferring;
+    job.completed = completed;
+    if let Some(obj) = job.stats.as_object_mut() {
+        if let Some(value) = stats_transferring {
+            obj.insert("transferring".into(), value);
+        }
+        if let Some(value) = stats_completed {
+            obj.insert("completed".into(), value);
+        }
+    }
+}
+
+pub fn find_quick_run_job(live: &[JobInfo], history: &[JobInfo], qr: &QuickRun) -> Option<JobInfo> {
+    if let Some(job) = find_active_quick_run(live, qr) {
+        return Some(job.clone());
+    }
+    if let Some(id) = qr.last_job_id {
+        if let Some(job) = live.iter().chain(history.iter()).find(|job| job.id == id) {
+            return Some(job.clone());
+        }
+    }
+    let (src, dst) = qr.paths();
+    live.iter()
+        .chain(history.iter())
+        .find(|job| {
+            (job.origin == "quick-run" || job.origin == "quickrun" || job.origin == "flow")
+                && job_belongs_to_remote(job, &qr.remote_name)
+                && job_operation_matches(&job.operation, qr.operation_type)
+                && src
+                    .as_ref()
+                    .is_none_or(|path| job.src == *path || job.src.starts_with(path))
+                && dst
+                    .as_ref()
+                    .is_none_or(|path| job.dst == *path || job.dst.starts_with(path))
+        })
+        .cloned()
 }
 
 pub fn find_active_quick_run<'a>(jobs: &'a [JobInfo], qr: &QuickRun) -> Option<&'a JobInfo> {
@@ -1752,6 +2974,166 @@ pub fn find_active_quick_run<'a>(jobs: &'a [JobInfo], qr: &QuickRun) -> Option<&
             && job_belongs_to_remote(job, &qr.remote_name)
             && job_operation_matches(&job.operation, qr.operation_type)
     })
+}
+
+/// Paths shown in Angular `app-operation-control` (live job wins, delete hides dest).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct OperationControlPaths {
+    pub source: Option<String>,
+    pub destination: Option<String>,
+    pub hide_destination: bool,
+    pub dest_browseable: bool,
+}
+
+pub fn serve_accessible_via(rclone: &Value, default_addr: &str) -> String {
+    let flat = flatten_rclone(rclone);
+    let kind = first_path(&flat, &["type"]).unwrap_or_else(|| "http".into());
+    let addr = first_path(&flat, &["addr"]).unwrap_or_else(|| default_addr.to_string());
+    format!("{} at {addr}", kind.to_ascii_uppercase())
+}
+
+pub fn is_saf_mount(rclone: &Value) -> bool {
+    let flat = flatten_rclone(rclone);
+    first_path(&flat, &["mountType"]).as_deref() == Some("saf")
+        || first_path(&flat, &["mountPoint"]).is_some_and(|p| p.starts_with("saf://"))
+}
+
+/// Configured src/dst for Angular `buildControlConfig` (serve addr + SAF mount).
+pub fn operation_control_configured_paths(
+    op: OperationType,
+    rclone: &Value,
+    remote: &str,
+    default_addr: &str,
+) -> (Option<String>, Option<String>) {
+    let (src, dst) = crate::store::quick_run_paths(rclone, op);
+    match op {
+        OperationType::Serve => (src, Some(serve_accessible_via(rclone, default_addr))),
+        OperationType::Mount if is_saf_mount(rclone) => (src, Some(format!("saf://{remote}"))),
+        _ => (src, dst),
+    }
+}
+
+/// Prefer a live FUSE mount point over configured/stale dest for mount ops.
+pub fn overlay_live_mount_dest(
+    op: OperationType,
+    dest: Option<String>,
+    live_mount_point: Option<&str>,
+) -> Option<String> {
+    if op == OperationType::Mount {
+        if let Some(point) = live_mount_point.map(str::trim).filter(|s| !s.is_empty()) {
+            return Some(point.to_string());
+        }
+    }
+    dest
+}
+
+/// Job Detail dest: mount jobs show the live mount point when rclone reports one.
+pub fn job_detail_dest_path(operation: &str, dest: &str, live_mount_point: Option<&str>) -> String {
+    overlay_live_mount_dest(
+        if job_operation_matches(operation, OperationType::Mount) {
+            OperationType::Mount
+        } else {
+            OperationType::Copy
+        },
+        Some(dest.to_string()),
+        live_mount_point,
+    )
+    .unwrap_or_else(|| dest.to_string())
+}
+
+pub fn operation_control_paths(
+    op: OperationType,
+    configured_src: Option<String>,
+    configured_dst: Option<String>,
+    live: Option<&JobInfo>,
+    live_mount_point: Option<&str>,
+) -> OperationControlPaths {
+    let nonempty = |value: Option<String>| value.filter(|s| !s.is_empty());
+    let source = live
+        .and_then(|job| nonempty(Some(job.src.clone())))
+        .or_else(|| nonempty(configured_src));
+    let destination = if op == OperationType::Serve {
+        nonempty(configured_dst).or_else(|| live.and_then(|job| nonempty(Some(job.dst.clone()))))
+    } else {
+        live.and_then(|job| nonempty(Some(job.dst.clone())))
+            .or_else(|| nonempty(configured_dst))
+    };
+    OperationControlPaths {
+        source,
+        destination: overlay_live_mount_dest(op, destination, live_mount_point),
+        hide_destination: op == OperationType::Delete,
+        dest_browseable: op != OperationType::Serve,
+    }
+}
+
+pub fn operation_control_subtitle(op_label: &str, dry_run: bool, dry_label: &str) -> String {
+    if dry_run {
+        format!("{op_label} · {dry_label}")
+    } else {
+        op_label.to_string()
+    }
+}
+
+pub fn operation_shows_session_flags(op: OperationType) -> bool {
+    op.is_sync_type()
+}
+
+pub fn operation_shows_mount_usage(op: OperationType, active: bool, destination: &str) -> bool {
+    op == OperationType::Mount && active && !destination.trim().is_empty()
+}
+
+/// Local `df` used/free/total for a FUSE or host mount point (Angular `getLocalDiskUsage`).
+pub fn mount_point_usage(path: &str) -> Option<(u64, u64, u64)> {
+    let (free, total) = crate::fileops::local_path_disk_usage(path)?;
+    Some((total.saturating_sub(free), free, total))
+}
+
+pub fn mount_usage_ratio(used: u64, total: u64) -> f64 {
+    if total == 0 {
+        0.0
+    } else {
+        (used as f64 / total as f64).clamp(0.0, 1.0)
+    }
+}
+
+pub fn format_mount_usage_subtitle(point: &str, used: u64, free: u64, total: u64) -> String {
+    format!(
+        "{} · {} used / {} free · {}",
+        point,
+        crate::rclone::format_bytes(used as i64),
+        crate::rclone::format_bytes(free as i64),
+        crate::rclone::format_bytes(total as i64),
+    )
+}
+
+/// RC/host mounts matching remote+alias, else the configured destination (alias remotes).
+pub fn mount_usage_candidates<'a>(
+    mounts: &'a [MountedRemote],
+    name: &str,
+    alias: &str,
+    destination: Option<&'a str>,
+) -> Vec<(&'a str, &'a str)> {
+    let matched: Vec<_> = mounts
+        .iter()
+        .filter(|item| crate::store::mount_matches_remote(&item.fs, &item.mount_point, name, alias))
+        .map(|item| (item.profile.as_str(), item.mount_point.as_str()))
+        .collect();
+    if !matched.is_empty() {
+        return matched;
+    }
+    match destination.map(str::trim).filter(|s| !s.is_empty()) {
+        Some(dest) => vec![("", dest)],
+        None => Vec::new(),
+    }
+}
+
+pub fn operation_control_action_kind(op: OperationType, active: bool) -> &'static str {
+    match (op == OperationType::Mount, active) {
+        (true, false) => "mount",
+        (true, true) => "unmount",
+        (false, false) => "start",
+        (false, true) => "stop",
+    }
 }
 
 pub fn merge_completed_transfers(stats: &mut Value, transferred: &Value) {
@@ -1881,25 +3263,41 @@ pub fn job_from_status(jobid: u64, status: &Value, stats: Option<&Value>) -> Job
     {
         job.status = "preparing".into();
     }
+    scope_job_transfers(&mut job);
     job
 }
 
 pub const MAX_JOB_STATUS_FETCH: usize = 48;
 
 /// rclone 1.60 `job/list` can return hundreds of thousands of leftover IDs.
-/// Prefer jobs we started; only scan unknowns when the list is small.
+/// Prefer jobs we started (even when rclone omitted a finished id from that
+/// leftover list); only scan unknowns when the list is small.
 pub fn select_job_ids(listed: &[u64], known: &[u64], max: usize) -> Vec<u64> {
     if listed.len() <= max {
         return listed.to_vec();
     }
-    let known_set: std::collections::HashSet<u64> = known.iter().copied().collect();
-    let mut selected: Vec<u64> = listed
-        .iter()
-        .copied()
-        .filter(|id| known_set.contains(id))
-        .collect();
-    selected.truncate(max);
+    let mut selected = Vec::new();
+    let mut seen = HashSet::new();
+    for id in known {
+        if selected.len() >= max {
+            break;
+        }
+        if seen.insert(*id) {
+            selected.push(*id);
+        }
+    }
     selected
+}
+
+/// Newest history first, then remaining `job_meta` keys (higher id first).
+pub fn known_job_ids(history: &[JobInfo], meta: &HashMap<u64, JobMeta>) -> Vec<u64> {
+    let mut ids: Vec<u64> = history.iter().map(|job| job.id).collect();
+    let mut seen: HashSet<u64> = ids.iter().copied().collect();
+    let mut extra: Vec<u64> = meta.keys().copied().filter(|id| seen.insert(*id)).collect();
+    extra.sort_unstable();
+    extra.reverse();
+    ids.extend(extra);
+    ids
 }
 
 /// rclone 1.60 `job/list` includes finished internal RC jobs (empty src/dst,
@@ -1915,6 +3313,12 @@ pub fn is_identifiable_job(job: &JobInfo) -> bool {
 
 pub fn is_managed_job(job: &JobInfo) -> bool {
     is_identifiable_job(job)
+}
+
+/// rclone 1.60 `operations/copyfile` jobs often return empty `output`, so
+/// `job_from_status` looks like RC noise until `apply_job_meta` runs.
+pub fn keep_collected_job(job: &JobInfo, known: &[u64]) -> bool {
+    known.contains(&job.id) || is_managed_job(job)
 }
 
 /// Local job shown immediately after `start_job` returns, before rclone reports transfers.
@@ -1955,6 +3359,75 @@ pub fn preparing_job(
         completed: json!([]),
         parent_job_id: None,
     }
+}
+
+/// Dashboard / start-operation job shown immediately after rclone returns an id.
+pub fn started_operation_job(
+    id: u64,
+    op: &str,
+    remote: &str,
+    profile: &str,
+    origin: &str,
+    src: &str,
+    dst: &str,
+) -> JobInfo {
+    JobInfo {
+        id,
+        operation: op.into(),
+        remote: remote.into(),
+        profile: profile.into(),
+        status: "starting".into(),
+        origin: origin.into(),
+        start_time: Utc::now(),
+        error: None,
+        dry_run: false,
+        src: src.into(),
+        dst: dst.into(),
+        group: format!("job/{id}"),
+        stats: json!({
+            "bytes": 0,
+            "totalBytes": 0,
+            "transfers": 0,
+            "totalTransfers": 0,
+            "preparing": true
+        }),
+        transferring: json!([]),
+        duration: 0.0,
+        progress: 0.0,
+        output: json!({ "operation": op, "origin": origin }),
+        completed: json!([]),
+        parent_job_id: None,
+    }
+}
+
+pub fn jobs_from_transfer_start(
+    ids: &[u64],
+    op: &str,
+    remote: &str,
+    origin: &str,
+    group: &str,
+    snapshot: &Value,
+) -> Vec<JobInfo> {
+    let rows = snapshot.as_array();
+    ids.iter()
+        .enumerate()
+        .map(|(index, id)| {
+            let row = rows.and_then(|arr| arr.get(index));
+            let src = row
+                .and_then(|v| v.get("src"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+            let dst = row
+                .and_then(|v| v.get("dst"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+            let mut job = started_operation_job(*id, op, remote, "default", origin, src, dst);
+            if !group.is_empty() {
+                job.group = group.to_string();
+            }
+            job
+        })
+        .collect()
 }
 
 pub fn preparing_progress_stats(
@@ -2009,10 +3482,9 @@ pub fn finalize_dropped_job(job: &JobInfo) -> JobInfo {
     match finished.status.as_str() {
         "running" => finished.status = "completed".into(),
         "preparing" | "starting" => {
-            finished.status = "failed".into();
-            if finished.error.is_none() {
-                finished.error = Some("Job disappeared before rclone reported it".into());
-            }
+            // rclone 1.60 often drops a finished job from job/list before the next poll.
+            finished.status = "completed".into();
+            finished.progress = 1.0;
         }
         _ => {}
     }
@@ -2307,11 +3779,21 @@ pub const BANDWIDTH_PRESETS: &[(&str, &str)] = &[
 
 pub fn normalize_bandwidth(value: &str) -> String {
     let trimmed = value.trim();
-    if trimmed.is_empty() || trimmed.eq_ignore_ascii_case("off") || trimmed == "0" {
+    if trimmed.is_empty()
+        || trimmed.eq_ignore_ascii_case("off")
+        || trimmed == "0"
+        || trimmed.eq_ignore_ascii_case("off:off")
+    {
         "off".into()
     } else {
         trimmed.to_string()
     }
+}
+
+/// Normalize a custom bandwidth limit after Angular-style format validation.
+pub fn validated_bandwidth_limit(value: &str) -> Result<String, String> {
+    crate::validators::validate_bandwidth_limit(value)?;
+    Ok(normalize_bandwidth(value))
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -2343,6 +3825,47 @@ fn json_i64(value: &Value, keys: &[&str]) -> i64 {
                 .or_else(|| v.as_str().and_then(|s| s.parse().ok()))
         })
         .unwrap_or(0)
+}
+
+pub fn format_bandwidth_rate(bytes_per_sec: i64) -> String {
+    format!("{}/s", crate::rclone::format_bytes(bytes_per_sec))
+}
+
+pub fn bandwidth_rate_display(rate: &str, unlimited: &str) -> String {
+    if normalize_bandwidth(rate) == "off" {
+        unlimited.to_string()
+    } else {
+        rate.to_string()
+    }
+}
+
+pub fn bandwidth_preset_is_active(saved: &str, preset: &str) -> bool {
+    normalize_bandwidth(saved) == normalize_bandwidth(preset)
+}
+
+/// Angular `bandwidthDetails`: upload / download / total when a limit is set.
+pub fn bandwidth_details(live: &BwLimitStatus) -> [(&'static str, &'static str, i64); 3] {
+    [
+        (
+            "generalOverview.bandwidth.upload",
+            "Upload:",
+            live.bytes_per_sec_tx,
+        ),
+        (
+            "generalOverview.bandwidth.download",
+            "Download:",
+            live.bytes_per_sec_rx,
+        ),
+        (
+            "generalOverview.bandwidth.total",
+            "Total:",
+            live.bytes_per_sec,
+        ),
+    ]
+}
+
+pub fn bandwidth_shows_details(live: &BwLimitStatus) -> bool {
+    normalize_bandwidth(&live.rate) != "off"
 }
 
 pub fn parse_bwlimit(value: &Value) -> BwLimitStatus {
@@ -2405,6 +3928,59 @@ pub fn selected_profile_key(remote: &str, op: OperationType) -> String {
     format!("{remote}:{}", op.as_str())
 }
 
+/// Profile a General-detail chip should start/stop — Angular `onToggleAction`.
+pub fn chip_action_profile(
+    remote: &str,
+    op: OperationType,
+    configured: &[String],
+    jobs: &[JobInfo],
+) -> String {
+    if let Some(job) = jobs.iter().find(|job| {
+        job_is_running(job)
+            && job_belongs_to_remote(job, remote)
+            && job_operation_matches(&job.operation, op)
+    }) {
+        if !job.profile.is_empty() {
+            return job.profile.clone();
+        }
+    }
+    configured
+        .first()
+        .cloned()
+        .unwrap_or_else(|| "default".into())
+}
+
+/// Angular `enrichedProfiles` status: running, scheduled (cron/watch), or idle.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ProfilePillStatus {
+    Running,
+    Scheduled,
+    Idle,
+}
+
+pub fn profile_pill_status(
+    active: bool,
+    cron_enabled: bool,
+    cron_expression: &str,
+    watch_enabled: bool,
+) -> ProfilePillStatus {
+    if active {
+        ProfilePillStatus::Running
+    } else if watch_enabled || (cron_enabled && !cron_expression.is_empty()) {
+        ProfilePillStatus::Scheduled
+    } else {
+        ProfilePillStatus::Idle
+    }
+}
+
+pub fn profile_pill_has_watcher(
+    cron_enabled: bool,
+    cron_expression: &str,
+    watch_enabled: bool,
+) -> bool {
+    watch_enabled && !(cron_enabled && !cron_expression.is_empty())
+}
+
 pub fn rename_serves_profile(
     serves: &mut [ServeItem],
     remote: &str,
@@ -2430,6 +4006,121 @@ pub fn rename_serves_profile(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn sync_check_reject_file_sources() {
+        assert_eq!(
+            directory_only_source_error(OperationType::Sync, "testdrive:a.txt", false).as_deref(),
+            Some("Sync only supports directories, not files: testdrive:a.txt")
+        );
+        assert_eq!(
+            directory_only_source_error(OperationType::Check, "/tmp/file.bin", false).as_deref(),
+            Some("Check only supports directories, not files: /tmp/file.bin")
+        );
+        assert!(
+            directory_only_source_error(OperationType::Sync, "testdrive:Photos", true).is_none()
+        );
+        assert!(
+            directory_only_source_error(OperationType::Copy, "testdrive:a.txt", false).is_none()
+        );
+    }
+
+    #[test]
+    fn file_copy_uses_copyfile() {
+        let req = build_job_params(
+            OperationType::Copy,
+            "testdrive",
+            "testdrive:a.txt",
+            "testdrive:verify-persist2/",
+            &json!({}),
+        )
+        .unwrap();
+        match req {
+            JobRequest::Async { endpoint, params } => {
+                assert_eq!(endpoint, "operations/copyfile");
+                assert_eq!(params["srcFs"], "testdrive:");
+                assert_eq!(params["srcRemote"], "a.txt");
+                assert_eq!(params["dstFs"], "testdrive:");
+                assert_eq!(params["dstRemote"], "verify-persist2/a.txt");
+            }
+            other => panic!("expected copyfile, got {other:?}"),
+        }
+        let moved = build_job_params(
+            OperationType::Move,
+            "src",
+            "src:file.txt",
+            "dst:backup/",
+            &json!({}),
+        )
+        .unwrap();
+        match moved {
+            JobRequest::Async { endpoint, params } => {
+                assert_eq!(endpoint, "operations/movefile");
+                assert_eq!(params["dstRemote"], "backup/file.txt");
+            }
+            other => panic!("expected movefile, got {other:?}"),
+        }
+        let local = build_job_params(
+            OperationType::Copy,
+            "local",
+            "/tmp/rclone-test-remote/a.txt",
+            "testdrive:Inbox/",
+            &json!({}),
+        )
+        .unwrap();
+        match local {
+            JobRequest::Async { endpoint, params } => {
+                assert_eq!(endpoint, "operations/copyfile");
+                assert_eq!(params["srcFs"], "/tmp/rclone-test-remote");
+                assert_eq!(params["srcRemote"], "a.txt");
+                assert_eq!(params["dstRemote"], "Inbox/a.txt");
+            }
+            other => panic!("expected local copyfile, got {other:?}"),
+        }
+        assert!(source_looks_like_file("testdrive:a.txt"));
+        assert!(!source_looks_like_file("testdrive:Photos"));
+        assert!(!source_looks_like_file("testdrive:"));
+        assert_eq!(
+            parse_transfer_fs("testdrive:a.txt"),
+            Some(("testdrive:".into(), "a.txt".into()))
+        );
+    }
+
+    #[test]
+    fn directory_copy_keeps_sync_copy() {
+        let req = build_job_params(
+            OperationType::Copy,
+            "testdrive",
+            "testdrive:Photos",
+            "testdrive:verify-photos/",
+            &json!({}),
+        )
+        .unwrap();
+        match req {
+            JobRequest::Async { endpoint, params } => {
+                assert_eq!(endpoint, "sync/copy");
+                assert_eq!(params["srcFs"], "testdrive:Photos");
+                assert_eq!(params["dstFs"], "testdrive:verify-photos/");
+            }
+            other => panic!("expected sync/copy, got {other:?}"),
+        }
+        let delete_file = build_job_params(
+            OperationType::Delete,
+            "testdrive",
+            "testdrive:a.txt",
+            "",
+            &json!({}),
+        )
+        .unwrap();
+        match delete_file {
+            JobRequest::Async { endpoint, params } => {
+                assert_eq!(endpoint, "operations/deletefile");
+                assert_eq!(params["fs"], "testdrive:");
+                assert_eq!(params["remote"], "a.txt");
+            }
+            other => panic!("expected deletefile, got {other:?}"),
+        }
+    }
 
     #[test]
     fn builds_sync_params() {
@@ -2656,18 +4347,74 @@ mod tests {
         assert!(!is_managed_job(&running_noise));
         let upload = preparing_job(3, "drive", "/tmp/a.txt", "drive:Inbox", 1, 12);
         assert!(is_managed_job(&upload));
+        let started = started_operation_job(
+            44,
+            "copy",
+            "testdrive",
+            "gui-copy-test",
+            "dashboard",
+            "testdrive:a.txt",
+            "testdrive:verify-gui-copy/",
+        );
+        assert!(is_managed_job(&started));
+        assert!(keep_collected_job(&running_noise, &[100]));
+        assert!(!keep_collected_job(&running_noise, &[99]));
+        assert_eq!(started.status, "starting");
+        assert_eq!(started.operation, "copy");
+        assert_eq!(started.src, "testdrive:a.txt");
         assert_eq!(
             select_job_ids(&[1, 2, 3], &[2], 48),
             vec![1, 2, 3],
             "small lists are fetched in full"
         );
         let huge: Vec<u64> = (1..=200).collect();
-        assert_eq!(select_job_ids(&huge, &[7, 9, 400], 48), vec![7, 9]);
+        assert_eq!(
+            select_job_ids(&huge, &[7, 9, 400], 48),
+            vec![7, 9, 400],
+            "known jobs are fetched even when rclone omitted them from the leftover list"
+        );
+        assert_eq!(
+            select_job_ids(&huge, &[3143, 7], 48),
+            vec![3143, 7],
+            "leftover listed ids must not crowd out jobs we started"
+        );
+        let many_known: Vec<u64> = (1..=60).collect();
+        let capped = select_job_ids(&huge, &many_known, 48);
+        assert_eq!(capped.len(), 48);
+        assert_eq!(capped[0], 1);
+        assert_eq!(capped[47], 48);
+        let mut meta = HashMap::new();
+        meta.insert(400, JobMeta::default());
+        meta.insert(9, JobMeta::default());
+        meta.insert(7, JobMeta::default());
+        assert_eq!(
+            known_job_ids(
+                &[started_operation_job(
+                    3143,
+                    "copy",
+                    "testdrive",
+                    "default",
+                    "filemanager",
+                    "testdrive:Photos/README.txt",
+                    "testdrive:README.txt",
+                )],
+                &meta
+            ),
+            vec![3143, 400, 9, 7]
+        );
     }
 
     #[test]
     fn job_meta_assigns_execute_id_and_session_flags() {
-        let meta = job_meta_for("drive", &ProfileConfig::default(), "dashboard", "local", "");
+        let meta = job_meta_for(
+            "drive",
+            &ProfileConfig::default(),
+            "dashboard",
+            "local",
+            "",
+            "sync",
+        );
+        assert_eq!(meta.operation, "sync");
         assert!(!meta.execute_id.is_empty());
         assert_eq!(meta.origin, "dashboard");
         let mut rclone = json!({});
@@ -2706,9 +4453,12 @@ mod tests {
                 ..Default::default()
             },
         );
-        let mut job = running_job(9, "", "sync", "default");
+        let mut job = running_job(9, "", "job/9", "default");
         apply_job_meta(&mut job, map.get(&9));
         assert_eq!(job.origin, "flow");
+        map.get_mut(&9).unwrap().operation = "sync".into();
+        apply_job_meta(&mut job, map.get(&9));
+        assert_eq!(job.operation, "sync");
         assert!(is_overview_job(&job));
         remember_grouped(
             &mut map,
@@ -2738,6 +4488,30 @@ mod tests {
         let jobs = vec![resolve];
         assert!(find_resolve_job(&jobs, &map, "photo.jpg").is_some());
         assert!(find_resolve_job(&jobs, &map, "other.jpg").is_none());
+        map.insert(
+            22,
+            JobMeta {
+                origin: "transfer-resolve".into(),
+                target: "bad.txt".into(),
+                ..Default::default()
+            },
+        );
+        let mut retry = running_job(22, "testdrive", "copy", "default");
+        retry.origin = "transfer-resolve".into();
+        retry.src = "testdrive:Photos/bad.txt".into();
+        assert!(find_resolve_job(&[retry], &map, "bad.txt").is_some());
+        let mut noise = running_job(99, "", "job/99", "");
+        noise.src.clear();
+        noise.dst.clear();
+        noise.remote.clear();
+        noise.origin = "dashboard".into();
+        assert!(!should_toast_job_failure(&noise));
+        assert!(should_toast_job_failure(&running_job(
+            1,
+            "testdrive",
+            "copy",
+            "default"
+        )));
         assert!(path_has_leaf("drive:album/photo.jpg", "photo.jpg"));
         assert!(!path_has_leaf("drive:album/photo.jpg", "album"));
     }
@@ -2772,7 +4546,43 @@ mod tests {
     fn bandwidth_off_aliases() {
         assert_eq!(normalize_bandwidth(""), "off");
         assert_eq!(normalize_bandwidth("OFF"), "off");
+        assert_eq!(normalize_bandwidth("off:off"), "off");
         assert_eq!(normalize_bandwidth("10M"), "10M");
+        assert_eq!(validated_bandwidth_limit("off").unwrap(), "off");
+        assert_eq!(validated_bandwidth_limit("2M").unwrap(), "2M");
+        assert!(validated_bandwidth_limit("xyz").is_err());
+        assert_eq!(bandwidth_entry_state("10M", "10M"), (true, false));
+        assert_eq!(bandwidth_entry_state("10M", "2M"), (true, true));
+        assert_eq!(bandwidth_entry_state("10M", "xyz"), (false, false));
+        assert_eq!(bandwidth_entry_state("10M", "off"), (true, true));
+        assert_eq!(bandwidth_entry_state("", "off"), (true, false));
+        assert_eq!(bandwidth_entry_state("10M", ""), (true, true));
+        assert_eq!(bandwidth_draft_text(Some("xyz"), "10M"), "xyz");
+        assert_eq!(bandwidth_draft_text(None, "10M"), "10M");
+        assert!(bandwidth_preset_is_active("10M:50M", "10M:50M"));
+        assert!(bandwidth_preset_is_active("", "off"));
+        assert!(!bandwidth_preset_is_active("10M", "50M"));
+        assert_eq!(format_bandwidth_rate(1024), "1.0 KiB/s");
+        assert_eq!(
+            bandwidth_rate_display("off", "Unlimited (Off)"),
+            "Unlimited (Off)"
+        );
+        assert_eq!(
+            bandwidth_rate_display("10M:50M", "Unlimited (Off)"),
+            "10M:50M"
+        );
+        let limited = BwLimitStatus {
+            rate: "10M:50M".into(),
+            bytes_per_sec: 60,
+            bytes_per_sec_tx: 10,
+            bytes_per_sec_rx: 50,
+        };
+        assert!(bandwidth_shows_details(&limited));
+        assert_eq!(
+            bandwidth_details(&limited)[0],
+            ("generalOverview.bandwidth.upload", "Upload:", 10)
+        );
+        assert!(!bandwidth_shows_details(&BwLimitStatus::default()));
     }
 
     #[test]
@@ -2842,6 +4652,26 @@ mod tests {
         assert!(job_operation_matches("rc/copy", OperationType::Copy));
         assert!(!job_operation_matches("job/1", OperationType::Sync));
         assert_eq!(
+            job_detail_path_title_key("copy", false),
+            "fileBrowser.operations.details.source"
+        );
+        assert_eq!(
+            job_detail_path_title_key("copy", true),
+            "fileBrowser.operations.details.destination"
+        );
+        assert_eq!(
+            job_detail_path_title_key("mount", true),
+            "modals.jobDetail.fields.mountPoint"
+        );
+        assert_eq!(
+            job_detail_path_title_key("mount/mount", true),
+            "modals.jobDetail.fields.mountPoint"
+        );
+        assert_eq!(
+            job_detail_remote_title_key(),
+            "modals.jobDetail.fields.remoteSource"
+        );
+        assert_eq!(
             action_busy_key("drive", "sync", "nightly"),
             "drive|sync|nightly"
         );
@@ -2888,12 +4718,64 @@ mod tests {
             Some(1)
         );
         assert!(find_active_job(&jobs, "drive", OperationType::Sync, "missing").is_none());
-        let mounts = vec![MountedRemote {
-            fs: "drive:photos".into(),
-            mount_point: "/mnt/drive".into(),
-        }];
+        let mounts = vec![MountedRemote::new("drive:photos", "/mnt/drive")];
         assert!(find_active_mount(&mounts, "drive").is_some());
         assert!(find_active_mount(&mounts, "dropbox").is_none());
+        let alias_mounts = vec![MountedRemote::new(
+            "/tmp/rclone-test-remote",
+            "/home/ubuntu/rclone-manager/testdrive",
+        )];
+        assert!(find_active_mount(&alias_mounts, "testdrive").is_some());
+        assert!(
+            find_active_mount_for(&alias_mounts, "testdrive", "/tmp/rclone-test-remote").is_some()
+        );
+        assert!(find_active_mount(&alias_mounts, "dummyexport").is_none());
+        let default_point = vec![MountedRemote::new(
+            "/tmp/rclone-test-remote",
+            "/tmp/rclone-testdrive-mnt",
+        )];
+        assert!(find_active_mount(&default_point, "testdrive").is_none());
+        assert!(
+            find_active_mount_for(&default_point, "testdrive", "/tmp/rclone-test-remote").is_some()
+        );
+        assert_eq!(
+            resolve_unmount_point_in(
+                &default_point,
+                "testdrive",
+                "/tmp/rclone-test-remote",
+                &[],
+                &[]
+            )
+            .as_deref(),
+            Some("/tmp/rclone-testdrive-mnt")
+        );
+        assert_eq!(
+            resolve_unmount_point_in(
+                &[],
+                "testdrive",
+                "/tmp/rclone-test-remote",
+                &["/tmp/rclone-testdrive-mnt".into()],
+                &default_point
+            )
+            .as_deref(),
+            Some("/tmp/rclone-testdrive-mnt")
+        );
+        assert!(resolve_unmount_point_in(
+            &[],
+            "testdrive",
+            "",
+            &["/tmp/rclone-testdrive-mnt".into()],
+            &[]
+        )
+        .is_none());
+        let profile = ProfileConfig {
+            name: "default".into(),
+            rclone: json!({ "mountPoint": "/tmp/rclone-testdrive-mnt" }),
+            ..ProfileConfig::default()
+        };
+        assert!(mount_unmount_fallbacks("testdrive", Some(&profile))
+            .iter()
+            .any(|point| point == "/tmp/rclone-testdrive-mnt"));
         let serves = vec![ServeItem {
             id: "abc".into(),
             addr: "127.0.0.1:8080".into(),
@@ -2931,10 +4813,19 @@ mod tests {
             "drive",
             "nightly",
             Some(OperationType::Sync),
+            "",
         );
         assert!(usage.blocked());
         assert_eq!(usage.jobs, 1);
-        let idle = profile_usage(&[], &[], &[], "drive", "default", Some(OperationType::Sync));
+        let idle = profile_usage(
+            &[],
+            &[],
+            &[],
+            "drive",
+            "default",
+            Some(OperationType::Sync),
+            "",
+        );
         assert!(!idle.blocked());
     }
 
@@ -3119,6 +5010,32 @@ mod tests {
     }
 
     #[test]
+    fn jobs_from_transfer_start_use_snapshot_paths() {
+        let jobs = jobs_from_transfer_start(
+            &[7, 8],
+            "copy",
+            "testdrive",
+            "filemanager",
+            "filemanager/abc",
+            &json!([
+                { "src": "testdrive:Photos", "dst": "testdrive:verify/Photos" },
+                { "src": "testdrive:a.txt", "dst": "testdrive:verify/a.txt" }
+            ]),
+        );
+        assert_eq!(jobs.len(), 2);
+        assert_eq!(jobs[0].id, 7);
+        assert_eq!(jobs[0].src, "testdrive:Photos");
+        assert_eq!(jobs[0].dst, "testdrive:verify/Photos");
+        assert_eq!(jobs[0].group, "filemanager/abc");
+        assert_eq!(jobs[0].origin, "filemanager");
+        assert_eq!(jobs[0].status, "starting");
+        assert_eq!(jobs[1].src, "testdrive:a.txt");
+        assert!(
+            jobs_from_transfer_start(&[1], "copy", "x", "filemanager", "", &json!([])).len() == 1
+        );
+    }
+
+    #[test]
     fn formats_elapsed_and_eta_seconds() {
         assert_eq!(format_seconds(0.0), "—");
         assert_eq!(format_seconds(-1.0), "—");
@@ -3167,8 +5084,8 @@ mod tests {
         let skipped = merge_preparing_jobs(vec![live_group], &[grouped]);
         assert_eq!(skipped.len(), 1);
         let dropped = finalize_dropped_job(&preparing);
-        assert_eq!(dropped.status, "failed");
-        assert!(dropped.error.is_some());
+        assert_eq!(dropped.status, "completed");
+        assert!(dropped.error.is_none());
         let from_stats = job_from_status(
             4,
             &json!({ "finished": false, "success": false, "output": { "operation": "upload" } }),
@@ -3239,6 +5156,7 @@ mod tests {
             dst_fs: "testdrive:".into(),
             dst: "e.txt".into(),
             cut: false,
+            is_dir: false,
         }];
         let snapshot = transfer_snapshot_from_items(&items);
         let row = crate::transfers::parse_transfer_row(&snapshot[0]);
@@ -3293,6 +5211,75 @@ mod tests {
         );
         assert_eq!(serves[0].profile, "web");
         assert_eq!(serves[1].profile, "public");
+    }
+
+    #[test]
+    fn renames_mount_profiles_for_remote() {
+        let mut mounts = vec![
+            MountedRemote {
+                fs: "drive:".into(),
+                mount_point: "/mnt/drive".into(),
+                profile: "home".into(),
+                ..MountedRemote::default()
+            },
+            MountedRemote {
+                fs: "box:".into(),
+                mount_point: "/mnt/box".into(),
+                profile: "home".into(),
+                ..MountedRemote::default()
+            },
+        ];
+        assert_eq!(
+            rename_mounts_profile(&mut mounts, "drive", "home", "desk"),
+            1
+        );
+        assert_eq!(mounts[0].profile, "desk");
+        assert_eq!(mounts[1].profile, "home");
+        assert_eq!(
+            rename_mounts_profile(&mut mounts, "drive", "home", "desk"),
+            0
+        );
+        let busy = ProfileUsage {
+            jobs: 1,
+            ..ProfileUsage::default()
+        };
+        assert!(profile_rename_blocked(Some(OperationType::Copy), &busy));
+        assert!(!profile_rename_blocked(Some(OperationType::Mount), &busy));
+        assert!(!profile_rename_blocked(None, &busy));
+        assert!(!profile_rename_blocked(
+            Some(OperationType::Copy),
+            &ProfileUsage::default()
+        ));
+        assert_eq!(activity_visible_end(13, 12), 12);
+        assert_eq!(activity_remaining(13, 12), 1);
+        assert_eq!(activity_remaining(12, 50), 0);
+        assert_eq!(activity_visible_end(80, ACTIVITY_PAGE), 50);
+        let alias_mounts = [MountedRemote {
+            fs: "/tmp/rclone-test-remote".into(),
+            mount_point: "/tmp/rclone-testdrive-mnt".into(),
+            profile: "default".into(),
+            ..MountedRemote::default()
+        }];
+        assert!(profile_usage(
+            &[],
+            &alias_mounts,
+            &[],
+            "testdrive",
+            "default",
+            Some(OperationType::Mount),
+            "/tmp/rclone-test-remote",
+        )
+        .blocked());
+        assert!(!profile_usage(
+            &[],
+            &alias_mounts,
+            &[],
+            "testdrive",
+            "default",
+            Some(OperationType::Mount),
+            "",
+        )
+        .blocked());
     }
 
     #[test]
@@ -3351,6 +5338,21 @@ mod tests {
         );
         assert!(active_open_paths(OperationType::Sync, "", "—", None).is_empty());
         assert_eq!(
+            active_open_paths(OperationType::Copy, "drive:a, drive:b", "box:out", None),
+            vec![
+                "drive:a".to_string(),
+                "drive:b".to_string(),
+                "box:out".to_string()
+            ]
+        );
+        let mut opening = std::collections::HashSet::new();
+        assert!(begin_folder_open(&mut opening, "testdrive"));
+        assert!(is_folder_opening(&opening, "testdrive"));
+        assert!(!begin_folder_open(&mut opening, "testdrive"));
+        end_folder_open(&mut opening, "testdrive");
+        assert!(!is_folder_opening(&opening, "testdrive"));
+        assert!(!begin_folder_open(&mut opening, ""));
+        assert_eq!(
             split_job_paths("drive:a, drive:b, /tmp/out"),
             vec!["drive:a", "drive:b", "/tmp/out"]
         );
@@ -3377,6 +5379,53 @@ mod tests {
     }
 
     #[test]
+    fn fs_and_activity_counts_match_remote() {
+        assert!(fs_belongs_to_remote("drive:", "drive"));
+        assert!(fs_belongs_to_remote("drive:Photos", "drive"));
+        assert!(fs_belongs_to_remote("drive", "drive"));
+        assert!(!fs_belongs_to_remote("other:", "drive"));
+        let mounts = vec![
+            crate::rclone::MountedRemote::new("drive:", "/mnt/a"),
+            crate::rclone::MountedRemote::new("drive:share", "/mnt/b"),
+        ];
+        let serves = vec![crate::rclone::ServeItem {
+            id: "1".into(),
+            addr: "127.0.0.1:8080".into(),
+            fs: "drive:web".into(),
+            serve_type: "http".into(),
+            origin: "dashboard".into(),
+            profile: "web".into(),
+            option_count: 0,
+        }];
+        let jobs = vec![running_job(1, "drive", "copy", "nightly")];
+        assert_eq!(
+            remote_activity_counts("drive", &mounts, &serves, &jobs),
+            (2, 1, 1)
+        );
+        assert_eq!(
+            remote_activity_counts("other", &mounts, &serves, &jobs),
+            (0, 0, 0)
+        );
+        let mut home = crate::rclone::MountedRemote::new("drive:", "/mnt/a");
+        home.profile = "home".into();
+        let unnamed = crate::rclone::MountedRemote::new("drive:share", "/mnt/b");
+        let act = remote_activity("drive", &[home, unnamed], &serves, &jobs);
+        assert_eq!(act.mount_profiles, vec!["home", "default"]);
+        assert_eq!(act.serve_labels, vec!["web"]);
+        assert_eq!(
+            act.serve_first
+                .as_ref()
+                .map(|(p, t, a)| (p.as_str(), t.as_str(), a.as_str())),
+            Some(("web", "http", "127.0.0.1:8080"))
+        );
+        assert_eq!(act.jobs, 1);
+        assert_eq!(
+            remote_activity("other", &mounts, &serves, &jobs),
+            RemoteActivity::default()
+        );
+    }
+
+    #[test]
     fn origin_filter_matches_angular_chips() {
         assert!(origin_matches("quickrun", "all"));
         assert!(origin_matches("flow", "quickrun"));
@@ -3388,6 +5437,13 @@ mod tests {
         assert!(origin_matches("automation", "automation"));
         assert_eq!(automation_origin("quick:abc"), "quickrun");
         assert_eq!(automation_origin("remote:drive:sync:default"), "dashboard");
+        assert!(automation_matches_filter("quick:abc", "automation"));
+        assert!(automation_matches_filter(
+            "remote:drive:sync:default",
+            "all"
+        ));
+        assert!(automation_matches_filter("quick:abc", "quickrun"));
+        assert!(!automation_matches_filter("quick:abc", "dashboard"));
     }
 
     #[test]
@@ -3530,7 +5586,7 @@ mod tests {
             "completed"
         );
         assert!(find_job_by_id(&[], &history, 99).is_none());
-        let merged = merge_overview_jobs(&[live.clone()], &history, "drive", None);
+        let merged = merge_overview_jobs(&[live.clone()], &history, "drive", None, None);
         assert_eq!(
             merged.iter().map(|job| job.id).collect::<Vec<_>>(),
             vec![1, 2]
@@ -3541,11 +5597,94 @@ mod tests {
             .unwrap()
             .with_timezone(&Utc);
         let history = vec![finished.clone(), other, child, weekly];
-        let nightly = merge_overview_jobs(&[live.clone()], &history, "drive", Some("nightly"));
+        let nightly =
+            merge_overview_jobs(&[live.clone()], &history, "drive", Some("nightly"), None);
+        let sync_only = merge_overview_jobs(
+            &[live.clone()],
+            &history,
+            "drive",
+            None,
+            Some(OperationType::Sync),
+        );
+        assert_eq!(
+            sync_only.iter().map(|job| job.id).collect::<Vec<_>>(),
+            vec![1, 5]
+        );
+        assert!(!sync_only.iter().any(|job| job.id == 2));
+        let check_only = merge_overview_jobs(
+            &[live.clone()],
+            &history,
+            "drive",
+            Some("default"),
+            Some(OperationType::Check),
+        );
+        assert!(check_only.is_empty());
         assert_eq!(
             nightly.iter().map(|job| job.id).collect::<Vec<_>>(),
             vec![1, 2]
         );
+        let mut leftover = running_job(42424, "testdrive", "copy", "");
+        leftover.status = "completed".into();
+        leftover.start_time = DateTime::parse_from_rfc3339("2026-08-26T21:00:00Z")
+            .unwrap()
+            .with_timezone(&Utc);
+        leftover.completed = json!([{ "name": "ok.txt" }, { "name": "bad.txt" }]);
+        let mut live_copy = running_job(24749, "testdrive", "job/24749", "gui-copy-test");
+        live_copy.start_time = DateTime::parse_from_rfc3339("2026-08-27T21:22:00Z")
+            .unwrap()
+            .with_timezone(&Utc);
+        live_copy.transferring = json!([{ "name": "blob.bin", "speed": 2_097_152.0 }]);
+        assert!(is_opaque_job_operation(&live_copy.operation));
+        assert!(!job_operation_matches(
+            &live_copy.operation,
+            OperationType::Copy
+        ));
+        let merged_copies = merge_overview_jobs(
+            &[live_copy.clone()],
+            &[leftover.clone()],
+            "testdrive",
+            Some("gui-copy-test"),
+            Some(OperationType::Copy),
+        );
+        assert_eq!(
+            merged_copies.iter().map(|job| job.id).collect::<Vec<_>>(),
+            vec![24749, 42424]
+        );
+        let mut empty_newer = running_job(16996, "testdrive", "job/16996", "gui-copy-test");
+        empty_newer.status = "completed".into();
+        empty_newer.start_time = DateTime::parse_from_rfc3339("2026-08-27T22:05:03Z")
+            .unwrap()
+            .with_timezone(&Utc);
+        let latest = latest_overview_job(
+            &[live_copy.clone()],
+            &[leftover.clone(), empty_newer.clone()],
+            "testdrive",
+            Some("gui-copy-test"),
+            Some(OperationType::Copy),
+        )
+        .unwrap();
+        assert_eq!(latest.id, 24749);
+        assert_eq!(latest.transferring[0]["name"], "blob.bin");
+        assert!(latest.completed.as_array().unwrap().is_empty());
+        let mut done_copy = live_copy;
+        done_copy.status = "completed".into();
+        done_copy.transferring = json!([]);
+        done_copy.completed = json!([{ "name": "blob.bin" }]);
+        let idle = latest_overview_job(
+            &[],
+            &[leftover, done_copy, empty_newer],
+            "testdrive",
+            Some("gui-copy-test"),
+            Some(OperationType::Copy),
+        )
+        .unwrap();
+        assert_eq!(idle.id, 24749);
+        assert_eq!(idle.completed[0]["name"], "blob.bin");
+        let mut duped = idle.clone();
+        duped.stats = json!({ "completed": [{ "name": "blob.bin" }, { "name": "ghost.txt" }] });
+        let items = job_completed_items(&duped).unwrap();
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0]["name"], "blob.bin");
         let siblings = merge_job_lists(&[live.clone()], &history);
         assert_eq!(siblings.len(), 5);
         assert!(!nightly.iter().any(|job| job.id == 5));
@@ -3580,6 +5719,47 @@ mod tests {
         assert_eq!(restored.completed[0]["percentage"], 100);
         assert_eq!(format_job_speed(0.0), "—");
         assert!(format_job_speed(1024.0).contains("KiB"));
+        let mut preview = restored.clone();
+        preview.stats = json!({ "speed": 2048.0, "eta": 90.0 });
+        preview.transferring = json!([{ "name": "a.bin", "percentage": 40, "speed": 1024.0 }]);
+        let (speed, eta) = job_speed_eta(&preview);
+        assert!(speed.contains("KiB"));
+        assert!(eta.contains("1m"));
+        let previews = job_transfer_previews(&preview, 4);
+        assert_eq!(previews[0].0, "a.bin");
+        assert!(previews[0].1.contains("40%"));
+        preview.error = Some("  network timeout  ".into());
+        preview.completed = json!([
+            { "name": "ok.txt" },
+            { "name": "bad.txt", "error": "permission denied" }
+        ]);
+        assert_eq!(job_error_text(&preview).as_deref(), Some("network timeout"));
+        assert_eq!(
+            job_failed_transfers(&preview, 8),
+            vec![("bad.txt".into(), "permission denied".into())]
+        );
+        preview.completed = json!([
+            { "name": "ok.txt", "size": 2048 },
+            { "name": "bad.txt", "error": "permission denied" }
+        ]);
+        let completed = job_completed_previews(&preview, 8);
+        assert_eq!(completed.len(), 2);
+        assert_eq!(completed[0].name, "ok.txt");
+        assert!(!completed[0].failed);
+        assert!(completed[0].detail.contains("KiB") || completed[0].detail.contains("2"));
+        assert_eq!(completed[1].name, "bad.txt");
+        assert!(completed[1].failed);
+        assert_eq!(completed[1].detail, "permission denied");
+        assert_eq!(
+            job_transferred_label_key("copy"),
+            "fileBrowser.operations.details.copiedFiles"
+        );
+        assert_eq!(
+            job_transferred_label_key("DELETE"),
+            "fileBrowser.operations.details.deletedFiles"
+        );
+        assert!(is_delete_like_operation("cleanup"));
+        assert!(!is_delete_like_operation("copy"));
         assert!((restored.progress - 1.0).abs() < f64::EPSILON);
         assert!(!has_known_start_time(&restored));
         let combined = history_with_meta(&history, &meta);
@@ -3610,6 +5790,475 @@ mod tests {
         assert_eq!(
             job_origin_key("filemanager"),
             "generalOverview.jobs.originFiles"
+        );
+        assert_eq!(job_stopped_toast_key(), "backendSuccess.job.stopped");
+        assert_eq!(
+            job_stop_failed_toast_key(),
+            "backendErrors.job.executionFailed"
+        );
+        assert_eq!(job_deleted_toast_key(), "backendSuccess.job.deleted");
+        let missing = start_failed_error(OperationType::Sync, "testdrive", "source path required");
+        assert!(missing.contains("operations.failedStart"));
+        assert!(missing.contains("testdrive"));
+        assert_eq!(
+            crate::i18n::I18n::default().translate_backend(&missing),
+            "Failed to start Sync for testdrive: source path required"
+        );
+        let idle = crate::i18n::localized_message("mount.notMounted", &[]);
+        assert_eq!(
+            crate::i18n::I18n::default().translate_backend(&idle),
+            "Not Mounted"
+        );
+    }
+
+    #[test]
+    fn terminal_jobs_refresh_listing_parents() {
+        let running = running_job(9, "testdrive", "copy", "default");
+        let mut done = running.clone();
+        done.status = "completed".into();
+        done.src = "testdrive:Photos/README.md".into();
+        done.dst = "testdrive:verify-ops/README.md".into();
+        assert!(terminal_job_transitions(&[], &[done.clone()]).is_empty());
+        let finished = terminal_job_transitions(&[running], &[done.clone()]);
+        assert_eq!(finished.len(), 1);
+        assert_eq!(finished[0].id, 9);
+        let affected = job_affected_listings(&done);
+        assert!(listing_is_affected("testdrive", "Photos", &affected));
+        assert!(listing_is_affected("testdrive", "verify-ops", &affected));
+        assert!(!listing_is_affected("testdrive", "other", &affected));
+        let open = vec![
+            ("testdrive".into(), "other".into()),
+            ("testdrive".into(), "verify-ops".into()),
+            ("testdrive".into(), "Photos".into()),
+        ];
+        assert_eq!(open_listings_needing_refresh(&open, &affected), vec![1, 2]);
+        let upload = JobInfo {
+            src: "/tmp/rclone-upload-undo.txt".into(),
+            dst: "testdrive:Photos/rclone-upload-undo.txt".into(),
+            remote: "testdrive".into(),
+            status: "completed".into(),
+            ..running_job(10, "testdrive", "upload", "default")
+        };
+        let upload_affected = job_affected_listings(&upload);
+        assert!(listing_is_affected("local", "/tmp", &upload_affected));
+        assert!(listing_is_affected("testdrive", "Photos", &upload_affected));
+        assert_eq!(ops_panel_signature(&[done.clone()], &[]), "9:completed");
+        assert!(is_terminal_job_status("Failed"));
+        assert!(!is_terminal_job_status("running"));
+    }
+
+    #[test]
+    fn job_panel_row_matches_angular_rules() {
+        let now = Utc::now();
+        let mut copy = running_job(12, "testdrive", "copy", "gui-copy-test");
+        copy.stats = json!({ "bytes": 512, "totalBytes": 1024 });
+        copy.dry_run = true;
+        copy.start_time = now - chrono::TimeDelta::minutes(3);
+        let row = job_panel_row(&copy, now);
+        assert_eq!(row.id_label, "#12");
+        assert_eq!(row.profile, "gui-copy-test");
+        assert_eq!(row.progress_pct, Some(50));
+        assert_eq!(row.bytes, 512);
+        assert_eq!(row.total_bytes, 1024);
+        assert!(row.dry_run);
+        assert!(row.can_stop);
+        assert!(row.has_footer);
+        assert_eq!(
+            row.relative,
+            Some(("shared.transferActivity.time.minutesAgo", 3))
+        );
+
+        let mut mount = running_job(3, "testdrive", "mount", "default");
+        mount.stats = json!({ "bytes": 10, "totalBytes": 100 });
+        assert!(job_panel_row(&mount, now).progress_pct.is_none());
+
+        let mut done = running_job(4, "testdrive", "sync", "default");
+        done.status = "completed".into();
+        done.stats = json!({});
+        done.duration = 12.0;
+        done.start_time = chrono::DateTime::<Utc>::from_timestamp(0, 0).unwrap_or_default();
+        let idle = job_panel_row(&done, now);
+        assert!(idle.progress_pct.is_none());
+        assert!(!idle.can_stop);
+        assert_eq!(idle.duration_secs, 12);
+        assert!(idle.relative.is_none());
+        assert!(idle.has_footer);
+    }
+
+    #[test]
+    fn quick_run_card_badges_and_openable_folders() {
+        let mut qr = QuickRun::new("Nightly".into(), OperationType::Copy, "testdrive".into());
+        qr.config.rclone = json!({
+            "srcFs": "testdrive:Photos",
+            "dstFs": "testdrive:verify-qr"
+        });
+        qr.config.app.cron_enabled = true;
+        qr.config.app.cron_expression = "0 7 * * *".into();
+        qr.config.app.watch_enabled = true;
+        qr.config.app.watch_changed_only = true;
+        qr.config.app.auto_start = true;
+        let badges = quick_run_card_badges(&qr);
+        assert!(badges.cron);
+        assert_eq!(badges.cron_expression, "0 7 * * *");
+        assert!(badges.watcher);
+        assert!(badges.watcher_changed_only);
+        assert!(badges.autostart);
+        assert_eq!(
+            quick_run_openable_folders(&qr),
+            vec![
+                QuickRunFolder {
+                    kind: "source",
+                    path: "testdrive:Photos".into()
+                },
+                QuickRunFolder {
+                    kind: "destination",
+                    path: "testdrive:verify-qr".into()
+                }
+            ]
+        );
+        qr.config.app.cron_enabled = true;
+        qr.config.app.cron_expression.clear();
+        assert!(!quick_run_card_badges(&qr).cron);
+        qr.config.rclone = json!({});
+        assert!(quick_run_openable_folders(&qr).is_empty());
+    }
+
+    #[test]
+    fn chip_action_profile_prefers_running_job() {
+        let running = running_job(1, "drive", "copy", "nightly");
+        assert_eq!(
+            chip_action_profile(
+                "drive",
+                OperationType::Copy,
+                &["gui-copy-test".into(), "nightly".into()],
+                &[running]
+            ),
+            "nightly"
+        );
+        assert_eq!(
+            chip_action_profile("drive", OperationType::Copy, &["gui-copy-test".into()], &[]),
+            "gui-copy-test"
+        );
+        assert_eq!(
+            chip_action_profile("drive", OperationType::Sync, &[], &[]),
+            "default"
+        );
+    }
+
+    #[test]
+    fn profile_pill_status_matches_angular() {
+        assert_eq!(
+            profile_pill_status(true, true, "0 7 * * *", true),
+            ProfilePillStatus::Running
+        );
+        assert_eq!(
+            profile_pill_status(false, true, "0 7 * * *", false),
+            ProfilePillStatus::Scheduled
+        );
+        assert_eq!(
+            profile_pill_status(false, false, "", true),
+            ProfilePillStatus::Scheduled
+        );
+        assert_eq!(
+            profile_pill_status(false, true, "", false),
+            ProfilePillStatus::Idle
+        );
+        assert_eq!(
+            profile_pill_status(false, false, "", false),
+            ProfilePillStatus::Idle
+        );
+        assert!(profile_pill_has_watcher(false, "", true));
+        assert!(!profile_pill_has_watcher(true, "0 7 * * *", true));
+        assert!(!profile_pill_has_watcher(true, "0 7 * * *", false));
+    }
+
+    fn sample_job(id: u64, src: &str, dst: &str) -> JobInfo {
+        JobInfo {
+            id,
+            operation: "copy".into(),
+            remote: "testdrive".into(),
+            profile: "default".into(),
+            status: "completed".into(),
+            origin: "quick-run".into(),
+            start_time: Utc::now(),
+            error: None,
+            dry_run: false,
+            src: src.into(),
+            dst: dst.into(),
+            group: format!("job/{id}"),
+            stats: json!({}),
+            transferring: json!([]),
+            duration: 1.0,
+            progress: 1.0,
+            output: json!({}),
+            completed: json!([]),
+            parent_job_id: None,
+        }
+    }
+
+    #[test]
+    fn scopes_completed_transfers_to_the_open_job() {
+        let mut job = sample_job(22718, "testdrive:Photos", "testdrive:verify-qr");
+        job.completed = json!([
+            {
+                "name": "README.txt",
+                "srcFs": "testdrive:Photos",
+                "dstFs": "testdrive:verify-qr"
+            },
+            {
+                "name": "other.jpg",
+                "srcFs": "testdrive:",
+                "dstFs": "testdrive:verify-copy-to"
+            },
+            { "name": "stale", "group": "job/14781" }
+        ]);
+        scope_job_transfers(&mut job);
+        let names: Vec<_> = job
+            .completed
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter_map(|item| item.get("name").and_then(|v| v.as_str()))
+            .collect();
+        assert_eq!(names, vec!["README.txt"]);
+    }
+
+    #[test]
+    fn finished_detail_job_keeps_richer_stored_transfers() {
+        let mut rc = sample_job(42424, "testdrive:Photos", "testdrive:verify-ops");
+        rc.status = "failed".into();
+        rc.completed = json!([{ "name": "testdrive:Photos", "srcFs": "testdrive:Photos" }]);
+        let mut stored = rc.clone();
+        stored.completed = json!([
+            { "name": "ok.txt", "bytes": 3, "size": 3, "percentage": 100 },
+            { "name": "bad.txt", "error": "permission denied", "size": 8 }
+        ]);
+        let resolved = resolve_detail_job(Some(rc), Some(stored)).unwrap();
+        assert_eq!(resolved.completed.as_array().unwrap().len(), 2);
+        assert_eq!(resolved.completed[0]["name"], "ok.txt");
+        assert_eq!(resolved.completed[1]["name"], "bad.txt");
+        let mut running = sample_job(9, "testdrive:Photos", "testdrive:verify-ops");
+        running.status = "running".into();
+        running.completed = json!([{ "name": "ok.txt" }]);
+        let mut older = running.clone();
+        older.completed = json!([
+            { "name": "ok.txt" },
+            { "name": "stale.txt" }
+        ]);
+        let live = resolve_detail_job(Some(running), Some(older)).unwrap();
+        assert_eq!(live.completed.as_array().unwrap().len(), 1);
+        assert_eq!(live.completed[0]["name"], "ok.txt");
+        let mut snap = sample_job(42424, "testdrive:Photos", "testdrive:verify-ops");
+        snap.status = "failed".into();
+        snap.completed = json!([{ "name": "testdrive:Photos", "srcFs": "testdrive:Photos" }]);
+        let mut history = snap.clone();
+        history.completed = json!([
+            { "name": "ok.txt", "bytes": 3, "size": 3, "percentage": 100 },
+            { "name": "bad.txt", "error": "permission denied", "size": 8 }
+        ]);
+        let stored = find_stored_job(&[snap], &[history], &Default::default(), 42424).unwrap();
+        assert_eq!(stored.completed.as_array().unwrap().len(), 2);
+        assert_eq!(stored.completed[0]["name"], "ok.txt");
+        let mut decorated = stored.clone();
+        decorate_job_transfers(&mut decorated, &Default::default(), &[]);
+        assert_eq!(decorated.completed.as_array().unwrap().len(), 2);
+        assert_eq!(decorated.completed[0]["name"], "ok.txt");
+        assert_eq!(decorated.completed[1]["name"], "bad.txt");
+    }
+
+    #[test]
+    fn job_from_status_drops_global_stats_from_another_job() {
+        let status = json!({
+            "finished": true,
+            "success": true,
+            "group": "job/22718",
+            "output": { "operation": "copy", "srcFs": "testdrive:Photos", "dstFs": "testdrive:verify-qr" }
+        });
+        let stats = json!({
+            "completed": [
+                { "name": "README.txt", "srcFs": "testdrive:Photos", "dstFs": "testdrive:verify-qr" },
+                { "name": "leaked.jpg", "srcFs": "testdrive:", "dstFs": "testdrive:other", "jobid": 14781 }
+            ]
+        });
+        let job = job_from_status(22718, &status, Some(&stats));
+        assert_eq!(job.completed.as_array().unwrap().len(), 1);
+        assert_eq!(job.completed[0]["name"], "README.txt");
+    }
+
+    #[test]
+    fn find_quick_run_job_prefers_live_then_last_id() {
+        let mut qr = crate::store::QuickRun::new(
+            "gui-qr-copy".into(),
+            OperationType::Copy,
+            "testdrive".into(),
+        );
+        qr.last_job_id = Some(22718);
+        qr.config.rclone = json!({ "srcFs": "testdrive:Photos", "dstFs": "testdrive:verify-qr" });
+        let mut live = sample_job(9, "testdrive:Photos", "testdrive:verify-qr");
+        live.status = "running".into();
+        let history = vec![sample_job(22718, "testdrive:Photos", "testdrive:verify-qr")];
+        let found = find_quick_run_job(&[live], &history, &qr).unwrap();
+        assert_eq!(found.id, 9);
+        let found = find_quick_run_job(&[], &history, &qr).unwrap();
+        assert_eq!(found.id, 22718);
+    }
+
+    #[test]
+    fn operation_control_paths_prefer_live_job_and_hide_delete_dest() {
+        let configured = operation_control_paths(
+            OperationType::Copy,
+            Some("testdrive:Photos".into()),
+            Some("testdrive:verify-qr".into()),
+            None,
+            None,
+        );
+        assert_eq!(configured.source.as_deref(), Some("testdrive:Photos"));
+        assert_eq!(
+            configured.destination.as_deref(),
+            Some("testdrive:verify-qr")
+        );
+        assert!(!configured.hide_destination);
+        assert!(configured.dest_browseable);
+
+        let live = sample_job(9, "testdrive:live-src", "testdrive:live-dst");
+        let from_job = operation_control_paths(
+            OperationType::Copy,
+            Some("testdrive:Photos".into()),
+            Some("testdrive:verify-qr".into()),
+            Some(&live),
+            None,
+        );
+        assert_eq!(from_job.source.as_deref(), Some("testdrive:live-src"));
+        assert_eq!(from_job.destination.as_deref(), Some("testdrive:live-dst"));
+
+        let delete = operation_control_paths(
+            OperationType::Delete,
+            Some("testdrive:Trash".into()),
+            Some("unused".into()),
+            None,
+            None,
+        );
+        assert!(delete.hide_destination);
+        assert_eq!(delete.source.as_deref(), Some("testdrive:Trash"));
+        assert_eq!(
+            operation_control_subtitle("Copy", true, "Dry run"),
+            "Copy · Dry run"
+        );
+        assert_eq!(operation_control_subtitle("Copy", false, "Dry run"), "Copy");
+        assert!(operation_shows_session_flags(OperationType::Copy));
+        assert!(!operation_shows_session_flags(OperationType::Mount));
+        assert!(operation_shows_mount_usage(
+            OperationType::Mount,
+            true,
+            "/tmp/mnt"
+        ));
+        assert!(!operation_shows_mount_usage(
+            OperationType::Mount,
+            false,
+            "/tmp/mnt"
+        ));
+        assert_eq!(mount_usage_ratio(50, 100), 0.5);
+        assert_eq!(mount_usage_ratio(0, 0), 0.0);
+        assert_eq!(
+            format_mount_usage_subtitle("/tmp/mnt", 1024, 2048, 3072),
+            "/tmp/mnt · 1.0 KiB used / 2.0 KiB free · 3.0 KiB"
+        );
+        assert!(mount_point_usage("/").is_some() || mount_point_usage("/tmp").is_some());
+        let alias_mount =
+            MountedRemote::new("/tmp/rclone-test-remote", "/tmp/rclone-testdrive-mnt");
+        assert_eq!(
+            mount_usage_candidates(
+                std::slice::from_ref(&alias_mount),
+                "testdrive",
+                "/tmp/rclone-test-remote",
+                Some("/mnt/unused")
+            ),
+            vec![("", "/tmp/rclone-testdrive-mnt")]
+        );
+        assert_eq!(
+            mount_usage_candidates(&[], "testdrive", "", Some("/tmp/rclone-testdrive-mnt")),
+            vec![("", "/tmp/rclone-testdrive-mnt")]
+        );
+        assert_eq!(
+            mount_usage_candidates(
+                std::slice::from_ref(&alias_mount),
+                "testdrive",
+                "",
+                Some("/tmp/rclone-testdrive-mnt")
+            ),
+            vec![("", "/tmp/rclone-testdrive-mnt")]
+        );
+        assert!(mount_usage_candidates(&[], "testdrive", "", None).is_empty());
+        assert!(mount_usage_candidates(&[], "testdrive", "", Some("  ")).is_empty());
+        assert_eq!(
+            operation_control_action_kind(OperationType::Mount, false),
+            "mount"
+        );
+        assert_eq!(
+            operation_control_action_kind(OperationType::Copy, true),
+            "stop"
+        );
+
+        let serve = operation_control_configured_paths(
+            OperationType::Serve,
+            &json!({ "type": "webdav", "addr": "127.0.0.1:18080", "srcFs": "testdrive:" }),
+            "testdrive",
+            "Default",
+        );
+        assert_eq!(serve.0.as_deref(), Some("testdrive:"));
+        assert_eq!(serve.1.as_deref(), Some("WEBDAV at 127.0.0.1:18080"));
+        let empty_serve = operation_control_configured_paths(
+            OperationType::Serve,
+            &json!({}),
+            "testdrive",
+            "Default",
+        );
+        assert_eq!(empty_serve.1.as_deref(), Some("HTTP at Default"));
+        let serve_paths = operation_control_paths(
+            OperationType::Serve,
+            empty_serve.0,
+            empty_serve.1,
+            None,
+            None,
+        );
+        assert!(!serve_paths.dest_browseable);
+        assert_eq!(serve_paths.destination.as_deref(), Some("HTTP at Default"));
+
+        let saf = operation_control_configured_paths(
+            OperationType::Mount,
+            &json!({ "mountType": "saf", "srcFs": "phone:" }),
+            "phone",
+            "Default",
+        );
+        assert_eq!(saf.1.as_deref(), Some("saf://phone"));
+        assert!(is_saf_mount(&json!({ "mountPoint": "saf://phone" })));
+
+        let mounted = operation_control_paths(
+            OperationType::Mount,
+            Some("testdrive:".into()),
+            Some("/mnt/unused".into()),
+            None,
+            Some("/tmp/rclone-testdrive-mnt"),
+        );
+        assert_eq!(
+            mounted.destination.as_deref(),
+            Some("/tmp/rclone-testdrive-mnt")
+        );
+        assert_eq!(
+            job_detail_dest_path("mount", "/mnt/unused", Some("/tmp/rclone-testdrive-mnt")),
+            "/tmp/rclone-testdrive-mnt"
+        );
+        assert_eq!(
+            job_detail_dest_path("mount/mount", "/mnt/unused", Some("/tmp/live")),
+            "/tmp/live"
+        );
+        assert_eq!(
+            job_detail_dest_path("copy", "testdrive:out", Some("/tmp/live")),
+            "testdrive:out"
+        );
+        assert_eq!(
+            job_detail_dest_path("mount", "/mnt/unused", None),
+            "/mnt/unused"
         );
     }
 }

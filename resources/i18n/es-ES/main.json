@@ -77,6 +77,32 @@
     "nthWeekdayAt": "El {{nth}} {{day}} a las {{time}}",
     "inMonthsAt": "En {{months}} a las {{time}}",
     "inMonthsOnDayAt": "El día {{dom}} de {{months}} a las {{time}}",
+    "atTimes": "A las {{times}}",
+    "hourlyAtMinutes": "Cada hora en los minutos {{mins}}",
+    "everyHoursBetween": "Cada {{n}} horas entre {{start}} y {{end}}",
+    "everyMinutesAt": "Cada {{n}} minutos a las {{times}}",
+    "atMinutesBetween": "En los minutos {{mins}} entre {{start}} y {{end}}",
+    "atHours": "A las {{hours}}",
+    "lastWeekdayOfMonthAt": "Último día laborable del mes a las {{time}}",
+    "atTime": "A las {{time}}",
+    "onDays": "los días {{days}}",
+    "onDay": "el día {{day}}",
+    "inMonths": "en {{months}}",
+    "onWeekdays": "el {{days}}",
+    "onWeekdaysWord": "en días laborables",
+    "onWeekendsWord": "el fin de semana",
+    "onLastDay": "el último día del mes",
+    "onLastWeekday": "el último día laborable del mes",
+    "onEveryNDays": "cada {{n}} días",
+    "onNearestWeekday": "el día laborable más cercano al día {{day}}",
+    "onNthWeekday": "el {{nth}} {{day}}",
+    "onLastNamedWeekday": "el último {{day}}",
+    "atMinuteHour": "En el minuto {{min}} de la hora {{hour}}",
+    "nearestWeekdayAt": "Día laborable más cercano al día {{day}} a las {{time}}",
+    "everyNDaysAt": "Cada {{n}} días a las {{time}}",
+    "composed": "{{head}}, {{tail}}",
+    "weekdaysAtTimes": "Días laborables a las {{times}}",
+    "weekendsAtTimes": "Fines de semana a las {{times}}",
     "days": {
       "0": "domingo",
       "1": "lunes",
@@ -128,7 +154,7 @@
     "vfsPollUpdated": "Poll interval updated",
     "vfsQueueExpiry": "Queue id / expiry",
     "vfsExpiryUpdated": "Queue expiry updated",
-    "flagsApplyHelp": "Edits are sent to rclone via options/set. Categories match the Angular flag panels.",
+    "flagsApplyHelp": "Edits are sent to rclone via options/set. Categories match the flag panels.",
     "flagsWriteEngine": "Write flags to the running engine",
     "jsonMode": "JSON",
     "jsonPayload": "Raw options/set payload",
@@ -185,6 +211,7 @@
     "cron": "Cron schedule",
     "linkedHelpers": "Linked helper profiles",
     "filterFlags": "Filter flags",
+    "filterKeys": "Filtrar claves",
     "importCliFlags": "Import rclone CLI flags",
     "cliImport": "CLI import",
     "jsonDocument": "JSON document",
@@ -532,6 +559,7 @@
       "apiKey": "Clave API",
       "gatewayUrl": "URL de Gateway",
       "customGateway": "Gateway personalizado",
+      "callMeBot": "CallMeBot",
       "messageTemplate": "Plantilla de mensaje",
       "messageTemplateHint": "Admite variables de Handlebars",
       "telegram_info": "Puedes encontrar tu Bot Token en @BotFather y tu Chat ID en @userinfobot.",
@@ -549,6 +577,9 @@
       "from": "Dirección del remitente",
       "to": "Dirección del destinatario",
       "encryption": "Cifrado",
+      "encryptionNone": "Ninguna",
+      "encryptionTls": "TLS (Puerto 465)",
+      "encryptionStarttls": "StartTLS (Puerto 587)",
       "subjectTemplate": "Plantilla de asunto",
       "headers": "Cabeceras HTTP/S",
       "presets": "Preajustes",
@@ -556,6 +587,7 @@
       "slack": "Slack",
       "headerKey": "Nombre de Cabecera",
       "headerValue": "Valor",
+      "addHeader": "Añadir encabezado",
       "editorTitle": "Alert action",
       "telegramMode": "Telegram mode",
       "envVars": "Environment variables (KEY=value)",
@@ -570,7 +602,8 @@
     "acknowledge": "Acknowledge",
     "addRule": "Add rule",
     "addAction": "Add action",
-    "templateKeys": "Insert template key"
+    "templateKeys": "Insert template key",
+    "statsLine": "{{total}} total · {{ack}} ack · {{open}} abiertos · {{delivered}} entregados · último {{last}}"
   },
   "settings": {
     "resetAll": {
@@ -851,9 +884,11 @@
       "add": "Add remote or quick run",
       "developer": "Developer",
       "trayActions": "Tray actions",
-      "memoryUnavailable": "Estadísticas de memoria no disponibles"
+      "memoryUnavailable": "Estadísticas de memoria no disponibles",
+      "remoteVisible": "Visible en la barra lateral y en la vista general"
     },
-    "detach": "Detach the current workspace into a new window"
+    "detach": "Detach the current workspace into a new window",
+    "closeOverlay": "Close overlay and return to the base view"
   },
   "onboarding": {
     "loadingTitle": "Inicializando RClone Manager",
@@ -1308,6 +1343,7 @@
       "nameTaken": "Ya existe un remoto con este nombre",
       "remoteType": "Tipo remoto",
       "noMatchingTypes": "No hay tipos remotos coincidentes",
+      "noMatchingProviders": "No hay proveedores coincidentes",
       "loadingOptions": "Cargando opciones de configuración...",
       "fields": "Campos",
       "switchToForm": "Cambiar a modo formulario",
@@ -1567,6 +1603,20 @@
   },
   "backup": {
     "analyzeFailed": "No se pudo analizar el archivo de copia de seguridad",
+    "importConfig": {
+      "title": "Importar rclone.conf",
+      "heading": "¿Importar remotos desde este archivo de configuración?",
+      "file": "Archivo",
+      "remotes": "Remotos",
+      "overwrite": "Reemplazar remotos que ya existen",
+      "import": "Importar",
+      "cancel": "Cancelar",
+      "empty": "No se encontraron remotos en este archivo",
+      "failed": "No se pudo leer rclone.conf: {{error}}",
+      "noEngine": "rclone no está en ejecución",
+      "success": "Se importaron {{count}} remotos",
+      "partial": "Importados {{created}}, omitidos {{skipped}}, fallidos {{failed}}"
+    },
     "restore": {
       "title": "Restaurar copia de seguridad",
       "ariaClose": "Cerrar vista previa de restauración",
@@ -1604,6 +1654,7 @@
         "profile": "Restaurar perfil específico"
       },
       "selectProfile": "Seleccionar perfil",
+      "restoreAs": "Restaurar como (cambio de nombre opcional)",
       "note": "Nota de copia de seguridad",
       "passwordRequired": "Se requiere contraseña",
       "encryptedWarning": "Esta copia de seguridad está cifrada. Introduce la contraseña correcta para descifrarla y restaurarla.",
@@ -1763,6 +1814,8 @@
     "fileViewer": {
       "closeViewer": "Cerrar visor",
       "download": "Descargar {{name}}",
+      "previousPage": "Página anterior",
+      "nextPage": "Página siguiente",
       "previousFile": "Archivo anterior",
       "nextFile": "Archivo siguiente",
       "loadingContent": "Cargando contenido",
@@ -2113,6 +2166,12 @@
       "openFlathub": "Abrir Flathub",
       "loadInfoFailed": "Error al cargar la información de rclone.",
       "license": "Licencia",
+      "toolkit": "GTK 4 + libadwaita",
+      "copyVersion": "Rclone Manager {version} · rclone {rclone}",
+      "licenseId": "GPL-3.0-or-later",
+      "gnuGpl": "GNU GPL v3",
+      "leadName": "Zarestia Dev",
+      "ackTextGtk": "Esta aplicación está construida con GTK 4 + libadwaita y depende del excelente proyecto Rclone para la gestión de almacenamiento en la nube.",
       "licenseText1": "Esta aplicación es un software de código abierto gratuito distribuido bajo la",
       "orLater": "o posterior.",
       "licenseText2": "Este programa no tiene garantía. Usted es libre de usar, modificar y distribuir este software de acuerdo con los términos de la licencia GPL v3.",
@@ -2185,6 +2244,12 @@
       "resetAll": "Restablecer toda la configuración",
       "noSettingsFound": "No se encontraron ajustes que coincidan",
       "trySearching": "Intente buscar:",
+      "searchSuggestions": {
+        "apiPort": "Puerto API",
+        "startup": "inicio",
+        "debug": "depuración",
+        "bandwidth": "ancho de banda"
+      },
       "readyToRestartHeader": "Ajustes que requieren reinicio",
       "readyToRestartDesc": "Los siguientes cambios requieren un reinicio del motor para que surtan efecto:",
       "discardChanges": "Descartar cambios",
@@ -2245,6 +2310,10 @@
       "passwordHint": "Esta contraseña será necesaria para restaurar la copia de seguridad.",
       "includeSecrets": "Incluir claves secretas",
       "includeSecretsHint": "Incluye credenciales sensibles en la copia de seguridad. Se requiere cifrado.",
+      "format": "Format",
+      "formatZip": "Zip backup",
+      "formatConf": "rclone.conf",
+      "confSuccess": "rclone.conf exported",
       "exportNow": "Exportar ahora",
       "exporting": "Exportando...",
       "fullBackup": "Copia de seguridad completa",
@@ -2256,6 +2325,7 @@
       "externalConfig": "Archivo de configuración externo",
       "profiles": "Incluir perfiles",
       "profilesHint": "Seleccione perfiles específicos para incluir en la copia de seguridad.",
+      "encryptBackup": "Encrypt backup",
       "categories": {
         "settings": {
           "label": "Configuración de la aplicación",
@@ -2606,6 +2676,8 @@
     }
   },
   "nautilus": {
+    "loadMore": "Mostrar {{count}} más",
+    "progressiveRender": "Mostrando {{shown}} de {{total}}",
     "sidebar": {
       "configureTitle": "Configurar elementos de la barra lateral",
       "configureDescription": "Arrastre elementos para reordenarlos o use el icono de ojo para ocultar o mostrar discos y remotos en la barra lateral."
@@ -2626,7 +2698,8 @@
       "fileSystem": "Sistema de Archivos",
       "bookmarks": "Marcadores",
       "localDisk": "Disco local",
-      "pathPlaceholder": "remote:path or /local/path"
+      "pathPlaceholder": "remote:path or /local/path",
+      "detachedTab": "{app} — {title}"
     },
     "bookmarks": {
       "emptyHint": "Sin marcadores"
@@ -2774,6 +2847,8 @@
       "delete": "Eliminar",
       "compress": "Comprimir",
       "copy": "Copiar",
+      "copyTo": "Copiar a…",
+      "moveTo": "Mover a…",
       "cut": "Cortar",
       "rename": "Renombrar",
       "paste": "Pegar",
@@ -2792,7 +2867,10 @@
       "copyPublicLink": "Copiar enlace público",
       "createFolderWithItems": "Nueva carpeta con selección...",
       "renameMultiple": "Renombrar varios...",
+      "star": "Destacar / Quitar",
+      "bookmark": "Marcador",
       "pathOptions": "Path options",
+      "selectionActions": "Acciones de selección",
       "move": "Move",
       "openNative": "Open native",
       "copyUrl": "Copy URL into folder…",
@@ -2808,6 +2886,9 @@
       "showHidden": "Mostrar archivos ocultos",
       "toggleLayout": "Alternar diseño",
       "viewOptions": "Opciones de vista",
+      "star": "Destacar esta carpeta",
+      "starred": "Destacados",
+      "unstarred": "Quitado de Destacados",
       "smaller": "Smaller",
       "larger": "Larger"
     },
@@ -2827,6 +2908,7 @@
       "nothingToRedo": "Nada que rehacer",
       "cannotUndo": "Esta acción no se puede deshacer",
       "selectValid": "Seleccione un elemento válido para continuar",
+      "nothingSelected": "Seleccione primero un archivo o carpeta",
       "selectNewFolderItems": "Seleccione elementos para mover a una carpeta nueva",
       "selectToDownload": "Seleccione un archivo para descargar",
       "selectToShare": "Seleccione un archivo para compartir",
@@ -2840,7 +2922,8 @@
       "getPublicLinkStarted": "Generando enlace público...",
       "archiveCreateStarted": "Creación de archivo iniciada...",
       "sendToAdded": "Se agregó '{{remote}}{{path}}' al menú del administrador de archivos",
-      "sendToRemoved": "Se quitó '{{remote}}{{path}}' del menú del administrador de archivos"
+      "sendToRemoved": "Se quitó '{{remote}}{{path}}' del menú del administrador de archivos",
+      "locationNotAllowed": "Esa ubicación no está permitida para este selector"
     },
     "androidShare": {
       "uploadHere": "Subir {{count}} archivo(s) compartido(s) a esta carpeta",
@@ -3498,7 +3581,11 @@
     "folders": "Folders",
     "maintenance": "Maintenance",
     "relaunch": "Relaunch",
-    "gcStarted": "Garbage collection started"
+    "gcStarted": "Garbage collection started",
+    "rcloneConfig": "configuración de rclone",
+    "rcloneCache": "caché de rclone",
+    "rcloneTemp": "temporal de rclone",
+    "configEncrypted": "rclone.conf cifrado"
   },
   "flow": {
     "title": "Flow",
@@ -3574,6 +3661,7 @@
   },
   "templates": {
     "title": "Plantillas",
+    "search": "Buscar plantillas…",
     "presetTitle": "Ajustes preestablecidos y plantillas",
     "applyPresets": "Aplicar ajustes preestablecidos predeterminados",
     "userTemplates": "Plantillas de usuario guardadas",

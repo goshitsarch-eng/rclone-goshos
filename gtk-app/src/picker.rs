@@ -30,6 +30,11 @@ pub struct FilePickerConfig {
     pub allowed_remotes: Vec<String>,
     pub allowed_extensions: Vec<String>,
     pub initial_location: Option<String>,
+    pub require_empty: bool,
+    /// Remote used for relative typed paths (`Photos` → `remote:Photos`).
+    pub default_remote: String,
+    /// Angular `FilePickerConfig.minSelection` (0 = no minimum).
+    pub min_selection: usize,
 }
 
 impl Default for FilePickerConfig {
@@ -41,6 +46,9 @@ impl Default for FilePickerConfig {
             allowed_remotes: vec![],
             allowed_extensions: vec![],
             initial_location: None,
+            require_empty: false,
+            default_remote: String::new(),
+            min_selection: 0,
         }
     }
 }
@@ -61,6 +69,14 @@ impl FilePickerConfig {
         }
     }
 
+    /// Mount destinations: local folder that must be empty (Angular `requireEmpty`).
+    pub fn local_mount_folders() -> Self {
+        Self {
+            require_empty: true,
+            ..Self::local_folders()
+        }
+    }
+
     pub fn remote_folders(current: &str) -> Self {
         Self {
             mode: PickerMode::Remote,
@@ -78,6 +94,24 @@ impl FilePickerConfig {
             ..Self::default()
         }
     }
+
+    /// Folder picker that can return extra paths (Angular `FilePickerConfig.multi`).
+    pub fn folders_multi() -> Self {
+        Self {
+            multi: true,
+            ..Self::folders()
+        }
+    }
+
+    pub fn with_remote(mut self, remote: &str) -> Self {
+        if !remote.is_empty() && remote != "local" {
+            self.default_remote = remote.to_string();
+            if self.allowed_remotes.is_empty() {
+                self.allowed_remotes.push(remote.to_string());
+            }
+        }
+        self
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
@@ -86,26 +120,35 @@ pub struct PickerResult {
     pub path: String,
     pub is_dir: bool,
     pub cancelled: bool,
+    /// Additional selected paths (relative to `remote`) when `FilePickerConfig.multi`.
+    pub extra_paths: Vec<String>,
 }
 
 impl PickerResult {
     pub fn formatted_path(&self) -> String {
         format_picker_path(&self.remote, &self.path)
     }
+
+    pub fn extra_formatted_paths(&self) -> Vec<String> {
+        self.extra_paths
+            .iter()
+            .map(|path| format_picker_path(&self.remote, path))
+            .collect()
+    }
+}
+
+/// Picker chrome: keep the prompt, then append the live selection summary.
+pub fn picker_bar_label(prompt: &str, selection: &str) -> String {
+    let selection = selection.trim();
+    if selection.is_empty() {
+        prompt.to_string()
+    } else {
+        format!("{prompt} · {selection}")
+    }
 }
 
 pub fn format_picker_path(remote: &str, path: &str) -> String {
-    if remote == "local" || remote.is_empty() {
-        if path.is_empty() {
-            "/".into()
-        } else {
-            path.to_string()
-        }
-    } else if path.is_empty() {
-        format!("{remote}:")
-    } else {
-        format!("{remote}:{path}")
-    }
+    crate::path_kind::format_location(remote, path, std::env::consts::OS)
 }
 
 pub fn is_location_allowed(loc: &str, cfg: &FilePickerConfig) -> bool {
@@ -168,21 +211,81 @@ fn extension_allowed(name: &str, cfg: &FilePickerConfig) -> bool {
         .any(|allowed| allowed.trim_start_matches('.').eq_ignore_ascii_case(&ext))
 }
 
+/// Reject a local folder pick the same way Tauri `get_folder_location` does.
+/// Returns an i18n key when the path cannot be used.
+pub fn local_folder_pick_error(
+    path: &std::path::Path,
+    require_empty: bool,
+) -> Option<&'static str> {
+    if is_windows_drive_root(path) {
+        return Some("backendErrors.file.driveRoot");
+    }
+    if require_empty && folder_has_entries(path) {
+        return Some("backendErrors.file.folderNotEmpty");
+    }
+    None
+}
+
+pub fn folder_has_entries(path: &std::path::Path) -> bool {
+    match std::fs::read_dir(path) {
+        Ok(mut entries) => entries.next().is_some(),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => false,
+        Err(_) => false,
+    }
+}
+
+pub fn is_windows_drive_root(path: &std::path::Path) -> bool {
+    let raw = path.to_string_lossy();
+    let trimmed = raw.trim_end_matches(['/', '\\']);
+    let bytes = trimmed.as_bytes();
+    bytes.len() == 2 && bytes[0].is_ascii_alphabetic() && bytes[1] == b':'
+}
+
+/// Counts selected dirs/files the same way Angular `isConfirmDisabled` does.
+/// An empty listing selection is the current folder (except `selection: files`).
+pub fn picker_confirm_counts(
+    selected_dirs: usize,
+    selected_files: usize,
+    cfg: &FilePickerConfig,
+) -> (usize, usize) {
+    if selected_dirs + selected_files == 0 {
+        return match cfg.selection {
+            PickerSelection::Files => (0, 0),
+            PickerSelection::Folders | PickerSelection::Both => (1, 0),
+        };
+    }
+    (selected_dirs, selected_files)
+}
+
 pub fn can_confirm_selection(
     selected_dirs: usize,
     selected_files: usize,
     cfg: &FilePickerConfig,
 ) -> bool {
+    let (dirs, files) = picker_confirm_counts(selected_dirs, selected_files, cfg);
+    let total = dirs + files;
+    if cfg.min_selection > 0 && total < cfg.min_selection {
+        return false;
+    }
     match cfg.selection {
-        PickerSelection::Folders => selected_dirs > 0 || selected_files == 0,
-        PickerSelection::Files => selected_files > 0,
-        PickerSelection::Both => selected_dirs + selected_files > 0 || true,
+        PickerSelection::Folders => files == 0,
+        PickerSelection::Files => files > 0,
+        PickerSelection::Both => true,
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn picker_bar_appends_selection_summary() {
+        assert_eq!(picker_bar_label("Select a folder", ""), "Select a folder");
+        assert_eq!(
+            picker_bar_label("Select a folder", "  2 folders selected  "),
+            "Select a folder · 2 folders selected"
+        );
+    }
 
     #[test]
     fn location_rules_match_angular() {
@@ -227,7 +330,14 @@ mod tests {
 
     #[test]
     fn formats_picker_paths() {
-        assert_eq!(format_picker_path("local", "/tmp/out"), "/tmp/out");
+        assert_eq!(
+            format_picker_path("local", "/tmp/out"),
+            crate::path_kind::format_location("local", "/tmp/out", std::env::consts::OS)
+        );
+        assert_eq!(
+            format_picker_path("local", ""),
+            crate::path_kind::default_local_root(std::env::consts::OS)
+        );
         assert_eq!(format_picker_path("drive", ""), "drive:");
         assert_eq!(format_picker_path("drive", "Photos"), "drive:Photos");
         assert_eq!(
@@ -236,9 +346,87 @@ mod tests {
                 path: "a".into(),
                 is_dir: true,
                 cancelled: false,
+                extra_paths: vec!["b".into()],
             }
             .formatted_path(),
             "drive:a"
         );
+        assert_eq!(
+            PickerResult {
+                remote: "drive".into(),
+                path: "Photos".into(),
+                extra_paths: vec!["Docs".into(), String::new()],
+                ..Default::default()
+            }
+            .extra_formatted_paths(),
+            vec!["drive:Docs".to_string(), "drive:".to_string()]
+        );
+        assert!(FilePickerConfig::folders_multi().multi);
+        assert!(!FilePickerConfig::folders().multi);
+    }
+
+    #[test]
+    fn mount_folders_require_empty() {
+        assert!(FilePickerConfig::local_mount_folders().require_empty);
+        assert!(!FilePickerConfig::local_folders().require_empty);
+    }
+
+    #[test]
+    fn drive_root_and_empty_folder_errors() {
+        assert!(is_windows_drive_root(std::path::Path::new("D:")));
+        assert!(is_windows_drive_root(std::path::Path::new("D:\\")));
+        assert!(is_windows_drive_root(std::path::Path::new("C:/")));
+        assert!(!is_windows_drive_root(std::path::Path::new("D:\\mount")));
+        assert!(!is_windows_drive_root(std::path::Path::new("/mnt")));
+        assert_eq!(
+            local_folder_pick_error(std::path::Path::new("E:\\"), true),
+            Some("backendErrors.file.driveRoot")
+        );
+        let dir = std::env::temp_dir().join(format!("rm-gtk-empty-pick-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        assert!(!folder_has_entries(&dir));
+        assert_eq!(local_folder_pick_error(&dir, true), None);
+        std::fs::write(dir.join("file.txt"), b"x").unwrap();
+        assert!(folder_has_entries(&dir));
+        assert_eq!(
+            local_folder_pick_error(&dir, true),
+            Some("backendErrors.file.folderNotEmpty")
+        );
+        assert_eq!(local_folder_pick_error(&dir, false), None);
+        let missing = dir.join("does-not-exist");
+        assert_eq!(local_folder_pick_error(&missing, true), None);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn min_selection_matches_angular() {
+        let both = FilePickerConfig::default();
+        assert_eq!(both.min_selection, 0);
+        assert!(can_confirm_selection(0, 0, &both));
+        let min2 = FilePickerConfig {
+            min_selection: 2,
+            ..FilePickerConfig::default()
+        };
+        assert!(!can_confirm_selection(0, 0, &min2));
+        assert!(!can_confirm_selection(1, 0, &min2));
+        assert!(can_confirm_selection(1, 1, &min2));
+        assert_eq!(picker_confirm_counts(0, 0, &both), (1, 0));
+        let files = FilePickerConfig {
+            selection: PickerSelection::Files,
+            min_selection: 1,
+            ..FilePickerConfig::default()
+        };
+        assert_eq!(picker_confirm_counts(0, 0, &files), (0, 0));
+        assert!(!can_confirm_selection(0, 0, &files));
+        assert!(can_confirm_selection(0, 1, &files));
+        let folders = FilePickerConfig {
+            selection: PickerSelection::Folders,
+            min_selection: 2,
+            ..FilePickerConfig::folders()
+        };
+        assert!(!can_confirm_selection(0, 0, &folders));
+        assert!(can_confirm_selection(2, 0, &folders));
+        assert!(!can_confirm_selection(0, 2, &folders));
     }
 }

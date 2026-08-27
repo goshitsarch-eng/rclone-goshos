@@ -146,10 +146,10 @@ We use BCP-47 language tags (e.g., `en-US`, `tr-TR`, `de-DE`) for internationali
 7. **Test your translation**:
 
    ```bash
-   npm run tauri dev
+   cd gtk-app && cargo run
    ```
 
-   Then change the language in Settings → General → Language.
+   Then change the language in Preferences → General → Language.
 
 8. **Audit i18n Keys**:
    Run the i18n auditor to ensure no translation keys are missing or malformed across languages:
@@ -195,13 +195,7 @@ Common language codes:
 
 ### Cron Expressions
 
-The application uses `cronstrue` to display human-readable cron schedules. To support a new language:
-
-1. **Register the Locale**: Import the locale in `src/app/core/i18n/cron-locale.mapper.ts`.
-   ```typescript
-   import 'cronstrue/locales/fr'; // Example for French
-   ```
-2. **Verify Mapping**: Ensure `getCronstrueLocale` correctly maps your app locale (e.g., `fr-FR`) to the `cronstrue` locale (e.g., `fr`).
+Cron previews are formatted in the GTK client (`gtk-app/src/cron.rs`). Add locale strings under `resources/i18n/{lang}/main.json`.
 
 ---
 
@@ -260,8 +254,9 @@ Before you begin, ensure you have the following installed:
 
 #### Required
 
-- **Node.js** (v18 or higher) and **npm**
 - **Rust** (latest stable version via [rustup](https://rustup.rs/))
+- **GTK 4** and **libadwaita** development packages (Linux desktop client)
+- **Node.js** (v18 or higher) and **npm** — only for Tauri CLI and i18n/flag sync scripts
 - **Rclone** (for runtime functionality)
 
 #### Platform-Specific Requirements
@@ -281,28 +276,24 @@ For detailed platform-specific prerequisites, see the [Building Wiki](https://ha
    cd rclone-manager
    ```
 
-2. **Install dependencies**:
+2. **Install GTK client dependencies** (Debian/Ubuntu):
+
+   ```bash
+   sudo apt install libgtk-4-dev libadwaita-1-dev pkg-config
+   ```
+
+3. **Run the GTK desktop client**:
+
+   ```bash
+   cd gtk-app && cargo run
+   ```
+
+4. **Optional: Tauri backend / headless API**:
 
    ```bash
    npm install
-   ```
-
-3. **Run in development mode**:
-
-   ```bash
    npm run tauri dev
-   ```
-
-4. **Run headless mode (development)** (optional):
-
-   ```bash
-   npm run headless-dev
-   ```
-
-5. **Run headless mode (production)** (optional):
-
-   ```bash
-   npm run headless
+   npm run dev:headless
    ```
 
 ---
@@ -312,10 +303,7 @@ For detailed platform-specific prerequisites, see the [Building Wiki](https://ha
 ```
 rclone-manager/
 ├── .github/           # GitHub workflows and configurations
-├── src/               # Angular frontend source code
-│   ├── app/          # Application components, services, and modules
-│   ├── assets/       # Static assets (images, icons)
-│   └── styles/       # Global styles and themes
+├── gtk-app/           # GTK 4 + libadwaita desktop UI
 ├── src-tauri/         # Rust backend (Tauri)
 │   ├── src/          # Rust source code
 │   │   ├── core/     # Core backend logic
@@ -325,13 +313,14 @@ rclone-manager/
 │   └── tauri.conf.json # Tauri configuration
 │   └── tauri.conf.headless.json # Tauri configuration (headless mode)
 │   └── Cargo.toml    # Rust dependencies and configuration
+├── web/               # Backend landing page (not a web app UI)
 ├── headless/          # Headless/web server mode documentation
-└── package.json       # Node.js dependencies and scripts
+└── package.json       # Tauri CLI and sync scripts only
 ```
 
 ### Key Directories
 
-- **`src/app/`**: Angular components, services, and application logic
+- **`gtk-app/`**: GTK 4 + libadwaita desktop UI
 - **`src-tauri/src/core/`**: Core Rust backend logic (scheduler, settings, security)
 - **`src-tauri/src/server/`**: Web server implementation for headless mode
 - **`src-tauri/src/rclone/`**: Rclone backend logic
@@ -350,14 +339,14 @@ rclone-manager/
    ```
 
 2. **Make your changes** in the appropriate directory:
-   - Frontend changes → `src/`
+   - Desktop UI changes → `gtk-app/`
    - Backend changes → `src-tauri/src/`
    - Documentation → `README.md`, Wiki, or `*.md` files
 
 3. **Test your changes**:
 
    ```bash
-   npm run tauri dev
+   cd gtk-app && cargo run
    ```
 
 4. **Commit your changes** with clear, descriptive messages:
@@ -369,22 +358,11 @@ rclone-manager/
 
 We use automated linting and formatting to maintain code quality. **All code must pass linting checks before being merged.**
 
-#### Frontend (TypeScript/Angular/SCSS/JSON)
+#### Desktop UI (GTK / Rust)
 
-- **Linting**: ESLint with Angular-specific rules
-- **Formatting**: Prettier
-
-```bash
-# Run ESLint and Clippy
-npm run lint
-
-# Format code with Prettier (TS, HTML, SCSS, JSON) & Cargo fmt
-npm run format
-
-# Or run Prettier directly:
-npx prettier --check "**/*.{ts,html,scss,json}"
-npx prettier --write "**/*.{ts,html,scss,json}"
-```
+- **Linting**: `cd gtk-app && cargo clippy`
+- **Formatting**: `cd gtk-app && cargo fmt`
+- **Tests**: `cd gtk-app && cargo test --lib`
 
 #### Backend (Rust)
 
@@ -394,14 +372,10 @@ npx prettier --write "**/*.{ts,html,scss,json}"
 #### Run All Checks & Fixes
 
 ```bash
-# Fix SVG IDs, Prettier formatting, and ESLint issues automatically
-npm run fix:all
-
-# Audit i18n translation keys
+cd gtk-app && cargo test --lib
+cd src-tauri && cargo fmt -- --check
 npm run audit:i18n
 ```
-
-**Note**: We use [Husky](https://typicode.github.io/husky/) and [lint-staged](https://github.com/okonet/lint-staged) to automatically lint and format code on commit. See [LINTING.md](LINTING.md) for detailed information.
 
 ### Testing
 
@@ -424,7 +398,8 @@ Currently, the project uses manual testing. We welcome contributions to add auto
 1. **Ensure your code passes all checks**:
 
    ```bash
-   npm run lint:all
+   cd gtk-app && cargo test --lib
+   cd src-tauri && cargo fmt -- --check
    ```
 
 2. **Push your branch to your fork**:
@@ -477,7 +452,7 @@ Currently, the project uses manual testing. We welcome contributions to add auto
 ### Documentation
 
 - **[Wiki](https://hakanismail.info/zarestia/rclone-manager/docs)** — Building instructions, installation guides, and more
-- **[LINTING.md](LINTING.md)** — Detailed linting and formatting guide
+- **[AGENTS.md](AGENTS.md)** — Build, test, and contribution guidance for agents
 - **[ISSUES.md](ISSUES.md)** — Known issues and workarounds
 - **[CHANGELOG.md](CHANGELOG.md)** — Version history and changes
 
@@ -490,7 +465,8 @@ Currently, the project uses manual testing. We welcome contributions to add auto
 ### Learning Resources
 
 - **[Tauri Documentation](https://tauri.app/)** — Tauri framework docs
-- **[Angular Documentation](https://angular.io/)** — Angular framework docs
+- **[GTK 4 documentation](https://docs.gtk.org/gtk4/)** — GTK 4 widgets
+- **[libadwaita documentation](https://gnome.pages.gitlab.gnome.org/libadwaita/doc/main/)** — Adwaita patterns
 - **[Rclone Documentation](https://rclone.org/)** — Rclone tool documentation
 - **[Rust Book](https://doc.rust-lang.org/book/)** — Learning Rust
 - **[TypeScript Handbook](https://www.typescriptlang.org/docs/)** — Learning TypeScript

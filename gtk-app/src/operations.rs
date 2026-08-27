@@ -43,6 +43,19 @@ impl OperationType {
         Self::Cryptcheck,
     ];
 
+    /// Same order as Angular `SYNC_TYPES` (registry `isSyncType` keys).
+    pub const SYNC_TYPES: [OperationType; 9] = [
+        Self::Sync,
+        Self::Copy,
+        Self::Move,
+        Self::Bisync,
+        Self::Check,
+        Self::Delete,
+        Self::Copyurl,
+        Self::Archivecreate,
+        Self::Cryptcheck,
+    ];
+
     pub const SERVE_TYPES: [&'static str; 8] = [
         "http", "webdav", "ftp", "sftp", "nfs", "dlna", "restic", "s3",
     ];
@@ -125,6 +138,43 @@ impl OperationType {
             Self::Copyurl => "actions.copyurl",
             Self::Archivecreate => "actions.archivecreate",
             Self::Cryptcheck => "actions.cryptcheck",
+        }
+    }
+
+    /// Dashboard operation description (`dashboard.appDetail.*Desc`).
+    /// Copy URL uses camelCase `copyUrlDesc` to match Angular i18n.
+    pub fn app_detail_desc_key(self) -> &'static str {
+        match self {
+            Self::Mount => "dashboard.appDetail.mountBehave",
+            Self::Serve => "dashboard.appDetail.serveBehave",
+            Self::Sync => "dashboard.appDetail.syncDesc",
+            Self::Copy => "dashboard.appDetail.copyDesc",
+            Self::Move => "dashboard.appDetail.moveDesc",
+            Self::Bisync => "dashboard.appDetail.bisyncDesc",
+            Self::Check => "dashboard.appDetail.checkDesc",
+            Self::Delete => "dashboard.appDetail.deleteDesc",
+            Self::Copyurl => "dashboard.appDetail.copyUrlDesc",
+            Self::Archivecreate => "dashboard.appDetail.archivecreateDesc",
+            Self::Cryptcheck => "dashboard.appDetail.cryptcheckDesc",
+        }
+    }
+
+    /// Compact remote-card action i18n key (`overviews.remoteCard.actions.*`).
+    pub fn remote_card_action_key(self, active: bool) -> String {
+        match self {
+            Self::Mount => {
+                if active {
+                    "overviews.remoteCard.actions.unmount".into()
+                } else {
+                    "overviews.remoteCard.actions.mount".into()
+                }
+            }
+            other => {
+                let verb = if active { "stop" } else { "start" };
+                let name = other.as_str();
+                let capitalized = format!("{}{}", name[..1].to_ascii_uppercase(), &name[1..]);
+                format!("overviews.remoteCard.actions.{verb}{capitalized}")
+            }
         }
     }
 
@@ -342,6 +392,11 @@ impl AppTab {
         }
     }
 
+    /// Configuration / Monitoring lists — Angular `currentOpType()` scoping.
+    pub fn lists_profile_op(self, detail_op: OperationType, op: OperationType) -> bool {
+        self == Self::General || op == detail_op
+    }
+
     pub fn default_operation(self) -> OperationType {
         match self {
             Self::Mount => OperationType::Mount,
@@ -451,6 +506,29 @@ impl AppTab {
         seen
     }
 
+    /// Operations-tab primary toggles — Angular `primarySyncOps`.
+    pub fn primary_sync_ops(sync_actions: &[String]) -> Vec<OperationType> {
+        let custom: Vec<OperationType> = sync_actions
+            .iter()
+            .filter_map(|s| OperationType::parse(s))
+            .filter(|op| op.is_sync_type())
+            .collect();
+        if custom.is_empty() {
+            Self::Operations.mode_defaults().to_vec()
+        } else {
+            custom.into_iter().take(3).collect()
+        }
+    }
+
+    /// Overflow operations for the More menu — Angular `moreSyncOps`.
+    pub fn more_sync_ops(primary: &[OperationType]) -> Vec<OperationType> {
+        OperationType::SYNC_TYPES
+            .iter()
+            .copied()
+            .filter(|op| !primary.contains(op))
+            .collect()
+    }
+
     pub fn idle_section_key(self) -> &'static str {
         match self {
             Self::General => "generalOverview.inactive",
@@ -533,9 +611,10 @@ impl FileTypeCategory {
             "mp3" | "flac" | "ogg" | "wav" | "m4a" | "aac" | "opus" | "wma" => Self::Audio,
             "pdf" => Self::Pdf,
             "zip" | "tar" | "gz" | "tgz" | "bz2" | "xz" | "7z" | "rar" | "iso" => Self::Archive,
-            "txt" | "md" | "json" | "toml" | "yml" | "yaml" | "xml" | "csv" | "rs" | "ts"
-            | "js" | "html" | "css" | "py" | "go" | "c" | "h" | "cpp" | "sh" | "log" | "ini"
-            | "conf" | "cfg" => Self::Text,
+            "txt" | "md" | "markdown" | "json" | "toml" | "yml" | "yaml" | "xml" | "csv" | "rs"
+            | "ts" | "js" | "mjs" | "cjs" | "html" | "css" | "scss" | "sass" | "py" | "go"
+            | "c" | "h" | "cpp" | "sh" | "bash" | "zsh" | "sql" | "log" | "ini" | "conf"
+            | "cfg" => Self::Text,
             _ => Self::Binary,
         }
     }
@@ -575,6 +654,75 @@ impl FileTypeCategory {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn app_detail_desc_keys_match_angular() {
+        assert_eq!(
+            OperationType::Copy.app_detail_desc_key(),
+            "dashboard.appDetail.copyDesc"
+        );
+        assert_eq!(
+            OperationType::Copyurl.app_detail_desc_key(),
+            "dashboard.appDetail.copyUrlDesc"
+        );
+        assert_eq!(
+            OperationType::Mount.app_detail_desc_key(),
+            "dashboard.appDetail.mountBehave"
+        );
+        assert_eq!(
+            OperationType::Serve.app_detail_desc_key(),
+            "dashboard.appDetail.serveBehave"
+        );
+        for op in OperationType::ALL {
+            assert!(
+                op.app_detail_desc_key().starts_with("dashboard.appDetail."),
+                "{}",
+                op.as_str()
+            );
+        }
+    }
+
+    #[test]
+    fn remote_card_action_keys_match_angular() {
+        assert_eq!(
+            OperationType::Mount.remote_card_action_key(false),
+            "overviews.remoteCard.actions.mount"
+        );
+        assert_eq!(
+            OperationType::Mount.remote_card_action_key(true),
+            "overviews.remoteCard.actions.unmount"
+        );
+        assert_eq!(
+            OperationType::Copy.remote_card_action_key(false),
+            "overviews.remoteCard.actions.startCopy"
+        );
+        assert_eq!(
+            OperationType::Copy.remote_card_action_key(true),
+            "overviews.remoteCard.actions.stopCopy"
+        );
+        assert_eq!(
+            OperationType::Copyurl.remote_card_action_key(false),
+            "overviews.remoteCard.actions.startCopyurl"
+        );
+        assert_eq!(
+            OperationType::Archivecreate.remote_card_action_key(true),
+            "overviews.remoteCard.actions.stopArchivecreate"
+        );
+        assert_eq!(
+            OperationType::Cryptcheck.remote_card_action_key(false),
+            "overviews.remoteCard.actions.startCryptcheck"
+        );
+        for op in OperationType::ALL {
+            if op == OperationType::Mount {
+                continue;
+            }
+            let start = op.remote_card_action_key(false);
+            let stop = op.remote_card_action_key(true);
+            assert!(start.starts_with("overviews.remoteCard.actions.start"));
+            assert!(stop.starts_with("overviews.remoteCard.actions.stop"));
+            assert_ne!(start, stop);
+        }
+    }
 
     #[test]
     fn parses_all_operation_keys() {
@@ -644,6 +792,18 @@ mod tests {
             FileTypeCategory::Text
         );
         assert_eq!(
+            FileTypeCategory::from_name("query.sql", false),
+            FileTypeCategory::Text
+        );
+        assert_eq!(
+            FileTypeCategory::from_name("init.zsh", false),
+            FileTypeCategory::Text
+        );
+        assert_eq!(
+            FileTypeCategory::from_name("theme.sass", false),
+            FileTypeCategory::Text
+        );
+        assert_eq!(
             FileTypeCategory::from_name("pack.zip", false),
             FileTypeCategory::Archive
         );
@@ -691,6 +851,11 @@ mod tests {
         assert!(!AppTab::Mount.includes_operation(OperationType::Sync));
         assert!(AppTab::Operations.includes_operation(OperationType::Bisync));
         assert!(!AppTab::Operations.includes_operation(OperationType::Serve));
+        assert!(AppTab::General.lists_profile_op(OperationType::Check, OperationType::Copy));
+        assert!(AppTab::Operations.lists_profile_op(OperationType::Check, OperationType::Check));
+        assert!(!AppTab::Operations.lists_profile_op(OperationType::Check, OperationType::Copy));
+        assert!(AppTab::Mount.lists_profile_op(OperationType::Mount, OperationType::Mount));
+        assert!(!AppTab::Mount.lists_profile_op(OperationType::Mount, OperationType::Sync));
         assert_eq!(AppTab::Serve.default_operation(), OperationType::Serve);
         assert!(AppTab::Mount.remote_is_active(true, false, false));
         assert!(!AppTab::Serve.remote_is_active(true, false, true));
@@ -735,6 +900,60 @@ mod tests {
             AppTab::Serve.compact_primary_ops(&[], &[], 1),
             vec![OperationType::Serve]
         );
+        assert_eq!(
+            AppTab::primary_sync_ops(&[]),
+            vec![
+                OperationType::Sync,
+                OperationType::Bisync,
+                OperationType::Copy
+            ]
+        );
+        assert_eq!(
+            AppTab::more_sync_ops(&AppTab::primary_sync_ops(&[])),
+            vec![
+                OperationType::Move,
+                OperationType::Check,
+                OperationType::Delete,
+                OperationType::Copyurl,
+                OperationType::Archivecreate,
+                OperationType::Cryptcheck
+            ]
+        );
+        assert_eq!(
+            AppTab::primary_sync_ops(&["mount".into(), "copy".into()]),
+            vec![OperationType::Copy]
+        );
+        assert_eq!(
+            AppTab::primary_sync_ops(&[
+                "check".into(),
+                "delete".into(),
+                "copyurl".into(),
+                "sync".into()
+            ]),
+            vec![
+                OperationType::Check,
+                OperationType::Delete,
+                OperationType::Copyurl
+            ]
+        );
+        let more = AppTab::more_sync_ops(&AppTab::primary_sync_ops(&[
+            "check".into(),
+            "delete".into(),
+            "copyurl".into(),
+            "sync".into(),
+        ]));
+        assert!(more.contains(&OperationType::Sync));
+        assert!(!more.contains(&OperationType::Check));
+        assert_eq!(more.len(), 6);
+        assert_eq!(
+            AppTab::primary_sync_ops(&["mount".into()]),
+            vec![
+                OperationType::Sync,
+                OperationType::Bisync,
+                OperationType::Copy
+            ]
+        );
+        assert_eq!(OperationType::SYNC_TYPES.len(), 9);
     }
 
     #[test]

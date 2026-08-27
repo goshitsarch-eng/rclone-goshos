@@ -1,9 +1,46 @@
 //! Persisted rclone `options/set` payload (`backend.json`), matching the Tauri store.
 
 use crate::rclone::RcClient;
-use crate::settings::AppSettings;
+use crate::settings::{AppSettings, BackendEntry};
 use serde_json::{json, Value};
 use std::path::PathBuf;
+
+const INVALID_BACKEND_NAME_CHARS: &[char] = &['/', '\\', ':', '*', '?', '"', '<', '>', '|'];
+
+/// Angular `Validators.pattern(/^[^/\\:*?"<>|]+$/)` plus reserved `local`.
+pub fn valid_backend_name(name: &str) -> bool {
+    let name = name.trim();
+    !name.is_empty()
+        && !name.eq_ignore_ascii_case("local")
+        && !name
+            .chars()
+            .any(|c| INVALID_BACKEND_NAME_CHARS.contains(&c))
+}
+
+pub fn valid_backend_port(port: u16) -> bool {
+    (1024..=65535).contains(&port)
+}
+
+/// Angular `duplicateNameValidator` — true when another extra backend already uses `name`.
+pub fn backend_name_taken(extras: &[BackendEntry], name: &str, editing: Option<&str>) -> bool {
+    extras.iter().any(|backend| {
+        backend.name == name && editing.is_none_or(|current| current != backend.name)
+    })
+}
+
+/// Angular `duplicateHostValidator` — same host:port as another extra backend.
+pub fn backend_host_taken(
+    extras: &[BackendEntry],
+    host: &str,
+    port: u16,
+    editing: Option<&str>,
+) -> bool {
+    extras.iter().any(|backend| {
+        backend.host == host
+            && backend.port == port
+            && editing.is_none_or(|current| current != backend.name)
+    })
+}
 
 pub fn store_path() -> PathBuf {
     AppSettings::config_dir().join("backend.json")
@@ -63,6 +100,21 @@ pub fn copy_for(from_key: &str, to_key: &str) -> Result<Value, String> {
     Ok(load_for(to_key))
 }
 
+/// Persist a restored `options/get` dump so the next engine start can `options/set` it.
+pub fn import_dump(backend_key: &str, dump: &Value) -> Result<Value, String> {
+    if dump.as_object().is_none() {
+        return Ok(json!({}));
+    }
+    save_for(backend_key, dump)?;
+    Ok(dump.clone())
+}
+
+/// Clear persisted engine flags for one backend (Angular `resetOptions`).
+pub fn reset_for(backend_key: &str) -> Result<Value, String> {
+    save_for(backend_key, &json!({}))?;
+    Ok(json!({}))
+}
+
 pub fn apply(client: &RcClient, backend_key: &str) {
     let options = load_for(backend_key);
     if options.as_object().is_some_and(|o| !o.is_empty()) {
@@ -120,5 +172,54 @@ mod tests {
         assert_eq!(copied["local"]["main"]["Transfers"], 8);
         let empty = copy_options(&all, "missing", "office");
         assert_eq!(empty["office"], json!({}));
+    }
+
+    #[test]
+    fn import_dump_rejects_non_objects() {
+        assert_eq!(import_dump("local", &json!("nope")).unwrap(), json!({}));
+    }
+
+    #[test]
+    fn validates_backend_name_host_and_port() {
+        let extras = vec![
+            BackendEntry {
+                name: "office".into(),
+                host: "127.0.0.1".into(),
+                port: 5572,
+                ..BackendEntry::default()
+            },
+            BackendEntry {
+                name: "nas".into(),
+                host: "10.0.0.8".into(),
+                port: 5573,
+                ..BackendEntry::default()
+            },
+        ];
+        assert!(valid_backend_name("home-nas"));
+        assert!(!valid_backend_name(""));
+        assert!(!valid_backend_name("local"));
+        assert!(!valid_backend_name("bad:name"));
+        assert!(valid_backend_port(5573));
+        assert!(!valid_backend_port(80));
+        assert!(backend_name_taken(&extras, "office", None));
+        assert!(!backend_name_taken(&extras, "office", Some("office")));
+        assert!(!backend_name_taken(&extras, "lab", None));
+        assert!(backend_host_taken(&extras, "127.0.0.1", 5572, None));
+        assert!(!backend_host_taken(
+            &extras,
+            "127.0.0.1",
+            5572,
+            Some("office")
+        ));
+        assert!(!backend_host_taken(&extras, "127.0.0.1", 5579, None));
+    }
+
+    #[test]
+    fn reset_for_clears_backend_object() {
+        let key = "unit-reset-flags";
+        save_for(key, &json!({ "main": { "Transfers": 8 } })).unwrap();
+        assert_eq!(load_for(key)["main"]["Transfers"], 8);
+        assert_eq!(reset_for(key).unwrap(), json!({}));
+        assert_eq!(load_for(key), json!({}));
     }
 }

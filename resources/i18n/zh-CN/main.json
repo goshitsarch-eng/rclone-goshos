@@ -77,6 +77,32 @@
     "nthWeekdayAt": "第 {{nth}} 个{{day}} {{time}}",
     "inMonthsAt": "在 {{months}} {{time}}",
     "inMonthsOnDayAt": "在 {{months}} {{dom}} 日 {{time}}",
+    "atTimes": "在 {{times}}",
+    "hourlyAtMinutes": "每小时的 {{mins}} 分",
+    "everyHoursBetween": "在 {{start}} 至 {{end}} 之间每 {{n}} 小时",
+    "everyMinutesAt": "在 {{times}} 每 {{n}} 分钟",
+    "atMinutesBetween": "在 {{start}} 至 {{end}} 之间的 {{mins}} 分",
+    "atHours": "在 {{hours}}",
+    "lastWeekdayOfMonthAt": "每月最后一个工作日 {{time}}",
+    "atTime": "在 {{time}}",
+    "onDays": "在 {{days}} 日",
+    "onDay": "在 {{day}} 日",
+    "inMonths": "在 {{months}}",
+    "onWeekdays": "在 {{days}}",
+    "onWeekdaysWord": "在工作日",
+    "onWeekendsWord": "在周末",
+    "onLastDay": "在每月最后一天",
+    "onLastWeekday": "在每月最后一个工作日",
+    "onEveryNDays": "每 {{n}} 天",
+    "onNearestWeekday": "在最接近 {{day}} 日的工作日",
+    "onNthWeekday": "在第 {{nth}} 个 {{day}}",
+    "onLastNamedWeekday": "在最后一个 {{day}}",
+    "atMinuteHour": "在 {{hour}} 点 {{min}} 分",
+    "nearestWeekdayAt": "{{day}} 日最近的工作日 {{time}}",
+    "everyNDaysAt": "每 {{n}} 天 {{time}}",
+    "composed": "{{head}}，{{tail}}",
+    "weekdaysAtTimes": "工作日 {{times}}",
+    "weekendsAtTimes": "周末 {{times}}",
     "days": {
       "0": "星期日",
       "1": "星期一",
@@ -128,7 +154,7 @@
     "vfsPollUpdated": "Poll interval updated",
     "vfsQueueExpiry": "Queue id / expiry",
     "vfsExpiryUpdated": "Queue expiry updated",
-    "flagsApplyHelp": "Edits are sent to rclone via options/set. Categories match the Angular flag panels.",
+    "flagsApplyHelp": "Edits are sent to rclone via options/set. Categories match the flag panels.",
     "flagsWriteEngine": "Write flags to the running engine",
     "jsonMode": "JSON",
     "jsonPayload": "Raw options/set payload",
@@ -185,6 +211,7 @@
     "cron": "Cron schedule",
     "linkedHelpers": "Linked helper profiles",
     "filterFlags": "Filter flags",
+    "filterKeys": "筛选键",
     "importCliFlags": "Import rclone CLI flags",
     "cliImport": "CLI import",
     "jsonDocument": "JSON document",
@@ -532,6 +559,7 @@
       "apiKey": "API 密钥",
       "gatewayUrl": "网关 URL",
       "customGateway": "自定义网关",
+      "callMeBot": "CallMeBot",
       "messageTemplate": "消息模板",
       "messageTemplateHint": "支持 Handlebars 变量",
       "telegram_info": "您可以从 @BotFather 获取机器人令牌，从 @userinfobot 获取您的会话 ID。",
@@ -549,6 +577,9 @@
       "from": "发件人地址",
       "to": "收件人地址",
       "encryption": "加密方式",
+      "encryptionNone": "无",
+      "encryptionTls": "TLS（端口 465）",
+      "encryptionStarttls": "StartTLS（端口 587）",
       "subjectTemplate": "主题模板",
       "headers": "HTTP/S 请求头",
       "presets": "预设",
@@ -556,6 +587,7 @@
       "slack": "Slack",
       "headerKey": "请求头名称",
       "headerValue": "值",
+      "addHeader": "添加标头",
       "editorTitle": "Alert action",
       "telegramMode": "Telegram mode",
       "envVars": "Environment variables (KEY=value)",
@@ -570,7 +602,8 @@
     "acknowledge": "Acknowledge",
     "addRule": "Add rule",
     "addAction": "Add action",
-    "templateKeys": "Insert template key"
+    "templateKeys": "Insert template key",
+    "statsLine": "共 {{total}} · 已确认 {{ack}} · 未确认 {{open}} · 已送达 {{delivered}} · 最近 {{last}}"
   },
   "settings": {
     "resetAll": {
@@ -851,9 +884,11 @@
       "add": "Add remote or quick run",
       "developer": "Developer",
       "trayActions": "Tray actions",
-      "memoryUnavailable": "内存统计不可用"
+      "memoryUnavailable": "内存统计不可用",
+      "remoteVisible": "在侧栏和总览中可见"
     },
-    "detach": "Detach the current workspace into a new window"
+    "detach": "Detach the current workspace into a new window",
+    "closeOverlay": "Close overlay and return to the base view"
   },
   "onboarding": {
     "loadingTitle": "正在初始化 RClone Manager",
@@ -1308,6 +1343,7 @@
       "nameTaken": "此名称的远程存储已存在",
       "remoteType": "远程存储类型",
       "noMatchingTypes": "无匹配的远程存储类型",
+      "noMatchingProviders": "无匹配的提供商",
       "loadingOptions": "加载配置选项...",
       "fields": "字段",
       "switchToForm": "切换到表单模式",
@@ -1567,6 +1603,20 @@
   },
   "backup": {
     "analyzeFailed": "备份文件解析失败",
+    "importConfig": {
+      "title": "Import rclone.conf",
+      "heading": "Import remotes from this configuration file?",
+      "file": "File",
+      "remotes": "Remotes",
+      "overwrite": "Replace remotes that already exist",
+      "import": "Import",
+      "cancel": "Cancel",
+      "empty": "No remotes found in this file",
+      "failed": "Could not read rclone.conf: {{error}}",
+      "noEngine": "rclone is not running",
+      "success": "Imported {{count}} remotes",
+      "partial": "Imported {{created}}, skipped {{skipped}}, failed {{failed}}"
+    },
     "restore": {
       "title": "恢复备份",
       "ariaClose": "关闭恢复预览",
@@ -1604,6 +1654,7 @@
         "profile": "恢复指定配置文件"
       },
       "selectProfile": "选择配置文件",
+      "restoreAs": "还原为（可选重命名）",
       "note": "备份备注",
       "passwordRequired": "需要密码",
       "encryptedWarning": "此备份已加密，请输入正确密码以解密并恢复。",
@@ -1763,6 +1814,8 @@
     "fileViewer": {
       "closeViewer": "关闭查看器",
       "download": "下载 {{name}}",
+      "previousPage": "上一页",
+      "nextPage": "下一页",
       "previousFile": "上一个文件",
       "nextFile": "下一个文件",
       "loadingContent": "正在加载内容",
@@ -2113,6 +2166,12 @@
       "openFlathub": "打开 Flathub",
       "loadInfoFailed": "加载 Rclone 信息失败",
       "license": "许可证",
+      "toolkit": "GTK 4 + libadwaita",
+      "copyVersion": "Rclone Manager {version} · rclone {rclone}",
+      "licenseId": "GPL-3.0-or-later",
+      "gnuGpl": "GNU GPL v3",
+      "leadName": "Zarestia Dev",
+      "ackTextGtk": "本应用基于 GTK 4 + libadwaita 构建，并依赖优秀的 Rclone 项目进行云存储管理。",
       "licenseText1": "本应用是自由开源软件，基于",
       "orLater": "或更高版本发布",
       "licenseText2": "本软件不提供任何担保。你可根据 GPL v3 许可条款自由使用、修改和分发。",
@@ -2185,6 +2244,12 @@
       "resetAll": "重置所有设置",
       "noSettingsFound": "未找到匹配的设置",
       "trySearching": "尝试搜索：",
+      "searchSuggestions": {
+        "apiPort": "API 端口",
+        "startup": "启动",
+        "debug": "调试",
+        "bandwidth": "带宽"
+      },
       "readyToRestartHeader": "需要重启生效的设置",
       "readyToRestartDesc": "以下修改需要重启引擎才能生效：",
       "discardChanges": "放弃更改",
@@ -2245,6 +2310,10 @@
       "passwordHint": "恢复备份时需要使用此密码。",
       "includeSecrets": "包含密钥",
       "includeSecretsHint": "在备份中包含敏感凭据。需要加密。",
+      "format": "Format",
+      "formatZip": "Zip backup",
+      "formatConf": "rclone.conf",
+      "confSuccess": "rclone.conf exported",
       "exportNow": "立即导出",
       "exporting": "正在导出...",
       "fullBackup": "完整备份",
@@ -2256,6 +2325,7 @@
       "externalConfig": "外部配置文件",
       "profiles": "包含配置文件",
       "profilesHint": "选择要包含在备份中的指定配置文件。",
+      "encryptBackup": "Encrypt backup",
       "categories": {
         "settings": {
           "label": "应用设置",
@@ -2606,6 +2676,8 @@
     }
   },
   "nautilus": {
+    "loadMore": "再显示 {{count}} 项",
+    "progressiveRender": "正在显示 {{shown}} / {{total}}",
     "sidebar": {
       "configureTitle": "配置侧边栏项目",
       "configureDescription": "拖动项目以重新排序，或使用眼睛图标隐藏或显示侧边栏中的磁盘和远程连接。"
@@ -2626,7 +2698,8 @@
       "fileSystem": "文件系统",
       "bookmarks": "书签",
       "localDisk": "本地磁盘",
-      "pathPlaceholder": "remote:path or /local/path"
+      "pathPlaceholder": "remote:path or /local/path",
+      "detachedTab": "{app} — {title}"
     },
     "bookmarks": {
       "emptyHint": "暂无书签"
@@ -2774,6 +2847,8 @@
       "delete": "删除",
       "compress": "压缩",
       "copy": "复制",
+      "copyTo": "复制到…",
+      "moveTo": "移动到…",
       "cut": "剪切",
       "rename": "重命名",
       "paste": "粘贴",
@@ -2792,7 +2867,10 @@
       "copyPublicLink": "复制公共链接",
       "createFolderWithItems": "用所选项目新建文件夹...",
       "renameMultiple": "批量重命名...",
+      "star": "加星 / 取消",
+      "bookmark": "书签",
       "pathOptions": "Path options",
+      "selectionActions": "所选项目操作",
       "move": "Move",
       "openNative": "Open native",
       "copyUrl": "Copy URL into folder…",
@@ -2808,6 +2886,9 @@
       "showHidden": "显示隐藏文件",
       "toggleLayout": "切换布局",
       "viewOptions": "视图选项",
+      "star": "将此文件夹加星",
+      "starred": "已加星",
+      "unstarred": "已从加星中移除",
       "smaller": "Smaller",
       "larger": "Larger"
     },
@@ -2827,6 +2908,7 @@
       "nothingToRedo": "没有可重做的操作",
       "cannotUndo": "此操作无法撤销",
       "selectValid": "请选择有效项目以继续",
+      "nothingSelected": "请先选择一个文件或文件夹",
       "selectNewFolderItems": "选择要移入新文件夹的项目",
       "selectToDownload": "选择要下载的文件",
       "selectToShare": "选择要共享的文件",
@@ -2840,7 +2922,8 @@
       "getPublicLinkStarted": "正在生成公共链接...",
       "archiveCreateStarted": "已开始创建归档操作...",
       "sendToAdded": "已将“{{remote}}{{path}}”添加至文件管理器右键菜单",
-      "sendToRemoved": "已将“{{remote}}{{path}}”从文件管理器右键菜单移除"
+      "sendToRemoved": "已将“{{remote}}{{path}}”从文件管理器右键菜单移除",
+      "locationNotAllowed": "此选择器不允许该位置"
     },
     "androidShare": {
       "uploadHere": "将 {{count}} 个共享文件上传至此文件夹",
@@ -3498,7 +3581,11 @@
     "folders": "Folders",
     "maintenance": "Maintenance",
     "relaunch": "Relaunch",
-    "gcStarted": "Garbage collection started"
+    "gcStarted": "Garbage collection started",
+    "rcloneConfig": "rclone 配置",
+    "rcloneCache": "rclone 缓存",
+    "rcloneTemp": "rclone 临时目录",
+    "configEncrypted": "rclone.conf 已加密"
   },
   "flow": {
     "title": "Flow",
@@ -3574,6 +3661,7 @@
   },
   "templates": {
     "title": "模板",
+    "search": "搜索模板…",
     "presetTitle": "预设与模板",
     "applyPresets": "应用默认预设",
     "userTemplates": "已保存的用户模板",

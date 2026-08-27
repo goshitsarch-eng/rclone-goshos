@@ -6,13 +6,30 @@ use serde_json::{json, Value};
 const INT_TYPES: &[&str] = &["int", "int64", "int32", "uint", "uint32", "uint64"];
 const FLOAT_TYPES: &[&str] = &["float", "float32", "float64"];
 
+const ARRAY_TYPES: &[&str] = &[
+    "Encoding",
+    "DumpFlags",
+    "CommaSepList",
+    "SpaceSepList",
+    "Bits",
+    "stringArray",
+    "CommaSeparatedList",
+];
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ControlKind {
     Bool,
     Tristate,
     Numeric,
     Select,
+    MultiSelect,
     Input,
+}
+
+pub fn is_array_type(type_name: &str) -> bool {
+    ARRAY_TYPES
+        .iter()
+        .any(|t| t.eq_ignore_ascii_case(type_name))
 }
 
 pub fn is_int_type(type_name: &str) -> bool {
@@ -34,6 +51,9 @@ pub fn control_kind(type_name: &str, exclusive: bool, example_count: usize) -> C
     }
     if is_int_type(type_name) || is_float_type(type_name) {
         return ControlKind::Numeric;
+    }
+    if is_array_type(type_name) && example_count > 0 {
+        return ControlKind::MultiSelect;
     }
     if example_count > 0 && exclusive {
         return ControlKind::Select;
@@ -347,6 +367,9 @@ mod tests {
         assert_eq!(control_kind("int64", false, 0), ControlKind::Numeric);
         assert_eq!(control_kind("string", true, 3), ControlKind::Select);
         assert_eq!(control_kind("string", false, 3), ControlKind::Input);
+        assert_eq!(control_kind("Encoding", false, 6), ControlKind::MultiSelect);
+        assert_eq!(control_kind("CommaSepList", false, 0), ControlKind::Input);
+        assert!(is_array_type("DumpFlags"));
     }
 
     #[test]

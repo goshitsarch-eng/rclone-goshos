@@ -1,6 +1,6 @@
 # GTK rewrite feature parity
 
-This client is the GTK 4 + libadwaita rewrite of the Angular/Tauri desktop UI. It talks to a local `rclone rcd` instance (or a selected extra RC backend) and persists app state under `~/.config/rclone-manager/`.
+This client is the GTK 4 + libadwaita desktop UI. It talks to a local `rclone rcd` instance (or a selected extra RC backend) and persists app state under `~/.config/rclone-manager/`. The Rust backend remains in `src-tauri/`.
 
 ## Implemented
 
@@ -15,12 +15,12 @@ This client is the GTK 4 + libadwaita rewrite of the Angular/Tauri desktop UI. I
 - File viewer (image/text/video/audio locally, PDF via system app, remote download preview, syntax highlighting for common text languages)
 - Quick runs: create/edit/duplicate/delete, cron validation + human-readable hint, watcher, autostart, tray flag, start/stop, folder pickers
 - Workflow builder placeholder (same as current Angular stub)
-- Preferences: language, default view, tray, startup (XDG autostart), notifications, restrict, prevent sleep (systemd-inhibit), rclone binary, bandwidth, tray item cap, log level, standalone dialogs
+- Preferences: language, default view, tray, startup (XDG / Windows Run / macOS LaunchAgent), notifications, restrict, prevent sleep (logind, SetThreadExecutionState, caffeinate), rclone binary, bandwidth, tray item cap, log level, standalone dialogs
 - Rclone flags editor: category pages (backend/filter/vfs/mount/copy/sync/check/network/other) writing `options/set`
 - Backends: local rcd plus extra RC backends with add/test/switch/remove
 - Alerts: history, rule editor, action editor (os_toast, webhook, telegram, whatsapp, script, email/mqtt logged)
 - Backup/restore zip with category picker, notes, and restore preview
-- Template manager: capture, apply (`options/set` or categorized helper/profile merge), delete
+- Template manager: capture with per-key picker, apply (`options/set` or categorized helper/profile merge), edit/rename/JSON, delete
 - Remote-config preset bar: apply default OS/provider presets, apply/save/manage user templates
 - Archive create job dialog (`operations/archive` create, selection + format flags)
 - Onboarding: welcome, features, rclone detect, default view, complete
@@ -28,6 +28,10 @@ This client is the GTK 4 + libadwaita rewrite of the Angular/Tauri desktop UI. I
 - Theme: system / light / dark
 - i18n: en-US, tr-TR, es-ES, zh-CN, fr-FR, uk-UA, ru-RU, pt-BR, ja-JP
 - Native StatusNotifier tray (ksni) with per-remote Mount/Unmount/Browse menus and Show Window restore
+- User applications menu desktop entry (`Start on Tray`, rclone.conf MIME, `rclone-manager://` scheme, `%U` open) written on startup
+- Opening `rclone.conf` / `rclone.json` (MIME, `file://`, `--import-config`) imports remotes into the live engine
+- `rclone-manager://` deep links navigate the same routes as Angular hash URLs (`dashboard`, `flow`, `nautilus`, preferences)
+- Windows NotifyIcon / macOS NSStatusItem helpers emit nested `plan_tray` menus and respawn only on menu-signature changes
 - Live job polling from rclone `job/list` + `job/status` + group `core/stats`, with failure alerts
 - Provider list from `config/providers` when adding remotes
 - Live job detail (progress, speed, ETA, transferring list, stop, reset stats)
@@ -36,7 +40,7 @@ This client is the GTK 4 + libadwaita rewrite of the Angular/Tauri desktop UI. I
 - Nautilus tabs (Ctrl+T/W), real dual-pane split, drag-drop upload, undo, right-click context menu (archive / Send to), operations panel
 - VFS stats/refresh/forget/queue on remote detail
 - App + rclone update checks in About; rclone binary install to `~/.local/bin`
-- Linux Send-to (Nautilus/Dolphin/Nemo) and `--send-to-remote` CLI upload path
+- Linux Send-to (Nautilus script + Python MenuProvider, Dolphin, Nemo) and `--send-to-remote` CLI upload path
 - Autostart + prevent-sleep inhibitor while jobs/mounts/serves are active
 - Profile-aware operation start dialog (src/dst/URL/mount/serve type, dry-run, static flags, folder pickers)
 - Per-operation profiles in the remote wizard, CLI flag import, obscure tool
@@ -491,9 +495,733 @@ This client is the GTK 4 + libadwaita rewrite of the Angular/Tauri desktop UI. I
 - Quick Run guidance banners remove tracked rows instead of Adwaita's internal PreferencesGroup box
 - Check-result rows show status icons, icon resolve actions, and resolve progress as preparing or bytes/size/ETA
 - Path picker Browse tooltip uses `common.browse`
+- Preferences search matches title and help text, shows suggestion chips (API port / startup / debug / bandwidth), and jumps to the setting page
+- Preference rows use `.description` as subtitle so Adw search finds help text
+- Full backup export can subset remotes with per-remote switches (store + rclone dump)
+- Category export scopes the zip: Alerts writes only rules/actions/history, Connections writes extra backends, Settings/Remotes stay file-scoped
+- Restoring an Alerts or Connections backup merges that slice instead of replacing the whole store/settings
+- Alert action body templates use a multi-line editor so Discord/Slack JSON presets can be viewed and edited
+- Template capture lists every flattened flag key with select/deselect all, optional remote source, and a description field
+- Template manager rows show key counts and open an edit/rename/JSON dialog
+- Remote-config sidenav can filter pages by label or alias (mount, vfs, …)
+- Alerts Rules/Actions lists support search, enable toggles, test, and delete-with-confirm
+- Files ops panel expands a job inline (speed/ETA, transferring files) with a details row
+- Remote-order visibility, Files picker location, and alert stats use i18n keys
+- Transfer-activity Active/Recent tabs interpolate `{{count}}`
+- `fusermount3` shim on PATH so rclone 1.60 mounts on fuse3-only hosts
+- `mount/listmounts` parses rclone 1.60 arrays and marks alias remotes mounted
+- Live GUI: testdrive/dummyexport remotes, FUSE mount of testdrive, Copy start from a profile
+- Start-operation / profile / Flow / Quick Run starts persist `job_history` immediately (not only after a later poll)
+- Host `/proc/mounts` fuse.rclone rows merge into live mounts so alias remotes stay Mounted across rcd restarts
+- Instant rclone 1.60 jobs that vanish from `job/list` finalize as completed, not failed
+- Preferences default-view combo shows translated labels instead of `main_menu`
+- Copy/Move of a single file uses `operations/copyfile` / `movefile` (rclone `sync/copy` rejects file sources)
+- Delete of a single file uses `operations/deletefile`
+- Instant job failures from `job/status` surface immediately instead of looking completed
+- Missing rclone RC methods (`job/batch`, `serve/list`, `core/disks`, …) are cached so 1.60 is not polled for them
+- Preferences “Save & Restart” title escapes `&` for Adwaita markup
+- Files copy/move of folders uses `sync/copy` / `sync/move` (files still use copyfile/movefile)
+- Tray menu and icon refresh on each poll; left-click Show Window; busy icon/tooltip from live jobs/mounts/serves
+- Alert titles/bodies use `notification.title.*` / `notification.body.*` i18n keys
+- Engine online/offline transitions emit alert events
+- Switching extra RC backends parks `job_history` / `job_meta` (and in-session mounts/serves) per backend so job IDs do not bleed across rcd instances
+- Flag editors call `options/blocks` and keep empty named groups when `options/info` omits them
+- Live mounts keep profile/origin across RC refresh and backend switches (rclone has no profile field)
+- Backends dialog has a Close button and dismisses before reopening after Use/Remove
+- Files copy/cut also writes a recoverable clipboard payload so paste works after a view rebuild
+- Files toolbar has Copy and Paste buttons next to New Folder
+- Files list selection reads `AdwActionRow` widget names (the row *is* the ListBoxRow); single-click selects, double-click opens
+- Files paste drops into a selected destination folder (unless that folder is the copy source)
+- Live GUI: testdrive Photos folder copy via toolbar Copy/Paste into verify-gui-folder (`sync/copy`, job group `filemanager/…`)
+- Files transfers persist `job_history` immediately (same as dashboard starts), not only `job_meta`
+- Files Copy to… / Move to… destination picker (toolbar, path menu, context menu, Shift+F10 / Menu)
+- Files right-click uses capture-phase hit-testing on the listing (lasso stays on button 1)
+- Files toolbar Selection actions menu (Copy / Copy to… / Move to… / Paste / rename / delete)
+- Live GUI: testdrive Photos Copy to… `verify-copy-to` (`sync/copy`, job 25238 in `job_history`, 3/3 files)
+- Live GUI: Selection actions menu lists Copy to… / Move to… and Copy toasts
+- Live GUI: remotes testdrive (Mounted) + dummyexport, Mount tab, Preferences tray/notifications ON, About, Alerts history
+- Live GUI: testdrive Serve start/stop (`Successfully started Serve` / `Stopped serve 127.0.0.1:35663`)
+- Live GUI: testdrive Copy start + stop (job 14781, `Successfully started Copy` / `Stopped job #14781`)
+- StatusNotifier tray registers `org.kde.StatusNotifierItem-<pid>-1` on the session bus when tray is enabled
+- Language change rebuilds the main window chrome (and reopens Preferences) so titles, menus, and workspace labels switch immediately
+- Files list/grid rows have a ⋮ menu button that opens the same context menu as right-click / Shift+F10
+- Live GUI: language switch English ↔ Türkçe rebuilds chrome (Dosyalar / Tercihler)
+- Live GUI: file viewer opens testdrive Photos/README.txt
+- Live GUI: testdrive Unmount + remount (`Unmounted /home/ubuntu/rclone-manager/testdrive` / `Successfully started Mount`)
+- Live GUI: testdrive Show in Tray ON
+- Live GUI: Flow New Quick Run editor opens
+- Unmount matches alias remotes and `…/{remote}` mount points (not only `remote:` RC fs names)
+- Mount/unmount fall back to `fusermount3 -u` for leftover FUSE from a previous rcd
 
-## Still deepening toward pixel-level Angular parity
+## Still deepening
 
 - Workflow builder (stub in both apps)
-- Remaining dialogs/Files English labels (core chrome now localized)
-- Pixel-level Angular layouts and leftover English `t_or` fallbacks
+- Pixel-level layouts vs Angular CSS (non-blocking for functional parity)
+- Files row ⋮ opens the toolbar Selection actions menu (same proven popover)
+- Live GUI: testdrive Photos ⋮ opens Selection actions; Copy toast
+- Live GUI: Flow Quick Run `gui-qr-copy` created and started (copy testdrive:Photos → verify-qr, job 22718, 3/3 files)
+- Live GUI: Export Full Backup → `/tmp/rclone-manager-gui-backup.zip` (`Backup created successfully`)
+- Live GUI: Bandwidth preset 10 MB/s saved as `10M`
+- Wizard provider list pins local/alias/drive/s3/sftp ahead of alphabetical leftovers
+- StatusNotifier tray includes ARGB32 icon pixmaps so the panel can draw the icon without a theme name
+- Files Send-to add/remove toasts use `nautilus.notifications.sendToAdded` / `sendToRemoved`
+- Detailed Remote wizard title is Remote Configuration; Quick Add keeps its own title
+- Scoped backup restore merges the renamed remote into the live store (does not replace settings)
+- GApplication re-forwards `--dialog` / `--dialog-data` / `--dialog-result` to the running instance
+- Restore preview puts scope / restore-as options above the contents list
+- Live GUI: Detailed Remote created `guilocal` (type=local); Quick Add is OAuth-only
+- Live GUI: Restore Backup preview opens via `--dialog restore-preview` and shows scope options above contents
+- Standalone `--dialog restore-preview` closes the leftover window after a successful restore
+- Flow overview automations have pause/resume and Run now (same controls as the dashboard)
+- Live GUI: Quick Run `gui-qr-copy` cron saved as `0 7 * * *` (Daily at 7:00); sidebar/card show the cron badge
+- Live GUI: Flow Automations **Pause** writes `automation_paused` `quick:050de334-2571-4ead-ac77-1fb23e16b0c6` and shows Resume + paused; **Resume** clears the list
+- Live GUI: Files testdrive toolbar **Add to File Manager Menu** writes Nautilus/KIO/Nemo send-to entries; **Remove** deletes them
+- Send-to toasts use `nautilus.notifications.sendToAdded` / `sendToRemoved` (with `tf_or` English fallback)
+- Live GUI: Send-to toast reads `Added 'testdrive' to File Manager menu`
+- Watch automations debounce from the last change (`watch_delay`) and pass scoped `(src, dst)` pairs when “changed only” is on
+- Sync / Bisync / Check start rejects file sources with the same directory-only error as Tauri
+- Files row ⋮ opens the full listing context menu (Share, Send-to, archive, star) instead of the short Selection actions list
+- Files grid matches list: single-click selects, double-click opens (`activate_on_single_click=false`)
+- Files ⋮ is a 48px `GtkButton` overlay (`.file-item-menu` / `.file-item-menu-hit`); FlowBox no longer opens on single click
+- Files listing context menu is a scrolled `GtkBox` (260×420) on a persistent window-parented `GtkPopover` pointed at the clicked ⋮ / row
+- `--tray-action` CLI tokens encode tray menu clicks for Windows NotifyIcon / macOS NSStatusItem helpers
+- Files toolbar Selection actions keeps the short Open/Copy/Cut/Copy to…/Move to…/Paste/rename/delete list
+- Windows autostart writes `HKCU\...\Run` `Rclone Manager` → `"exe" --tray` (PowerShell)
+- macOS autostart writes `~/Library/LaunchAgents/io.github.zarestia_dev.rclone-manager.plist` (`RunAtLoad`, `--tray`)
+- Prevent-sleep: Windows `SetThreadExecutionState(ES_CONTINUOUS|SYSTEM|AWAYMODE)`, macOS `caffeinate -dims`, Linux logind / systemd-inhibit
+- Live GUI: testdrive Photos ⋮ opens the full listing context menu pointed at the row and it stays open (Open / Copy to… under the Photos ⋮)
+- Live GUI: testdrive Photos right-click opens the same scrolled menu (Open in New Tab / Refresh / Copy to…)
+- Tray backends: Linux StatusNotifier (`ksni`), Windows NotifyIcon helper (`--tray-action`), macOS NSStatusItem Swift helper (`--tray-action`)
+- Win/macOS tray helpers flatten `plan_tray` for restart signatures and emit nested NotifyIcon / NSStatusItem menus (per-remote Mount/Unmount/Browse, quick runs)
+- Live GUI: after tray-helper rewrite, testdrive Photos ⋮ still opens the full listing menu (Open / Open native / Copy to…)
+- Linux Send-to writes the Tauri Nautilus Python `MenuProvider` extension (GNOME Files context menu, not only Scripts)
+- Live GUI: testdrive Remove/Add File Manager menu writes `~/.local/share/nautilus-python/extensions/testdrive (RClone Manager).py` (`Nautilus.MenuProvider`, `--send-to-remote testdrive`)
+- Desktop entry includes `Start on Tray`, `application/x-rclone-config`, `x-scheme-handler/rclone-manager`, `%U`, and localized comments
+- Job stop transitions emit `notification.title.jobStopped` alerts (same keys as Tauri)
+- New running/starting jobs emit `notification.title.jobStarted` (same keys as Tauri submit notify)
+- Startup installs `~/.local/share/applications/io.github.zarestia_dev.rclone-manager.desktop` with the running binary (Start on Tray + rclone.conf MIME + deep-link scheme)
+- Startup installs `~/.local/share/mime/packages/io.github.zarestia_dev.rclone-manager.xml` so `rclone.conf` is `application/x-rclone-config`
+- OS toasts use app name `Rclone Manager` and `folder-remote` icon
+- `rclone-manager://dashboard|flow|nautilus|preferences` deep links parse to the same `NavTarget`s as `#/` routes
+- `--import-config FILE` / MIME / `file://` open of rclone.conf shows Import remotes dialog and `config/create`s them
+- Live GUI: startup wrote `~/.local/share/applications/io.github.zarestia_dev.rclone-manager.desktop` (`Exec=…/rclone-manager-gtk %U`, `x-scheme-handler/rclone-manager`) and the shared-MIME package
+- Live GUI: `--import-config /tmp/rclone-import-gui.conf` listed `guiimport` (alias), Import created it (`Imported 1 remotes`, present in `rclone listremotes` + sidebar)
+- Live GUI: `rclone-manager://dashboard/mount/testdrive` selected testdrive and the Mount tab
+- Export Settings can write a standalone `rclone.conf` (INI) as well as the zip backup
+- Startup installs AppStream metainfo under `~/.local/share/metainfo/`
+- Live GUI: Export Format=`rclone.conf` saved `/tmp/gui-export.rclone.conf` (`rclone.conf exported`; `[dummyexport]` `[guiimport]` `[guilocal]` `[testdrive]` `[testdrive2]`)
+- Live GUI: AppStream metainfo installed at `~/.local/share/metainfo/io.github.zarestia_dev.rclone-manager.metainfo.xml`
+- Live GUI: Dashboard **Manage Backends · local** opens the Backends dialog (Local rclone RC `127.0.0.1:33663`)
+- Live GUI: Files toolbar sidebar toggle hides Configure Sidebar / Starred / local disks and writes `nautilus.sidebar_visible` false, then true again
+- Mount folder pickers reject non-empty destinations (`backendErrors.file.folderNotEmpty`) and Windows drive roots
+- Files sidebar toggle persists `nautilus.sidebar_visible` (setting is no longer forced on)
+- Dashboard and Flow overview headers open the Backends dialog (`overviewHeader.manageBackends`)
+- App/rclone update download URLs resolve Windows MSI/EXE and macOS DMG/zip assets; rclone zip is OS-specific
+- Host-local “Open folder” uses the system file manager when the path exists on this machine, even if the extra RC backend OS differs
+- Remote-config content header can collapse the profile sidebar
+- NetworkManager `Metered` D-Bus watcher applies bandwidth + banner immediately (1s poll fallback)
+- Files toolbar Detach Tab opens the current listing in a new window
+- Files internal drag shows a GTK `DragIcon` ghost with name or “N items”
+- Live GUI: process thread `nm-metered` starts with the app
+- Live GUI: `rclone-manager://nautilus` opens the Files workspace (separate Files window 1222×882)
+- Live GUI: Dashboard sidebar toggle writes `runtime.dashboard_sidebar_open` false; restart keeps remotes list collapsed, then toggle restores it
+- Live GUI: `guiimport` stays in the remotes sidebar while dimmed (`sidebar.hiddenOnDashboard`)
+- Live GUI: dummyexport Browse from Remotes opens a detached Files window (`Files` 1278×762) while Remotes/Start Mount stay visible
+- Live GUI: About copy writes `Rclone Manager 0.3.2 · rclone v1.60.1-DEV` to the clipboard
+- Live GUI: Backends dialog shows Config Password / System Keychain plus Validate, Encrypt, Change password, Remove encryption
+- Dashboard and Flow sidebars can collapse; open state persists as `runtime.dashboard_sidebar_open` / `runtime.flow_sidebar_open`
+- Hidden remotes stay in the dashboard sidebar (dimmed, `sidebar.hiddenOnDashboard`) instead of disappearing
+- Browse from Dashboard/Flow opens a detached Files window so the current workspace stays visible
+- Backends dialog includes the same rclone.conf Security actions as Preferences
+- About copies the app + rclone version in one click
+- `backup.restore.restoreAs` exists in all nine catalogs
+- Dashboard sidebar status uses mount/serve/job icons with translated tooltips
+- Dashboard General/Mount/Operations/Serve tab persists as `runtime.dashboard_tab`
+- Remote-config deep links honor `?autoAdd=true` / `--auto-add` (GIO boolean flags are not read as strings)
+- `#/logs/{remote}` and `--logs REMOTE` open remote-scoped logs; hamburger **Logs** is `win.logs`
+- Live GUI: Mount tab + testdrive Configuration persist across restart (`runtime.dashboard_tab=mount`, `selected_detail_pages.testdrive=configuration`)
+- Live GUI: `--logs testdrive` opens the logs overlay with testdrive copy/serve lines
+- Live GUI: `Ctrl+?` opens Keyboard Shortcuts (Quit, Preferences, Flags, New Remote)
+- Live GUI: `runtime.rclone_restart_required` shows **Rclone Restart Required** / **Restart Now** ahead of the version-too-old banner
+- Live GUI: `--remote-config testdrive --step mount --auto-add` opens Mount config and the Add profile name prompt
+- Zero-remotes overview shows Quick Add / Detailed Remote CTAs
+- After rclone install, titlebar/banner prompt to restart the engine
+- Updates hides app Install on Flatpak/portable and links Flathub/download page
+- `Ctrl+?` opens keyboard shortcuts (same as Angular; `Ctrl+Shift+?` still works)
+- Remote detail Monitoring/Configuration tab is remembered per remote
+- Titlebar / Ctrl+B / Flow peek overlay a detached workspace when the target is not `default_view` (Angular overlay model)
+- Live GUI: titlebar Files with `default_view=main_menu` opens detached `Files` `1082×762` while Remotes stays on the main window
+- Global Logs dialog has a Remote Filter dropdown (All + remotes); `--logs REMOTE` locks the dropdown
+- Live GUI: hamburger/gdbus Logs shows Remote Filter **All** plus testdrive copy/job lines
+- `--backends`, `--rclone-flags`, `--templates`, `--export`, `--repair` and `#/backends|flags|templates|export|repair` open those dialogs
+- Live GUI: `win.backends` via gdbus shows Local `127.0.0.1` + office extra backend and Config Password
+- App update install launches `msiexec` / `open` for Windows MSI/EXE and macOS DMG/PKG instead of replacing the binary
+- Flow overview Jobs/Serves/Automations honor the same origin filter chips as the dashboard
+- Flow remote detail Transfer Activity has search plus Active/Recent tabs
+- Remote-config and Detailed Remote obscure tools apply the result to a provider password field
+- Preferences search indexes restrict, sleep, theme, files, env, mount, and destroy-on-close rows
+- Multi-rename hides counter start/step/padding until the template includes `[Counter]`
+- Preferences pending-restart banner lists the queued setting names
+- Developer menu and Preferences open the GTK Inspector (`developerTools.openDevTools`)
+- Titlebar / menu Close overlay dismisses detached workspace windows and returns to the base view
+- Live GUI: Flow overlay shows origin chips All / Dashboard / Quick Run / Files / Automations; `win.close-overlay` dismisses the Flow window and leaves Remotes
+- Live GUI: `win.inspector` opens GTK Inspector (Objects tree: AdwApplication / AdwApplicationWindow)
+- Live GUI: testdrive remote-config sidenav shows Obscure / Clear / Apply plus the result row
+- Live GUI: Preferences General lists Restrict, Prevent Sleep, Detached Dialogs, theme, and tray icon theme
+- Hamburger menu shows a badge for restart / updates / unacknowledged alerts; Alerts and About/Updates menu labels include counts
+- Application menu omits the workspace that is already open
+- Tray NeedsAttention when unacknowledged alerts exist (not only busy jobs)
+- Flow sidebar quick runs show a running indicator and translated cron/watch/autostart badges
+- Sidebar remotes show numeric badges when more than one mount, serve, or job is active
+- Mount monitoring lists every mount point for a remote (profile subtitle when set)
+- Export includes a Backend category (`settings` slice + `backend.json` from `options/get`)
+- Export Encrypt switch reveals the zip password and secrets rows; remotes subset is labeled as remotes
+- Restore applies exported `backend.json` via persisted `options/set` (engine restart)
+- Template manager has Save / Manage tabs, search, and Apply Default Presets on capture and edit
+- Debug Info uses i18n for rclone path rows and the encrypted-config flag
+- Files path bar fades at the scroll edges when breadcrumbs overflow
+- Live GUI: Templates Save/Manage tabs, search, Apply Default Presets (236 keys including backend.buffer_size)
+- Live GUI: Export Encrypt reveals password + secrets; Type includes Backend
+- Live GUI: hamburger badge shows for the outdated-rclone notice
+- Live GUI: application menu stays open (Export, Templates, Alerts, About); Remotes omitted while on the Remotes workspace
+- Application menu model is not rebuilt on every poll (popover stays open); badge does not steal clicks
+- Template capture groups keys by category expander, supports Add Key, and toggles Visual / JSON (JSON edits rehydrate the visual list)
+- Alert action editor uses wrapping kind chips, translated encryption/WhatsApp labels, and key/value webhook header rows (Discord/Slack presets refill them)
+- Deep links and CLI: `#/templates?mode=save`, `#/quick-add`, `#/whats-new-app`, `#/whats-new-rclone`, `#/properties/{remote}/{path}`
+- Job detail shows a copyable monospace error block when a job has an error
+- PDF viewer prev/next tooltips use `fileBrowser.fileViewer.previousPage` / `nextPage` in all locales
+- GIO registers `--quick-add`, `--whats-new[-app|-rclone]`, `--properties`, `--clone-from`, and optional `--templates MODE`
+- `#/remote-config?cloneFrom=` / `--clone-from` opens the Clone Remote wizard with dumped fields; rclone.conf is written only on Save
+- Live GUI: Templates New Template shows category expanders, Add Key, Visual Inspector / JSON Editor
+- Live GUI: Alert action kind chips wrap; Webhook shows Header Name/Value + Add header; Discord preset fills Content-Type and JSON body
+- Live GUI: `--whats-new-rclone` forwarded to the running instance and opened rclone v1.75.0 notes
+- Live GUI: `--properties testdrive:Photos` opened the Photos properties dialog (testdrive, directory, 35 files)
+- Template Manage → Edit uses the same Visual / JSON inspector as Save (category expanders, Add Key, presets)
+- Clone Remote / `#/remote-config?cloneFrom=` opens the wizard with dumped fields and a suggested name; rclone.conf is written only on Save
+- Remote-config “Save as template” opens the full capture inspector with that remote preselected
+- Files listings render the first 200 items and offer Show N more (Angular view-pane batch)
+- Deep links and CLI for remaining dialogs: `#/file-viewer`, `#/start-operation/{remote}/{op}`, `#/vfs/{remote}`, `#/delete-remote/{remote}`, `#/remote-about/{remote}`, `#/restore-preview?path=`, `#/archive-create/{remote}/{path}?names=`, `#/quick-run-editor/{id}`, `#/flow/{id}?mode=edit`, `#/export/{remote}`
+- Files Ctrl+R refreshes the listing (same as F5 / Angular nautilus-keyboard)
+- Files sidebar has a Keyboard Shortcuts row that opens the Nautilus-scoped cheat sheet (`nautilus.shortcuts.title`)
+- Global shortcuts modal matches Angular categories (application / remotes / file operations / navigation), including Alerts and Escape
+- Action-order, remote-order, sidebar-configure, and dashboard/Flow edit-layout lists support drag-reorder (`moveItemInArray`)
+- Files keybinds yield while a dialog is open or the path/search field is focused
+- Standalone dialog window titles and Start Operation titles use i18n instead of raw kind / API labels
+- Dashboard panel headings use `generalOverview.panels.*`
+- Live GUI: `--file-viewer testdrive:Photos/README.txt` opens README.txt (7 B)
+- Live GUI: `--vfs testdrive` opens VFS Control (Refresh Metadata / Clear Metadata Cache)
+- Live GUI: `--start-operation testdrive:copy` opens Copy with profile `gui-copy-test`
+- Live GUI: `--remote-about testdrive` opens Remote About (Used/Free/Total Space, hashes)
+- Live GUI: Templates Manage → Parity Capture Edit shows Visual Inspector (dlna expander, Add Key, 220/220) and JSON Editor (`"dlna"` / `"filter"`)
+- Live GUI: `--clone-from testdrive` opens the wizard with suggested name `testdrive-2` and type alias; store + `rclone listremotes` stay unchanged until Save
+- Live GUI: remote-config testdrive **Save Current Settings as Template** opens the full capture inspector (7/7 remote keys, Visual Inspector)
+- Live GUI: `testdrive:batch250` (250 files) first paint ends at `file-200.txt` with **Show 50 more** and status `250 items`
+- Detached Files / Flow / Dashboard windows get the application hamburger, global shortcuts, and shared `win.*` actions (Preferences, About, Quit, Ctrl+?)
+- Shortcuts search shows Angular’s empty state (`shared.search.title` / `description` / `action`) when nothing matches
+- Nautilus cheat sheet lists F2 rename, Space preview, and Ctrl+Shift+D detach
+- About Legal / Credits use `modals.about.toolkit`, `licenseId`, `gnuGpl`, `leadName`, and `ackTextGtk`
+- Live GUI: `--shortcuts` shows Global / Application / Quit / Preferences / Flags / Ctrl+Alt+A / Flow
+- Live GUI: `--dialog keyboard-shortcuts --dialog-data '{"nautilus":true}'` shows File Browser (Nautilus) plus Copy / Cut / Paste / F5
+- Live GUI: `--delete-remote testdrive` opens Delete testdrive? (mounts/serves/jobs + quick runs)
+- Live GUI: `--quick-run-editor gui-qr-copy` opens the Quick Run editor (Name / testdrive copy)
+- Live GUI: `--restore-preview` opens Restore Backup (password + Restore Specific Profile)
+- Live GUI: `--export testdrive` opens Export with Type Full Backup and remote testdrive preselected
+- Live GUI: `--browse testdrive` detached Files window has overlay chrome (`Files` header) and `win.shortcuts` / `win.about` / `win.preferences` actions
+- Live GUI: overlay `win.shortcuts` opens Keyboard Shortcuts; search `xyzzy` shows **No results found** / **No options match your search** / **Clear Search**
+- Live GUI: overlay About shows `GTK 4 + libadwaita · 0.3.2 · rclone v1.60.1-DEV`
+- Live GUI: Nautilus shortcuts search `F2` → Rename; `Detach` → Detach Tab
+- Overlay `view` / `toggle-flow` open or focus sibling workspace windows instead of changing the main stack
+- Overlay hamburger registers `win.theme` and `win.quick-run-new`; language reload snapshots and restores overlay specs
+- Detach on Flow/Dashboard overlays is a no-op; Files still detaches the current tab
+- Live GUI: Files overlay `toggle-flow` opens **Flow Workspace** while Remotes stays on the main window; second toggle closes Flow
+- Live GUI: Files detach titles use `Files — Home`; Nautilus sheet search `Undo` / `New Tab`
+- About includes dedicated About App and About Rclone pages (OS/arch/mode, debug tools, rclone version + beta/dev badge, Go, PID/kill, memory, FS cache)
+- About App / About Rclone update cards match Angular: Ready to restart, update available (What's New / Install / Skip), or up to date, plus auto-check, channel, and skipped versions
+- App updates stage a restart (`runtime.app_restart_required`) instead of relaunching immediately; banner and About App show Restart Now
+- Live GUI: About App shows OS `linux (x86_64)`, mode `gtk-desktop`, Up to Date, Check for Updates, Auto-Check, Release Channel Stable
+- Live GUI: About Rclone shows `v1.60.1-DEV · Beta`, Go `go1.22.2`, PID + Kill Process, Memory + View Memory Statistics, Backend Cache, Rclone Up to Date
+- Live GUI: `app_restart_required` banner reads **Restart Required** / **Restart Now**; About App shows the same card and hides Check for Updates
+- Files listing context menu is context-sensitive (empty / file / folder Open submenu / multi), matching Angular
+- About deep links select a page (`#/about/about-rclone`, `--about rclone`); Debug tools include Restart App and GTK Inspector; memory stats include heap/stack/GC counts
+- Live GUI: `--about rclone` opens the About Rclone tab (`v1.60.1-DEV · Beta`, Go, PID, Memory, Cache)
+- Live GUI: testdrive folder ⋮ / right-click shows Open, Remove empty folders, Copy Path (no Open native / Share)
+- Live GUI: testdrive `a.txt` menu shows Open, Open native, Share, Copy Path, Copy/Cut, Rename, Compress, Delete
+- Create wizard uses Angular’s 16-step sidebar (Remote + 11 operations + filter / VFS / backend / runtime) with Back / Next / Create
+- Quick Add stays two steps (Remote + Operations) with Back from the operations page
+- Sidebar steps stay locked until the remote name is valid; interactive OAuth hides the sidebar
+- Live GUI: Add New Remote sidebar lists Remote through Crypt Check plus Filter / VFS / Backend / Runtime Remote; Next opens Mount with Back / Next / Create
+- Live GUI: last step is Runtime Remote (typed flags, Back + Create, no Next)
+- Live GUI: Quick Add sidebar is Remote + Operation Options (Optional) with Google Drive fields
+- rclone.conf Security matches Angular backend-security: Encrypted/Not Encrypted banner, confirm-password, live mismatch, keychain toggle, change/remove expanders
+- Live GUI: Preferences Security shows **Not Encrypted** / Credentials stored in plain text, Password + Confirm Password, disabled Enable Encryption
+- Live GUI: mismatch `secret` / `other` outlines Confirm in red with **Passwords do not match** and keeps Enable Encryption disabled; matching 6-character passwords enable the button (rclone.conf left unencrypted)
+- Global right-click on window chrome opens Refresh UI / Clear Cache / Open Developer Tools (Angular `DebugService`); editable fields keep the native GTK menu
+- Live GUI: Preferences Security tab title is **Security**; Enable Encryption is grey until passwords match
+- Live GUI: dashboard right-click shows Refresh UI / Clear Cache / Open Developer Tools; Refresh UI toast
+- About uses Angular-style drill-down (home list → Details / About Rclone / About App / Credits / Legal) instead of a six-tab ViewSwitcher
+- Live GUI: `--about home` lists full titles Details, About Rclone, About App, Credits, Legal (no `Abou...` truncation)
+- Live GUI: About Rclone page title is **About Rclone** with v1.60.1-DEV · Beta, Go, PID, Memory, Cache
+- Live GUI: `--about app` opens **About App** (Up to Date, Check for Updates, Release Channel Stable)
+- Bare optional CLI flags (`--about`, `--preferences`, `--logs`, `--templates`, `--export`, `--whats-new`, `--quick-run-editor`, `--standalone`) register as GLib booleans so GIO no longer requires a value; leftover tokens stay after the re-inserted flag
+- Live GUI: `--about` opens the About home list (Details / About Rclone / About App / Credits / Legal); `--about rclone` as a second instance opens About Rclone
+- Live GUI: `--preferences` opens Preferences; `--preferences security` opens Security (Not Encrypted); `--logs` opens the logs dialog
+- Automations persist Angular-style lifecycle state (enabled/running/failed, success/fail/stop/run counts, last error, current job) and show it on dashboard and Flow rows
+- The Automations origin chip lists every scheduled item (it previously compared job-origin labels and hid Quick Run automations)
+- Live GUI: Flow Automations row for `gui-qr-copy` shows Failed, 3 ok / 1 fail / 4 runs, and last error `network timeout`
+- Automations use Angular-style cards: compact overview (status, 4 stats, next run) and detailed remote cards (schedule, statistics, paths with Open in Files, last error, running job) with a carousel when a remote has more than one
+- Live GUI: Flow Automations compact card shows **gui-qr-copy**, **Failed**, and stats **3 / 1 / 0 / 4**
+- Operations detail has Angular’s More selector: up to 3 primary `syncActions` (else sync/bisync/copy) plus a More menu for the rest of `SYNC_TYPES` (move, check, delete, copyurl, archivecreate, cryptcheck)
+- Live GUI: testdrive Operations shows Sync / Bisync / Copy + **More**; More lists Move, Check, Delete, Copy URL, Archive, Cryptcheck
+- Live GUI: More → Check highlights More and shows **Check Settings**; More → Move shows **Move Settings**; Sync primary toggle restores **Sync Settings**
+- Transfer rows offer Angular fallback copy-URL / download / delete when rclone omits `srcFs`/`dstFs`, using the job remote + transfer name
+- Operations Configuration / Monitoring / activity / transfers scope to the selected sync op (Check no longer lists Copy profiles or Copy jobs)
+- Live GUI: testdrive Operations Sync/Check/Move show **No saved profiles**; Copy shows **copy / gui-copy-test**; switching back to Copy restores it
+- Operations Monitoring uses Angular profile pills (running / scheduled / idle, add-profile) when an op has more than one profile
+- Configuration lists a settings panel per profile of the selected op (`Copy Settings (name)`), then Shared Settings once
+- Live GUI: testdrive Copy Monitoring shows **Selected Profile** / **2 profiles** pills (`gui-copy-nightly` clock, `gui-copy-test`); selecting test hides Daily at 2:00
+- Live GUI: Configuration lists both Copy Settings panels then Shared Settings once
+- General remote status chips stop an active mount/serve/job (Angular `onToggleAction`); idle chips start a single profile or open Start Operation when several exist
+- Stop Mount resolves alias remotes (`cfg.remote`) and host fuse mounts, then falls back to the profile dest when RC `listmounts` is empty
+- Live GUI: testdrive General **Stop Mount** unmounted `/tmp/rclone-testdrive-mnt` (toast **Unmounted /tmp/rclone-testdrive-mnt**) while rcd `listmounts` was empty; **Start Mount** remounted it
+- General detail shows Angular’s Remote Configuration preview (`settings_list` + Edit Configuration) from `config/dump`
+- Live GUI: testdrive General Remote Configuration lists **2 settings** (`remote` `/tmp/rclone-test-remote`, `type` `alias`) and **Edit Configuration**
+- General and Flow remote detail use Angular’s Jobs panel (type, `#id`, profile, status, progress, dry-run, duration, relative time, stop/delete)
+- Live GUI: testdrive General **Jobs 12** shows `copy #22718` Completed; click opens Job Information; Flow testdrive remote detail lists the same cards
+- Flow transfer activity has Reset stats (running) / Delete from history (finished), matching the dashboard toolbar
+- General and Flow render Angular `app-quick-run-card` overview cards (name, op badge, remote link, cron/watch/autostart icons, start/stop, edit, source/destination folder menu)
+- Cards sit after disk usage and before Jobs, matching Angular `general-detail`
+- Live GUI: testdrive General **Quick Runs (1)** shows `gui-qr-copy` Copy · testdrive with cron clock, Start, Edit, and folder popover (Source `testdrive:Photos` / Destination `testdrive:verify-qr`); title opens Flow detail; Edit opens the Quick Run editor (`0 7 * * *`)
+- Settings previews use Angular’s expandable `settings-panel` (count subtitle, app/rclone groups, Edit) instead of a flat ActionRow list
+- Live GUI: testdrive General **Remote Configuration** expander shows **2 settings** (`remote` `/tmp/rclone-test-remote`, `type` `alias`) and Edit Settings
+- Live GUI: Operations Copy Configuration expanders list **Copy Settings (gui-copy-nightly/test)** with Application Settings + Rclone Options
+- Live GUI: Flow `gui-qr-copy` Configuration expander shows Application Settings + Rclone Options (`srcFs` `testdrive:Photos`, `dstFs` `testdrive:verify-qr`)
+- Job detail drops rclone 1.60 global `core/stats` leftovers that belong to another job (id / `job/<id>` group / foreign src-dst)
+- Flow Quick Run Monitoring resolves the live or last matching job, not only `last_job_id`
+- Live GUI: job/22718 shows copy · testdrive:Photos → testdrive:verify-qr and empty completed (no #14781 / verify-copy-to); job/14781 stays on gui-copy-test / job/14781
+- General remote detail matches Angular `general-detail`: status chips, disk usage, Quick Runs, Jobs, Automations, Remote Configuration (no operation-start grid, Profiles, VFS, or transfer activity)
+- Live GUI: testdrive General shows Stop Mount / Start Sync / Start Serve, disk usage, `gui-qr-copy`, Jobs 12, then Automations + Remote Configuration; Operations still has Sync/Bisync/Copy/More and Profiles
+- Flow Quick Run Monitoring and dashboard profile start use a shared Angular `app-operation-control` expander (paths, dry-run/resync, header start/stop, full Start/Stop Copy)
+- Delete hides destination; live job src/dst win over configured paths; mount usage only while mounted
+- Live GUI: Flow `gui-qr-copy` Monitoring expander shows Source `testdrive:Photos`, Destination `testdrive:verify-qr`, Dry run, Start Copy; collapse reveals header Start/Stop
+- Live GUI: testdrive Operations Copy expanders `gui-copy-test` / `gui-copy-nightly` still show Source/Destination, Dry run, and Start Copy
+- Operation-control serve paths match Angular: `TYPE at addr` (or Default), destination is display-only, empty source is Not configured; SAF mounts use `saf://remote`
+- Live GUI: testdrive Serve expander shows Serving **Not configured**, Accessible via **HTTP at Default**, Start Serve (no folder-open on dest)
+- Live GUI: guilocal Serve expander shows Serving `guilocal:`, Accessible via **HTTP at Default**
+- `transfer_action_paths` returns only `{remote}:{name}` when rclone omits `srcFs`/`dstFs`, so name-only completed rows show one action cluster (Open / Copy path / Download / Delete) instead of src + dst + fallback
+- Live GUI: job/22718 completed `Photos/README.txt` (7 B) shows one action cluster; Copy URL stays hidden on alias remotes (no PublicLink); Download opens Save a File with `README.txt` (cancelled)
+- Check/cryptcheck result actions follow Angular `canDo`: hide src on `missing_src`, hide dest on `failed`/`missing_dst`, allow dest delete on checked rows, and use the real job type instead of hardcoding copy
+- Operation-control source Open splits comma-joined or JSON `srcFs` arrays into one Files action per path (destination stays a single Open)
+- Folder-open is guarded per remote like Angular `actionInProgress === 'open'`: a second Open is ignored and Open buttons show a spinner while one is in flight
+- Files operations expanders show Angular job details: source, destination, start time, job error with Copy, and failed completed-transfer rows
+- Live GUI: testdrive Copy `gui-copy-multi` Source `testdrive:Photos, testdrive:` opens a folder menu with `testdrive:Photos` and `testdrive:`
+- Live GUI: Files ops `copy · Failed` #42424 shows Source `testdrive:Photos`, Destination `testdrive:verify-ops`, Start time Aug 26 21:00, Failed `network timeout` with Copy, and `bad.txt` / `permission denied`
+- Remote-config profile rename follows Angular: sync/job profiles cannot be renamed while a job is running; mount/serve rename still cascades into the live mount/serve cache
+- Delete stays blocked for any in-use job/mount/serve profile, with the same in-use tooltip as Angular
+- Dashboard and Flow transfer/check tables page like Angular (`displayLimit` 50 + Show N more) instead of silently dropping rows at 12/40; Job Information lists every check result
+- Live GUI: testdrive Copy `gui-copy-test` Transfer Activity lists `batch/file-01.txt` through `batch/file-15.txt` (beyond the old 12-row cap)
+- Live GUI: testdrive Mount profile `default` rename stays enabled while `/tmp/rclone-testdrive-mnt` is mounted (Angular allows mount rename; job-profile rename is what gets blocked)
+- Markdown preview embeds `![alt](path)` and `<img src>` like Angular: relative refs resolve against the current file and load via local path, HTTP, or `operations/copyfile` into a temp cache
+- Cron descriptions no longer fall back to the raw expression; unmatched fields compose a cronstrue-style phrase and new keys are translated in all nine locales
+- File viewer text falls back to `--rc-serve` when rclone has no `operations/cat` (1.60)
+- Live GUI: testdrive `Photos/README.md` Show Preview embeds orange `photo1.jpg` (First photo) and blue `photo2.jpg` (Second photo) plus Shortcut Targets
+- Live GUI: Flow `gui-qr-copy` Scheduled Task shows Daily at 7:00; editor Your Schedule describes `0 9 15 * 1` as At 9:00, on day 15, on Monday and `0 9,18 * * 1-5` as Weekdays at 9:00 and 18:00, then restores `0 7 * * *`
+- Dashboard and Flow custom bandwidth Apply reject invalid values (`xyz`) with `validators.bandwidth` and keep empty/`off`/`0` as unlimited; Preferences uses the same limit helper
+- Remote-config / Start Operation / Quick Run / helper saves type-check flag editors via `validate_flag_text` and refuse persist on the first invalid field
+- Remote PDF preview uses `--rc-serve` `preview_bytes` into `pdf_panel` (pdftoppm) instead of treating PDF as a non-streamable download-only type
+- Embedded folder pickers honor Angular `FilePickerConfig.multi`: extra selected paths fill Additional source rows on Copy/Sync/Move
+- Live GUI: `--file-viewer testdrive:Photos/preview.pdf` shows Remote PDF preview, 552 B, 1 pages, and rendered page text Remote PDF Preview
+- Live GUI: dashboard Bandwidth Limit presets change Saved/Live limit (1 MB/s → 1M, 10 MB/s → 10M)
+- Dashboard/Flow poll no longer rebuilds the overview on every stats tick; custom bandwidth EntryRow keeps a draft so typing `xyz` / `2M` survives the poller
+- Custom bandwidth Apply is enabled only when the draft is valid and dirty (Angular `isCustomBandwidthChanged`); invalid drafts get the error CSS class
+- Operation start failures toast `operations.failedStart` (`Failed to start {{type}} for {{remote}}: {{error}}`)
+- Sidebar search with no matches shows `sidebar.noRemotesFound` instead of a blank list
+- Embedded file-picker chrome appends the live selection summary (`Select a folder · 2 folders selected`)
+- Sidebar mount/serve badges use `mount.mountedWithProfile` / `mountedMultiple` and `serve.servingWithProfile` / `servingMultiple`
+- Live GUI: custom bandwidth `xyz` stays in the EntryRow across poll ticks with a red invalid outline (Apply stays inactive); applying `2M` updates Saved/Live to 2M
+- Path fields get Angular-style inline autocomplete: list the parent folder, filter the last segment, and offer Up Folder / folder rows
+- `FilePickerConfig.default_remote` scopes typed relative paths (`Photos` → `remote:Photos`) on remote-config, Start Operation, and Quick Run
+- Destination path badges follow Angular `getPathStatus` (mount/sync/copy/bisync); bisync also shows a source badge when the resolved path is local
+- Mount save/start refuse a non-local dest with `wizards.appOperation.mountDestMustBeLocal`
+- Watch controls are hidden unless the op is automatable and the active RC backend is local; 0s delay shows `watchZeroDelayWarning`
+- Quick Run remote has a remotes dropdown and refuses Save with `selectRemoteFirst` when remotes exist but none is chosen
+- Live GUI: Copy source `testdrive:Pho` lists **Photos** (folder); picking it fills `testdrive:Photos/`
+- Live GUI: testdrive Copy dest `testdrive:verify-multi` Path check shows **Directory has files**
+- Live GUI: testdrive Mount dest `testdrive:Photos` Save is blocked with **Mount destination must be a local folder**; stored mount point stays `/tmp/rclone-testdrive-mnt`
+- Wizard provider type uses Angular `filteredRemotes` type-ahead (name + description) instead of a 100-item ComboRow
+- Wizard fields filter with `matchesConfigSearch` (Name / Help / `--client-id` flex keys)
+- `enableAutoStart` interpolates `{{type}}` from `modals.remoteConfig.steps.*` (Mount → Enable Auto-Mount on Startup)
+- Wizard remote-name errors use `wizards.remoteConfig.*` i18n keys
+- rclone array types (`Encoding`, `DumpFlags`, …) render as check-list MultiSelect when examples exist
+- VFS advanced config is searchable and grouped (Booleans / Durations / Sizes / …)
+- Live GUI: testdrive Mount shows **Enable Auto-Mount on Startup**
+- Live GUI: Quick Add provider `drive` lists **drive — Google Drive** and **onedrive — Microsoft OneDrive**
+
+- Provider/vendor exclusive example lists use Angular `filteredProvidersView` type-ahead (`filter_example_choices`) instead of a long ComboRow
+- `enableScheduled` interpolates `{{type}}` (Copy → Enable Scheduled Copy)
+- Remote-config flag search uses `matchesConfigSearch` (name / help / `--flag` flex keys); JSON mode keeps the search box and highlights matching keys
+- Path and provider typeahead only open while the EntryRow is being edited (child-focus aware) and folder picks keep listing the next segment
+- Files tabs can be drag-reordered (`moveItemInArray` / `rclone-manager-tab:` payload)
+- Live GUI: testdrive Copy shows **Enable Scheduled Copy**
+- Live GUI: Add Remote type `s3` lists **s3 — Amazon S3 Compliant Storage Providers…**; selecting it shows a searchable **provider** field defaulting to **AWS**
+
+- Remote-config Remote step edits provider fields inline (type + Auth/Advanced/search/JSON/command options) instead of opening the create wizard
+- Helper sidebar pages have JSON mode with key highlight, matching operation-profile JSON search
+- Files tab strip scrolls when tabs overflow; middle-click closes a tab
+- Live GUI: testdrive Remote step shows **alias — Alias for an existing remote**, Search fields, Show Advanced Options, and **remote (Required)**
+
+- Structured JSON editor (chips, parse/unknown-key banners, key/value autocomplete, restrict-mode masking, src/dst path reconciliation) replaces raw TextView JSON on operation profiles, helper pages, wizard JSON, and helper-profile dialogs
+- Delete-remote confirmation lists mounts/serves/jobs with icons plus saved profiles, quick runs, and automations
+
+- Live GUI: testdrive Copy JSON mode shows chip `createEmptySrcDirs · false`, info banner for srcFs/dstFs, parse error `Invalid JSON syntax. Please check your formatting.`, and warning `Unknown option(s): 'nope'`
+- Live GUI: Delete Remote for testdrive lists Saved Profiles (17) with icons (`archivecreate/default`, `backend/default`, …) plus Associated Quick Runs (1); Cancel leaves the remote intact
+
+- Operation, helper, start-operation, Quick Run, and wizard runtime flag rows use typed `FlagWidget` controls (Switch / Combo / SearchCombo / MultiSelect / Spin / Duration-Size Entry) instead of plain `AdwEntryRow` text
+- Live GUI: testdrive Copy `gui-copy-test` shows **Create Empty Src Dirs** as a switch; toggling ON then Save persists `createEmptySrcDirs: true`; toggling OFF then Save restores `false`
+
+- Rclone Flags home navigates like Angular: General Settings / File System & Storage / Network & Servers, then service expanders and category pages (not coarse backend/vfs/mount tabs)
+- Home search lists matching flags (`service › category`) and opens that category; category pages keep typed FlagWidgets, JSON mode, Apply, and Reset All
+- When rclone has no `options/info` (1.60), flags are synthesized from `options/get` so services still appear
+- Live GUI: `--rclone-flags` home shows General Settings (Log, Main, Rc), File System (Filter, Mount, Vfs), and Network (Dlna, Http, Sftp); Main › General shows **Ask Password** switch, **Buffer Size** spin `16777216`, and `Showing 91 of 91 flags`; home search `buffer` opens Main › General filtered to Buffer Size
+
+- Quick Run editor Runtime Remote tab uses typed provider FlagWidgets (plus JSON mode), not a raw JSON EntryRow; values save as `rclone.runtimeRemote`
+- Quick Run editor has a Presets & Templates bar that patches form values (vfs/backend/runtime/operation flags and src/dst) instead of remote metadata
+- `--quick-run-editor <name>` opens the saved run by name as well as UUID
+- Live GUI: `--quick-run-editor gui-qr-copy` shows **Presets & Templates** and Runtime Remote **remote** + **JSON** for testdrive alias; Apply Default Presets reports success; Save persists `runtimeRemote.remote: /tmp/rclone-test-remote`
+
+- Files tabs detach like Angular `onNativeDragEnd` / `detachTabAction`: drop on the listing or drag outside the window (or more than 70px vertically) opens `Files — {title}` and closes the source tab when more than one remains
+- Upload undo tokens keep the local source path so redo re-copies the file (`FileOp::Upload.source`); undo still deletes the destination
+- Live GUI: Files at testdrive:Photos with two **Photos** tabs; dragging the second tab onto the listing opens **Files — Photos**
+
+- Quick Run / remote-config template Apply looks up the ComboRow label by name (not store index) and refreshes the combo after Manage Templates / Save as Template
+- Remote-config Apply matches Angular scope: vfs / mount / backend / filter / remote only (does not write operation profiles)
+- `apply_to_meta_with_target` can patch a named helper or operation profile instead of always using the first/default
+- Live GUI: `--quick-run-editor gui-qr-copy` Apply of **QR Copy Paths** shows `Template "QR Copy Paths" applied successfully` and Destination becomes `testdrive:verify-qr-tmpl`
+
+- Files copy/upload/delete/paste push one undo token per batch (Angular `UndoEntry`); stack capped at 20
+- Files Back exits search first (`effectiveCanGoBack`): clears the filter and restores path crumbs before popping folder history
+- Live GUI: Files at testdrive:Photos filtered to README.md / README.txt; Back restores photo1.jpg, photo2.jpg, preview.pdf, and path crumbs
+
+- Backend editor matches Angular Connection/Security tabs: Enable Auth switch, Copy Backend Settings vs Copy Remotes, duplicate name/host/port checks, and Remove Stored Password
+- App menu includes **Import rclone.conf** (`win.import-config`) beside settings-backup import
+- Live GUI: `--backends` Add Backend shows Connection (Customize Authentication, Copy Backend/Remote Settings) and Security (No Password Stored); Save with an empty name reports **Name exists**
+
+- Files operations panel lists `stats.completed` files with sizes and failed-row errors (Angular `getTransferredFiles` / `transferredLabel`); delete/cleanup/rmdirs use an indeterminate progress pulse
+- Preset/template bar is a MenuButton (Angular CDK menu): Apply Default Presets, one-click template-by-name, Save as Template (remote-config), Manage Templates
+- Preferences Search Results render live setting widgets (same Switch/Combo/Entry/Spin as the tab pages), not jump-only rows; security still opens the Security tab
+- Live GUI: Preferences search `bandwidth` shows an editable Bandwidth limit row; changing it to `3M` writes `core.bandwidth_limit` then restore to `2M`
+- Live GUI: `--quick-run-editor gui-qr-copy` Presets & Templates menu lists **QR Copy Paths** / **Parity Capture**; one-click apply shows `Template "QR Copy Paths" applied successfully` and Destination `testdrive:verify-qr-tmpl`
+- Live GUI: Files operations job `#42424` copy Failed expands to **Copied files** `ok.txt` and `bad.txt` with `permission denied`
+
+- Files split-view file viewer uses the secondary pane listing for prev/next (`last_listing_right`) instead of an empty sibling list
+- Files listings and the operations panel refresh when rclone jobs finish if the open folder is the job source/destination or its parent (Angular `refreshAffectedPaths`)
+- Directory list failures show **Failed to load directory** with a Retry button (list or grid)
+- Live GUI: testdrive:Photos split view, opening README.md from the right pane shows **1 / 6 · 191 B**; Next opens README.txt as **2 / 6 · 7 B**
+
+- Files directory listing uses cancellable rclone `operations/list` jobs with Angular `ui/nautilus/list-left-*` / `list-right-*` groups, a Loading overlay, and Cancel (`job/stopgroup`); immediate list responses still populate without a job
+- File viewer prev/next selects the new name in the Files listing (`ensure_name_selected`); `--file-viewer` and standalone viewers list the parent folder when siblings are empty
+
+- Live GUI: testdrive:Photos lists 6 items after an async `operations/list` job; rclone 1.60 returns a `jobid` then `output.list`
+- Live GUI: opening README.md shows **5 / 6 · 191 B**; Next opens README.txt as **6 / 6 · 7 B** and the status bar reads **"README.txt" selected (7 B)**
+
+- Files copy/move/upload/delete/rename undo tokens wait until rclone jobs complete (Angular `await transferItems`); failed or stopped jobs never become Undo
+- Files split-view job refresh reloads the secondary pane when only that folder is affected
+
+- Standalone Files overlays call `refresh_runtime` so job status (and pending undo) can settle without the main window
+- `select_job_ids` fetches jobs we started even when rclone 1.60 omits them from a huge leftover `job/list`
+- Known file-manager jobs stay in the live list when rclone returns empty `output` (copyfile), so completed status reaches undo
+- Live GUI: testdrive:Photos copy README.txt, Go Up, Paste to testdrive root; after the copy job finishes, Ctrl+Z removes `README.txt` and shows **Undo successful** (lowercase `readme.txt` stays)
+
+- Remote-config has an Angular-style page search overlay (toolbar toggle / Ctrl+F) that filters current-step preference rows via `matchesConfigSearch`
+- Live GUI: `--remote-config testdrive --step copy` Toggle Search shows a content search bar; typing `path` keeps Path type / Path check rows
+
+- Remote-config edit sidebar matches Angular: Remote shows General / Auth / Advanced section jump; operations show profile rows plus shared VFS/filter/backend/runtime (VFS only from mount/serve/filter/backend)
+- `navigateToShared` / `returnFromShared` keep a Back stack and hide shared rows while stacked
+- Live GUI: `--remote-config testdrive --step copy` lists **Copy Profiles** (`gui-copy-multi` / `gui-copy-nightly` / `gui-copy-test`) and **Shared** Filter / Backend / Runtime Remote (no VFS); Filter opens **Filter Profiles** with Back **Copy** and hides Shared; Remote page lists **Sections** General / Authentication / Advanced
+
+- Remote-config CLI Import and Obscure are exclusive slide-down content panels (Angular `app-cli-import` / `app-obscure-tool`), not a cramped sidebar strip or only a modal
+- Sidebar footer toggles Import from CLI / Obscure Password; opening one closes the other; Escape hides the overlay before page search
+- CLI apply still creates/overrides/patches the current operation profile; Obscure applies to password-typed fields on the open step, then remote secrets
+- Live GUI: `--remote-config testdrive --step copy` sidebar **Import from CLI** slides a full-width paste/preview panel over Copy; **Obscure Password** replaces it (exclusive); Preview of `rclone copy testdrive: testdrive: --transfers 4` shows Detected Configuration and Apply to Profile; Apply Patch hides the overlay
+
+- Files folder open (double-click / Enter) and Go Up push Back history like Angular `navigate(..., newHistory: true)`
+- Each Files tab keeps its own Back/Forward stack; switching tabs restores that tab's history
+- Finished jobs refresh every matching open listing (active tab, split pane, and other tab paths)
+
+- Live GUI: `--browse testdrive` double-click **Photos** then toolbar Back (`<`, not Alt+Left) returns to testdrive root (batch250 / Docs / Photos) without aborting; toolbar Forward returns to Photos (`photo1.jpg`, README.md)
+- Files cut items dim to 50% opacity and swap the file icon for `edit-cut-symbolic` (Angular `cut-item` / scissors); copy restyles so cut marks clear
+
+- Live GUI: `--browse testdrive:NoSuchFolder999` shows **Failed to load directory** / `directory not found` and **Retry**; creating the folder and clicking Retry lists `appeared.txt`
+- Live GUI: Cut on `appeared.txt` dims the tile, draws a dashed outline, and swaps the icon for scissors; a Cut toast confirms the clipboard
+- Live GUI: copy `Photos/job-refresh-gui.txt` then Back and Paste into testdrive root; after `filemanager/...` completes the listing count goes 27 → 28 items (23 B / 23 B) without a manual refresh
+- Split-view copy/cut uses the secondary pane path when only that pane has a selection
+
+- Files listings paint the first 200 items, then append on scroll-near-bottom (Angular `onGridScroll`) and keep **Show N more**
+- Status caption is **Showing X of Y** while a listing is only partially painted
+- Operations panel is a collapsible expander (`fileBrowser.operations.title`) with an active-job badge; expanded state persists as `nautilus.ops_panel_expanded`
+- File-manager ops history is no longer capped at 12 finished jobs
+
+- Live GUI: `--browse testdrive:batch250` first paint is **Showing 200 of 250**; collapsing **Operations** persists `ops_panel_expanded: false`; scrolling the grid reaches `file-250.txt` and the status becomes **250 items**
+
+- Files lasso updates the selection while dragging and auto-scrolls near the listing edges (Angular `_handleAutoScroll`, 40px / 15px)
+- Files windows under 680px use Angular mobile chrome: overlay sidebar, single-tap open, and a bottom bar (sidebar / Open / layout)
+
+- Live GUI: `xdotool windowsize` on `--browse testdrive:batch250` now reaches **640×880** (toolbar + filter chips scroll instead of locking ~1280px)
+- Live GUI: at 640px the bottom bar shows **Toggle Sidebar** / **Toggle Layout**; sidebar is an overlay (Configure Sidebar Items / Starred / Home)
+- Live GUI: single-tap opens a folder (`Docs` → `note.txt`, **1 item**)
+- Live GUI: lasso hold at the listing bottom edge scrolls from `file-001` to `file-032+` and grows the selection to **42 items selected (327 B)**
+
+- Files operations jobs are compact one-line rows; clicking a row opens a floating details popover (Angular `detailsMenu`) with speed/ETA, source/dest, current and processed files, and Job details
+- Narrow Files bottom bar includes Pop-out (`openNewWindow`) and View options in addition to sidebar / layout
+- The active Files tab scrolls into the tab strip viewport
+- Live GUI: `--browse testdrive:batch250` Operations lists compact `job/4896 · Failed` rows; click opens a popover with Speed, Start time, and Processed files
+- Live GUI: at 640px the bottom bar exposes **Open in New Window**, **Toggle Layout**, and **View Options** (Icon Size / Sort / Hidden)
+
+- Starred grid/list items have a per-item Unstar button (Angular `starredMode` star column / overlay)
+- Internal file drags highlight drop targets with `.file-drag-over` (tabs, sidebar, folders, breadcrumbs)
+- Remote/mount disk-usage LevelBars use Angular severity thresholds (60% warning, 80% high, 90% critical)
+- Files tab reorder applies Angular `getTabTransform` slide offsets while dragging; dragging outside scales the source tab to 0
+- Folder context-menu Open submenu uses a 200ms left/right GtkStack slide (Angular `slide-menu`)
+- Dashboard Status overview row includes a LevelBar for active/total remotes
+
+- Repair sheet embeds Angular `installation-options`: Recommended / Custom / Existing tabs, path browse, and `rclone version` binary Test
+- Advanced install can download to a custom directory or apply a validated existing binary; Use Different Config sets `--config=`
+- `--starred` / `--browse starred` open Files on the Starred collection
+
+- Live GUI: `--repair` Show Advanced reveals Recommended / Custom / Existing; Existing `/usr/bin/rclone` Test shows **Valid binary** and **Use This Binary**
+- Live GUI: `--starred` opens Files on Starred with per-item Unstar buttons
+
+- Opening Starred cancels in-flight `operations/list` jobs so the collection is not replaced by the previous folder (Angular `starredMode`)
+- Dragging a tab outside the tab strip scales it to 0 while the pointer is over the listing or sidebar, not only on drag-end
+- Dashboard Status overview row is hosted in a boxed ListBox so the LevelBar is visible (ActionRow on a plain Box did not paint)
+
+- Live GUI: `--starred` shows only the Starred collection (**2 items**, two Home tiles with Unstar) instead of a stale local listing
+- Live GUI: `--dashboard` remotes panel **Status overview** reads `3 / 5 active · 60%` with a LevelBar
+
+- Standalone `--browse` / `--starred` / `--flow` / `--dashboard` skip driving the hidden main window nav stack, so they do not spawn a second Files overlay at `local:`
+- `--browse` / `--starred` together with `--dashboard` or `--flow` keep that workspace and still open Files as an overlay (`launch_overlay_files`)
+- `--starred` after `--dashboard` / `--flow` does not overwrite the workspace target
+
+- Live GUI: `--starred` opens a single Files window on the Starred collection (2 Home tiles, Unstar, **2 items**)
+- Live GUI: `--browse testdrive` opens a single Files window at testdrive (batch250 / Docs / Photos, **28 items**)
+- Live GUI: `--browse testdrive --dashboard` opens Remotes (Status overview **3 / 5 active · 60%**) plus one testdrive Files overlay
+- Live GUI: testdrive folder Actions → **Open** slides to Back / Open / Open in New Tab / Open in New Window; New Tab adds a **Photos** tab
+
+- Files Escape matches Angular: close listing menu, then search, picker, selection, or clipboard (no longer always reloads crumbs)
+- Files Ctrl+Y is redo (Angular); system-clipboard paste stays on the context menu
+- Files shortcuts attach to the window on realize (capture) so they work after a popover leaves focus on the header
+- Live GUI: testdrive Photos Actions then Escape closes the menu while **"Photos" selected**; a second Escape restores **28 items**
+
+- Path bar and `navigate_to` use Angular `parseLocation` plus relative append (`resolve_path_bar`)
+- Navigating to a file (`--browse remote:dir/file`) lists the parent and opens the viewer (`pendingPreviewFilePath`)
+- Files context / path menus show Paste when the OS clipboard has uri-list paths (`menu_has_paste`)
+- Live GUI: `--browse testdrive:Photos/README.md` opens Photos with **README.md selected (191 B)** and the file viewer (**6 / 7 · 191 B**, markdown preview)
+
+- Files sidebar remotes, local disks, and bookmarks accept OS `FileList` drops (`upload_local_paths_to`) matching Angular `dropToRemote` / `dropToBookmark`
+- Bookmarks header accepts internal folder drops and toggles bookmarks (`dropToLocal`)
+- Embedded file picker honors Angular `FilePickerConfig.minSelection` (confirm disabled / `nautilus.errors.minSelection`)
+- Properties size and hashsum run as grouped `_async` jobs (`filemanager/properties/...`) and `job/stopgroup` on close
+- Live GUI: `--properties testdrive:Photos` opens immediately; Contained Files **292** and Total Size fill from the async `operations/size` job
+
+- Markdown preview keeps inline `[label](url)` links (LinkButton / open-in-viewer) and bare `http(s)` autolinks
+- What's New release notes render the same markdown/link preview instead of a plain TextView
+- Logs expanders split Angular `terminalOutput` (ANSI) from `logContext` JSON
+- Files window chrome accepts OS `FileList` drops onto the current folder (Tauri `onDragDropEvent` fallback)
+- File viewer live syntax highlighting is debounced (80ms) so large edits do not repaint on every keystroke
+- Live GUI: `--file-viewer testdrive:Photos/README.md` Preview shows inline **notes** button; clicking it opens **README.txt** (`2 / 7`)
+
+- Copy Path / location uses Angular `pathStyleForRemote` (`format_location`): local paths follow the engine OS, remotes stay posix
+- Files list-view icons honor View Options `icon_size` (`list_icon_px`) instead of the default symbolic size
+- File viewer Escape closes the dialog (ignored while the text editor is focused and editable)
+- File viewer presents immediately with a `loadingContent` spinner, then fills on idle
+- File viewer save shows `saveSuccess` / `saveError` toasts; Preview / Edit / Save / Wrap live on the header toolbar
+- Text editor has a CodeMirror-style line-number gutter and a wrap-lines toggle
+- Job detail has a dedicated Paths section (copy buttons) and Active / Completed / Checks transfer tabs
+
+- Live GUI: `--file-viewer testdrive:Photos/README.md` header packs Open / Download / Wrap / Preview / Edit; Preview shows markdown plus **notes**
+- Live GUI: Escape closes the file viewer (not while editing)
+- Live GUI: `--job 42424` shows Paths **testdrive:Photos** → **testdrive:verify-ops** and tabs Active (0) / Recent (2) / Checked (0); Recent lists ok.txt and bad.txt
+
+- Live GUI: file viewer Edit then Save shows toast **File saved successfully**
+
+- Job-detail Active/Recent/Checked lists paginate (50) with a `nautilus.loadMore` row
+- Deleting a transfer hides it for the session (`hidden_transfer_ids`)
+- Completed transfers append relative time and elapsed duration when rclone provides start/end timestamps
+- Transfer and check filenames are click-to-copy
+- Job Paths rows have folder-open (Browse) plus Copy; Group, Backend, and Execute ID also copy
+- Properties Location uses `format_location` and a Copy suffix
+- VFS indexed warning includes a `#9120` link (rclone/rclone#9120)
+- Dashboard Edit Layout remotes can drag-reorder via `move_remote_before` (up/down buttons remain)
+- Alert History shows dismissible filter pills and Reset when more than one filter is active
+
+- Live GUI: `--job 42424` Paths Source **testdrive:Photos** / Destination **testdrive:verify-ops** with Browse + Copy; Group **job/42424** Copy; Backend **local** Copy; Recent lists **ok.txt** and **bad.txt**
+- Live GUI: job Source Browse opens Files at **testdrive » Photos** (**7 items**)
+- Live GUI: `--properties testdrive:Photos` Location **testdrive:Photos**; Copy puts `testdrive:Photos` on the clipboard
+- Live GUI: `--alerts` Jobs & File Operations + testdrive filters show pills **testdrive ×** and **Jobs & File Operations ×** plus **Reset**; Reset clears the chips
+
+- Export categories include Templates, Quick Runs, and Files/Nautilus preferences (store/settings filters + merge)
+- Restore analyzes and imports Tauri/Angular `.rcman` zips (remotes, quick runs, connections, alerts, templates, rclone.conf)
+
+- Live GUI: `--export` Select Export Type lists Full Backup, Application Settings, Alerts, **Templates**, **Quick Runs**, Remotes, Connections, **Nautilus File Browser**, Backend
+- Live GUI: `--restore-preview /tmp/legacy-migrate.rcman` Type **rcman**, Remote Configurations **photos**, contents Profiles + Rclone Configuration (Restore not confirmed)
+
+- Edit Layout / order dialogs use a dedicated drag handle (`list-drag-handle-symbolic`) so MOVE does not fight row activation
+- Remote order dialog has Reset (live remote list, all visible)
+- Disk usage shows loading, not-supported, error, Used/Free/Total legend, then idle `operations/about`
+- Configure primary actions numbers the visible 1/2/3 slots
+
+- Live GUI: `--remote testdrive --tab general` Disk Usage **Used: 89.1 GiB · Free: 150.0 GiB · Total: 251.9 GiB** with a usage bar and Retry
+- Live GUI: Configure primary actions shows ranks **1 Mount / 2 Sync / 3 Copy**, drag handles, and Reset
+- Live GUI: Remote order dialog lists remotes with Reset + Save
+
+- Tray Browse is profile-aware (`browse|{remote}` or `browse|{remote}|{profile}`) and becomes a submenu when a remote has multiple mounts
+- Remote tray labels add job count and `serve` when those are active
+- OS notifications register Open actions; clicks focus the app and open Job / Alerts / Repair
+- Job alert toasts carry `job_id` so OS click-through opens that job
+- In-app toasts can show OK (dismiss) or action buttons (Undo, View Details)
+
+- Live GUI: testdrive Photos New Folder shows toast **New Folder** with **Undo**; Undo removes the folder
+- Live GUI: `--tray-action browse|testdrive` opens Files at testdrive (**28 items**, batch250 / Photos)
+
+- Job Detail completed transfers with an error expose Copy to Destination (`operations/copyfile`, origin `transfer-resolve`)
+- Leaf-only transfer names are joined onto the parent job src/dst before resolve
+- In-app job-fail toasts only fire for managed jobs
+- Files toolbar search toggle (`sidebar.toggleSearch`) opens the path-stack search field
+- Empty Files bookmarks list shows `nautilus.bookmarks.emptyHint`
+- Remote-config mount dest shows local disk usage (`items · free / total`)
+- Compact/detailed remote cards toggle from the header and the dashboard layout bar (not only Edit Layout)
+
+- Live GUI: `--job 42424` Recent lists **ok.txt** (completed) and **bad.txt** (Transfer error) with **Copy to Destination** on bad.txt
+- Live GUI: Copy to Destination toasts **File mismatch resolution started** and writes `verify-ops/bad.txt`; job_meta origin `transfer-resolve` parent **42424**
+- Live GUI: `--browse testdrive:Photos` toolbar magnifying glass opens **Search files...**; Escape restores **testdrive » Photos**; sidebar Bookmarks shows **No bookmarks**
+- Live GUI: `--remote-config testdrive --step mount` Mount point usage **29 items · 148.3 GiB / 251.9 GiB**
+- Live GUI: Remotes toolbar **Show Detailed Cards** expands cards and becomes **Show Compact Cards**; header list/grid icon toggles the same setting
+
+- Dashboard System panel shows engine status, version, platform, Go runtime, remotes, PID, uptime, heap memory
+- Detailed remote cards show empty-state title plus message
+- Remote Serve monitoring lists an Active Serves heading
+- VFS Advanced Configuration groups options by category with search empty-state and poll-interval unsupported
+- Files copy/move/mkdir/undo/redo/rmdirs/upload errors use `nautilus.errors.*`
+- File viewer labels audio, downloading, load, and download failures
+- Remote wizard header shows `Configuration Steps · current / total`; OAuth cancel sets cleanup status
+
+- Live GUI: `--dashboard` System Information **Engine Status: Active**, **Engine Version: v1.60.1-DEV**, **Platform: linux/amd64**, **Go Runtime: go1.22.2**, **Total Remotes: 5**, **Process ID**, **Engine Uptime**, **Heap Memory**
+- Live GUI: `--quick-add` wizard header **Configuration Steps · 1 / 2** (Create not clicked)
+- Live GUI: `--remote testdrive --tab mount` Monitoring shows VFS panel (Advanced Configuration + Poll Interval; alias mount has no VFS instance)
+
+- Preferences array settings (extra flags, env vars, connectivity URLs) use add/remove item rows instead of a single delimited field
+- Alert action editor groups fields under Basic Information and Configuration; rule editor titles Basic Information and Filters
+
+- Live GUI: `--preferences core` Additional Rclone Flags / Environment Variables / Connectivity Check URLs each have **Add Item** plus per-row remove
+- Live GUI: Add Item on flags creates **Item 1**; typing `--fast-list` queues **Pending engine restart** (Discard / close, Save not clicked)
+- Live GUI: Connectivity Check URLs shows **https://www.google.com** with remove
+- Live GUI: `--alerts` Add action editor sections **Basic Information** (name, enabled, action type) and **Configuration**
+- Locale files include `remoteConfig.filterKeys` and `wizards.remoteConfig.noMatchingProviders` (8 non-en locales)
+
+- Files delete, empty trash, and remove-empty-folders ask for confirmation (Angular confirmModal)
+- New Folder / Rename prompts use `nautilus.modals.*`; listing/upload/delete/rename/share/extract errors use i18n toasts
+
+- Live GUI: `--browse testdrive:Photos` Delete on README.md shows **Delete Items** / Are you sure you want to delete "README.md"? Cancel leaves the file
+- Live GUI: Remove empty folders shows **Remove Empty Folders** / Are you sure you want to remove all empty folders in "…" with Cancel
+- Empty Trash confirm is the same helper; testdrive (alias) hides the menu when fsinfo lacks CleanUp
+
+- Alert History Clear asks for confirmation (`alerts.clearHistoryConfirm`) and disables when empty
+- Remote About shows Type / Root Path / Object Count, Reload Usage, and Features empty-state
+- Files operations panel uses Cancel / Cancelled / Files / Speed / ETA i18n keys
+- Password prompt uses `shared.passwordManager.*`; multi-rename uses title, original/newName, and duplicateOrInvalid
+
+- Live GUI: `--alerts` Clear History opens confirm **Clear History** / Are you sure you want to clear all alert history? This action cannot be undone. Cancel leaves 500 history events
+- Live GUI: `--remote-about testdrive` Overview shows Reload Usage, Total/Used/Free Space, **Object Count** `293 · 20.0 MiB`, **Type** Alias, **Root Path** `/tmp/rclone-test-remote`, Time Precision, hashes, features
+- Live GUI: Files Operations job popover shows **Files**, **Speed**, **ETA** (finished jobs use `0 / 0` and `—`)
+
+- Check-result resolve toasts use `successSync` / `failSync`; job detail check rows toast on the dialog overlay
+- Properties groups folder size under Content Stats and disk usage under Storage; hash load/fail use dedicated keys
+- Indexed VFS banner titles **VFS Controls Unavailable**; queue rows label Size / Status / Name
+
+- Live GUI: `--properties testdrive:Photos` shows **Storage** Used 102.6 GiB / Free 136.4 GiB / Total Capacity 251.9 GiB and **Content Stats** Contained Files 293 / Total Size 20.0 MiB
+
+- Remote cards use `overviews.remoteCard.actions` Mount/Unmount/Start Sync/Start Copy (not `Start` + op)
+- New Folder / Rename prompts take placeholders; Rename confirm is **Rename**
+- File viewer labels video, Close viewer, and Open-native tooltip
+- Job Detail shows Remote Source in overview; mount dest uses Mount Point
+
+- Live GUI: `--dashboard` testdrive compact actions **Unmount**, **Start Sync**, **Start Bi-Sync**; dummyexport **Mount**
+- Live GUI: `--browse testdrive:Photos` New Folder placeholder **Enter folder name**; Rename confirm **Rename** (Cancel)
+- Live GUI: `--file-viewer testdrive:Photos/preview.pdf` **Close viewer** and Open in External App tooltip **Open in default external application**
+- Live GUI: `--job 42424` Job Information **Remote Source** testdrive; Paths Source testdrive:Photos / Destination testdrive:verify-ops
+
+- Job Detail / operation controls overlay the live FUSE mount point over a stale configured dest
+- Sync-op picker tooltips use `dashboard.appDetail.*Desc` (Copy URL uses camelCase `copyUrlDesc`)
+
+- Live GUI: `--job 55555` (mount, stored dest `/mnt/unused`) Paths **Mount Point** `/tmp/rclone-testdrive-mnt`
+- Live GUI: `--job 42424` copy Paths Destination remains `testdrive:verify-ops` (no mount overlay)
+- Live GUI: `--remote testdrive --tab operations` Sync/Bisync/Copy tooltips **One-way synchronization** / **Bidirectional sync** / **Copy files (keep source)**; More items include **Generate public download URLs for files**
+
+- Downloads toast `fileBrowser.fileViewer.downloading` on start and success/fail only after the copyfile job finishes
+- Manual job stop / remove-from-history toast `backendSuccess.job.stopped` / `backendSuccess.job.deleted`
+
+- Live GUI: `--job 55559` Remove closes Job Detail; window toast **Job deleted successfully** (OK)
+
+- Mount operation-control polls local disk usage on the live/configured mount point (alias dest fallback) and shows a LevelBar
+- Mount start/stop treats a resolved host FUSE point as active (`live_mount`) even when `profile_is_active` misses alias remotes
+- Alert rule rows append `fire_count` and `alerts.lastFired` when a rule has fired
+
+- Live GUI: `--remote testdrive --tab mount` expand default shows **Mount point usage** `/tmp/rclone-testdrive-mnt · 117.0 GiB used / 134.8 GiB free · 251.9 GiB` plus a LevelBar; Unmount is enabled for the host FUSE alias
+- Live GUI: `--alerts` Rules **Notify on events** subtitle **Info · 1 Actions · Enabled · 969 · Last Fired 08/27/26, 06:59 PM**
+
+- Backend error toasts go through `translate_error` (`toast_error` / start-failed / window / VFS / export / password unlock)
+- Bandwidth panel shows Angular Upload / Download / Total rows when limited, highlights the active preset, and offers retry when `core/bwlimit` fails
+- Remote stream file-viewer video/audio uses `fileBrowser.fileViewer.videoLabel` / `audioLabel`
+
+- Live GUI: `--dashboard` Bandwidth Limit **Saved limit** `2M`, **Live limit** `2Mi`, **Upload:** / **Download:** / **Total:** `2.0 MiB/s`
+
+- Job/remotes/Flow transfer rows use Angular transfer-activity cards: icon + name + status badge, src→dst path pills, size/speed/ETA footer
+- Leaf-only rclone completed transfers are qualified with the parent job src/dst; finished Job Detail keeps the richer stored transfer list (failed rows are not treated as missing sizes)
+
+- Live GUI: testdrive Operations Transfer Activity for **copy #42424** shows **ok.txt** **Transfer completed** path pills `testdrive:Photos/ok.txt` → `testdrive:verify-ops/ok.txt` footer `3 B / 3 B`, and **bad.txt** **Transfer error** pills `testdrive:Photos/bad.txt` → `testdrive:verify-ops/bad.txt` plus **Copy to Destination**
+- Live GUI: `--job 42424` Job Detail transfer tabs **Recent (2)** after merging history (ok.txt + bad.txt)
+
+- Job/serve stop failures toast `backendErrors.job.executionFailed` / `serve.failedStop` (translated); Nautilus `{{error}}` params go through `translate_error`
+- Start-profile / start-request missing paths and stop_profile idle/unmount messages use localized JSON keys (`operations.failedStart`, `mount.notMounted`, `mount.successUnmount`)
+
+- Live GUI: `--job 42424` Stop job toasts **Job execution failed: HTTP 500: job not found** (OK); history job 42424 remains
+
+- File viewer syntax matches the Angular CodeMirror map: `.sql`, `.zsh`, and `.sass` are Text (not binary), with SQL `--`/`/* */` highlighting, zsh→shell, sass→css, and markdown source headings/code/links
+- Archive extract failures show `translate_error` instead of a raw `RcError`
+
+- Live GUI: `--file-viewer testdrive:Photos/sample.sql` shows **Remote preview via operations/cat**, SQL keywords **SELECT** / **FROM** / **WHERE** / **AND** / **ORDER BY** in blue, `-- testdrive syntax sample` and `/* block comment */` in gray, `'active'` in green, `42` in orange; Edit then Cancel keeps the highlighted source
+
+- Transfer-activity cards show Angular speed-dot (fast/medium/slow) next to MiB/s when speed > 0; check-resolve progress uses the same indicator
+- Start Operation profile switch reloads extra source rows so leftover multi-source paths are not started
+
+- Live GUI: `--start-operation testdrive:copy` switch to **gui-copy-test** clears the extra `testdrive:` source from **gui-copy-multi** and loads `testdrive:speedsrc` → `testdrive:speeddst3`
+- Live GUI: testdrive Operations **Start** on **gui-copy-test** toasts **Successfully started Copy for testdrive (gui-copy-test)**; dashboard Job Information shows live **77% · 36.9 MiB of 48.0 MiB** and **Transfer Speed: 2.0 MiB/s**
+- Live GUI: `--job` / Job Detail for copy **#24749** shows **Completed · 100% · 39.8s**, transfer tabs **Recent (1)**
+
+- Operations/Flow Transfer Activity follows Angular `getLatestJobForRemote` (newest start_time then id) instead of merging every leftover job’s transfers; rows pass the selected job id/src/dst for Copy-to-Destination resolve
+
+- rclone 1.60 leftover jobs stored as `job/<id>` still match the selected operation when their profile matches, so latest Transfer Activity is not stuck on an older `copy`-labeled leftover
+
+- Transfer Activity prefers a running/pending job, then the newest matching job that has transfer rows, so empty rclone leftover stubs do not hide the latest real copy
+
+- Live GUI: `--remote testdrive --tab operations` Transfer Activity for **gui-copy-test** shows **blob.bin** (not leftover **ok.txt** / **bad.txt** from copy #42424); Jobs list still lists **copy #42424**
+- Live GUI: testdrive Operations **Start** on **gui-copy-test** Transfer Activity shows live **blob.bin** **22%** `17.9 MiB / 80.0 MiB` with a speed-medium dot and **2.0 MiB/s**; Jobs list shows **copy #12376** Starting plus leftover **#42424**
+
+- Operations Job Information / stats use `latest_overview_job` (same resolver as Transfer Activity) so a running or latest transferred copy is not replaced by the empty-stats placeholder
+- Operations Jobs list passes the selected profile so rclone `job/<id>` leftovers for that profile appear beside copy-labeled history
+- Transfer Activity reads completed rows from one source (`job.completed`, else `stats.completed`)
+- `JobMeta.operation` is persisted on start and restored onto opaque `job/<id>` leftovers
+
+- Live GUI: `--remote testdrive --tab operations` Job Information shows **Job Type** `copy`, **Job ID** `#4814`, **Job Status** `running` (not empty stats); copy Statistics includes **Progress** and **2.0 MiB/s**
+- Live GUI: Operations Jobs list includes **copy #4814** gui-copy-test plus leftover **#12376** / **#7888** / **#42424**; Transfer Activity shows a single **blob.bin** row (not leftover ok.txt)
+
+- Repair always offers Configuration Password / Unlock when diagnose does not already report PasswordRequired, so the shared password prompt is reachable without encrypting rclone.conf
+
+- File viewer Download uses `gtk::FileDialog::save` then `operations/copyfile`; start toast `fileBrowser.fileViewer.downloading` and success/fail `shared.transferActivity.actions.successDownload` / `failDownload` after the job finishes
+- File-viewer download toasts host on the dialog `ToastOverlay` (the viewer button), not the main window under the AdwDialog
+- Multi-rename (`F2` with multiple selection) shows template/replace, Original name / New name preview, and placeholder chips; Escape closes without applying
+- VFS Control for a non-indexed name (e.g. `testdrive:`) shows stats/queue/advanced actions; the rclone #9120 **VFS Controls Unavailable** banner only appears when `is_indexed_vfs` matches a `:[digits]` suffix
+
+- Live GUI: `--file-viewer testdrive:Photos/README.md` **Download README.md** opens **Save a File**; dest `/tmp/rclone-dl-readme-ok.md` toasts **Downloading rclone-dl-readme-ok.md** then **File downloaded successfully**; 191 B matches `testdrive:Photos/README.md`
+- Live GUI: `--browse testdrive:Photos` Ctrl+click **README.md** + **README.txt** then **F2** opens **Rename using a template** with Template `[Original file name]`, Original name / Counter / Date / Extension chips, Find text / Replace with, Case sensitive, preview **README.md** / **README.txt**; Escape cancels (files unchanged)
+- Live GUI: `--vfs testdrive` VFS Control shows Metadata / Upload Queue / Cache Information / Advanced Configuration plus **Refresh Metadata**, **Clear Metadata Cache**, and **Refresh All Data**; no `testdrive:[0]` instance so the indexed **VFS Controls Unavailable** banner was not shown
+- Live GUI: `--repair` **Configuration Password / Unlock** opens the password prompt; **Cancel** leaves `config_password` unset

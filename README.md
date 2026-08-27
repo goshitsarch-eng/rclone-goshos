@@ -19,7 +19,7 @@
 
 <p align="center">
   <b>A powerful, cross-platform GUI for managing Rclone remotes with style and ease.</b><br>
-  <i>Linux desktop: GTK 4 + libadwaita · Also Angular 22 + Tauri · Windows • macOS • Android (Beta) • ARM Support</i>
+  <i>Linux desktop: GTK 4 + libadwaita · Rust backend (Tauri) · Windows • macOS • Android (Beta) • ARM Support</i>
 </p>
 
 <p align="center">
@@ -155,5 +155,5 @@ We welcome contributions of all forms!
 
 <p align="center">
   Made with ❤️ by the Zarestia Dev Team<br>
-  <sub>Powered by Rclone | Built with Angular & Tauri</sub>
+  <sub>Powered by Rclone | Built with GTK 4, libadwaita, and Rust</sub>
 </p>

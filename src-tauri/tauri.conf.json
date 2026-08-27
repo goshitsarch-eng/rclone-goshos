@@ -5,10 +5,7 @@
   "version": "0.3.2",
   "identifier": "com.rclone.manager",
   "build": {
-    "beforeDevCommand": "npm run start",
-    "devUrl": "http://localhost:1420",
-    "beforeBuildCommand": "npm run build",
-    "frontendDist": "../dist/rclone-manager/browser"
+    "frontendDist": "../web"
   },
   "app": {
     "security": {

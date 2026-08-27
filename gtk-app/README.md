@@ -1,6 +1,6 @@
 # Rclone Manager GTK
 
-Native **GTK 4 + libadwaita** desktop client for [Rclone Manager](https://github.com/Zarestia-Dev/rclone-manager), rewritten to keep feature parity with the Angular/Tauri UI.
+Native **GTK 4 + libadwaita** desktop client for [Rclone Manager](https://github.com/Zarestia-Dev/rclone-manager). This is the application UI. The Rust backend lives in `src-tauri/`.
 
 ## Features
 

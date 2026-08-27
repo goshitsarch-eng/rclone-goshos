@@ -72,6 +72,11 @@ impl I18n {
         &self.lang
     }
 
+    /// True when the user picked a different catalog and the chrome should rebuild.
+    pub fn language_changed(previous: &str, next: &str) -> bool {
+        previous != next
+    }
+
     pub fn t(&self, key: &str) -> String {
         self.strings
             .get(key)
@@ -88,12 +93,11 @@ impl I18n {
     }
 
     pub fn tf(&self, key: &str, params: &[(&str, &str)]) -> String {
-        let mut out = self.t(key);
-        for (name, value) in params {
-            out = out.replace(&format!("{{{{{name}}}}}"), value);
-            out = out.replace(&format!("{{{name}}}"), value);
-        }
-        out
+        interpolate(&self.t(key), params)
+    }
+
+    pub fn tf_or(&self, key: &str, fallback: &str, params: &[(&str, &str)]) -> String {
+        interpolate(&self.t_or(key, fallback), params)
     }
 
     pub fn has(&self, key: &str) -> bool {
@@ -147,6 +151,35 @@ pub fn normalize_option_name(name: &str) -> String {
         out.push(ch.to_ascii_lowercase());
     }
     out
+}
+
+/// Angular `localized_error!` JSON payload so GTK never pre-translates.
+pub fn localized_message(key: &str, params: &[(&str, &str)]) -> String {
+    let mut map = serde_json::Map::new();
+    map.insert("key".into(), Value::String(key.to_string()));
+    if !params.is_empty() {
+        let mut object = serde_json::Map::new();
+        for (name, value) in params {
+            object.insert((*name).into(), Value::String((*value).to_string()));
+        }
+        map.insert("params".into(), Value::Object(object));
+    }
+    Value::Object(map).to_string()
+}
+
+/// Translate `error` params the way Angular `NotificationService` does.
+pub fn translate_named_error_params(i18n: &I18n, params: &[(&str, &str)]) -> Vec<(String, String)> {
+    params
+        .iter()
+        .map(|(name, value)| {
+            let text = if *name == "error" {
+                i18n.translate_backend(value)
+            } else {
+                (*value).to_string()
+            };
+            ((*name).to_string(), text)
+        })
+        .collect()
 }
 
 pub fn translate_backend_message(i18n: &I18n, message: &str) -> String {
@@ -229,6 +262,15 @@ fn looks_like_key(message: &str) -> bool {
             .all(|c| c.is_ascii_alphanumeric() || c == '.' || c == '_')
 }
 
+fn interpolate(template: &str, params: &[(&str, &str)]) -> String {
+    let mut out = template.to_string();
+    for (name, value) in params {
+        out = out.replace(&format!("{{{{{name}}}}}"), value);
+        out = out.replace(&format!("{{{name}}}"), value);
+    }
+    out
+}
+
 fn flatten_json(prefix: &str, value: &Value, out: &mut HashMap<String, String>) {
     match value {
         Value::Object(map) => {
@@ -272,6 +314,22 @@ mod tests {
     use super::*;
 
     #[test]
+    fn language_changed_detects_catalog_switch() {
+        assert!(I18n::language_changed("en-US", "tr-TR"));
+        assert!(!I18n::language_changed("en-US", "en-US"));
+        let en = I18n::load("en-US");
+        let tr = I18n::load("tr-TR");
+        assert_eq!(en.lang(), "en-US");
+        assert_eq!(tr.lang(), "tr-TR");
+        if en.has("settings.general.language.label") && tr.has("settings.general.language.label") {
+            assert_ne!(
+                en.t("settings.general.language.label"),
+                tr.t("settings.general.language.label")
+            );
+        }
+    }
+
+    #[test]
     fn flatten_nested_keys() {
         let value = serde_json::json!({
             "tabs": { "general": "General", "mount": "Mount" },
@@ -295,6 +353,35 @@ mod tests {
             i18n.tf("hello", &[("name", "Ada"), ("id", "7")]),
             "Hello Ada, id=7"
         );
+        assert_eq!(
+            i18n.tf_or(
+                "missing.sendTo",
+                "Added '{{remote}}{{path}}' to File Manager menu",
+                &[("remote", "testdrive"), ("path", "")]
+            ),
+            "Added 'testdrive' to File Manager menu"
+        );
+    }
+
+    #[test]
+    fn send_to_catalog_keys_interpolate() {
+        let i18n = I18n::load("en-US");
+        if i18n_dir().is_none() {
+            return;
+        }
+        assert!(
+            i18n.has("nautilus.notifications.sendToAdded"),
+            "nautilus.notifications.sendToAdded must exist in en-US"
+        );
+        assert!(i18n.has("nautilus.notifications.sendToRemoved"));
+        assert!(i18n.has("nautilus.errors.sendToFailed"));
+        assert_eq!(
+            i18n.tf(
+                "nautilus.notifications.sendToAdded",
+                &[("remote", "testdrive"), ("path", "")]
+            ),
+            "Added 'testdrive' to File Manager menu"
+        );
     }
 
     #[test]
@@ -306,6 +393,65 @@ mod tests {
                     || i18n.t("tabs.general") != "tabs.general"
                     || !i18n.strings.is_empty()
             );
+        }
+    }
+
+    #[test]
+    fn restore_as_exists_in_all_catalogs() {
+        if i18n_dir().is_none() {
+            return;
+        }
+        for lang in SUPPORTED_LANGUAGES {
+            let i18n = I18n::load(lang);
+            assert!(
+                i18n.has("backup.restore.restoreAs"),
+                "backup.restore.restoreAs missing in {lang}"
+            );
+        }
+    }
+
+    #[test]
+    fn template_alert_and_pdf_keys_exist_in_all_catalogs() {
+        if i18n_dir().is_none() {
+            return;
+        }
+        const KEYS: &[&str] = &[
+            "fileBrowser.fileViewer.previousPage",
+            "fileBrowser.fileViewer.nextPage",
+            "alerts.action.encryptionNone",
+            "alerts.action.encryptionTls",
+            "alerts.action.encryptionStarttls",
+            "alerts.action.callMeBot",
+            "alerts.action.addHeader",
+            "templates.visualView",
+            "templates.jsonView",
+            "templates.addKey",
+            "nautilus.loadMore",
+            "nautilus.shortcuts.title",
+            "shortcuts.categories.fileBrowserNautilus",
+            "nautilus.contextMenu.refresh",
+            "generalOverview.panels.jobs",
+            "generalOverview.moveUp",
+            "shared.search.title",
+            "shared.search.description",
+            "shared.search.action",
+            "modals.about.toolkit",
+            "modals.about.licenseId",
+            "modals.about.gnuGpl",
+            "modals.about.ackTextGtk",
+            "modals.about.leadName",
+            "modals.about.copyVersion",
+            "nautilus.titles.detachedTab",
+            "nautilus.contextMenu.openNewTab",
+            "nautilus.contextMenu.openNewWindow",
+            "nautilus.contextMenu.undo",
+            "nautilus.contextMenu.redo",
+        ];
+        for lang in SUPPORTED_LANGUAGES {
+            let i18n = I18n::load(lang);
+            for key in KEYS {
+                assert!(i18n.has(key), "{key} missing in {lang}");
+            }
         }
     }
 
@@ -333,6 +479,25 @@ mod tests {
             ),
             "Mount drive is already in use"
         );
+        assert_eq!(
+            i18n.translate_backend(&localized_message(
+                "backendErrors.mount.alreadyInUse",
+                &[("name", "drive")]
+            )),
+            "Mount drive is already in use"
+        );
+        let params = translate_named_error_params(
+            &i18n,
+            &[
+                ("count", "2"),
+                (
+                    "error",
+                    &localized_message("backendErrors.mount.alreadyInUse", &[("name", "box")]),
+                ),
+            ],
+        );
+        assert_eq!(params[0].1, "2");
+        assert_eq!(params[1].1, "Mount box is already in use");
         assert_eq!(
             i18n.translate_backend(
                 r#"Start failed: {"key":"backendErrors.mount.alreadyInUse","params":{"name":"x"}}"#
@@ -391,6 +556,12 @@ mod tests {
         for key in [
             "repairSheet.titles.missingRclone",
             "repairSheet.actions.installPlugin",
+            "repairSheet.showAdvanced",
+            "repairSheet.hideAdvanced",
+            "repairSheet.useDifferentConfig",
+            "repairSheet.buttons.useThisBinary",
+            "shared.installationOptions.tabs.quickFix",
+            "shared.installationOptions.status.valid",
             "modals.remoteConfig.profile.noProfiles",
             "mount.successMount",
             "operations.successStart",
@@ -420,6 +591,14 @@ mod tests {
             "home.options.cloneFailed",
             "modals.about.killRclone",
             "modals.about.backendCache",
+            "nautilus.notifications.sendToAdded",
+            "nautilus.notifications.sendToRemoved",
+            "nautilus.errors.sendToFailed",
+            "backendErrors.job.executionFailed",
+            "backendSuccess.job.stopped",
+            "operations.failedStart",
+            "mount.successUnmount",
+            "serve.failedStop",
         ] {
             assert!(i18n.has(key), "missing i18n key {key}");
         }

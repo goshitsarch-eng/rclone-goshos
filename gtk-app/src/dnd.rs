@@ -5,6 +5,86 @@ use crate::rclone::{join_remote_path, parent_remote_path, remote_fs, split_remot
 use serde::{Deserialize, Serialize};
 
 pub const PAYLOAD_KIND: &str = "rclone-manager-files";
+pub const TAB_PAYLOAD_PREFIX: &str = "rclone-manager-tab:";
+
+pub fn encode_tab_payload(id: u32) -> String {
+    format!("{TAB_PAYLOAD_PREFIX}{id}")
+}
+
+pub fn decode_tab_payload(text: &str) -> Option<u32> {
+    text.strip_prefix(TAB_PAYLOAD_PREFIX)?.parse().ok()
+}
+
+/// Angular `onNativeDragEnd` vertical threshold before a tab detaches.
+pub const TAB_DETACH_DY: f64 = 70.0;
+/// Angular window-edge padding (`clientX < -20` / `>= innerWidth + 20`).
+pub const TAB_DETACH_OUTSIDE_PAD: f64 = 20.0;
+
+/// True when a tab drag should open a detached Files window.
+///
+/// Matches Angular `nautilus-tabs.component.ts` `onNativeDragEnd`: skip when the
+/// drop already reordered a tab; otherwise detach if the pointer left the
+/// window or moved more than [`TAB_DETACH_DY`] vertically.
+pub fn should_detach_tab(
+    drop_succeeded: bool,
+    start: (f64, f64),
+    end: (f64, f64),
+    window: (f64, f64, f64, f64),
+) -> bool {
+    if drop_succeeded {
+        return false;
+    }
+    let (ex, ey) = end;
+    let (wx, wy, ww, wh) = window;
+    let outside = ex < wx - TAB_DETACH_OUTSIDE_PAD
+        || ey < wy - TAB_DETACH_OUTSIDE_PAD
+        || ex >= wx + ww + TAB_DETACH_OUTSIDE_PAD
+        || ey >= wy + wh + TAB_DETACH_OUTSIDE_PAD;
+    let significant_dy = (ey - start.1).abs() > TAB_DETACH_DY;
+    outside || significant_dy
+}
+
+/// Angular CDK `moveItemInArray`.
+pub fn move_item_in_array<T>(items: &mut Vec<T>, from: usize, to: usize) {
+    if from == to || from >= items.len() || to >= items.len() {
+        return;
+    }
+    let item = items.remove(from);
+    items.insert(to, item);
+}
+
+/// Horizontal offset for Angular `getTabTransform` while a tab is dragged.
+pub fn tab_slide_offset_px(
+    dragged: usize,
+    insert_at: usize,
+    index: usize,
+    width: f64,
+    outside: bool,
+) -> f64 {
+    if outside || dragged == insert_at {
+        return 0.0;
+    }
+    if index == dragged {
+        return (insert_at as f64 - dragged as f64) * width;
+    }
+    if dragged < insert_at {
+        if index > dragged && index <= insert_at {
+            return -width;
+        }
+    } else if index >= insert_at && index < dragged {
+        return width;
+    }
+    0.0
+}
+
+/// Angular `isOutside` scales the dragged tab to 0.
+pub fn tab_slide_scale(dragged: usize, index: usize, outside: bool) -> f64 {
+    if outside && index == dragged {
+        0.0
+    } else {
+        1.0
+    }
+}
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct DragItem {
@@ -25,6 +105,24 @@ pub enum DropPlan {
     Ignore,
     Star,
     Transfer { dest: DropDest, move_items: bool },
+}
+
+pub fn drag_ghost_label(items: &[DragItem]) -> String {
+    match items.len() {
+        0 => String::new(),
+        1 => items[0].name.clone(),
+        n => format!("{n} items"),
+    }
+}
+
+pub fn drag_ghost_icon(items: &[DragItem]) -> &'static str {
+    if items.iter().any(|item| item.is_dir) {
+        "folder-symbolic"
+    } else if items.len() > 1 {
+        "folder-documents-symbolic"
+    } else {
+        "text-x-generic-symbolic"
+    }
 }
 
 pub fn encode_payload(items: &[DragItem]) -> String {
@@ -64,6 +162,11 @@ pub fn location_string(remote: &str, path: &str) -> String {
 pub fn dest_from_location(input: &str) -> DropDest {
     let (remote, path) = split_remote_path(input);
     DropDest { remote, path }
+}
+
+/// Angular `dropToLocal` on the Bookmarks header: only folders toggle a bookmark.
+pub fn bookmark_header_dirs(items: &[DragItem]) -> Vec<&DragItem> {
+    items.iter().filter(|item| item.is_dir).collect()
 }
 
 pub fn fs_and_remote(remote: &str, path: &str) -> (String, String) {
@@ -139,6 +242,7 @@ pub fn transfer_items(items: &[DragItem], dest: &DropDest, move_items: bool) -> 
                 dst_fs,
                 dst,
                 cut: move_items,
+                is_dir: item.is_dir,
             }
         })
         .collect()
@@ -245,6 +349,11 @@ mod tests {
         assert_eq!(transfers[0].dst_fs, "drive:");
         assert_eq!(transfers[0].dst, "Inbox/a.png");
         assert!(transfers[0].cut);
+        assert!(!transfers[0].is_dir);
+        let folder = vec![item("drive", "Photos", true)];
+        let folder_xfer = transfer_items(&folder, &dest, false);
+        assert!(folder_xfer[0].is_dir);
+        assert_eq!(folder_xfer[0].endpoint(), "sync/copy");
         let copy = transfer_items(
             &items,
             &DropDest {
@@ -294,5 +403,118 @@ mod tests {
         let dest = dest_from_location("dropbox:Inbox");
         assert_eq!(dest.remote, "dropbox");
         assert_eq!(dest.path, "Inbox");
+    }
+
+    #[test]
+    fn drag_ghost_uses_name_or_count() {
+        let one = vec![item("drive", "Photos/README.txt", false)];
+        assert_eq!(drag_ghost_label(&one), "README.txt");
+        assert_eq!(drag_ghost_icon(&one), "text-x-generic-symbolic");
+        let many = vec![
+            item("drive", "Photos/a.png", false),
+            item("drive", "Photos/b.png", false),
+        ];
+        assert_eq!(drag_ghost_label(&many), "2 items");
+        assert_eq!(drag_ghost_icon(&many), "folder-documents-symbolic");
+        let folder = vec![item("drive", "Photos", true)];
+        assert_eq!(drag_ghost_icon(&folder), "folder-symbolic");
+        assert!(drag_ghost_label(&[]).is_empty());
+    }
+
+    #[test]
+    fn tab_payload_round_trips() {
+        assert_eq!(decode_tab_payload(&encode_tab_payload(42)), Some(42));
+        assert_eq!(decode_tab_payload("rclone-manager-files"), None);
+        assert_eq!(decode_tab_payload("rclone-manager-tab:x"), None);
+    }
+
+    #[test]
+    fn should_detach_tab_matches_angular_thresholds() {
+        let window = (0.0, 0.0, 800.0, 600.0);
+        assert!(!should_detach_tab(
+            true,
+            (10.0, 10.0),
+            (10.0, 400.0),
+            window
+        ));
+        assert!(!should_detach_tab(
+            false,
+            (40.0, 20.0),
+            (80.0, 80.0),
+            window
+        ));
+        assert!(should_detach_tab(
+            false,
+            (40.0, 20.0),
+            (40.0, 20.0 + TAB_DETACH_DY + 1.0),
+            window
+        ));
+        assert!(should_detach_tab(
+            false,
+            (40.0, 20.0),
+            (-30.0, 20.0),
+            window
+        ));
+        assert!(should_detach_tab(
+            false,
+            (40.0, 20.0),
+            (820.0 + TAB_DETACH_OUTSIDE_PAD, 20.0),
+            window
+        ));
+        assert!(should_detach_tab(
+            false,
+            (40.0, 20.0),
+            (40.0, -25.0),
+            window
+        ));
+        assert!(!should_detach_tab(
+            false,
+            (40.0, 20.0),
+            (40.0, 20.0 + TAB_DETACH_DY),
+            window
+        ));
+        assert!(!should_detach_tab(
+            false,
+            (0.0, 0.0),
+            (0.0, 0.0),
+            (0.0, 0.0, 0.0, 0.0)
+        ));
+    }
+
+    #[test]
+    fn move_item_in_array_matches_cdk() {
+        let mut items = vec!["A", "B", "C", "D"];
+        move_item_in_array(&mut items, 0, 2);
+        assert_eq!(items, vec!["B", "C", "A", "D"]);
+        move_item_in_array(&mut items, 3, 1);
+        assert_eq!(items, vec!["B", "D", "C", "A"]);
+        move_item_in_array(&mut items, 1, 1);
+        assert_eq!(items, vec!["B", "D", "C", "A"]);
+    }
+
+    #[test]
+    fn tab_slide_transform_matches_angular_get_tab_transform() {
+        assert_eq!(tab_slide_offset_px(0, 2, 0, 80.0, false), 160.0);
+        assert_eq!(tab_slide_offset_px(0, 2, 1, 80.0, false), -80.0);
+        assert_eq!(tab_slide_offset_px(0, 2, 2, 80.0, false), -80.0);
+        assert_eq!(tab_slide_offset_px(2, 0, 1, 80.0, false), 80.0);
+        assert_eq!(tab_slide_offset_px(1, 1, 0, 80.0, false), 0.0);
+        assert_eq!(tab_slide_offset_px(0, 2, 0, 80.0, true), 0.0);
+        assert_eq!(tab_slide_scale(0, 0, true), 0.0);
+        assert_eq!(tab_slide_scale(0, 1, true), 1.0);
+    }
+
+    #[test]
+    fn bookmark_header_drop_keeps_folders_only() {
+        let items = vec![
+            item("drive", "Photos", true),
+            item("drive", "Photos/README.md", false),
+            item("local", "/tmp/docs", true),
+        ];
+        let dirs = bookmark_header_dirs(&items);
+        assert_eq!(dirs.len(), 2);
+        assert_eq!(dirs[0].path, "Photos");
+        assert_eq!(dirs[1].path, "/tmp/docs");
+        assert!(bookmark_header_dirs(&[item("drive", "a.txt", false)]).is_empty());
     }
 }

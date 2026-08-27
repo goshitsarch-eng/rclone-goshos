@@ -32,6 +32,23 @@ pub fn default_local_root(os: &str) -> String {
     }
 }
 
+/// Angular `getFullDisplayPath` / `pathStyleForRemote`.
+/// Local paths follow the engine OS (`\` on Windows, `/` elsewhere); remotes stay posix.
+pub fn format_location(remote: &str, path: &str, os: &str) -> String {
+    let local = remote == "local" || remote.is_empty();
+    if local {
+        if path.is_empty() {
+            default_local_root(os)
+        } else {
+            normalize_for_os(path, os)
+        }
+    } else if path.is_empty() {
+        format!("{remote}:")
+    } else {
+        format!("{remote}:{path}")
+    }
+}
+
 /// Angular `normalizeForPlatform`.
 pub fn normalize_for_os(path: &str, os: &str) -> String {
     if path.is_empty() {
@@ -444,5 +461,21 @@ mod tests {
             r"C:\"
         );
         assert_eq!(expand_user_for_os("~", "windows"), r"C:\");
+        assert_eq!(format_location("local", "", "linux"), "/");
+        assert_eq!(format_location("local", "", "windows"), r"C:\");
+        assert_eq!(
+            format_location("local", r"C:/Users/me/file.txt", "windows"),
+            r"C:\Users\me\file.txt"
+        );
+        assert_eq!(
+            format_location("local", r"C:\Users\me\file.txt", "linux"),
+            "C:/Users/me/file.txt"
+        );
+        assert_eq!(
+            format_location("drive", "Photos/2024", "windows"),
+            "drive:Photos/2024"
+        );
+        assert_eq!(format_location("drive", "", "linux"), "drive:");
+        assert_eq!(format_location("", "/tmp/out", "linux"), "/tmp/out");
     }
 }

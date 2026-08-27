@@ -1,9 +1,32 @@
 //! rclone Remote Control HTTP client.
 
 use serde_json::{json, Value};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashSet};
+use std::sync::{Mutex, OnceLock};
 use std::time::Duration;
 use thiserror::Error;
+
+fn missing_rc_methods() -> &'static Mutex<HashSet<String>> {
+    static SET: OnceLock<Mutex<HashSet<String>>> = OnceLock::new();
+    SET.get_or_init(|| Mutex::new(HashSet::new()))
+}
+
+fn missing_method_key(base: &str, endpoint: &str) -> String {
+    format!("{base}\0{endpoint}")
+}
+
+fn is_cached_missing_method(base: &str, endpoint: &str) -> bool {
+    missing_rc_methods()
+        .lock()
+        .map(|set| set.contains(&missing_method_key(base, endpoint)))
+        .unwrap_or(false)
+}
+
+fn cache_missing_method(base: &str, endpoint: &str) {
+    if let Ok(mut set) = missing_rc_methods().lock() {
+        set.insert(missing_method_key(base, endpoint));
+    }
+}
 
 #[derive(Debug, Error)]
 pub enum RcError {
@@ -85,11 +108,13 @@ impl RcClient {
         params: Value,
         timeout: Duration,
     ) -> Result<Value, RcError> {
-        let url = format!(
-            "{}/{}",
-            self.base_url.trim_end_matches('/'),
-            endpoint.trim_start_matches('/')
-        );
+        let endpoint = endpoint.trim_start_matches('/');
+        if is_cached_missing_method(&self.base_url, endpoint) {
+            return Err(RcError::message(format!(
+                "couldn't find method \"{endpoint}\""
+            )));
+        }
+        let url = format!("{}/{}", self.base_url.trim_end_matches('/'), endpoint);
         let mut request = ureq::post(&url)
             .timeout(timeout)
             .set("Content-Type", "application/json");
@@ -119,7 +144,11 @@ impl RcClient {
                             .map(|s| s.to_string())
                     })
                     .unwrap_or(text);
-                Err(RcError::Message(format!("HTTP {code}: {message}")))
+                let err = RcError::Message(format!("HTTP {code}: {message}"));
+                if looks_missing_endpoint(&err) {
+                    cache_missing_method(&self.base_url, endpoint);
+                }
+                Err(err)
             }
             Err(ureq::Error::Transport(t)) => {
                 if t.kind() == ureq::ErrorKind::ConnectionFailed || t.kind() == ureq::ErrorKind::Io
@@ -583,6 +612,54 @@ impl RcClient {
         parse_cat_content(&value).ok_or_else(|| RcError::message("rclone cat returned no content"))
     }
 
+    /// Read a remote file for the viewer. Falls back to `--rc-serve` when
+    /// `operations/cat` is missing (rclone < 1.62).
+    pub fn preview_text(
+        &self,
+        remote: &str,
+        path: &str,
+        count: Option<i64>,
+    ) -> Result<String, RcError> {
+        let fs = remote_fs(remote, "");
+        match self.cat(&fs, path, count) {
+            Ok(text) => Ok(text),
+            Err(err) if looks_missing_endpoint(&err) => {
+                let limit = count.unwrap_or(CAT_PREVIEW_BYTES) as u64;
+                let bytes = self.preview_bytes(remote, path, limit)?;
+                Ok(String::from_utf8_lossy(&bytes).into_owned())
+            }
+            Err(err) => Err(err),
+        }
+    }
+
+    /// Fetch raw bytes via rclone `--rc-serve` (same URL the media viewer uses).
+    pub fn preview_bytes(&self, remote: &str, path: &str, limit: u64) -> Result<Vec<u8>, RcError> {
+        use std::io::Read;
+        let url = self.rc_serve_url(remote, path);
+        if url.is_empty() {
+            return Err(RcError::message("no rc-serve url"));
+        }
+        let mut request = ureq::get(&url).timeout(Duration::from_secs(8));
+        if let (Some(user), Some(pass)) = (&self.user, &self.pass) {
+            request = request.set("Authorization", &basic_auth_header(user, pass));
+        }
+        match request.call() {
+            Ok(resp) => {
+                let mut bytes = Vec::new();
+                resp.into_reader()
+                    .take(limit.max(1))
+                    .read_to_end(&mut bytes)
+                    .map_err(|e| RcError::Http(e.to_string()))?;
+                Ok(bytes)
+            }
+            Err(ureq::Error::Status(code, resp)) => {
+                let text = resp.into_string().unwrap_or_default();
+                Err(RcError::Message(format!("HTTP {code}: {text}")))
+            }
+            Err(e) => Err(RcError::Http(e.to_string())),
+        }
+    }
+
     pub fn stat(&self, fs: &str, remote: &str) -> Result<Option<StatItem>, RcError> {
         let value = self.call("operations/stat", json!({ "fs": fs, "remote": remote }))?;
         Ok(parse_stat(&value))
@@ -596,6 +673,21 @@ impl RcClient {
         v.get("jobid")
             .and_then(|x| x.as_u64())
             .ok_or_else(|| RcError::message("rclone did not return a jobid"))
+    }
+
+    /// Start an RC call as `_async` + `_group`. Sync responses (no `jobid`) are `Ready`.
+    pub fn start_grouped_call(
+        &self,
+        endpoint: &str,
+        mut params: Value,
+        group: &str,
+    ) -> Result<RcJobStart, RcError> {
+        if let Some(obj) = params.as_object_mut() {
+            obj.insert("_async".into(), json!(true));
+            obj.insert("_group".into(), json!(group));
+        }
+        let value = self.call(endpoint, params)?;
+        Ok(classify_job_start(&value))
     }
 
     pub fn job_status(&self, jobid: u64) -> Result<Value, RcError> {
@@ -664,6 +756,9 @@ impl RcClient {
     }
 
     pub fn mount(&self, fs: &str, mount_point: &str, mount_type: &str) -> Result<Value, RcError> {
+        if host_fuse_mounted(mount_point) {
+            let _ = host_unmount(mount_point);
+        }
         self.call(
             "mount/mount",
             json!({
@@ -675,7 +770,16 @@ impl RcClient {
     }
 
     pub fn unmount(&self, mount_point: &str) -> Result<Value, RcError> {
-        self.call("mount/unmount", json!({ "mountPoint": mount_point }))
+        match self.call("mount/unmount", json!({ "mountPoint": mount_point })) {
+            Ok(value) => Ok(value),
+            Err(err) => {
+                if host_unmount(mount_point).is_ok() {
+                    Ok(json!({ "unmounted": mount_point }))
+                } else {
+                    Err(err)
+                }
+            }
+        }
     }
 
     pub fn unmount_all(&self) -> Result<Value, RcError> {
@@ -683,19 +787,11 @@ impl RcClient {
     }
 
     pub fn list_mounts(&self) -> Result<Vec<MountedRemote>, RcError> {
-        let v = self.call("mount/listmounts", json!({}))?;
-        let mounts = v
-            .get("mountPoints")
-            .and_then(|x| x.as_object())
-            .map(|obj| {
-                obj.iter()
-                    .map(|(point, fs)| MountedRemote {
-                        fs: fs.as_str().unwrap_or_default().to_string(),
-                        mount_point: point.clone(),
-                    })
-                    .collect()
-            })
+        let mut mounts = self
+            .call("mount/listmounts", json!({}))
+            .map(|v| parse_mount_points(&v))
             .unwrap_or_default();
+        merge_host_mounts(&mut mounts);
         Ok(mounts)
     }
 
@@ -871,6 +967,22 @@ impl RcClient {
         self.call("options/info", json!({}))
     }
 
+    pub fn options_blocks(&self) -> Result<Vec<String>, RcError> {
+        let value = self.call("options/blocks", json!({}))?;
+        Ok(crate::flags::parse_options_blocks(&value))
+    }
+
+    /// `options/info` plus empty groups named by `options/blocks`.
+    pub fn option_flag_blocks(&self) -> Vec<crate::flags::FlagBlock> {
+        crate::flags::option_blocks_from_rc(
+            &self.options_info().unwrap_or(json!({})),
+            &self
+                .options_blocks()
+                .map(|names| json!({ "options": names }))
+                .unwrap_or(json!({})),
+        )
+    }
+
     pub fn local_disks(&self) -> Result<Vec<String>, RcError> {
         let v = self.call("core/disks", json!({}))?;
         Ok(v.get("disks")
@@ -976,10 +1088,144 @@ impl DirEntry {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct MountedRemote {
     pub fs: String,
     pub mount_point: String,
+    pub profile: String,
+    pub quick_run_id: String,
+    pub origin: String,
+}
+
+impl MountedRemote {
+    pub fn new(fs: impl Into<String>, mount_point: impl Into<String>) -> Self {
+        Self {
+            fs: fs.into(),
+            mount_point: mount_point.into(),
+            ..Default::default()
+        }
+    }
+}
+
+/// Carry profile/origin across RC refreshes (rclone has no profile field).
+pub fn merge_mount_context(
+    incoming: Vec<MountedRemote>,
+    existing: &[MountedRemote],
+) -> Vec<MountedRemote> {
+    incoming
+        .into_iter()
+        .map(|mut mount| {
+            if let Some(prev) = existing
+                .iter()
+                .find(|item| item.mount_point == mount.mount_point)
+            {
+                if mount.profile.is_empty() {
+                    mount.profile = prev.profile.clone();
+                }
+                if mount.quick_run_id.is_empty() {
+                    mount.quick_run_id = prev.quick_run_id.clone();
+                }
+                if mount.origin.is_empty() {
+                    mount.origin = prev.origin.clone();
+                }
+            }
+            mount
+        })
+        .collect()
+}
+
+/// rclone ≥1.64 returns `{ mountPoint: fs }`. 1.60 returns
+/// `[{ Fs, MountPoint, MountedOn }, ...]`.
+pub fn parse_mount_points(value: &Value) -> Vec<MountedRemote> {
+    let Some(points) = value.get("mountPoints") else {
+        return Vec::new();
+    };
+    if let Some(obj) = points.as_object() {
+        return obj
+            .iter()
+            .map(|(point, fs)| MountedRemote::new(fs.as_str().unwrap_or_default(), point.clone()))
+            .collect();
+    }
+    let Some(arr) = points.as_array() else {
+        return Vec::new();
+    };
+    arr.iter()
+        .filter_map(|item| {
+            let mount_point = item
+                .get("MountPoint")
+                .or_else(|| item.get("mountPoint"))
+                .and_then(|v| v.as_str())?
+                .to_string();
+            let fs = item
+                .get("Fs")
+                .or_else(|| item.get("fs"))
+                .and_then(|v| v.as_str())
+                .unwrap_or_default()
+                .to_string();
+            Some(MountedRemote::new(fs, mount_point))
+        })
+        .collect()
+}
+
+fn unescape_mount_field(value: &str) -> String {
+    value.replace("\\040", " ").replace("\\011", "\t")
+}
+
+/// `/proc/mounts` fuse.rclone rows (covers mounts owned by a previous rcd).
+pub fn parse_proc_mounts(text: &str) -> Vec<MountedRemote> {
+    text.lines()
+        .filter_map(|line| {
+            let mut parts = line.split_whitespace();
+            let fs = parts.next()?;
+            let point = parts.next()?;
+            let fstype = parts.next().unwrap_or("");
+            if fstype != "fuse.rclone" {
+                return None;
+            }
+            Some(MountedRemote::new(
+                unescape_mount_field(fs),
+                unescape_mount_field(point),
+            ))
+        })
+        .collect()
+}
+
+fn merge_host_mounts(mounts: &mut Vec<MountedRemote>) {
+    let Ok(text) = std::fs::read_to_string("/proc/mounts") else {
+        return;
+    };
+    for extra in parse_proc_mounts(&text) {
+        if !mounts.iter().any(|m| m.mount_point == extra.mount_point) {
+            mounts.push(extra);
+        }
+    }
+}
+
+pub fn host_fuse_mounts() -> Vec<MountedRemote> {
+    std::fs::read_to_string("/proc/mounts")
+        .map(|text| parse_proc_mounts(&text))
+        .unwrap_or_default()
+}
+
+pub fn host_fuse_mounted(mount_point: &str) -> bool {
+    let want = mount_point.trim_end_matches('/');
+    host_fuse_mounts()
+        .iter()
+        .any(|m| m.mount_point.trim_end_matches('/') == want)
+}
+
+pub fn host_unmount(mount_point: &str) -> Result<(), String> {
+    for (bin, args) in [
+        ("fusermount3", &["-u", mount_point] as &[&str]),
+        ("fusermount", &["-u", mount_point]),
+        ("umount", &[mount_point]),
+    ] {
+        match std::process::Command::new(bin).args(args).status() {
+            Ok(status) if status.success() => return Ok(()),
+            _ => continue,
+        }
+    }
+    Err(format!("failed to unmount {mount_point}"))
 }
 
 #[derive(Debug, Clone, Default)]
@@ -1466,6 +1712,62 @@ pub struct DiskUsage {
     pub used: i64,
 }
 
+/// Async RC start: either a `jobid` or the finished payload (rclone ignored `_async`).
+#[derive(Debug, Clone, PartialEq)]
+pub enum RcJobStart {
+    Job(u64),
+    Ready(Value),
+}
+
+/// Angular `filemanager/properties/{remote}/{path}-{token}` read-job group.
+pub fn properties_read_group(remote: &str, path: &str, token: &str) -> String {
+    let path = if path.is_empty() { "/" } else { path };
+    format!("filemanager/properties/{remote}/{path}-{token}")
+}
+
+pub fn classify_job_start(value: &Value) -> RcJobStart {
+    if let Some(id) = value.get("jobid").and_then(|x| x.as_u64()) {
+        RcJobStart::Job(id)
+    } else {
+        RcJobStart::Ready(value.clone())
+    }
+}
+
+pub fn job_is_finished(status: &Value) -> bool {
+    status
+        .get("finished")
+        .and_then(|x| x.as_bool())
+        .unwrap_or(false)
+}
+
+pub fn job_output(status: &Value) -> Option<&Value> {
+    status.get("output").or_else(|| status.get("result"))
+}
+
+pub fn job_error_message(status: &Value) -> Option<String> {
+    if !job_is_finished(status) {
+        return None;
+    }
+    let success = status
+        .get("success")
+        .and_then(|x| x.as_bool())
+        .unwrap_or(true);
+    let err = status
+        .get("error")
+        .and_then(|x| x.as_str())
+        .unwrap_or("")
+        .trim();
+    if !success || !err.is_empty() {
+        Some(if err.is_empty() {
+            "job failed".into()
+        } else {
+            err.to_string()
+        })
+    } else {
+        None
+    }
+}
+
 /// Object count and byte total from `operations/size`.
 pub fn parse_object_size(value: &Value) -> (i64, i64) {
     let count = value.get("count").and_then(|v| v.as_i64()).unwrap_or(0);
@@ -1880,12 +2182,35 @@ pub struct BackendIdentity {
     pub version: String,
     pub os: String,
     pub arch: String,
+    pub go: String,
+    pub is_beta: bool,
+    pub is_git: bool,
 }
 
 impl BackendIdentity {
     pub fn summary(&self) -> String {
         format!("{} · {}/{}", self.version, self.os, self.arch)
     }
+
+    pub fn channel_badge(&self) -> Option<&'static str> {
+        if self.is_beta {
+            Some("beta")
+        } else if self.is_git || self.version.to_ascii_uppercase().contains("DEV") {
+            Some("dev")
+        } else {
+            None
+        }
+    }
+}
+
+/// Elapsed seconds since a local process started (`/proc/<pid>` mtime).
+pub fn process_uptime_secs(pid: u64) -> Option<u64> {
+    if pid == 0 {
+        return None;
+    }
+    let meta = std::fs::metadata(format!("/proc/{pid}")).ok()?;
+    let started = meta.created().or_else(|_| meta.modified()).ok()?;
+    Some(started.elapsed().ok()?.as_secs())
 }
 
 pub fn backend_identity(info: &Value) -> BackendIdentity {
@@ -1905,12 +2230,105 @@ pub fn backend_identity(info: &Value) -> BackendIdentity {
             .and_then(|x| x.as_str())
             .unwrap_or("unknown")
             .to_string(),
+        go: info
+            .get("goVersion")
+            .or_else(|| info.get("go_version"))
+            .and_then(|x| x.as_str())
+            .unwrap_or("")
+            .to_string(),
+        is_beta: info
+            .get("isBeta")
+            .and_then(|x| x.as_bool())
+            .unwrap_or(false),
+        is_git: info.get("isGit").and_then(|x| x.as_bool()).unwrap_or(false),
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn caches_missing_rc_methods() {
+        cache_missing_method("http://127.0.0.1:9", "job/batch");
+        assert!(is_cached_missing_method("http://127.0.0.1:9", "job/batch"));
+        assert!(!is_cached_missing_method(
+            "http://127.0.0.1:9",
+            "core/version"
+        ));
+        assert!(looks_missing_endpoint(&RcError::message(
+            "HTTP 500: couldn't find method \"job/batch\""
+        )));
+    }
+
+    #[test]
+    fn parses_mount_points_map_and_array() {
+        let map = parse_mount_points(&json!({
+            "mountPoints": { "/mnt/drive": "drive:" }
+        }));
+        assert_eq!(map.len(), 1);
+        assert_eq!(map[0].fs, "drive:");
+        assert_eq!(map[0].mount_point, "/mnt/drive");
+        let arr = parse_mount_points(&json!({
+            "mountPoints": [{
+                "Fs": "/tmp/rclone-test-remote",
+                "MountPoint": "/home/ubuntu/rclone-manager/testdrive",
+                "MountedOn": "2026-08-25T23:14:23Z"
+            }]
+        }));
+        assert_eq!(arr.len(), 1);
+        assert_eq!(arr[0].fs, "/tmp/rclone-test-remote");
+        assert_eq!(arr[0].mount_point, "/home/ubuntu/rclone-manager/testdrive");
+        assert!(parse_mount_points(&json!({})).is_empty());
+    }
+
+    #[test]
+    fn parses_proc_mounts_fuse_rclone() {
+        let mounts = parse_proc_mounts(
+            "/tmp/rclone-test-remote /home/ubuntu/rclone-manager/testdrive fuse.rclone rw 0 0\n\
+             /dev/sda1 / ext4 rw 0 0\n",
+        );
+        assert_eq!(mounts.len(), 1);
+        assert_eq!(mounts[0].fs, "/tmp/rclone-test-remote");
+        assert_eq!(
+            mounts[0].mount_point,
+            "/home/ubuntu/rclone-manager/testdrive"
+        );
+        assert!(host_fuse_mounted_in(
+            &text_with_testdrive(),
+            "/home/ubuntu/rclone-manager/testdrive"
+        ));
+        assert!(!host_fuse_mounted_in(
+            &text_with_testdrive(),
+            "/home/ubuntu/rclone-manager/other"
+        ));
+    }
+
+    fn text_with_testdrive() -> String {
+        "/tmp/rclone-test-remote /home/ubuntu/rclone-manager/testdrive fuse.rclone rw 0 0\n\
+         /dev/sda1 / ext4 rw 0 0\n"
+            .into()
+    }
+
+    fn host_fuse_mounted_in(text: &str, mount_point: &str) -> bool {
+        let want = mount_point.trim_end_matches('/');
+        parse_proc_mounts(text)
+            .iter()
+            .any(|m| m.mount_point.trim_end_matches('/') == want)
+    }
+
+    #[test]
+    fn merges_mount_profile_context() {
+        let live = vec![MountedRemote::new("drive:", "/mnt/drive")];
+        let mut remembered = MountedRemote::new("drive:", "/mnt/drive");
+        remembered.profile = "nightly".into();
+        remembered.origin = "dashboard".into();
+        let merged = merge_mount_context(live, &[remembered]);
+        assert_eq!(merged[0].profile, "nightly");
+        assert_eq!(merged[0].origin, "dashboard");
+        let fresh = merge_mount_context(vec![MountedRemote::new("other:", "/mnt/other")], &[]);
+        assert!(fresh[0].profile.is_empty());
+    }
 
     #[test]
     fn remote_path_helpers() {
@@ -2039,7 +2457,24 @@ mod tests {
             "arch": "amd64"
         }));
         assert_eq!(id.summary(), "v1.68.2 · linux/amd64");
+        assert_eq!(id.channel_badge(), None);
         assert_eq!(backend_identity(&json!({})).version, "unknown");
+        let git = backend_identity(&json!({
+            "version": "v1.60.1-DEV",
+            "os": "linux",
+            "arch": "amd64",
+            "goVersion": "go1.19.4",
+            "isGit": true
+        }));
+        assert_eq!(git.go, "go1.19.4");
+        assert_eq!(git.channel_badge(), Some("dev"));
+        let beta = backend_identity(&json!({
+            "version": "v1.70.0-beta.1",
+            "isBeta": true
+        }));
+        assert_eq!(beta.channel_badge(), Some("beta"));
+        assert!(process_uptime_secs(std::process::id() as u64).is_some());
+        assert!(process_uptime_secs(0).is_none());
     }
 
     #[test]
@@ -2289,6 +2724,9 @@ mod tests {
         assert!(looks_missing_endpoint(&RcError::message(
             "couldn't find method operations/archive"
         )));
+        assert!(looks_missing_endpoint(&RcError::message(
+            "couldn't find method \"operations/cat\""
+        )));
         assert!(!looks_missing_endpoint(&RcError::message("path not found")));
     }
 
@@ -2329,6 +2767,50 @@ mod tests {
         assert_eq!(
             config_unlock_payload("secret"),
             json!({ "configPassword": "secret" })
+        );
+    }
+
+    #[test]
+    fn properties_jobs_classify_async_and_errors() {
+        assert_eq!(
+            properties_read_group("testdrive", "Photos", "ab12cd34"),
+            "filemanager/properties/testdrive/Photos-ab12cd34"
+        );
+        assert_eq!(
+            properties_read_group("testdrive", "", "token"),
+            "filemanager/properties/testdrive//-token"
+        );
+        assert_eq!(
+            classify_job_start(&json!({ "jobid": 42 })),
+            RcJobStart::Job(42)
+        );
+        assert_eq!(
+            classify_job_start(&json!({ "count": 3, "bytes": 12 })),
+            RcJobStart::Ready(json!({ "count": 3, "bytes": 12 }))
+        );
+        let running = json!({ "finished": false, "success": true });
+        assert!(!job_is_finished(&running));
+        assert!(job_error_message(&running).is_none());
+        let done = json!({
+            "finished": true,
+            "success": true,
+            "output": { "count": 2, "bytes": 8 }
+        });
+        assert!(job_is_finished(&done));
+        assert_eq!(job_output(&done), Some(&json!({ "count": 2, "bytes": 8 })));
+        assert!(job_error_message(&done).is_none());
+        assert_eq!(
+            job_error_message(&json!({
+                "finished": true,
+                "success": false,
+                "error": "size failed"
+            }))
+            .as_deref(),
+            Some("size failed")
+        );
+        assert_eq!(
+            job_error_message(&json!({ "finished": true, "success": false })).as_deref(),
+            Some("job failed")
         );
     }
 }

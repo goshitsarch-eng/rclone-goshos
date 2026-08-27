@@ -8,17 +8,24 @@ mod checks;
 mod cli;
 mod cli_import;
 mod command_options;
+mod config_import;
+mod config_search;
+mod config_steps;
 mod connection;
 mod cron;
+mod debug_menu;
 mod dnd;
 mod fileops;
 mod flags;
 mod guidance;
 mod i18n;
+mod installation;
 mod interactive;
 mod jobs;
+mod json_editor;
 mod keyring;
 mod layout;
+mod listing;
 mod logs;
 mod markdown;
 mod media;
@@ -29,10 +36,13 @@ mod mqtt;
 mod navigation;
 mod onboarding;
 mod operations;
+mod os_notify;
+mod path_autocomplete;
 mod path_inspection;
 mod path_kind;
 mod picker;
 mod platform;
+mod pref_search;
 mod presets;
 mod providers;
 mod rclone;
@@ -42,6 +52,7 @@ mod repair;
 mod restrict;
 mod security;
 mod settings;
+mod shortcuts;
 mod smtp;
 mod store;
 mod syntax;
@@ -67,8 +78,21 @@ fn main() {
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).init();
     let args: Vec<String> = std::env::args().collect();
     cli::apply(&cli::parse_cli_args(&args));
+    if let Err(err) = platform::install_user_desktop_entry() {
+        log::debug!("desktop entry not installed: {err}");
+    }
+    if let Err(err) = platform::install_user_mime_package() {
+        log::debug!("mime package not installed: {err}");
+    }
+    if let Err(err) = platform::install_user_metainfo() {
+        log::debug!("metainfo not installed: {err}");
+    }
     if let Some(files) = platform::parse_share_intake_args(&args) {
         platform::enqueue_share_intake(&files);
+    }
+    let open_configs = config_import::parse_open_config_args(&args);
+    if !open_configs.is_empty() {
+        config_import::enqueue_open_configs(&open_configs);
     }
     let app = adw::Application::builder()
         .application_id(APP_ID)
@@ -82,15 +106,19 @@ fn main() {
             .map(|s| s.to_str().unwrap_or_default().to_string())
             .collect();
         cli::merge_option_flags(&mut args, &command_line_option_flags(cmdline));
-        if !cmdline.is_remote() && !args.iter().any(|arg| arg.starts_with("--")) {
+        if !cmdline.is_remote() {
             let env_args: Vec<String> = std::env::args().collect();
-            if env_args.iter().any(|arg| arg.starts_with("--")) {
+            if env_args.len() > 1 {
                 args = env_args;
             }
         }
         cli::set_launch_args(args.clone());
         if let Some(files) = platform::parse_share_intake_args(&args) {
             platform::enqueue_share_intake(&files);
+        }
+        let open_configs = config_import::parse_open_config_args(&args);
+        if !open_configs.is_empty() {
+            config_import::enqueue_open_configs(&open_configs);
         }
         app.activate();
         0
@@ -123,6 +151,12 @@ fn register_application_options(app: &adw::Application) {
         Some("DIR"),
     );
     add("tray", OptionArg::None, "Start hidden in the tray", None);
+    add(
+        "tray-action",
+        OptionArg::String,
+        "Dispatch a tray menu action to the running instance",
+        Some("ACTION"),
+    );
     add(
         "hidden",
         OptionArg::None,
@@ -166,34 +200,164 @@ fn register_application_options(app: &adw::Application) {
     );
     add("updates", OptionArg::None, "Open the Updates dialog", None);
     add("alerts", OptionArg::None, "Open the Alerts dialog", None);
-    app.add_main_option(
+    add(
         "preferences",
-        0.into(),
-        OptionFlags::OPTIONAL_ARG,
-        OptionArg::String,
-        "Open Preferences, optionally a page",
-        Some("PAGE"),
+        OptionArg::None,
+        "Open Preferences (optional page follows the flag)",
+        None,
     );
-    app.add_main_option(
-        "settings",
-        0.into(),
-        OptionFlags::OPTIONAL_ARG,
-        OptionArg::String,
-        "Alias for --preferences",
-        Some("PAGE"),
-    );
+    add("settings", OptionArg::None, "Alias for --preferences", None);
     add(
         "onboarding",
         OptionArg::None,
         "Re-open the first-run onboarding window",
         None,
     );
-    add("about", OptionArg::None, "Open the About dialog", None);
-    add("logs", OptionArg::None, "Open the Logs dialog", None);
+    add(
+        "about",
+        OptionArg::None,
+        "Open the About dialog (optional page follows the flag)",
+        None,
+    );
+    add(
+        "logs",
+        OptionArg::None,
+        "Open the Logs dialog (optional remote follows the flag)",
+        None,
+    );
+    add(
+        "auto-add",
+        OptionArg::None,
+        "Prompt for a new profile in remote-config",
+        None,
+    );
     add(
         "shortcuts",
         OptionArg::None,
         "Open the keyboard shortcuts dialog",
+        None,
+    );
+    add(
+        "backends",
+        OptionArg::None,
+        "Open the Backends dialog",
+        None,
+    );
+    add(
+        "rclone-flags",
+        OptionArg::None,
+        "Open the Rclone Flags dialog",
+        None,
+    );
+    add("flags", OptionArg::None, "Alias for --rclone-flags", None);
+    add(
+        "templates",
+        OptionArg::None,
+        "Open the Templates dialog (optional save/new follows the flag)",
+        None,
+    );
+    add(
+        "quick-add",
+        OptionArg::None,
+        "Open the Quick Add remote wizard",
+        None,
+    );
+    add("quickadd", OptionArg::None, "Alias for --quick-add", None);
+    add(
+        "whats-new",
+        OptionArg::None,
+        "Open What's New (optional app/rclone follows the flag)",
+        None,
+    );
+    add(
+        "whats-new-app",
+        OptionArg::None,
+        "Open app release notes",
+        None,
+    );
+    add(
+        "whats-new-rclone",
+        OptionArg::None,
+        "Open rclone release notes",
+        None,
+    );
+    add(
+        "properties",
+        OptionArg::String,
+        "Open file properties for remote:path",
+        Some("REMOTE:PATH"),
+    );
+    add(
+        "clone-from",
+        OptionArg::String,
+        "Clone a remote into the configuration wizard",
+        Some("REMOTE"),
+    );
+    add(
+        "file-viewer",
+        OptionArg::String,
+        "Open the file viewer for remote:path",
+        Some("REMOTE:PATH"),
+    );
+    add(
+        "start-operation",
+        OptionArg::String,
+        "Open Start Operation (remote or remote:operation)",
+        Some("REMOTE[:OP]"),
+    );
+    add(
+        "operation",
+        OptionArg::String,
+        "Operation type for --start-operation",
+        Some("OP"),
+    );
+    add(
+        "vfs",
+        OptionArg::String,
+        "Open VFS controls for a remote",
+        Some("REMOTE"),
+    );
+    add(
+        "delete-remote",
+        OptionArg::String,
+        "Open Delete Remote",
+        Some("REMOTE"),
+    );
+    add(
+        "remote-about",
+        OptionArg::String,
+        "Open Remote About",
+        Some("REMOTE"),
+    );
+    add(
+        "restore-preview",
+        OptionArg::Filename,
+        "Open Restore Backup for a zip file",
+        Some("FILE"),
+    );
+    add(
+        "archive-create",
+        OptionArg::String,
+        "Open Create Archive for remote:path",
+        Some("REMOTE:PATH"),
+    );
+    add(
+        "quick-run-editor",
+        OptionArg::None,
+        "Open the Quick Run editor (optional id follows the flag)",
+        None,
+    );
+    add(
+        "export",
+        OptionArg::None,
+        "Open Export (optional remote follows the flag)",
+        None,
+    );
+    add("repair", OptionArg::None, "Open the Repair sheet", None);
+    add(
+        "starred",
+        OptionArg::None,
+        "Open the Files workspace on Starred",
         None,
     );
     add(
@@ -214,13 +378,11 @@ fn register_application_options(app: &adw::Application) {
         "Remote-config profile (with --remote-config)",
         Some("NAME"),
     );
-    app.add_main_option(
+    add(
         "standalone",
-        0.into(),
-        OptionFlags::OPTIONAL_ARG,
-        OptionArg::String,
-        "Open a standalone workspace (nautilus|flow|main)",
-        Some("KIND"),
+        OptionArg::None,
+        "Open a standalone workspace (optional nautilus|flow|main follows)",
+        None,
     );
     add(
         "send-to-remote",
@@ -239,6 +401,12 @@ fn register_application_options(app: &adw::Application) {
         OptionArg::None,
         "Queue files for Files Upload here",
         None,
+    );
+    add(
+        "import-config",
+        OptionArg::Filename,
+        "Import remotes from an rclone.conf / rclone.json file",
+        Some("FILE"),
     );
     add(
         "dialog",
@@ -270,7 +438,31 @@ fn command_line_option_flags(
         "onboarding",
         "about",
         "logs",
+        "auto-add",
         "shortcuts",
+        "backends",
+        "rclone-flags",
+        "flags",
+        "templates",
+        "quick-add",
+        "quickadd",
+        "whats-new",
+        "whats-new-app",
+        "whats-new-rclone",
+        "properties",
+        "clone-from",
+        "file-viewer",
+        "start-operation",
+        "operation",
+        "vfs",
+        "delete-remote",
+        "remote-about",
+        "restore-preview",
+        "archive-create",
+        "quick-run-editor",
+        "export",
+        "repair",
+        "starred",
         "remote-config",
         "step",
         "profile",
@@ -287,8 +479,13 @@ fn command_line_option_flags(
         "browse",
         "browse-path",
         "standalone",
+        "import-config",
         "tray",
+        "tray-action",
         "hidden",
+        "dialog",
+        "dialog-data",
+        "dialog-result",
     ];
     let dict = cmdline.options_dict();
     let mut flags = Vec::new();
@@ -296,17 +493,8 @@ fn command_line_option_flags(
         let Some(value) = dict.lookup_value(name, None) else {
             continue;
         };
-        if let Some(text) = value
-            .str()
-            .map(|s| s.to_string())
-            .or_else(|| value.get::<String>())
-        {
-            flags.push((
-                (*name).to_string(),
-                if text.is_empty() { None } else { Some(text) },
-            ));
-        } else if value.get::<bool>() == Some(true) {
-            flags.push(((*name).to_string(), None));
+        if let Some(flag) = cli::option_flag_from_variant(name, &value) {
+            flags.push(flag);
         }
     }
     flags

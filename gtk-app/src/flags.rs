@@ -3,6 +3,7 @@
 
 use crate::operations::OperationType;
 use serde_json::{json, Map, Value};
+use std::collections::{BTreeMap, HashSet};
 
 const BACKEND_INCLUDE: &[&str] = &[
     "Performance",
@@ -109,6 +110,49 @@ pub fn parse_options_info(value: &Value) -> Vec<FlagBlock> {
     blocks
 }
 
+/// rclone `options/blocks` is `{ "options": ["main", "vfs", ...] }` or a raw array.
+pub fn parse_options_blocks(value: &Value) -> Vec<String> {
+    let arr = value
+        .get("options")
+        .and_then(|v| v.as_array())
+        .or_else(|| value.as_array());
+    let Some(arr) = arr else {
+        return Vec::new();
+    };
+    let mut names: Vec<String> = arr
+        .iter()
+        .filter_map(|v| v.as_str().map(|s| s.to_string()))
+        .filter(|name| !name.is_empty())
+        .collect();
+    names.sort_by(|a, b| a.to_lowercase().cmp(&b.to_lowercase()));
+    names.dedup();
+    names
+}
+
+pub fn ensure_named_blocks(blocks: &mut Vec<FlagBlock>, names: &[String]) {
+    for name in names {
+        if name.is_empty() {
+            continue;
+        }
+        if !blocks
+            .iter()
+            .any(|block| block.name.eq_ignore_ascii_case(name))
+        {
+            blocks.push(FlagBlock {
+                name: name.clone(),
+                options: Vec::new(),
+            });
+        }
+    }
+    blocks.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
+}
+
+pub fn option_blocks_from_rc(info: &Value, blocks: &Value) -> Vec<FlagBlock> {
+    let mut parsed = parse_options_info(info);
+    ensure_named_blocks(&mut parsed, &parse_options_blocks(blocks));
+    parsed
+}
+
 fn parse_flag_option(value: &Value) -> Option<FlagOption> {
     let name = value
         .get("Name")
@@ -179,6 +223,78 @@ fn parse_flag_option(value: &Value) -> Option<FlagOption> {
     })
 }
 
+fn inferred_flag_type(value: &Value) -> &'static str {
+    match value {
+        Value::Bool(_) => "bool",
+        Value::Number(n) if n.is_i64() || n.is_u64() => "int",
+        Value::Number(_) => "float",
+        _ => "string",
+    }
+}
+
+fn flatten_current_options(value: &Value, prefix: &str) -> Vec<FlagOption> {
+    let Some(obj) = value.as_object() else {
+        return Vec::new();
+    };
+    let mut out = Vec::new();
+    for (key, val) in obj {
+        let field = if prefix.is_empty() {
+            key.clone()
+        } else {
+            format!("{prefix}.{key}")
+        };
+        if val.is_object() {
+            out.extend(flatten_current_options(val, &field));
+            continue;
+        }
+        let name = field.rsplit('.').next().unwrap_or(key).to_string();
+        let default_str = crate::value_mapper::machine_to_human(val, inferred_flag_type(val), "");
+        out.push(FlagOption {
+            name,
+            field_name: field,
+            help: String::new(),
+            type_name: inferred_flag_type(val).to_string(),
+            advanced: false,
+            groups: String::new(),
+            default_str,
+            value: val.clone(),
+            examples: Vec::new(),
+            exclusive: false,
+        });
+    }
+    out
+}
+
+/// rclone 1.60 has no `options/info` — build editors from `options/get`.
+pub fn synthesize_blocks_from_current(current: &Value) -> Vec<FlagBlock> {
+    let Some(obj) = current.as_object() else {
+        return Vec::new();
+    };
+    let mut blocks = Vec::new();
+    for (name, value) in obj {
+        let options = flatten_current_options(value, "");
+        if options.is_empty() {
+            continue;
+        }
+        blocks.push(FlagBlock {
+            name: name.clone(),
+            options,
+        });
+    }
+    blocks.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
+    blocks
+}
+
+pub fn blocks_for_flags_ui(info_blocks: Vec<FlagBlock>, current: &Value) -> Vec<FlagBlock> {
+    if info_blocks.iter().any(|block| !block.options.is_empty()) {
+        let mut blocks = info_blocks;
+        merge_current_values(&mut blocks, current);
+        blocks
+    } else {
+        synthesize_blocks_from_current(current)
+    }
+}
+
 pub fn merge_current_values(blocks: &mut [FlagBlock], current: &Value) {
     for block in blocks.iter_mut() {
         let Some(current_block) = current.get(&block.name) else {
@@ -209,6 +325,30 @@ pub fn set_option_payload(block: &str, option_name: &str, value: Value) -> Value
 
 pub fn parse_flag_value(type_name: &str, text: &str) -> Value {
     crate::value_mapper::human_to_machine(text, type_name)
+}
+
+/// Current flag value as the editor should display it.
+pub fn flag_display_text(flag: &FlagOption, current: &Value) -> String {
+    let value = current
+        .get(&flag.field_name)
+        .or_else(|| current.get(&flag.name))
+        .or_else(|| {
+            current
+                .get("_config")
+                .and_then(|cfg| cfg.get(&flag.field_name).or_else(|| cfg.get(&flag.name)))
+        });
+    match value {
+        Some(value) => {
+            let text =
+                crate::value_mapper::machine_to_human(value, &flag.type_name, &flag.default_str);
+            if text.is_empty() || text == "null" {
+                flag.default_str.clone()
+            } else {
+                text
+            }
+        }
+        None => flag.default_str.clone(),
+    }
 }
 
 pub fn static_flags_for(op: OperationType) -> Vec<FlagOption> {
@@ -498,6 +638,142 @@ pub fn options_for_category<'a>(
     out
 }
 
+/// Angular rclone-flags home: three top-level buckets.
+pub const MAIN_CATEGORY_KEYS: &[&str] = &[
+    "generalSettings",
+    "fileSystemAndStorage",
+    "networkAndServers",
+];
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FlagServiceCategory {
+    pub name: String,
+    pub options: Vec<FlagOption>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FlagService {
+    pub name: String,
+    pub categories: Vec<FlagServiceCategory>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FlagSearchHit {
+    pub service: String,
+    pub category: String,
+    pub option: FlagOption,
+}
+
+/// First `FieldName` segment, or `General` when the name is not dotted.
+pub fn option_field_category(field_name: &str) -> &str {
+    field_name
+        .split_once('.')
+        .map(|(group, _)| group)
+        .filter(|group| !group.is_empty())
+        .unwrap_or("General")
+}
+
+/// Angular `SERVICE_CONFIG[name].mainCategory` (unknown services → Network).
+pub fn service_main_category(service: &str) -> &'static str {
+    match service.to_ascii_lowercase().as_str() {
+        "vfs" | "mount" | "filter" => "fileSystemAndStorage",
+        "main" | "log" | "rc" | "proxy" => "generalSettings",
+        _ => "networkAndServers",
+    }
+}
+
+/// Group `options/info` blocks the way Angular `group_options` does:
+/// service = block name, category = first `FieldName` segment.
+pub fn group_blocks_by_service(blocks: &[FlagBlock]) -> Vec<FlagService> {
+    let mut services: BTreeMap<String, BTreeMap<String, Vec<FlagOption>>> = BTreeMap::new();
+    for block in blocks {
+        if block.options.is_empty() {
+            continue;
+        }
+        let cats = services.entry(block.name.clone()).or_default();
+        let mut seen = HashSet::new();
+        for option in &block.options {
+            let category = option_field_category(&option.field_name).to_string();
+            let key = if option.field_name.is_empty() {
+                option.name.clone()
+            } else {
+                option.field_name.clone()
+            };
+            if !seen.insert((category.clone(), key)) {
+                continue;
+            }
+            cats.entry(category).or_default().push(option.clone());
+        }
+    }
+    services
+        .into_iter()
+        .map(|(name, cats)| FlagService {
+            name,
+            categories: cats
+                .into_iter()
+                .map(|(name, options)| FlagServiceCategory { name, options })
+                .collect(),
+        })
+        .collect()
+}
+
+pub fn services_for_main_category<'a>(
+    services: &'a [FlagService],
+    main: &str,
+) -> Vec<&'a FlagService> {
+    services
+        .iter()
+        .filter(|service| service_main_category(&service.name) == main)
+        .collect()
+}
+
+pub fn search_grouped_flags(services: &[FlagService], query: &str) -> Vec<FlagSearchHit> {
+    let clean = crate::config_search::strip_cli_prefix(query);
+    if clean.is_empty() {
+        return Vec::new();
+    }
+    let mut hits = Vec::new();
+    for service in services {
+        let service_hit = service.name.to_ascii_lowercase().contains(&clean);
+        for category in &service.categories {
+            let category_hit = category.name.to_ascii_lowercase().contains(&clean);
+            for option in &category.options {
+                if service_hit
+                    || category_hit
+                    || crate::config_search::matches_config_search(
+                        &option.name,
+                        &option.help,
+                        &option.field_name,
+                        query,
+                    )
+                {
+                    hits.push(FlagSearchHit {
+                        service: service.name.clone(),
+                        category: category.name.clone(),
+                        option: option.clone(),
+                    });
+                }
+            }
+        }
+    }
+    hits
+}
+
+pub fn find_service_category<'a>(
+    services: &'a [FlagService],
+    service: &str,
+    category: &str,
+) -> Option<&'a FlagServiceCategory> {
+    services
+        .iter()
+        .find(|item| item.name.eq_ignore_ascii_case(service))
+        .and_then(|item| {
+            item.categories
+                .iter()
+                .find(|cat| cat.name.eq_ignore_ascii_case(category))
+        })
+}
+
 pub fn collect_edits(edits: &[(String, String, Value)]) -> Value {
     let mut root = Map::new();
     for (block, field, value) in edits {
@@ -596,11 +872,78 @@ mod tests {
     }
 
     #[test]
+    fn displays_bool_int_and_default_flag_text() {
+        let flag = bool_flag("createEmptySrcDirs", "Create empty dirs");
+        assert_eq!(
+            flag_display_text(&flag, &json!({ "createEmptySrcDirs": true })),
+            "true"
+        );
+        assert_eq!(flag_display_text(&flag, &json!({})), flag.default_str);
+        let transfers = FlagOption {
+            name: "transfers".into(),
+            field_name: "transfers".into(),
+            help: "parallel".into(),
+            type_name: "int".into(),
+            advanced: false,
+            groups: "Copy".into(),
+            default_str: "4".into(),
+            value: json!(4),
+            examples: vec![],
+            exclusive: false,
+        };
+        assert_eq!(
+            flag_display_text(&transfers, &json!({ "transfers": 8 })),
+            "8"
+        );
+    }
+
+    #[test]
     fn builds_nested_set_payload() {
         let payload = set_option_payload("HTTP", "ListenAddr", json!(":8080"));
         assert_eq!(payload["HTTP"]["ListenAddr"], ":8080");
         let dotted = set_option_payload("main", "a.b", json!(1));
         assert_eq!(dotted["main"]["a"]["b"], 1);
+    }
+
+    #[test]
+    fn parses_options_blocks_and_fills_empty() {
+        let names = parse_options_blocks(&json!({ "options": ["main", "vfs", "HTTP"] }));
+        assert_eq!(names, vec!["HTTP", "main", "vfs"]);
+        assert_eq!(
+            parse_options_blocks(&json!(["rc", "log"])),
+            vec!["log", "rc"]
+        );
+        assert!(parse_options_blocks(&json!({})).is_empty());
+        let mut blocks = parse_options_info(&json!({
+            "main": [{
+                "Name": "transfers",
+                "FieldName": "transfers",
+                "Type": "int",
+                "Groups": "Performance"
+            }]
+        }));
+        ensure_named_blocks(&mut blocks, &names);
+        assert!(blocks
+            .iter()
+            .any(|b| b.name == "main" && !b.options.is_empty()));
+        assert!(blocks
+            .iter()
+            .any(|b| b.name == "vfs" && b.options.is_empty()));
+        assert!(blocks
+            .iter()
+            .any(|b| b.name == "HTTP" && b.options.is_empty()));
+        let merged = option_blocks_from_rc(
+            &json!({
+                "main": [{
+                    "Name": "transfers",
+                    "FieldName": "transfers",
+                    "Type": "int"
+                }]
+            }),
+            &json!({ "options": ["main", "filter"] }),
+        );
+        assert!(merged.iter().any(|b| b.name == "filter"));
+        assert_eq!(merged.iter().filter(|b| b.name == "main").count(), 1);
     }
 
     #[test]
@@ -701,6 +1044,103 @@ mod tests {
         assert_eq!(parse_flag_value("Duration", "30s"), json!("30s"));
         assert_eq!(parse_flag_value("SizeSuffix", "1Gi"), json!("1Gi"));
         assert_eq!(parse_flag_value("Tristate", "unset"), json!(null));
+    }
+
+    #[test]
+    fn synthesizes_blocks_from_options_get() {
+        let current = json!({
+            "main": { "transfers": 8, "DryRun": false },
+            "rc": { "HTTPOptions": { "ListenAddr": ":5572" } }
+        });
+        let blocks = synthesize_blocks_from_current(&current);
+        assert_eq!(
+            blocks.iter().map(|b| b.name.as_str()).collect::<Vec<_>>(),
+            vec!["main", "rc"]
+        );
+        assert!(blocks[0]
+            .options
+            .iter()
+            .any(|o| o.field_name == "transfers" && o.type_name == "int"));
+        let listen = blocks[1]
+            .options
+            .iter()
+            .find(|o| o.field_name == "HTTPOptions.ListenAddr")
+            .unwrap();
+        assert_eq!(option_field_category(&listen.field_name), "HTTPOptions");
+        let empty_info = vec![FlagBlock {
+            name: "main".into(),
+            options: vec![],
+        }];
+        let ui = blocks_for_flags_ui(empty_info, &current);
+        assert!(ui.iter().any(|b| b.name == "main" && !b.options.is_empty()));
+    }
+
+    #[test]
+    fn groups_options_by_service_and_field_prefix() {
+        let blocks = parse_options_info(&json!({
+            "main": [
+                {
+                    "Name": "transfers",
+                    "FieldName": "transfers",
+                    "Help": "parallel",
+                    "Type": "int"
+                },
+                {
+                    "Name": "listen-addr",
+                    "FieldName": "HTTP.ListenAddr",
+                    "Help": "listen",
+                    "Type": "string"
+                },
+                {
+                    "Name": "listen-addr",
+                    "FieldName": "HTTP.ListenAddr",
+                    "Help": "duplicate",
+                    "Type": "string"
+                }
+            ],
+            "vfs": [{
+                "Name": "cache-mode",
+                "FieldName": "CacheMode",
+                "Help": "cache",
+                "Type": "string"
+            }],
+            "sftp": [{
+                "Name": "user",
+                "FieldName": "Auth.User",
+                "Help": "user",
+                "Type": "string"
+            }]
+        }));
+        let grouped = group_blocks_by_service(&blocks);
+        assert_eq!(
+            grouped.iter().map(|s| s.name.as_str()).collect::<Vec<_>>(),
+            vec!["main", "sftp", "vfs"]
+        );
+        let main = grouped.iter().find(|s| s.name == "main").unwrap();
+        assert_eq!(
+            main.categories
+                .iter()
+                .map(|c| c.name.as_str())
+                .collect::<Vec<_>>(),
+            vec!["General", "HTTP"]
+        );
+        assert_eq!(main.categories[1].options.len(), 1);
+        assert_eq!(service_main_category("vfs"), "fileSystemAndStorage");
+        assert_eq!(service_main_category("main"), "generalSettings");
+        assert_eq!(service_main_category("sftp"), "networkAndServers");
+        assert_eq!(
+            services_for_main_category(&grouped, "fileSystemAndStorage")
+                .iter()
+                .map(|s| s.name.as_str())
+                .collect::<Vec<_>>(),
+            vec!["vfs"]
+        );
+        let hits = search_grouped_flags(&grouped, "--listen");
+        assert_eq!(hits.len(), 1);
+        assert_eq!(hits[0].service, "main");
+        assert_eq!(hits[0].category, "HTTP");
+        let vfs_hits = search_grouped_flags(&grouped, "vfs");
+        assert!(vfs_hits.iter().any(|h| h.option.name == "cache-mode"));
     }
 
     #[test]

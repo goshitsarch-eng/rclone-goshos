@@ -19,7 +19,7 @@
 
 <p align="center">
   <b>Мощный кроссплатформенный графический интерфейс для удобного управления удалёнными хранилищами Rclone.</b><br>
-  <i>Создан с использованием Angular 22 и Tauri · Linux • Windows • macOS • Android (бета) • Поддержка ARM</i>
+  <i>Linux: GTK 4 + libadwaita · Rust (Tauri) · Linux • Windows • macOS • Android (бета) • Поддержка ARM</i>
 </p>
 
 <p align="center">
@@ -143,5 +143,5 @@
 
 <p align="center">
   Создано командой Zarestia Dev<br>
-  <sub>Работает на основе Rclone | Создано с использованием Angular и Tauri</sub>
+  <sub>Работает на основе Rclone | GTK 4, libadwaita и Rust</sub>
 </p>

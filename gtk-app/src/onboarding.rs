@@ -1,6 +1,6 @@
 //! Onboarding card catalog — mirrors Angular `OnboardingComponent` card keys.
 
-use std::path::PathBuf;
+pub use crate::installation::{rclone_install_dest, InstallLocation};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum OnboardingCard {
@@ -135,32 +135,6 @@ pub const MAIN_UI_OPTIONS: &[MainUiOption] = &[
     },
 ];
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum InstallLocation {
-    Default,
-    Custom,
-    Existing,
-}
-
-pub fn rclone_install_dest(location: InstallLocation, custom: &str) -> Option<PathBuf> {
-    match location {
-        InstallLocation::Default => Some(
-            dirs::home_dir()
-                .unwrap_or_else(|| PathBuf::from("."))
-                .join(".local/bin"),
-        ),
-        InstallLocation::Custom => {
-            let trimmed = custom.trim();
-            if trimmed.is_empty() {
-                None
-            } else {
-                Some(PathBuf::from(trimmed))
-            }
-        }
-        InstallLocation::Existing => None,
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -208,18 +182,5 @@ mod tests {
         assert!(MAIN_UI_OPTIONS
             .iter()
             .all(|opt| opt.title_key.contains("uiOptions")));
-    }
-
-    #[test]
-    fn rclone_dest_requires_custom_path() {
-        assert!(rclone_install_dest(InstallLocation::Default, "")
-            .unwrap()
-            .ends_with(".local/bin"));
-        assert!(rclone_install_dest(InstallLocation::Custom, "  ").is_none());
-        assert_eq!(
-            rclone_install_dest(InstallLocation::Custom, "/opt/rclone"),
-            Some(PathBuf::from("/opt/rclone"))
-        );
-        assert!(rclone_install_dest(InstallLocation::Existing, "/bin/rclone").is_none());
     }
 }

@@ -6,9 +6,11 @@
 
 use super::AppCtx;
 use crate::settings::{
-    apply_path_values, default_for_path, display_setting, requires_engine_restart, values_equal,
+    apply_path_values, default_for_path, display_setting, persistable_string_list,
+    requires_engine_restart, setting_string_list, setting_string_list_value, values_equal,
 };
 use adw::prelude::*;
+use gtk::prelude::{Cast, IsA};
 use serde_json::{json, Value};
 use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
@@ -18,7 +20,7 @@ use std::rc::Rc;
 struct PrefsSession {
     ctx: AppCtx,
     pending: Rc<RefCell<HashMap<String, Value>>>,
-    restorers: Rc<RefCell<HashMap<String, Rc<dyn Fn()>>>>,
+    restorers: Rc<RefCell<Vec<(String, Rc<dyn Fn()>)>>>,
     suppress: Rc<Cell<bool>>,
     banner: adw::PreferencesGroup,
     banner_row: adw::ActionRow,
@@ -37,13 +39,14 @@ impl PrefsSession {
         )));
         banner.set_visible(false);
         let banner_row = adw::ActionRow::new();
-        banner_row
-            .set_title(&ctx.t_or("modals.preferences.saveAndRestart", "Save & Restart Engine"));
+        banner_row.set_title(&glib::markup_escape_text(
+            &ctx.t_or("modals.preferences.saveAndRestart", "Save & Restart Engine"),
+        ));
         banner.add(&banner_row);
         Self {
             ctx,
             pending: Rc::new(RefCell::new(HashMap::new())),
-            restorers: Rc::new(RefCell::new(HashMap::new())),
+            restorers: Rc::new(RefCell::new(Vec::new())),
             suppress: Rc::new(Cell::new(false)),
             banner,
             banner_row,
@@ -79,7 +82,19 @@ impl PrefsSession {
     fn refresh_banner(&self) {
         let count = self.pending.borrow().len();
         self.banner.set_visible(count > 0);
-        self.banner_row.set_subtitle(&if count == 1 {
+        let mut names: Vec<String> = self
+            .pending
+            .borrow()
+            .keys()
+            .map(|path| {
+                crate::settings::pending_restart_title_key(path)
+                    .map(|(key, fallback)| self.ctx.t_or(key, fallback))
+                    .unwrap_or_else(|| path.clone())
+            })
+            .collect();
+        names.sort();
+        let list = names.join(" · ");
+        let summary = if count == 1 {
             self.ctx.t_or(
                 "modals.preferences.onePendingChange",
                 "1 setting waiting for Save & Restart",
@@ -89,7 +104,17 @@ impl PrefsSession {
                 "modals.preferences.pendingChangesTooltip",
                 &[("count", &count.to_string())],
             )
+        };
+        self.banner_row.set_subtitle(&if list.is_empty() {
+            summary
+        } else {
+            format!("{summary} — {list}")
         });
+        if list.is_empty() {
+            self.banner.set_description(None);
+        } else {
+            self.banner.set_description(Some(&list));
+        }
     }
 
     fn save_and_restart(&self) {
@@ -115,7 +140,7 @@ impl PrefsSession {
 
     fn discard(&self) {
         self.suppress.set(true);
-        for restorer in self.restorers.borrow().values() {
+        for (_, restorer) in self.restorers.borrow().iter() {
             restorer();
         }
         self.pending.borrow_mut().clear();
@@ -156,7 +181,7 @@ impl PrefsSession {
     fn remember_restorer(&self, path: &str, restorer: impl Fn() + 'static) {
         self.restorers
             .borrow_mut()
-            .insert(path.to_string(), Rc::new(restorer));
+            .push((path.to_string(), Rc::new(restorer)));
     }
 }
 
@@ -498,63 +523,32 @@ pub fn present_page(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, page: Option<&s
         40.0,
         1.0,
     );
-    add_entry(
-        &session,
-        &c1,
-        "settings.core.rclone_flags.label",
-        "Additional rclone flags (space-separated)",
-        "core.rclone_additional_flags",
-        " ",
-        |text| {
-            json!(text
-                .split_whitespace()
-                .map(|s| s.to_string())
-                .collect::<Vec<_>>())
-        },
-        |_| {},
-        None,
-    );
-    add_entry(
-        &session,
-        &c1,
-        "settings.core.rclone_env_vars.label",
-        "Rclone environment (KEY=value;KEY=value)",
-        "core.rclone_env_vars",
-        ";",
-        |text| {
-            json!(text
-                .split(';')
-                .map(str::trim)
-                .filter(|s| !s.is_empty())
-                .map(|s| s.to_string())
-                .collect::<Vec<_>>())
-        },
-        |_| {},
-        None,
-    );
-    add_entry(
-        &session,
-        &c1,
-        "settings.core.connection_check_urls.label",
-        "Connectivity check URLs (comma-separated)",
-        "core.connection_check_urls",
-        ", ",
-        |text| {
-            json!(text
-                .split(',')
-                .map(str::trim)
-                .filter(|s| !s.is_empty())
-                .map(|s| s.to_string())
-                .collect::<Vec<_>>())
-        },
-        |_| {},
-        None,
-    );
     core.add(&c1);
+    core.add(&build_list_editor_group(
+        &session,
+        "settings.core.rclone_flags.label",
+        "Additional rclone flags",
+        "core.rclone_additional_flags",
+        None,
+    ));
+    core.add(&build_list_editor_group(
+        &session,
+        "settings.core.rclone_env_vars.label",
+        "Rclone environment (KEY=value)",
+        "core.rclone_env_vars",
+        None,
+    ));
+    core.add(&build_list_editor_group(
+        &session,
+        "settings.core.connection_check_urls.label",
+        "Connectivity check URLs",
+        "core.connection_check_urls",
+        Some(crate::validators::validate_url),
+    ));
 
     let security = adw::PreferencesPage::new();
     security.set_name(Some("security"));
-    security.set_title(&ctx.t_or("modals.backend.security.encrypted", "Security"));
+    security.set_title(&ctx.t_or("modals.backend.securityTab", "Security"));
     security.set_icon_name(Some("security-high-symbolic"));
     add_security_page(&session, &security, parent);
 
@@ -568,13 +562,422 @@ pub fn present_page(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, page: Option<&s
     dialog.add(&core);
     dialog.add(&security);
     dialog.add(&dev);
+    dialog.add(&search_page(&session, &dialog, parent));
     if let Some(name) = page.filter(|name| !name.is_empty()) {
         dialog.set_visible_page_name(name);
     }
     dialog.present(Some(parent));
 }
 
-fn add_language_row(session: &PrefsSession, group: &adw::PreferencesGroup) {
+fn search_page(
+    session: &PrefsSession,
+    dialog: &adw::PreferencesDialog,
+    parent: &impl IsA<gtk::Widget>,
+) -> adw::PreferencesPage {
+    let ctx = &session.ctx;
+    let page = adw::PreferencesPage::new();
+    page.set_name(Some("search"));
+    page.set_title(&ctx.t_or("modals.preferences.searchResults", "Search Results"));
+    page.set_icon_name(Some("edit-find-symbolic"));
+    let query = adw::EntryRow::new();
+    query.set_title(&ctx.t_or("modals.preferences.searchPlaceholder", "Search settings..."));
+    let query_group = adw::PreferencesGroup::new();
+    query_group.add(&query);
+    let chips_row = adw::ActionRow::new();
+    chips_row.set_title(&ctx.t_or("modals.preferences.trySearching", "Try searching for:"));
+    for (id, key, fallback) in crate::pref_search::SUGGESTIONS {
+        let label = ctx.t_or(key, fallback);
+        let btn = gtk::Button::with_label(&label);
+        btn.add_css_class("pill");
+        btn.set_valign(gtk::Align::Center);
+        btn.set_tooltip_text(Some(&ctx.tf(
+            "modals.preferences.aria.searchFor",
+            &[("suggestion", &label)],
+        )));
+        let query = query.clone();
+        let text = if *id == "apiPort" {
+            "port".to_string()
+        } else {
+            label.clone()
+        };
+        btn.connect_clicked(move |_| query.set_text(&text));
+        chips_row.add_suffix(&btn);
+    }
+    let results = adw::PreferencesGroup::new();
+    results.set_title(&ctx.t_or("modals.preferences.searchResults", "Search Results"));
+    let empty = adw::ActionRow::new();
+    empty.set_title(&ctx.t_or(
+        "modals.preferences.noSettingsFound",
+        "No settings found matching",
+    ));
+    empty.set_visible(false);
+    results.add(&empty);
+    let result_rows: Rc<RefCell<Vec<gtk::Widget>>> = Rc::new(RefCell::new(Vec::new()));
+    let refresh = {
+        let session = session.clone();
+        let dialog = dialog.clone();
+        let parent = parent.clone();
+        let results = results.clone();
+        let empty = empty.clone();
+        let chips_row = chips_row.clone();
+        let result_rows = result_rows.clone();
+        Rc::new(move |text: String| {
+            for row in result_rows.borrow().iter() {
+                if row.parent().as_ref() == Some(results.upcast_ref()) {
+                    results.remove(row);
+                }
+            }
+            result_rows.borrow_mut().clear();
+            let query = text.trim().to_string();
+            if query.is_empty() {
+                empty.set_visible(false);
+                chips_row.set_visible(true);
+                return;
+            }
+            let hits = crate::pref_search::matching_items(&query, &session.ctx.i18n.borrow());
+            chips_row.set_visible(hits.is_empty());
+            empty.set_visible(hits.is_empty());
+            empty.set_subtitle(&format!("\"{query}\""));
+            for item in hits {
+                let row = add_search_hit(&session, &results, item, &dialog, &parent);
+                result_rows.borrow_mut().push(row);
+            }
+        })
+    };
+    {
+        let refresh = refresh.clone();
+        query.connect_changed(move |row| refresh(row.text().to_string()));
+    }
+    let chips_group = adw::PreferencesGroup::new();
+    chips_group.add(&chips_row);
+    page.add(&query_group);
+    page.add(&chips_group);
+    page.add(&results);
+    page
+}
+
+fn add_search_hit(
+    session: &PrefsSession,
+    group: &adw::PreferencesGroup,
+    item: &crate::pref_search::PrefSearchItem,
+    dialog: &adw::PreferencesDialog,
+    _parent: &impl IsA<gtk::Widget>,
+) -> gtk::Widget {
+    match item.title_key {
+        "settings.general.language.label" => add_language_row(session, group),
+        "settings.general.default_view.label" => add_combo(
+            session,
+            group,
+            item.title_key,
+            item.title_fallback,
+            "general.default_view",
+            &["main_menu", "nautilus", "flow"],
+            None,
+            |_| {},
+        ),
+        "settings.general.tray_enabled.label" => add_switch(
+            session,
+            group,
+            item.title_key,
+            item.title_fallback,
+            "general.tray_enabled",
+            |_, _| {},
+        ),
+        "settings.general.start_on_startup.label" => add_switch(
+            session,
+            group,
+            item.title_key,
+            item.title_fallback,
+            "general.start_on_startup",
+            |_, value| {
+                if let Some(on) = value.as_bool() {
+                    let _ = crate::platform::set_autostart(on);
+                }
+            },
+        ),
+        "settings.general.notifications.label" => add_switch(
+            session,
+            group,
+            item.title_key,
+            item.title_fallback,
+            "general.notifications",
+            |ctx, value| {
+                if let Some(on) = value.as_bool() {
+                    ctx.store.borrow_mut().notifications_enabled = on;
+                }
+            },
+        ),
+        "settings.general.restrict.label" => add_switch(
+            session,
+            group,
+            item.title_key,
+            item.title_fallback,
+            "general.restrict",
+            |_, _| {},
+        ),
+        "settings.general.prevent_sleep.label" => add_switch(
+            session,
+            group,
+            item.title_key,
+            item.title_fallback,
+            "general.prevent_sleep",
+            |_, _| {},
+        ),
+        "settings.general.standalone_dialogs.label" => add_switch(
+            session,
+            group,
+            item.title_key,
+            item.title_fallback,
+            "general.standalone_dialogs",
+            |_, _| {},
+        ),
+        "titlebar.menu.theme" => add_combo(
+            session,
+            group,
+            item.title_key,
+            item.title_fallback,
+            "runtime.theme",
+            &["system", "light", "dark"],
+            None,
+            |ctx| ctx.apply_theme(),
+        ),
+        "settings.general.tray_icon_theme.label" => add_combo(
+            session,
+            group,
+            item.title_key,
+            item.title_fallback,
+            "general.tray_icon_theme",
+            &[
+                "system",
+                "color",
+                "monochrome_light",
+                "monochrome_dark",
+                "symbolic",
+            ],
+            None,
+            |_| {},
+        ),
+        "nautilus.sort.label" => add_combo(
+            session,
+            group,
+            item.title_key,
+            item.title_fallback,
+            "nautilus.sort_by",
+            &["name", "size", "modified"],
+            Some(("nautilus.sort.defaultHint", "Default Nautilus listing sort")),
+            |_| {},
+        ),
+        "nautilus.view.showHidden" => add_switch(
+            session,
+            group,
+            item.title_key,
+            item.title_fallback,
+            "nautilus.show_hidden",
+            |_, _| {},
+        ),
+        "settings.runtime.app_update_channel.label" => add_combo(
+            session,
+            group,
+            item.title_key,
+            item.title_fallback,
+            "runtime.app_update_channel",
+            &["stable", "beta"],
+            None,
+            |_| {},
+        ),
+        "settings.runtime.rclone_update_channel.label" => add_combo(
+            session,
+            group,
+            item.title_key,
+            item.title_fallback,
+            "runtime.rclone_update_channel",
+            &["stable", "beta"],
+            None,
+            |_| {},
+        ),
+        "settings.runtime.app_auto_check_updates.label" => add_switch(
+            session,
+            group,
+            item.title_key,
+            item.title_fallback,
+            "runtime.app_auto_check_updates",
+            |_, _| {},
+        ),
+        "settings.runtime.rclone_auto_check_updates.label" => add_switch(
+            session,
+            group,
+            item.title_key,
+            item.title_fallback,
+            "runtime.rclone_auto_check_updates",
+            |_, _| {},
+        ),
+        "settings.runtime.show_json_mode.label" => add_switch(
+            session,
+            group,
+            item.title_key,
+            item.title_fallback,
+            "runtime.show_json_mode",
+            |_, _| {},
+        ),
+        "settings.core.rclone_binary.label" => add_entry(
+            session,
+            group,
+            item.title_key,
+            item.title_fallback,
+            "core.rclone_binary",
+            " ",
+            |text| json!(text),
+            |_| {},
+            None,
+        ),
+        "settings.core.bandwidth_limit.label" => add_entry(
+            session,
+            group,
+            item.title_key,
+            item.title_fallback,
+            "core.bandwidth_limit",
+            " ",
+            |text| json!(text),
+            |ctx| ctx.apply_effective_bandwidth(),
+            Some(validate_bandwidth_row),
+        ),
+        "settings.core.metered_bandwidth_limit.label" => add_entry(
+            session,
+            group,
+            item.title_key,
+            item.title_fallback,
+            "core.metered_bandwidth_limit",
+            " ",
+            |text| json!(text),
+            |ctx| ctx.apply_effective_bandwidth(),
+            Some(validate_bandwidth_row),
+        ),
+        "settings.core.connection_check_urls.label" => add_list_editor(
+            session,
+            group,
+            item.title_key,
+            item.title_fallback,
+            "core.connection_check_urls",
+            Some(crate::validators::validate_url),
+        ),
+        "settings.core.rclone_flags.label" => add_list_editor(
+            session,
+            group,
+            item.title_key,
+            item.title_fallback,
+            "core.rclone_additional_flags",
+            None,
+        ),
+        "settings.core.rclone_env_vars.label" => add_list_editor(
+            session,
+            group,
+            item.title_key,
+            item.title_fallback,
+            "core.rclone_env_vars",
+            None,
+        ),
+        "settings.core.default_mount_directory.label" => add_entry(
+            session,
+            group,
+            item.title_key,
+            item.title_fallback,
+            "core.default_mount_directory",
+            " ",
+            |text| json!(text),
+            |_| {},
+            None,
+        ),
+        "settings.core.default_bisync_directory.label" => add_entry(
+            session,
+            group,
+            item.title_key,
+            item.title_fallback,
+            "core.default_bisync_directory",
+            " ",
+            |text| json!(text),
+            |_| {},
+            None,
+        ),
+        "settings.core.max_tray_items.label" => add_spin(
+            session,
+            group,
+            item.title_key,
+            item.title_fallback,
+            "core.max_tray_items",
+            1.0,
+            40.0,
+            1.0,
+        ),
+        "settings.developer.log_level.label" => add_combo(
+            session,
+            group,
+            item.title_key,
+            item.title_fallback,
+            "developer.log_level",
+            &["error", "warn", "info", "debug", "trace"],
+            None,
+            |_| {},
+        ),
+        "settings.developer.destroy_window_on_close.label" => add_switch(
+            session,
+            group,
+            item.title_key,
+            item.title_fallback,
+            "developer.destroy_window_on_close",
+            |_, _| {},
+        ),
+        _ => {
+            let row = adw::ActionRow::new();
+            row.set_title(&session.ctx.t_or(item.title_key, item.title_fallback));
+            row.set_subtitle(&format!(
+                "{} · {}",
+                session
+                    .ctx
+                    .t_or(&format!("modals.preferences.tabs.{}", item.page), item.page),
+                session.ctx.t_or(item.help_key, item.help_fallback)
+            ));
+            row.set_activatable(true);
+            let dialog = dialog.clone();
+            let page = item.page.to_string();
+            row.connect_activated(move |_| {
+                dialog.set_visible_page_name(&page);
+            });
+            group.add(&row);
+            row.upcast()
+        }
+    }
+}
+
+fn apply_help_subtitle(
+    session: &PrefsSession,
+    row: &impl adw::prelude::ActionRowExt,
+    label_key: &str,
+) {
+    if row.subtitle().is_some_and(|text| !text.is_empty()) {
+        return;
+    }
+    if let Some(help) = help_text(session, label_key) {
+        row.set_subtitle(&help);
+    }
+}
+
+fn apply_help_tooltip(session: &PrefsSession, widget: &impl IsA<gtk::Widget>, label_key: &str) {
+    if let Some(help) = help_text(session, label_key) {
+        widget.set_tooltip_text(Some(&help));
+    }
+}
+
+fn help_text(session: &PrefsSession, label_key: &str) -> Option<String> {
+    let key = crate::pref_search::help_key_from_label(label_key)?;
+    session
+        .ctx
+        .i18n
+        .borrow()
+        .has(&key)
+        .then(|| session.ctx.t(&key))
+}
+
+fn add_language_row(session: &PrefsSession, group: &adw::PreferencesGroup) -> gtk::Widget {
     let langs = crate::i18n::SUPPORTED_LANGUAGES;
     let lang_labels = [
         "English (US)",
@@ -598,12 +1001,6 @@ fn add_language_row(session: &PrefsSession, group: &adw::PreferencesGroup) {
         "Application language",
     ));
     row.set_model(Some(&gtk::StringList::new(&lang_labels)));
-    if let Some(idx) = langs
-        .iter()
-        .position(|l| *l == session.ctx.settings.borrow().general.language)
-    {
-        row.set_selected(idx as u32);
-    }
     {
         let session = session.clone();
         row.connect_selected_notify(move |row| {
@@ -612,11 +1009,23 @@ fn add_language_row(session: &PrefsSession, group: &adw::PreferencesGroup) {
             }
             let idx = row.selected() as usize;
             if let Some(code) = langs.get(idx) {
+                let previous = session.ctx.settings.borrow().general.language.clone();
                 session.commit("general.language", json!(code));
                 *session.ctx.i18n.borrow_mut() = crate::i18n::I18n::load(code);
+                if crate::i18n::I18n::language_changed(&previous, code) {
+                    session.ctx.request_reload_ui(true);
+                }
             }
         });
     }
+    session.suppress.set(true);
+    if let Some(idx) = langs
+        .iter()
+        .position(|l| *l == session.ctx.settings.borrow().general.language)
+    {
+        row.set_selected(idx as u32);
+    }
+    session.suppress.set(false);
     let row_reset = row.clone();
     let session_reset = session.clone();
     row.add_suffix(&session.reset_button("general.language", move |value| {
@@ -639,6 +1048,7 @@ fn add_language_row(session: &PrefsSession, group: &adw::PreferencesGroup) {
         });
     }
     group.add(&row);
+    row.upcast()
 }
 
 fn add_switch(
@@ -648,7 +1058,7 @@ fn add_switch(
     fallback: &str,
     path: &'static str,
     extra: impl Fn(&AppCtx, &Value) + 'static,
-) {
+) -> gtk::Widget {
     let active = session
         .ctx
         .settings
@@ -658,6 +1068,7 @@ fn add_switch(
         .unwrap_or(false);
     let row = adw::SwitchRow::new();
     row.set_title(&session.ctx.t_or(key, fallback));
+    apply_help_subtitle(session, &row, key);
     row.set_active(active);
     let extra = Rc::new(extra);
     {
@@ -697,6 +1108,7 @@ fn add_switch(
         });
     }
     group.add(&row);
+    row.upcast()
 }
 
 fn add_combo(
@@ -708,7 +1120,7 @@ fn add_combo(
     options: &'static [&'static str],
     subtitle: Option<(&str, &str)>,
     extra: impl Fn(&AppCtx) + 'static,
-) {
+) -> gtk::Widget {
     let current = session
         .ctx
         .settings
@@ -718,10 +1130,20 @@ fn add_combo(
         .unwrap_or_default();
     let row = adw::ComboRow::new();
     row.set_title(&session.ctx.t_or(key, fallback));
+    apply_help_subtitle(session, &row, key);
     if let Some((sub_key, sub_fallback)) = subtitle {
         row.set_subtitle(&session.ctx.t_or(sub_key, sub_fallback));
     }
-    row.set_model(Some(&gtk::StringList::new(options)));
+    let labels: Vec<String> = options
+        .iter()
+        .map(|id| {
+            session
+                .ctx
+                .t_or(&format!("settings.{path}.options.{id}"), id)
+        })
+        .collect();
+    let label_refs: Vec<&str> = labels.iter().map(|s| s.as_str()).collect();
+    row.set_model(Some(&gtk::StringList::new(&label_refs)));
     if let Some(idx) = options.iter().position(|item| *item == current) {
         row.set_selected(idx as u32);
     }
@@ -765,6 +1187,7 @@ fn add_combo(
         });
     }
     group.add(&row);
+    row.upcast()
 }
 
 fn add_int_combo(
@@ -774,7 +1197,7 @@ fn add_int_combo(
     fallback: &str,
     path: &'static str,
     options: &'static [i64],
-) {
+) -> gtk::Widget {
     let labels: Vec<String> = options.iter().map(|n| n.to_string()).collect();
     let refs: Vec<&str> = labels.iter().map(|s| s.as_str()).collect();
     let current = session
@@ -786,6 +1209,7 @@ fn add_int_combo(
         .unwrap_or(options.first().copied().unwrap_or(0));
     let row = adw::ComboRow::new();
     row.set_title(&session.ctx.t_or(key, fallback));
+    apply_help_subtitle(session, &row, key);
     row.set_model(Some(&gtk::StringList::new(&refs)));
     if let Some(idx) = options.iter().position(|item| *item == current) {
         row.set_selected(idx as u32);
@@ -824,6 +1248,7 @@ fn add_int_combo(
         });
     }
     group.add(&row);
+    row.upcast()
 }
 
 fn add_entry(
@@ -836,7 +1261,7 @@ fn add_entry(
     encode: impl Fn(&str) -> Value + 'static,
     extra: impl Fn(&AppCtx) + 'static,
     validate: Option<fn(&adw::EntryRow) -> bool>,
-) {
+) -> gtk::Widget {
     let current = session
         .ctx
         .settings
@@ -846,6 +1271,7 @@ fn add_entry(
         .unwrap_or_default();
     let row = adw::EntryRow::new();
     row.set_title(&session.ctx.t_or(key, fallback));
+    apply_help_tooltip(session, &row, key);
     row.set_text(&current);
     let encode = Rc::new(encode);
     let extra = Rc::new(extra);
@@ -889,6 +1315,198 @@ fn add_entry(
         });
     }
     group.add(&row);
+    row.upcast()
+}
+
+fn add_list_editor(
+    session: &PrefsSession,
+    group: &adw::PreferencesGroup,
+    key: &str,
+    fallback: &str,
+    path: &'static str,
+    validate_item: Option<fn(&str) -> Result<(), String>>,
+) -> gtk::Widget {
+    let list_group = build_list_editor_group(session, key, fallback, path, validate_item);
+    group.add(&list_group);
+    list_group.upcast()
+}
+
+fn build_list_editor_group(
+    session: &PrefsSession,
+    key: &str,
+    fallback: &str,
+    path: &'static str,
+    validate_item: Option<fn(&str) -> Result<(), String>>,
+) -> adw::PreferencesGroup {
+    let list_group = adw::PreferencesGroup::new();
+    list_group.set_title(&session.ctx.t_or(key, fallback));
+    if let Some(help) = help_text(session, key) {
+        list_group.set_description(Some(&help));
+    }
+
+    let current = session
+        .ctx
+        .settings
+        .borrow()
+        .get_by_path(path)
+        .map(|v| setting_string_list(&v))
+        .unwrap_or_default();
+    let label_key = key.to_string();
+    let rows: Rc<RefCell<Vec<adw::EntryRow>>> = Rc::new(RefCell::new(Vec::new()));
+    let add_row = adw::ActionRow::new();
+    add_row.set_title(&session.ctx.t_or("modals.preferences.addItem", "Add Item"));
+    add_row.set_activatable(true);
+    add_row.add_prefix(&gtk::Image::from_icon_name("list-add-symbolic"));
+    add_row.set_tooltip_text(Some(&session.ctx.tf(
+        "modals.preferences.aria.addNewItem",
+        &[("name", &session.ctx.t_or(key, fallback))],
+    )));
+
+    let commit_rows = {
+        let session = session.clone();
+        let rows = rows.clone();
+        let label_key = label_key.clone();
+        Rc::new(move || {
+            let mut next = Vec::new();
+            let mut ok = true;
+            for row in rows.borrow().iter() {
+                let text = row.text().to_string();
+                if let Some(validate) = validate_item {
+                    match validate(&text) {
+                        Ok(()) => {
+                            row.remove_css_class("error");
+                            apply_help_tooltip(&session, row, &label_key);
+                        }
+                        Err(_) => {
+                            if !text.trim().is_empty() {
+                                row.add_css_class("error");
+                                row.set_tooltip_text(Some(&session.ctx.t_or(
+                                    "modals.preferences.validation.urlArray",
+                                    "All items must be valid URLs (e.g., https://...).",
+                                )));
+                                ok = false;
+                            }
+                        }
+                    }
+                }
+                next.push(text);
+            }
+            if ok {
+                session.commit(
+                    path,
+                    setting_string_list_value(&persistable_string_list(&next)),
+                );
+            }
+        }) as Rc<dyn Fn()>
+    };
+
+    let populate = {
+        let session = session.clone();
+        let list_group = list_group.clone();
+        let rows = rows.clone();
+        let add_row = add_row.clone();
+        let commit_rows = commit_rows.clone();
+        Rc::new(move |values: Vec<String>| {
+            for row in rows.borrow().iter() {
+                if row.parent().as_ref() == Some(list_group.upcast_ref()) {
+                    list_group.remove(row);
+                }
+            }
+            rows.borrow_mut().clear();
+            if add_row.parent().as_ref() == Some(list_group.upcast_ref()) {
+                list_group.remove(&add_row);
+            }
+            for (idx, value) in values.into_iter().enumerate() {
+                let row = adw::EntryRow::new();
+                let index = (idx + 1).to_string();
+                row.set_title(
+                    &session
+                        .ctx
+                        .tf("modals.preferences.aria.itemIndex", &[("index", &index)]),
+                );
+                row.set_text(&value);
+                let remove = gtk::Button::from_icon_name("user-trash-symbolic");
+                remove.set_valign(gtk::Align::Center);
+                remove.add_css_class("flat");
+                remove.set_tooltip_text(Some(&session.ctx.tf(
+                    "modals.preferences.aria.removeItemIndex",
+                    &[("index", &index)],
+                )));
+                row.add_suffix(&remove);
+                {
+                    let commit_rows = commit_rows.clone();
+                    let session = session.clone();
+                    row.connect_changed(move |_| {
+                        if session.suppress.get() {
+                            return;
+                        }
+                        commit_rows();
+                    });
+                }
+                {
+                    let rows = rows.clone();
+                    let list_group = list_group.clone();
+                    let row = row.clone();
+                    let commit_rows = commit_rows.clone();
+                    let populate_later = Rc::clone(&rows);
+                    remove.connect_clicked(move |_| {
+                        if row.parent().as_ref() == Some(list_group.upcast_ref()) {
+                            list_group.remove(&row);
+                        }
+                        populate_later.borrow_mut().retain(|item| !item.eq(&row));
+                        commit_rows();
+                    });
+                }
+                list_group.add(&row);
+                rows.borrow_mut().push(row);
+            }
+            list_group.add(&add_row);
+        }) as Rc<dyn Fn(Vec<String>)>
+    };
+
+    {
+        let populate = populate.clone();
+        let rows = rows.clone();
+        add_row.connect_activated(move |_| {
+            let mut next: Vec<String> = rows
+                .borrow()
+                .iter()
+                .map(|row| row.text().to_string())
+                .collect();
+            next.push(String::new());
+            populate(next);
+        });
+    }
+
+    list_group.set_header_suffix(Some(&session.reset_button(path, {
+        let populate = populate.clone();
+        let session = session.clone();
+        move |value| {
+            session.suppress.set(true);
+            populate(setting_string_list(value));
+            session.suppress.set(false);
+        }
+    })));
+    {
+        let populate = populate.clone();
+        let ctx = session.ctx.clone();
+        let restorer = session.clone();
+        session.remember_restorer(path, move || {
+            restorer.suppress.set(true);
+            let values = ctx
+                .settings
+                .borrow()
+                .get_by_path(path)
+                .map(|v| setting_string_list(&v))
+                .unwrap_or_default();
+            populate(values);
+            restorer.suppress.set(false);
+        });
+    }
+    session.suppress.set(true);
+    populate(current);
+    session.suppress.set(false);
+    list_group
 }
 
 fn add_spin(
@@ -900,7 +1518,7 @@ fn add_spin(
     min: f64,
     max: f64,
     step: f64,
-) {
+) -> gtk::Widget {
     let current = session
         .ctx
         .settings
@@ -910,6 +1528,7 @@ fn add_spin(
         .unwrap_or(0);
     let row = adw::SpinRow::with_range(min, max, step);
     row.set_title(&session.ctx.t_or(key, fallback));
+    apply_help_tooltip(session, &row, key);
     row.set_value(current as f64);
     {
         let session = session.clone();
@@ -940,10 +1559,11 @@ fn add_spin(
         });
     }
     group.add(&row);
+    row.upcast()
 }
 
 fn validate_bandwidth_row(row: &adw::EntryRow) -> bool {
-    match crate::validators::validate_bandwidth(&row.text()) {
+    match crate::validators::validate_bandwidth_limit(&row.text()) {
         Ok(()) => {
             row.remove_css_class("error");
             row.set_tooltip_text(None);
@@ -998,6 +1618,7 @@ fn add_reset_all(
                 ctx.apply_theme();
                 session.pending.borrow_mut().clear();
                 session.refresh_banner();
+                ctx.request_reload_ui(true);
             });
             alert.present(Some(&parent));
         });
@@ -1063,121 +1684,317 @@ fn add_security_page(
     page: &adw::PreferencesPage,
     parent: &impl IsA<gtk::Widget>,
 ) {
-    let ctx = &session.ctx;
-    let s1 = adw::PreferencesGroup::new();
-    s1.set_title(&ctx.t_or(
-        "modals.backend.security.configPassword",
-        "rclone.conf password",
-    ));
-    let stored = adw::PasswordEntryRow::new();
-    stored.set_title(&ctx.t_or("modals.backend.security.password", "Stored password"));
-    stored.set_text(&crate::keyring::resolve_config_password(
-        &ctx.settings.borrow().core.config_password,
-    ));
-    {
-        let ctx = ctx.clone();
-        stored.connect_changed(move |row| {
-            let mut settings = ctx.settings.borrow_mut();
-            crate::keyring::persist_password_setting(
-                &mut settings.core.config_password,
-                &row.text(),
-            );
-            drop(settings);
-            ctx.persist();
-        });
-    }
-    s1.add(&stored);
-    let keyring_row = adw::ActionRow::new();
-    keyring_row.set_title(&ctx.t_or("modals.backend.security.systemKeychain", "OS keyring"));
-    keyring_row.set_subtitle(&if crate::keyring::load_password().is_some() {
-        ctx.t_or(
-            "modals.backend.security.passwordStoredInKeyring",
-            "rclone.conf password is stored in the system keyring",
-        )
-    } else if ctx.settings.borrow().core.config_password.is_empty() {
-        ctx.t_or(
-            "modals.backend.security.protectCredentials",
-            "No password stored. Saving will prefer the system keyring when available.",
-        )
-    } else {
-        ctx.t_or(
-            "modals.backend.security.credentialsPlainText",
-            "Password is stored in settings.json because the keyring is unavailable",
-        )
-    });
-    s1.add(&keyring_row);
-    let validate = gtk::Button::with_label(&ctx.t_or("common.ok", "Validate"));
+    page.add(&rclone_conf_security_group(&session.ctx, parent));
+}
+
+pub fn rclone_conf_security_group(
+    ctx: &AppCtx,
+    parent: &impl IsA<gtk::Widget>,
+) -> adw::PreferencesGroup {
+    let outer = adw::PreferencesGroup::new();
+    outer.set_title(&ctx.t_or("modals.backend.securityTab", "Security"));
+    let holder = gtk::Box::new(gtk::Orientation::Vertical, 0);
+    outer.add(&holder);
+    let show_keychain_input = Rc::new(Cell::new(false));
+    let rebuild: Rc<RefCell<Rc<dyn Fn()>>> = Rc::new(RefCell::new(Rc::new(|| {})));
     {
         let ctx = ctx.clone();
         let parent = parent.clone();
-        let stored = stored.clone();
-        validate.connect_clicked(move |_| {
-            let binary = ctx.settings.borrow().core.rclone_binary.clone();
-            let client = ctx.client();
-            let msg = match crate::security::validate_password_for(
-                client.as_ref(),
-                &binary,
-                &stored.text(),
-            ) {
-                Ok(()) => "Password accepted".into(),
-                Err(e) => e,
+        let holder = holder.clone();
+        let show_keychain_input = show_keychain_input.clone();
+        let rebuild_fn = rebuild.clone();
+        *rebuild.borrow_mut() = Rc::new(move || {
+            while let Some(child) = holder.first_child() {
+                holder.remove(&child);
+            }
+            let on_changed = {
+                let rebuild = rebuild_fn.clone();
+                Rc::new(move || rebuild.borrow()()) as Rc<dyn Fn()>
             };
-            let alert = adw::AlertDialog::new(
-                Some(&ctx.t_or("modals.backend.security.configPassword", "Config password")),
-                Some(&msg),
-            );
-            alert.add_response("ok", &ctx.t("common.ok"));
-            alert.present(Some(&parent));
+            holder.append(&build_security_inner(
+                &ctx,
+                &parent,
+                show_keychain_input.clone(),
+                on_changed,
+            ));
         });
     }
-    let encrypt = gtk::Button::with_label(
-        &ctx.t_or("modals.backend.security.enableEncryption", "Encrypt config"),
-    );
-    {
-        let ctx = ctx.clone();
-        let parent = parent.clone();
-        let stored = stored.clone();
-        encrypt.connect_clicked(move |_| {
-            let binary = ctx.settings.borrow().core.rclone_binary.clone();
-            let client = ctx.client();
-            let msg =
-                match crate::security::encrypt_config_for(client.as_ref(), &binary, &stored.text())
-                {
-                    Ok(()) => {
-                        ctx.restart_engine();
-                        "rclone.conf encrypted".into()
-                    }
-                    Err(e) => e,
-                };
-            let alert = adw::AlertDialog::new(
-                Some(&ctx.t_or("modals.backend.security.enableEncryption", "Encrypt")),
-                Some(&msg),
-            );
-            alert.add_response("ok", &ctx.t("common.ok"));
-            alert.present(Some(&parent));
-        });
+    rebuild.borrow()();
+    outer
+}
+
+fn build_security_inner(
+    ctx: &AppCtx,
+    parent: &impl IsA<gtk::Widget>,
+    show_keychain_input: Rc<Cell<bool>>,
+    on_changed: Rc<dyn Fn()>,
+) -> gtk::Box {
+    let list = gtk::Box::new(gtk::Orientation::Vertical, 0);
+    list.add_css_class("boxed-list");
+    let stored = ctx.settings.borrow().core.config_password.clone();
+    let has_stored = crate::security::has_stored_password(&stored);
+    let flags = ctx.settings.borrow().core.rclone_additional_flags.clone();
+    let config_path = crate::repair::config_path_from_flags(&flags).map(std::path::PathBuf::from);
+    let encrypted =
+        crate::security::probe_config_encrypted(ctx.client().as_ref(), config_path.as_deref())
+            .unwrap_or(false);
+
+    let status = adw::ActionRow::new();
+    if encrypted {
+        status.set_title(&ctx.t_or("modals.backend.security.encrypted", "Encrypted"));
+        status.set_subtitle(&ctx.t_or(
+            "modals.backend.security.credentialsProtected",
+            "Your credentials are protected",
+        ));
+        status.add_prefix(&gtk::Image::from_icon_name("security-high-symbolic"));
+    } else {
+        status.set_title(&ctx.t_or("modals.backend.security.notEncrypted", "Not Encrypted"));
+        status.set_subtitle(&ctx.t_or(
+            "modals.backend.security.credentialsPlainText",
+            "Credentials stored in plain text",
+        ));
+        status.add_prefix(&gtk::Image::from_icon_name("security-medium-symbolic"));
     }
-    let new_pass = adw::PasswordEntryRow::new();
-    new_pass.set_title(&ctx.t_or(
-        "modals.backend.security.newPassword",
-        "New password (change)",
+    if encrypted && has_stored {
+        let key = gtk::Label::new(Some(&ctx.t_or(
+            "modals.backend.security.passwordStoredInKeyring",
+            "Password stored in system keyring",
+        )));
+        key.add_css_class("dim-label");
+        key.set_wrap(true);
+        key.set_xalign(1.0);
+        status.add_suffix(&key);
+    }
+    list.append(&status);
+
+    if encrypted {
+        append_encrypted_security(
+            &list,
+            ctx,
+            parent,
+            has_stored,
+            show_keychain_input,
+            on_changed,
+        );
+    } else {
+        append_encrypt_form(&list, ctx, parent, on_changed);
+    }
+    list
+}
+
+fn append_encrypted_security(
+    list: &gtk::Box,
+    ctx: &AppCtx,
+    parent: &impl IsA<gtk::Widget>,
+    has_stored: bool,
+    show_keychain_input: Rc<Cell<bool>>,
+    on_changed: Rc<dyn Fn()>,
+) {
+    let keychain = adw::SwitchRow::new();
+    keychain.set_title(&ctx.t_or("modals.backend.security.systemKeychain", "System Keychain"));
+    keychain.set_subtitle(&ctx.t_or(
+        "modals.backend.security.autoUnlock",
+        "Auto-unlock on startup",
     ));
-    s1.add(&new_pass);
-    let change = gtk::Button::with_label(
-        &ctx.t_or("modals.backend.security.changePassword", "Change password"),
-    );
+    keychain.set_active(has_stored || show_keychain_input.get());
     {
         let ctx = ctx.clone();
         let parent = parent.clone();
-        let stored = stored.clone();
+        let show_keychain_input = show_keychain_input.clone();
+        let on_changed = on_changed.clone();
+        keychain.connect_active_notify(move |row| {
+            if row.is_active() {
+                if !crate::security::has_stored_password(
+                    &ctx.settings.borrow().core.config_password,
+                ) {
+                    show_keychain_input.set(true);
+                    on_changed();
+                }
+                return;
+            }
+            show_keychain_input.set(false);
+            let _ = crate::keyring::delete_password();
+            ctx.settings.borrow_mut().core.config_password.clear();
+            ctx.persist();
+            security_alert(
+                parent.upcast_ref(),
+                &ctx,
+                &ctx.t_or("modals.backend.security.systemKeychain", "System Keychain"),
+                &ctx.t_or(
+                    "modals.backend.security.passwordRemoved",
+                    "Password removed from keychain",
+                ),
+            );
+            on_changed();
+        });
+    }
+    list.append(&keychain);
+
+    if show_keychain_input.get() && !has_stored {
+        let key_pass = adw::PasswordEntryRow::new();
+        key_pass.set_title(&ctx.t_or("modals.backend.security.configPassword", "Config Password"));
+        let save = gtk::Button::with_label(
+            &ctx.t_or("modals.backend.security.saveToKeychain", "Save to Keychain"),
+        );
+        save.add_css_class("suggested-action");
+        {
+            let ctx = ctx.clone();
+            let parent = parent.clone();
+            let key_pass = key_pass.clone();
+            let show_keychain_input = show_keychain_input.clone();
+            let on_changed = on_changed.clone();
+            save.connect_clicked(move |_| {
+                let password = key_pass.text().to_string();
+                if password.is_empty() {
+                    security_alert(
+                        parent.upcast_ref(),
+                        &ctx,
+                        &ctx.t_or("modals.backend.security.configPassword", "Config Password"),
+                        &ctx.t_or(
+                            "backendErrors.security.passwordEmpty",
+                            "Password cannot be empty",
+                        ),
+                    );
+                    return;
+                }
+                let binary = ctx.settings.borrow().core.rclone_binary.clone();
+                let client = ctx.client();
+                match crate::security::validate_password_for(client.as_ref(), &binary, &password) {
+                    Ok(()) => {
+                        crate::keyring::persist_password_setting(
+                            &mut ctx.settings.borrow_mut().core.config_password,
+                            &password,
+                        );
+                        ctx.persist();
+                        show_keychain_input.set(false);
+                        security_alert(
+                            parent.upcast_ref(),
+                            &ctx,
+                            &ctx.t_or("modals.backend.security.systemKeychain", "System Keychain"),
+                            &ctx.t_or(
+                                "modals.backend.security.passwordStored",
+                                "Password stored in keychain",
+                            ),
+                        );
+                        on_changed();
+                    }
+                    Err(e) => security_alert(
+                        parent.upcast_ref(),
+                        &ctx,
+                        &ctx.t_or("modals.backend.security.configPassword", "Config Password"),
+                        &e,
+                    ),
+                }
+            });
+        }
+        let cancel = gtk::Button::with_label(&ctx.t_or("common.cancel", "Cancel"));
+        {
+            let show_keychain_input = show_keychain_input.clone();
+            let on_changed = on_changed.clone();
+            cancel.connect_clicked(move |_| {
+                show_keychain_input.set(false);
+                on_changed();
+            });
+        }
+        let actions = adw::ActionRow::new();
+        actions.set_title(&ctx.t_or("modals.backend.security.saveToKeychain", "Save to Keychain"));
+        actions.add_suffix(&cancel);
+        actions.add_suffix(&save);
+        list.append(&key_pass);
+        list.append(&actions);
+    }
+
+    let change = adw::ExpanderRow::new();
+    change.set_title(&ctx.t_or("modals.backend.security.changePassword", "Change Password"));
+    change.set_subtitle(&ctx.t_or(
+        "modals.backend.security.updatePasswordDesc",
+        "Update your encryption password",
+    ));
+    let current = adw::PasswordEntryRow::new();
+    current.set_title(&ctx.t_or(
+        "modals.backend.security.currentPassword",
+        "Current Password",
+    ));
+    let new_pass = adw::PasswordEntryRow::new();
+    new_pass.set_title(&ctx.t_or("modals.backend.security.newPassword", "New Password"));
+    let confirm = adw::PasswordEntryRow::new();
+    confirm.set_title(&ctx.t_or(
+        "modals.backend.security.confirmNewPassword",
+        "Confirm New Password",
+    ));
+    let error = gtk::Label::new(None);
+    error.add_css_class("error");
+    error.set_xalign(0.0);
+    error.set_wrap(true);
+    error.set_margin_start(12);
+    error.set_margin_end(12);
+    let update = gtk::Button::with_label(
+        &ctx.t_or("modals.backend.security.updatePassword", "Update Password"),
+    );
+    update.set_sensitive(false);
+    {
+        let ctx = ctx.clone();
+        let current_w = current.clone();
+        let new_pass_w = new_pass.clone();
+        let confirm_w = confirm.clone();
+        let error = error.clone();
+        let update = update.clone();
+        let refresh = Rc::new(move || {
+            match crate::security::validate_change_password_form(
+                &current_w.text(),
+                &new_pass_w.text(),
+                &confirm_w.text(),
+            ) {
+                Ok(()) => {
+                    error.set_text("");
+                    confirm_w.remove_css_class("error");
+                    update.add_css_class("suggested-action");
+                    update.set_sensitive(true);
+                }
+                Err(err) => {
+                    error.set_text(&ctx.t_or(err.i18n_key(), err.as_str()));
+                    if err == crate::security::SecurityFormError::Mismatch {
+                        confirm_w.add_css_class("error");
+                    } else {
+                        confirm_w.remove_css_class("error");
+                    }
+                    update.remove_css_class("suggested-action");
+                    update.set_sensitive(false);
+                }
+            }
+        });
+        for row in [&current, &new_pass, &confirm] {
+            let refresh = refresh.clone();
+            row.connect_changed(move |_| refresh());
+        }
+    }
+    {
+        let ctx = ctx.clone();
+        let parent = parent.clone();
+        let current = current.clone();
         let new_pass = new_pass.clone();
-        change.connect_clicked(move |_| {
+        let confirm = confirm.clone();
+        let on_changed = on_changed.clone();
+        update.connect_clicked(move |_| {
+            if let Err(err) = crate::security::validate_change_password_form(
+                &current.text(),
+                &new_pass.text(),
+                &confirm.text(),
+            ) {
+                security_alert(
+                    parent.upcast_ref(),
+                    &ctx,
+                    &ctx.t_or("modals.backend.security.changePassword", "Change Password"),
+                    &ctx.t_or(err.i18n_key(), err.as_str()),
+                );
+                return;
+            }
             let binary = ctx.settings.borrow().core.rclone_binary.clone();
             let client = ctx.client();
-            let msg = match crate::security::change_password_for(
+            match crate::security::change_password_for(
                 client.as_ref(),
                 &binary,
-                &stored.text(),
+                &current.text(),
                 &new_pass.text(),
             ) {
                 Ok(()) => {
@@ -1187,59 +2004,258 @@ fn add_security_page(
                     );
                     ctx.persist();
                     ctx.restart_engine();
-                    "Password changed".into()
+                    security_alert(
+                        parent.upcast_ref(),
+                        &ctx,
+                        &ctx.t_or("modals.backend.security.changePassword", "Change Password"),
+                        &ctx.t_or(
+                            "modals.backend.security.passwordChanged",
+                            "Password changed",
+                        ),
+                    );
+                    on_changed();
                 }
-                Err(e) => e,
-            };
-            let alert = adw::AlertDialog::new(
-                Some(&ctx.t_or("modals.backend.security.changePassword", "Change password")),
-                Some(&msg),
-            );
-            alert.add_response("ok", &ctx.t("common.ok"));
-            alert.present(Some(&parent));
+                Err(e) => security_alert(
+                    parent.upcast_ref(),
+                    &ctx,
+                    &ctx.t_or("modals.backend.security.changePassword", "Change Password"),
+                    &e,
+                ),
+            }
         });
     }
-    let unencrypt = gtk::Button::with_label(&ctx.t_or(
+    change.add_row(&current);
+    change.add_row(&new_pass);
+    change.add_row(&confirm);
+    let update_row = adw::ActionRow::new();
+    update_row.set_title(&ctx.t_or("modals.backend.security.updatePassword", "Update Password"));
+    update_row.add_suffix(&update);
+    change.add_row(&update_row);
+    list.append(&change);
+    list.append(&error);
+
+    let remove = adw::ExpanderRow::new();
+    remove.set_title(&ctx.t_or(
         "modals.backend.security.removeEncryption",
-        "Remove encryption",
+        "Remove Encryption",
     ));
+    remove.set_subtitle(&ctx.t_or(
+        "modals.backend.security.storePlainText",
+        "Store credentials in plain text",
+    ));
+    let warn = adw::ActionRow::new();
+    warn.set_title(&ctx.t_or(
+        "modals.backend.security.decryptWarning",
+        "This will decrypt your rclone configuration. Your credentials will be visible to anyone with access to your files.",
+    ));
+    warn.add_prefix(&gtk::Image::from_icon_name("dialog-warning-symbolic"));
+    let decrypt_pass = adw::PasswordEntryRow::new();
+    decrypt_pass.set_title(&ctx.t_or(
+        "modals.backend.security.currentPassword",
+        "Current Password",
+    ));
+    let decrypt = gtk::Button::with_label(&ctx.t_or(
+        "modals.backend.security.removeEncryption",
+        "Remove Encryption",
+    ));
+    decrypt.add_css_class("destructive-action");
     {
         let ctx = ctx.clone();
         let parent = parent.clone();
-        let stored = stored.clone();
-        unencrypt.connect_clicked(move |_| {
+        let decrypt_pass = decrypt_pass.clone();
+        decrypt.connect_clicked(move |_| {
+            let password = decrypt_pass.text().to_string();
+            if password.is_empty() {
+                security_alert(
+                    parent.upcast_ref(),
+                    &ctx,
+                    &ctx.t_or(
+                        "modals.backend.security.removeEncryption",
+                        "Remove Encryption",
+                    ),
+                    &ctx.t_or(
+                        "backendErrors.security.passwordEmpty",
+                        "Password cannot be empty",
+                    ),
+                );
+                return;
+            }
             let binary = ctx.settings.borrow().core.rclone_binary.clone();
             let client = ctx.client();
-            let msg = match crate::security::unencrypt_config_for(
-                client.as_ref(),
-                &binary,
-                &stored.text(),
-            ) {
+            match crate::security::unencrypt_config_for(client.as_ref(), &binary, &password) {
                 Ok(()) => {
                     let _ = crate::keyring::delete_password();
                     ctx.settings.borrow_mut().core.config_password.clear();
                     ctx.persist();
                     ctx.restart_engine();
-                    "rclone.conf encryption removed".into()
+                    security_alert(
+                        parent.upcast_ref(),
+                        &ctx,
+                        &ctx.t_or(
+                            "modals.backend.security.removeEncryption",
+                            "Remove Encryption",
+                        ),
+                        &ctx.t_or(
+                            "modals.backend.security.removeEncryption",
+                            "Remove Encryption",
+                        ),
+                    );
+                    on_changed();
                 }
-                Err(e) => e,
-            };
-            let alert = adw::AlertDialog::new(
-                Some(&ctx.t_or("modals.backend.security.removeEncryption", "Unencrypt")),
-                Some(&msg),
-            );
-            alert.add_response("ok", &ctx.t("common.ok"));
-            alert.present(Some(&parent));
+                Err(e) => security_alert(
+                    parent.upcast_ref(),
+                    &ctx,
+                    &ctx.t_or(
+                        "modals.backend.security.removeEncryption",
+                        "Remove Encryption",
+                    ),
+                    &e,
+                ),
+            }
         });
     }
-    let sec_row = adw::ActionRow::new();
-    sec_row.set_title(&ctx.t_or("common.moreActions", "Actions"));
-    sec_row.add_suffix(&validate);
-    sec_row.add_suffix(&encrypt);
-    sec_row.add_suffix(&change);
-    sec_row.add_suffix(&unencrypt);
-    s1.add(&sec_row);
-    page.add(&s1);
+    let decrypt_row = adw::ActionRow::new();
+    decrypt_row.add_suffix(&decrypt);
+    remove.add_row(&warn);
+    remove.add_row(&decrypt_pass);
+    remove.add_row(&decrypt_row);
+    list.append(&remove);
+}
+
+fn append_encrypt_form(
+    list: &gtk::Box,
+    ctx: &AppCtx,
+    parent: &impl IsA<gtk::Widget>,
+    on_changed: Rc<dyn Fn()>,
+) {
+    let heading = adw::ActionRow::new();
+    heading.set_title(&ctx.t_or(
+        "modals.backend.security.enableEncryption",
+        "Enable Encryption",
+    ));
+    heading.set_subtitle(&ctx.t_or(
+        "modals.backend.security.protectCredentials",
+        "Protect your credentials with a password",
+    ));
+    heading.add_prefix(&gtk::Image::from_icon_name("dialog-password-symbolic"));
+    let password = adw::PasswordEntryRow::new();
+    password.set_title(&ctx.t_or("modals.backend.security.password", "Password"));
+    let confirm = adw::PasswordEntryRow::new();
+    confirm.set_title(&ctx.t_or(
+        "modals.backend.security.confirmPassword",
+        "Confirm Password",
+    ));
+    let error = gtk::Label::new(None);
+    error.add_css_class("error");
+    error.set_xalign(0.0);
+    error.set_wrap(true);
+    error.set_margin_start(12);
+    error.set_margin_end(12);
+    let enable = gtk::Button::with_label(&ctx.t_or(
+        "modals.backend.security.enableEncryption",
+        "Enable Encryption",
+    ));
+    enable.set_sensitive(false);
+    {
+        let ctx = ctx.clone();
+        let password_w = password.clone();
+        let confirm_w = confirm.clone();
+        let error = error.clone();
+        let enable = enable.clone();
+        let refresh = Rc::new(move || {
+            match crate::security::validate_encrypt_form(&password_w.text(), &confirm_w.text()) {
+                Ok(()) => {
+                    error.set_text("");
+                    confirm_w.remove_css_class("error");
+                    enable.add_css_class("suggested-action");
+                    enable.set_sensitive(true);
+                }
+                Err(err) => {
+                    error.set_text(&ctx.t_or(err.i18n_key(), err.as_str()));
+                    if err == crate::security::SecurityFormError::Mismatch {
+                        confirm_w.add_css_class("error");
+                    } else {
+                        confirm_w.remove_css_class("error");
+                    }
+                    enable.remove_css_class("suggested-action");
+                    enable.set_sensitive(false);
+                }
+            }
+        });
+        for row in [&password, &confirm] {
+            let refresh = refresh.clone();
+            row.connect_changed(move |_| refresh());
+        }
+    }
+    {
+        let ctx = ctx.clone();
+        let parent = parent.clone();
+        let password = password.clone();
+        let confirm = confirm.clone();
+        enable.connect_clicked(move |_| {
+            if let Err(err) =
+                crate::security::validate_encrypt_form(&password.text(), &confirm.text())
+            {
+                security_alert(
+                    parent.upcast_ref(),
+                    &ctx,
+                    &ctx.t_or(
+                        "modals.backend.security.enableEncryption",
+                        "Enable Encryption",
+                    ),
+                    &ctx.t_or(err.i18n_key(), err.as_str()),
+                );
+                return;
+            }
+            let binary = ctx.settings.borrow().core.rclone_binary.clone();
+            let client = ctx.client();
+            match crate::security::encrypt_config_for(client.as_ref(), &binary, &password.text()) {
+                Ok(()) => {
+                    crate::keyring::persist_password_setting(
+                        &mut ctx.settings.borrow_mut().core.config_password,
+                        &password.text(),
+                    );
+                    ctx.persist();
+                    ctx.restart_engine();
+                    security_alert(
+                        parent.upcast_ref(),
+                        &ctx,
+                        &ctx.t_or(
+                            "modals.backend.security.enableEncryption",
+                            "Enable Encryption",
+                        ),
+                        &ctx.t_or(
+                            "backendSuccess.security.encrypted",
+                            "Configuration encrypted successfully",
+                        ),
+                    );
+                    on_changed();
+                }
+                Err(e) => security_alert(
+                    parent.upcast_ref(),
+                    &ctx,
+                    &ctx.t_or(
+                        "modals.backend.security.enableEncryption",
+                        "Enable Encryption",
+                    ),
+                    &e,
+                ),
+            }
+        });
+    }
+    let enable_row = adw::ActionRow::new();
+    enable_row.add_suffix(&enable);
+    list.append(&heading);
+    list.append(&password);
+    list.append(&confirm);
+    list.append(&error);
+    list.append(&enable_row);
+}
+
+fn security_alert(parent: &gtk::Widget, ctx: &AppCtx, title: &str, body: &str) {
+    let alert = adw::AlertDialog::new(Some(title), Some(body));
+    alert.add_response("ok", &ctx.t("common.ok"));
+    alert.present(Some(parent));
 }
 
 fn add_developer_page(
@@ -1353,9 +2369,21 @@ fn add_developer_page(
             .ctx
             .t_or("developerTools.maintenance", "Maintenance"),
     );
+    let inspector = gtk::Button::with_label(
+        &session
+            .ctx
+            .t_or("developerTools.openDevTools", "Open Developer Tools"),
+    );
+    inspector.set_tooltip_text(Some(
+        &session
+            .ctx
+            .t_or("developerTools.openDevTools", "Open the GTK Inspector"),
+    ));
+    inspector.connect_clicked(|_| gtk::Window::set_interactive_debugging(true));
     maint.add_suffix(&gc);
     maint.add_suffix(&fscache);
     maint.add_suffix(&ping);
+    maint.add_suffix(&inspector);
     d1.add(&maint);
     page.add(&d1);
 }

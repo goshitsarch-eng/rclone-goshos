@@ -1,10 +1,14 @@
 use super::AppCtx;
-use crate::jobs::{format_seconds, job_transfer_caption, overview_job_stats, stats_f64, stats_i64};
+use crate::jobs::{
+    format_seconds, job_panel_row, job_status_key, job_transfer_caption, overview_job_stats,
+    stats_f64, stats_i64,
+};
 use crate::navigation::NavTarget;
 use crate::rclone::format_bytes;
 use crate::store::JobInfo;
 use adw::prelude::*;
 use chrono::{Local, Utc};
+use gtk::prelude::*;
 use serde_json::Value;
 
 pub fn job_info_group(ctx: &AppCtx, job: &JobInfo) -> adw::PreferencesGroup {
@@ -334,9 +338,9 @@ pub fn overview_jobs_panel(
                 let ctx = ctx.clone();
                 let id = job.id;
                 let on_changed = on_changed.clone();
-                stop.connect_clicked(move |_| {
+                stop.connect_clicked(move |btn| {
                     if let Some(c) = ctx.client() {
-                        let _ = c.job_stop(id);
+                        ctx.toast_job_stop_result(btn, c.job_stop(id));
                         ctx.refresh_runtime();
                         on_changed();
                     }
@@ -352,6 +356,182 @@ pub fn overview_jobs_panel(
             }
             list.append(&row);
         }
+    }
+    root.append(&list);
+    root
+}
+
+/// Angular `app-jobs-panel`: type, `#id`, profile, status, progress, dry-run, time.
+pub fn detail_jobs_panel(
+    ctx: &AppCtx,
+    jobs: &[JobInfo],
+    on_changed: impl Fn() + Clone + 'static,
+) -> gtk::Box {
+    let root = gtk::Box::new(gtk::Orientation::Vertical, 8);
+    let header = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+    let title = gtk::Label::new(Some(&ctx.t_or("detailShared.jobs.title", "Jobs")));
+    title.add_css_class("heading");
+    title.set_xalign(0.0);
+    title.set_hexpand(true);
+    header.append(&title);
+    let count = gtk::Label::new(Some(&jobs.len().to_string()));
+    count.add_css_class("dim-label");
+    header.append(&count);
+    root.append(&header);
+
+    let list = gtk::ListBox::new();
+    list.add_css_class("boxed-list");
+    list.set_activate_on_single_click(true);
+    list.set_selection_mode(gtk::SelectionMode::None);
+    if jobs.is_empty() {
+        let row = adw::ActionRow::new();
+        row.set_title(&ctx.t_or("detailShared.jobs.empty", "No jobs found"));
+        list.append(&row);
+        root.append(&list);
+        return root;
+    }
+    let now = Utc::now();
+    for job in jobs {
+        let view = job_panel_row(job, now);
+        let card = gtk::Box::new(gtk::Orientation::Vertical, 6);
+        card.set_margin_top(8);
+        card.set_margin_bottom(8);
+        card.set_margin_start(12);
+        card.set_margin_end(12);
+
+        let top = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+        let kind = gtk::Label::new(Some(&view.operation));
+        kind.add_css_class("heading");
+        kind.set_xalign(0.0);
+        top.append(&kind);
+        let id = gtk::Label::new(Some(&view.id_label));
+        id.add_css_class("dim-label");
+        top.append(&id);
+        if !view.profile.is_empty() {
+            let profile = gtk::Label::new(Some(&view.profile));
+            profile.add_css_class("dim-label");
+            top.append(&profile);
+        }
+        let spacer = gtk::Box::new(gtk::Orientation::Horizontal, 0);
+        spacer.set_hexpand(true);
+        top.append(&spacer);
+        let status = gtk::Label::new(Some(&ctx.t_or(job_status_key(&view.status), &view.status)));
+        status.add_css_class("dim-label");
+        if !view.error.is_empty() && view.status.eq_ignore_ascii_case("failed") {
+            status.set_tooltip_text(Some(&view.error));
+        }
+        top.append(&status);
+        let action = if view.can_stop {
+            let stop = gtk::Button::from_icon_name("media-playback-stop-symbolic");
+            stop.set_valign(gtk::Align::Center);
+            stop.set_tooltip_text(Some(
+                &ctx.t_or("detailShared.jobs.actions.stop", "Stop Job"),
+            ));
+            let ctx = ctx.clone();
+            let id = job.id;
+            let on_changed = on_changed.clone();
+            stop.connect_clicked(move |btn| {
+                if let Some(client) = ctx.client() {
+                    ctx.toast_job_stop_result(btn, client.job_stop(id));
+                    ctx.refresh_runtime();
+                    on_changed();
+                }
+            });
+            stop
+        } else {
+            let delete = gtk::Button::from_icon_name("user-trash-symbolic");
+            delete.set_valign(gtk::Align::Center);
+            delete.set_tooltip_text(Some(
+                &ctx.t_or("detailShared.jobs.actions.delete", "Delete Job"),
+            ));
+            let ctx = ctx.clone();
+            let id = job.id;
+            let on_changed = on_changed.clone();
+            delete.connect_clicked(move |btn| {
+                ctx.store.borrow_mut().dismiss_job(id);
+                ctx.persist();
+                ctx.toast_near(
+                    btn,
+                    ctx.t_or(
+                        crate::jobs::job_deleted_toast_key(),
+                        "Job deleted successfully",
+                    ),
+                );
+                on_changed();
+            });
+            delete
+        };
+        top.append(&action);
+        card.append(&top);
+
+        if let Some(pct) = view.progress_pct {
+            let progress = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+            let bar = gtk::ProgressBar::new();
+            bar.set_fraction((pct as f64 / 100.0).clamp(0.0, 1.0));
+            bar.set_hexpand(true);
+            bar.set_valign(gtk::Align::Center);
+            progress.append(&bar);
+            progress.append(&gtk::Label::new(Some(&format!("{pct}%"))));
+            card.append(&progress);
+        }
+
+        if view.has_footer {
+            let footer = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+            if view.progress_pct.is_some() {
+                let size = gtk::Label::new(Some(&format!(
+                    "{} / {}",
+                    format_bytes(view.bytes),
+                    format_bytes(view.total_bytes)
+                )));
+                size.add_css_class("dim-label");
+                size.set_xalign(0.0);
+                size.set_hexpand(true);
+                footer.append(&size);
+            } else {
+                let spacer = gtk::Box::new(gtk::Orientation::Horizontal, 0);
+                spacer.set_hexpand(true);
+                footer.append(&spacer);
+            }
+            if view.dry_run {
+                let dry = gtk::Label::new(Some(&ctx.t_or("detailShared.jobs.dryRun", "Dry Run")));
+                dry.add_css_class("dim-label");
+                footer.append(&dry);
+            }
+            if view.duration_secs > 0 {
+                footer.append(&gtk::Label::new(Some(&format_seconds(
+                    view.duration_secs as f64,
+                ))));
+            }
+            if let Some((key, count)) = view.relative {
+                let text = if count <= 0 {
+                    ctx.t_or(key, "Just now")
+                } else {
+                    ctx.tf(key, &[("count", &count.to_string())])
+                };
+                let rel = gtk::Label::new(Some(&text));
+                rel.add_css_class("dim-label");
+                footer.append(&rel);
+            }
+            card.append(&footer);
+        }
+
+        let row = gtk::ListBoxRow::new();
+        row.set_child(Some(&card));
+        row.set_activatable(true);
+        list.append(&row);
+    }
+    {
+        let ctx = ctx.clone();
+        let jobs = jobs.to_vec();
+        list.connect_row_activated(move |_, row| {
+            let index = row.index();
+            if index < 0 {
+                return;
+            }
+            if let Some(job) = jobs.get(index as usize) {
+                ctx.request_nav(NavTarget::Job { id: job.id });
+            }
+        });
     }
     root.append(&list);
     root

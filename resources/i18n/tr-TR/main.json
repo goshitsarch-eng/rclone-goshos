@@ -77,6 +77,32 @@
     "nthWeekdayAt": "{{nth}} {{day}} {{time}}",
     "inMonthsAt": "{{months}} içinde {{time}}",
     "inMonthsOnDayAt": "{{months}} ayının {{dom}}. günü {{time}}",
+    "atTimes": "{{times}}",
+    "hourlyAtMinutes": "Her saat {{mins}} dakikalarında",
+    "everyHoursBetween": "{{start}}–{{end}} arasında her {{n}} saatte",
+    "everyMinutesAt": "{{times}} saatinde her {{n}} dakikada",
+    "atMinutesBetween": "{{start}}–{{end}} arasında {{mins}} dakikalarında",
+    "atHours": "{{hours}}",
+    "lastWeekdayOfMonthAt": "Ayın son iş günü {{time}}",
+    "atTime": "Saat {{time}}",
+    "onDays": "{{days}} günlerinde",
+    "onDay": "{{day}}. günde",
+    "inMonths": "{{months}} ayında",
+    "onWeekdays": "{{days}} günü",
+    "onWeekdaysWord": "hafta içi",
+    "onWeekendsWord": "hafta sonu",
+    "onLastDay": "ayın son gününde",
+    "onLastWeekday": "ayın son iş gününde",
+    "onEveryNDays": "her {{n}} günde",
+    "onNearestWeekday": "{{day}}. güne en yakın iş gününde",
+    "onNthWeekday": "{{nth}} {{day}} günü",
+    "onLastNamedWeekday": "son {{day}} günü",
+    "atMinuteHour": "{{hour}}. saatin {{min}}. dakikasında",
+    "nearestWeekdayAt": "{{day}}. güne en yakın iş günü {{time}}",
+    "everyNDaysAt": "Her {{n}} günde {{time}}",
+    "composed": "{{head}}, {{tail}}",
+    "weekdaysAtTimes": "Hafta içi {{times}}",
+    "weekendsAtTimes": "Hafta sonu {{times}}",
     "days": {
       "0": "Pazar",
       "1": "Pazartesi",
@@ -128,7 +154,7 @@
     "vfsPollUpdated": "Poll interval updated",
     "vfsQueueExpiry": "Queue id / expiry",
     "vfsExpiryUpdated": "Queue expiry updated",
-    "flagsApplyHelp": "Edits are sent to rclone via options/set. Categories match the Angular flag panels.",
+    "flagsApplyHelp": "Edits are sent to rclone via options/set. Categories match the flag panels.",
     "flagsWriteEngine": "Write flags to the running engine",
     "jsonMode": "JSON",
     "jsonPayload": "Raw options/set payload",
@@ -185,6 +211,7 @@
     "cron": "Cron schedule",
     "linkedHelpers": "Linked helper profiles",
     "filterFlags": "Filter flags",
+    "filterKeys": "Anahtarları filtrele",
     "importCliFlags": "Import rclone CLI flags",
     "cliImport": "CLI import",
     "jsonDocument": "JSON document",
@@ -532,6 +559,7 @@
       "apiKey": "API Anahtarı",
       "gatewayUrl": "Gateway URL",
       "customGateway": "Özel Gateway",
+      "callMeBot": "CallMeBot",
       "messageTemplate": "Mesaj Şablonu",
       "messageTemplateHint": "Handlebars değişkenlerini destekler",
       "telegram_info": "Bot Token'ınızı @BotFather'dan, Sohbet Kimliğinizi (Chat ID) @userinfobot'tan bulabilirsiniz.",
@@ -549,6 +577,9 @@
       "from": "Gönderen Adresi",
       "to": "Alıcı Adresi",
       "encryption": "Şifreleme",
+      "encryptionNone": "Yok",
+      "encryptionTls": "TLS (Port 465)",
+      "encryptionStarttls": "StartTLS (Port 587)",
       "subjectTemplate": "Konu Şablonu",
       "headers": "HTTP/S Üstbilgileri (Headers)",
       "presets": "Hazır Ayarlar (Presets)",
@@ -556,6 +587,7 @@
       "slack": "Slack",
       "headerKey": "Başlık Adı",
       "headerValue": "Değer",
+      "addHeader": "Başlık ekle",
       "editorTitle": "Alert action",
       "telegramMode": "Telegram mode",
       "envVars": "Environment variables (KEY=value)",
@@ -570,7 +602,8 @@
     "acknowledge": "Acknowledge",
     "addRule": "Add rule",
     "addAction": "Add action",
-    "templateKeys": "Insert template key"
+    "templateKeys": "Insert template key",
+    "statsLine": "{{total}} toplam · {{ack}} onaylı · {{open}} açık · {{delivered}} iletildi · son {{last}}"
   },
   "settings": {
     "resetAll": {
@@ -851,9 +884,11 @@
       "add": "Add remote or quick run",
       "developer": "Developer",
       "trayActions": "Tray actions",
-      "memoryUnavailable": "Bellek istatistikleri kullanılamıyor"
+      "memoryUnavailable": "Bellek istatistikleri kullanılamıyor",
+      "remoteVisible": "Kenar çubuğunda ve genel bakışta görünür"
     },
-    "detach": "Detach the current workspace into a new window"
+    "detach": "Detach the current workspace into a new window",
+    "closeOverlay": "Close overlay and return to the base view"
   },
   "onboarding": {
     "loadingTitle": "RClone Yöneticisi Başlatılıyor",
@@ -1308,6 +1343,7 @@
       "nameTaken": "Bu ada sahip bir uzak bağlantı zaten var",
       "remoteType": "Uzak Bağlantı Türü",
       "noMatchingTypes": "Eşleşen tür yok",
+      "noMatchingProviders": "Eşleşen sağlayıcı yok",
       "loadingOptions": "Yapılandırma seçenekleri yükleniyor...",
       "fields": "Alan",
       "switchToForm": "Form Moduna Geç",
@@ -1567,6 +1603,20 @@
   },
   "backup": {
     "analyzeFailed": "Yedekleme dosyası analiz edilemedi",
+    "importConfig": {
+      "title": "rclone.conf içe aktar",
+      "heading": "Bu yapılandırma dosyasındaki uzakları içe aktarmak istiyor musunuz?",
+      "file": "Dosya",
+      "remotes": "Uzaklar",
+      "overwrite": "Var olan uzakların üzerine yaz",
+      "import": "İçe aktar",
+      "cancel": "İptal",
+      "empty": "Bu dosyada uzak bulunamadı",
+      "failed": "rclone.conf okunamadı: {{error}}",
+      "noEngine": "rclone çalışmıyor",
+      "success": "{{count}} uzak içe aktarıldı",
+      "partial": "İçe aktarılan {{created}}, atlanan {{skipped}}, başarısız {{failed}}"
+    },
     "restore": {
       "title": "Yedeği Geri Yükle",
       "ariaClose": "Önizlemeyi kapat",
@@ -1604,6 +1654,7 @@
         "profile": "Belirli Profili Geri Yükle"
       },
       "selectProfile": "Profil Seç",
+      "restoreAs": "Farklı adla geri yükle (isteğe bağlı)",
       "note": "Yedekleme Notu",
       "passwordRequired": "Şifre Gerekli",
       "encryptedWarning": "Bu yedekleme şifrelenmiş. Şifresini çözmek ve geri yüklemek için doğru parolayı girin.",
@@ -1763,6 +1814,8 @@
     "fileViewer": {
       "closeViewer": "Görüntüleyiciyi kapat",
       "download": "{{name}} İndir",
+      "previousPage": "Önceki sayfa",
+      "nextPage": "Sonraki sayfa",
       "previousFile": "Önceki dosya",
       "nextFile": "Sonraki dosya",
       "loadingContent": "İçerik yükleniyor",
@@ -2113,6 +2166,12 @@
       "openFlathub": "Flathub'u Aç",
       "loadInfoFailed": "Rclone bilgisi yüklenemedi.",
       "license": "Lisans",
+      "toolkit": "GTK 4 + libadwaita",
+      "copyVersion": "Rclone Manager {version} · rclone {rclone}",
+      "licenseId": "GPL-3.0-or-later",
+      "gnuGpl": "GNU GPL v3",
+      "leadName": "Zarestia Dev",
+      "ackTextGtk": "Bu uygulama GTK 4 + libadwaita ile geliştirilmiştir ve bulut depolama yönetimi için Rclone projesine dayanır.",
       "licenseText1": "Bu uygulama, özgür ve açık kaynaklı bir yazılımdır ve",
       "orLater": "veya sonrası lisansı ile dağıtılmaktadır.",
       "licenseText2": "Bu program herhangi bir garanti olmaksızın sunulmaktadır. GPL v3 lisans şartlarına göre bu yazılımı kullanmakta, değiştirmekte ve dağıtmakta özgürsünüz.",
@@ -2185,6 +2244,12 @@
       "resetAll": "Tüm Ayarları Sıfırla",
       "noSettingsFound": "Eşleşen ayar bulunamadı",
       "trySearching": "Şunu aramayı deneyin:",
+      "searchSuggestions": {
+        "apiPort": "API bağlantı noktası",
+        "startup": "başlangıç",
+        "debug": "hata ayıklama",
+        "bandwidth": "bant genişliği"
+      },
       "readyToRestartHeader": "Yeniden Başlatma Gerektiren Ayarlar",
       "readyToRestartDesc": "Aşağıdaki değişikliklerin etkili olması için motorun yeniden başlatılması gerekir:",
       "discardChanges": "Değişiklikleri İptal Et",
@@ -2245,6 +2310,10 @@
       "passwordHint": "Bu parola yedeği geri yüklemek için gerekli olacaktır.",
       "includeSecrets": "Gizli anahtarları dahil et",
       "includeSecretsHint": "Hassas kimlik bilgilerini yedeğe dahil et. Şifreleme gereklidir.",
+      "format": "Format",
+      "formatZip": "Zip backup",
+      "formatConf": "rclone.conf",
+      "confSuccess": "rclone.conf exported",
       "exportNow": "Şimdi Dışa Aktar",
       "exporting": "Dışa aktarılıyor...",
       "fullBackup": "Tam Yedekleme",
@@ -2256,6 +2325,7 @@
       "externalConfig": "Harici yapılandırma dosyası",
       "profiles": "Profilleri Dahil Et",
       "profilesHint": "Yedeklemeye dahil edilecek belirli profilleri seçin.",
+      "encryptBackup": "Encrypt backup",
       "categories": {
         "settings": {
           "label": "Uygulama Ayarları",
@@ -2606,6 +2676,8 @@
     }
   },
   "nautilus": {
+    "loadMore": "{{count}} öğe daha göster",
+    "progressiveRender": "{{shown}} / {{total}} gösteriliyor",
     "sidebar": {
       "configureTitle": "Kenar Çubuğu Öğelerini Yapılandır",
       "configureDescription": "Sıralarını değiştirmek için öğeleri sürükleyin veya kenar çubuğunda diskleri ve bulut sunucularını gizlemek/göstermek için göz simgesini kullanın."
@@ -2626,7 +2698,8 @@
       "fileSystem": "Dosya Sistemi",
       "bookmarks": "Yer İmleri",
       "localDisk": "Yerel Disk",
-      "pathPlaceholder": "remote:path or /local/path"
+      "pathPlaceholder": "remote:path or /local/path",
+      "detachedTab": "{app} — {title}"
     },
     "bookmarks": {
       "emptyHint": "Yer imi yok"
@@ -2774,6 +2847,8 @@
       "delete": "Sil",
       "compress": "Sıkıştır",
       "copy": "Kopyala",
+      "copyTo": "Şuraya kopyala…",
+      "moveTo": "Şuraya taşı…",
       "cut": "Kes",
       "rename": "Yeniden Adlandır",
       "paste": "Yapıştır",
@@ -2792,7 +2867,10 @@
       "copyPublicLink": "Ortak Bağlantıyı Kopyala",
       "createFolderWithItems": "Seçilenlerle Yeni Klasör...",
       "renameMultiple": "Çoklu Yeniden Adlandır...",
+      "star": "Yıldızla / Kaldır",
+      "bookmark": "Yer imi",
       "pathOptions": "Path options",
+      "selectionActions": "Seçim işlemleri",
       "move": "Move",
       "openNative": "Open native",
       "copyUrl": "Copy URL into folder…",
@@ -2808,6 +2886,9 @@
       "showHidden": "Gizli Dosyaları Göster",
       "toggleLayout": "Düzeni Değiştir",
       "viewOptions": "Görünüm Seçenekleri",
+      "star": "Bu klasörü yıldızla",
+      "starred": "Yıldızlı",
+      "unstarred": "Yıldızlardan kaldırıldı",
       "smaller": "Smaller",
       "larger": "Larger"
     },
@@ -2827,6 +2908,7 @@
       "nothingToRedo": "Yinelenecek işlem yok",
       "cannotUndo": "Bu işlem geri alınamaz",
       "selectValid": "Devam etmek için geçerli bir öğe seçin",
+      "nothingSelected": "Önce bir dosya veya klasör seçin",
       "selectNewFolderItems": "Yeni klasöre taşınacak öğeleri seçin",
       "selectToDownload": "İndirilecek bir dosya seçin",
       "selectToShare": "Paylaşılacak bir dosya seçin",
@@ -2840,7 +2922,8 @@
       "getPublicLinkStarted": "Ortak bağlantı oluşturuluyor...",
       "archiveCreateStarted": "Arşiv oluşturma başlatıldı...",
       "sendToAdded": "'{{remote}}{{path}}' dosya yöneticisi sağ tık menüsüne eklendi",
-      "sendToRemoved": "'{{remote}}{{path}}' dosya yöneticisi sağ tık menüsünden kaldırıldı"
+      "sendToRemoved": "'{{remote}}{{path}}' dosya yöneticisi sağ tık menüsünden kaldırıldı",
+      "locationNotAllowed": "Bu konum bu seçici için izinli değil"
     },
     "androidShare": {
       "uploadHere": "{{count}} paylaşılan dosyayı bu klasöre yükle",
@@ -3498,7 +3581,11 @@
     "folders": "Folders",
     "maintenance": "Maintenance",
     "relaunch": "Relaunch",
-    "gcStarted": "Garbage collection started"
+    "gcStarted": "Garbage collection started",
+    "rcloneConfig": "rclone yapılandırması",
+    "rcloneCache": "rclone önbelleği",
+    "rcloneTemp": "rclone geçici",
+    "configEncrypted": "rclone.conf şifreli"
   },
   "flow": {
     "title": "Flow",
@@ -3574,6 +3661,7 @@
   },
   "templates": {
     "title": "Şablonlar",
+    "search": "Şablonlarda ara…",
     "presetTitle": "Hazır Ayarlar ve Şablonlar",
     "applyPresets": "Varsayılan Hazır Ayarları Uygula",
     "userTemplates": "Kayıtlı Kullanıcı Şablonları",

@@ -40,6 +40,15 @@ pub struct RenamePreview {
     pub has_error: bool,
 }
 
+/// Angular hides counter start/step/padding until the template uses `[Counter]`.
+pub fn template_uses_counter(template: &str) -> bool {
+    template.contains("[Counter]")
+}
+
+pub fn counter_controls_visible(mode: &RenameMode, template: &str) -> bool {
+    matches!(mode, RenameMode::Template) && template_uses_counter(template)
+}
+
 pub fn split_base_ext(filename: &str) -> (String, String) {
     if filename.starts_with('.') && filename[1..].find('.').is_none() {
         return (filename.to_string(), String::new());
@@ -219,6 +228,21 @@ mod tests {
         let rows = preview(&["a.txt".into(), "b.txt".into()], &plan, "");
         assert!(has_errors(&rows));
         assert!(has_changes(&rows));
+    }
+
+    #[test]
+    fn counter_controls_follow_template_token() {
+        assert!(template_uses_counter("[Name]-[Counter]"));
+        assert!(!template_uses_counter("[Original file name]"));
+        assert!(counter_controls_visible(
+            &RenameMode::Template,
+            "shot-[Counter]"
+        ));
+        assert!(!counter_controls_visible(
+            &RenameMode::Template,
+            "[Original file name]"
+        ));
+        assert!(!counter_controls_visible(&RenameMode::Replace, "[Counter]"));
     }
 
     #[test]

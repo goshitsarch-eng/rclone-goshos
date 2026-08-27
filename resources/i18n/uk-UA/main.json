@@ -77,6 +77,32 @@
     "nthWeekdayAt": "{{nth}} {{day}} о {{time}}",
     "inMonthsAt": "У {{months}} о {{time}}",
     "inMonthsOnDayAt": "{{dom}} {{months}} о {{time}}",
+    "atTimes": "О {{times}}",
+    "hourlyAtMinutes": "Щогодини в хвилини {{mins}}",
+    "everyHoursBetween": "Кожні {{n}} год між {{start}} і {{end}}",
+    "everyMinutesAt": "Кожні {{n}} хв о {{times}}",
+    "atMinutesBetween": "У хвилини {{mins}} між {{start}} і {{end}}",
+    "atHours": "О {{hours}}",
+    "lastWeekdayOfMonthAt": "Останній робочий день місяця о {{time}}",
+    "atTime": "О {{time}}",
+    "onDays": "у дні {{days}}",
+    "onDay": "у день {{day}}",
+    "inMonths": "у {{months}}",
+    "onWeekdays": "у {{days}}",
+    "onWeekdaysWord": "у будні",
+    "onWeekendsWord": "у вихідні",
+    "onLastDay": "в останній день місяця",
+    "onLastWeekday": "в останній робочий день місяця",
+    "onEveryNDays": "кожні {{n}} днів",
+    "onNearestWeekday": "у найближчий робочий день до {{day}}",
+    "onNthWeekday": "у {{nth}} {{day}}",
+    "onLastNamedWeekday": "в останній {{day}}",
+    "atMinuteHour": "О {{min}} хвилині години {{hour}}",
+    "nearestWeekdayAt": "Найближчий робочий день до {{day}} о {{time}}",
+    "everyNDaysAt": "Кожні {{n}} днів о {{time}}",
+    "composed": "{{head}}, {{tail}}",
+    "weekdaysAtTimes": "Будні о {{times}}",
+    "weekendsAtTimes": "Вихідні о {{times}}",
     "days": {
       "0": "неділю",
       "1": "понеділок",
@@ -128,7 +154,7 @@
     "vfsPollUpdated": "Poll interval updated",
     "vfsQueueExpiry": "Queue id / expiry",
     "vfsExpiryUpdated": "Queue expiry updated",
-    "flagsApplyHelp": "Edits are sent to rclone via options/set. Categories match the Angular flag panels.",
+    "flagsApplyHelp": "Edits are sent to rclone via options/set. Categories match the flag panels.",
     "flagsWriteEngine": "Write flags to the running engine",
     "jsonMode": "JSON",
     "jsonPayload": "Raw options/set payload",
@@ -185,6 +211,7 @@
     "cron": "Cron schedule",
     "linkedHelpers": "Linked helper profiles",
     "filterFlags": "Filter flags",
+    "filterKeys": "Фільтр ключів",
     "importCliFlags": "Import rclone CLI flags",
     "cliImport": "CLI import",
     "jsonDocument": "JSON document",
@@ -532,6 +559,7 @@
       "apiKey": "Ключ API",
       "gatewayUrl": "URL шлюзу",
       "customGateway": "Власний шлюз",
+      "callMeBot": "CallMeBot",
       "messageTemplate": "Шаблон повідомлення",
       "messageTemplateHint": "Підтримує змінні Handlebars",
       "telegram_info": "Токен бота можна отримати від @BotFather, а Chat ID — від @userinfobot.",
@@ -549,6 +577,9 @@
       "from": "Адреса відправника",
       "to": "Адреса отримувача",
       "encryption": "Шифрування",
+      "encryptionNone": "Немає",
+      "encryptionTls": "TLS (порт 465)",
+      "encryptionStarttls": "StartTLS (порт 587)",
       "subjectTemplate": "Шаблон теми",
       "headers": "Заголовки HTTP/S",
       "presets": "Шаблони",
@@ -556,6 +587,7 @@
       "slack": "Slack",
       "headerKey": "Назва заголовка",
       "headerValue": "Значення",
+      "addHeader": "Додати заголовок",
       "editorTitle": "Alert action",
       "telegramMode": "Telegram mode",
       "envVars": "Environment variables (KEY=value)",
@@ -570,7 +602,8 @@
     "acknowledge": "Acknowledge",
     "addRule": "Add rule",
     "addAction": "Add action",
-    "templateKeys": "Insert template key"
+    "templateKeys": "Insert template key",
+    "statsLine": "{{total}} усього · {{ack}} підтверджено · {{open}} відкрито · {{delivered}} доставлено · останнє {{last}}"
   },
   "settings": {
     "resetAll": {
@@ -851,9 +884,11 @@
       "add": "Add remote or quick run",
       "developer": "Developer",
       "trayActions": "Tray actions",
-      "memoryUnavailable": "Статистика пам’яті недоступна"
+      "memoryUnavailable": "Статистика пам’яті недоступна",
+      "remoteVisible": "Видно на бічній панелі та в огляді"
     },
-    "detach": "Detach the current workspace into a new window"
+    "detach": "Detach the current workspace into a new window",
+    "closeOverlay": "Close overlay and return to the base view"
   },
   "onboarding": {
     "loadingTitle": "Ініціалізація RClone Manager",
@@ -1308,6 +1343,7 @@
       "nameTaken": "Сховище із такою назвою вже існує",
       "remoteType": "Тип сховища",
       "noMatchingTypes": "Немає відповідних типів сховищ",
+      "noMatchingProviders": "Немає відповідних провайдерів",
       "loadingOptions": "Завантаження параметрів конфігурації...",
       "fields": "Поля",
       "switchToForm": "Перемкнути на режим форми",
@@ -1567,6 +1603,20 @@
   },
   "backup": {
     "analyzeFailed": "Не вдалося проаналізувати файл резервної копії",
+    "importConfig": {
+      "title": "Import rclone.conf",
+      "heading": "Import remotes from this configuration file?",
+      "file": "File",
+      "remotes": "Remotes",
+      "overwrite": "Replace remotes that already exist",
+      "import": "Import",
+      "cancel": "Cancel",
+      "empty": "No remotes found in this file",
+      "failed": "Could not read rclone.conf: {{error}}",
+      "noEngine": "rclone is not running",
+      "success": "Imported {{count}} remotes",
+      "partial": "Imported {{created}}, skipped {{skipped}}, failed {{failed}}"
+    },
     "restore": {
       "title": "Відновлення з резервної копії",
       "ariaClose": "Закрити попередній перегляд відновлення",
@@ -1604,6 +1654,7 @@
         "profile": "Відновити окремий профіль"
       },
       "selectProfile": "Вибрати профіль",
+      "restoreAs": "Відновити як (необов’язкове перейменування)",
       "note": "Примітка до резервної копії",
       "passwordRequired": "Потрібен пароль",
       "encryptedWarning": "Цю резервну копію зашифровано. Введіть правильний пароль, щоб розшифрувати й відновити.",
@@ -1763,6 +1814,8 @@
     "fileViewer": {
       "closeViewer": "Закрити переглядач",
       "download": "Завантажити {{name}}",
+      "previousPage": "Попередня сторінка",
+      "nextPage": "Наступна сторінка",
       "previousFile": "Попередній файл",
       "nextFile": "Наступний файл",
       "loadingContent": "Завантаження вмісту",
@@ -2113,6 +2166,12 @@
       "openFlathub": "Відкрити Flathub",
       "loadInfoFailed": "Не вдалося завантажити інформацію про rclone.",
       "license": "Ліцензія",
+      "toolkit": "GTK 4 + libadwaita",
+      "copyVersion": "Rclone Manager {version} · rclone {rclone}",
+      "licenseId": "GPL-3.0-or-later",
+      "gnuGpl": "GNU GPL v3",
+      "leadName": "Zarestia Dev",
+      "ackTextGtk": "Цей застосунок створено на GTK 4 + libadwaita і покладається на чудовий проєкт Rclone для керування хмарним сховищем.",
       "licenseText1": "Цей застосунок є вільним програмним забезпеченням з відкритим кодом, що розповсюджується за ліцензією",
       "orLater": "або новішою.",
       "licenseText2": "Ця програма постачається без жодних гарантій. Ви можете вільно використовувати, змінювати та поширювати це ПЗ відповідно до умов ліцензії GPL v3.",
@@ -2185,6 +2244,12 @@
       "resetAll": "Скинути всі налаштування",
       "noSettingsFound": "Не знайдено налаштувань за запитом",
       "trySearching": "Спробуйте пошукати:",
+      "searchSuggestions": {
+        "apiPort": "Порт API",
+        "startup": "автозапуск",
+        "debug": "налагодження",
+        "bandwidth": "пропускна здатність"
+      },
       "readyToRestartHeader": "Налаштування, що потребують перезапуску",
       "readyToRestartDesc": "Наступні зміни потребують перезапуску рушія, щоб набути чинності:",
       "discardChanges": "Відхилити зміни",
@@ -2245,6 +2310,10 @@
       "passwordHint": "Цей пароль знадобиться для відновлення резервної копії.",
       "includeSecrets": "Включити секретні ключі",
       "includeSecretsHint": "Включити чутливі облікові дані до резервної копії. Потрібне шифрування.",
+      "format": "Format",
+      "formatZip": "Zip backup",
+      "formatConf": "rclone.conf",
+      "confSuccess": "rclone.conf exported",
       "exportNow": "Експортувати зараз",
       "exporting": "Експортування...",
       "fullBackup": "Повна резервна копія",
@@ -2256,6 +2325,7 @@
       "externalConfig": "Зовнішній файл конфігурації",
       "profiles": "Включити профілі",
       "profilesHint": "Виберіть конкретні профілі для включення до резервної копії.",
+      "encryptBackup": "Encrypt backup",
       "categories": {
         "settings": {
           "label": "Налаштування застосунку",
@@ -2606,6 +2676,8 @@
     }
   },
   "nautilus": {
+    "loadMore": "Показати ще {{count}}",
+    "progressiveRender": "Показано {{shown}} з {{total}}",
     "sidebar": {
       "configureTitle": "Налаштувати елементи бічної панелі",
       "configureDescription": "Перетягуйте елементи для зміни їх порядку або використовуйте значок пильного ока, щоб приховати або показати диски та хмарні підключення."
@@ -2626,7 +2698,8 @@
       "fileSystem": "Файлова система",
       "bookmarks": "Закладки",
       "localDisk": "Локальний диск",
-      "pathPlaceholder": "remote:path or /local/path"
+      "pathPlaceholder": "remote:path or /local/path",
+      "detachedTab": "{app} — {title}"
     },
     "bookmarks": {
       "emptyHint": "Немає закладок"
@@ -2774,6 +2847,8 @@
       "delete": "Видалити",
       "compress": "Стиснути",
       "copy": "Копіювати",
+      "copyTo": "Копіювати до…",
+      "moveTo": "Перемістити до…",
       "cut": "Вирізати",
       "rename": "Перейменувати",
       "paste": "Вставити",
@@ -2792,7 +2867,10 @@
       "copyPublicLink": "Копіювати публічне посилання",
       "createFolderWithItems": "Нова папка з виділеним...",
       "renameMultiple": "Перейменувати декілька...",
+      "star": "Позначити / Зняти",
+      "bookmark": "Закладка",
       "pathOptions": "Path options",
+      "selectionActions": "Дії з вибраним",
       "move": "Move",
       "openNative": "Open native",
       "copyUrl": "Copy URL into folder…",
@@ -2808,6 +2886,9 @@
       "showHidden": "Показувати приховані файли",
       "toggleLayout": "Перемкнути макет",
       "viewOptions": "Параметри перегляду",
+      "star": "Позначити цю папку",
+      "starred": "Позначені",
+      "unstarred": "Прибрано з позначених",
       "smaller": "Smaller",
       "larger": "Larger"
     },
@@ -2827,6 +2908,7 @@
       "nothingToRedo": "Немає що повторити",
       "cannotUndo": "Цю дію не можна скасувати",
       "selectValid": "Виберіть дійсний елемент, щоб продовжити",
+      "nothingSelected": "Спочатку виберіть файл або папку",
       "selectNewFolderItems": "Виберіть елементи для переміщення в нову папку",
       "selectToDownload": "Виберіть файл для завантаження",
       "selectToShare": "Виберіть файл для спільного доступу",
@@ -2840,7 +2922,8 @@
       "getPublicLinkStarted": "Створення публічного посилання...",
       "archiveCreateStarted": "Створення архіву розпочато...",
       "sendToAdded": "Додано '{{remote}}{{path}}' до контекстного меню файлового менеджера",
-      "sendToRemoved": "Вилучено '{{remote}}{{path}}' з контекстного меню файлового менеджера"
+      "sendToRemoved": "Вилучено '{{remote}}{{path}}' з контекстного меню файлового менеджера",
+      "locationNotAllowed": "Це розташування заборонене для цього вибору"
     },
     "androidShare": {
       "uploadHere": "Завантажити {{count}} спільних файл(ів) до цієї папки",
@@ -3498,7 +3581,11 @@
     "folders": "Folders",
     "maintenance": "Maintenance",
     "relaunch": "Relaunch",
-    "gcStarted": "Garbage collection started"
+    "gcStarted": "Garbage collection started",
+    "rcloneConfig": "конфіг rclone",
+    "rcloneCache": "кеш rclone",
+    "rcloneTemp": "тимчасові файли rclone",
+    "configEncrypted": "rclone.conf зашифровано"
   },
   "flow": {
     "title": "Flow",
@@ -3574,6 +3661,7 @@
   },
   "templates": {
     "title": "Шаблони",
+    "search": "Пошук шаблонів…",
     "presetTitle": "Пресети та шаблони",
     "applyPresets": "Застосувати типові пресети",
     "userTemplates": "Збережені шаблони користувача",

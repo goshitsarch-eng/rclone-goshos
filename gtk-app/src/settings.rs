@@ -154,6 +154,18 @@ pub struct RuntimeSettings {
     pub selected_profiles: HashMap<String, String>,
     #[serde(default)]
     pub panel_open_states: HashMap<String, bool>,
+    #[serde(default = "default_true")]
+    pub dashboard_sidebar_open: bool,
+    #[serde(default = "default_true")]
+    pub flow_sidebar_open: bool,
+    #[serde(default = "default_dashboard_tab")]
+    pub dashboard_tab: String,
+    #[serde(default)]
+    pub selected_detail_pages: HashMap<String, String>,
+    #[serde(default)]
+    pub rclone_restart_required: bool,
+    #[serde(default)]
+    pub app_restart_required: bool,
 }
 
 pub fn panel_state_key(scope: &str, id: &str) -> String {
@@ -184,6 +196,10 @@ fn default_true() -> bool {
     true
 }
 
+fn default_dashboard_tab() -> String {
+    "general".into()
+}
+
 impl Default for RuntimeSettings {
     fn default() -> Self {
         Self {
@@ -203,14 +219,21 @@ impl Default for RuntimeSettings {
             selected_sync_ops: HashMap::new(),
             selected_profiles: HashMap::new(),
             panel_open_states: HashMap::new(),
+            dashboard_sidebar_open: true,
+            flow_sidebar_open: true,
+            dashboard_tab: default_dashboard_tab(),
+            selected_detail_pages: HashMap::new(),
+            rclone_restart_required: false,
+            app_restart_required: false,
         }
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct NautilusSettings {
     pub starred: Vec<serde_json::Value>,
     pub bookmarks: Vec<serde_json::Value>,
+    #[serde(default = "default_true")]
     pub sidebar_visible: bool,
     pub show_hidden: bool,
     pub layout: String,
@@ -233,6 +256,32 @@ pub struct NautilusSettings {
     pub split_secondary_remote: String,
     #[serde(default)]
     pub split_secondary_path: String,
+    #[serde(default = "default_true")]
+    pub ops_panel_expanded: bool,
+}
+
+impl Default for NautilusSettings {
+    fn default() -> Self {
+        Self {
+            starred: vec![],
+            bookmarks: vec![],
+            sidebar_visible: true,
+            show_hidden: false,
+            layout: "list".into(),
+            sort_by: "name".into(),
+            sort_desc: false,
+            icon_size: 48,
+            sidebar_drive_order: vec![],
+            sidebar_hidden_drives: vec![],
+            file_type_filter: String::new(),
+            split_enabled: false,
+            grid_icon_size: 0,
+            split_divider_pos: 0,
+            split_secondary_remote: String::new(),
+            split_secondary_path: String::new(),
+            ops_panel_expanded: true,
+        }
+    }
 }
 
 impl NautilusSettings {
@@ -249,7 +298,6 @@ impl NautilusSettings {
         if self.grid_icon_size == 0 {
             self.grid_icon_size = self.icon_size.max(48);
         }
-        self.sidebar_visible = true;
         self
     }
 
@@ -424,6 +472,21 @@ pub fn requires_engine_restart(path: &str) -> bool {
     ENGINE_RESTART_PATHS.contains(&path)
 }
 
+/// Title key + English fallback for a queued engine-restart setting.
+pub fn pending_restart_title_key(path: &str) -> Option<(&'static str, &'static str)> {
+    match path {
+        "core.rclone_binary" => Some(("settings.core.rclone_binary.label", "Rclone binary")),
+        "core.rclone_additional_flags" => Some((
+            "settings.core.rclone_flags.label",
+            "Additional rclone flags",
+        )),
+        "core.rclone_env_vars" => {
+            Some(("settings.core.rclone_env_vars.label", "Rclone environment"))
+        }
+        _ => None,
+    }
+}
+
 pub fn default_for_path(path: &str) -> Option<serde_json::Value> {
     AppSettings::default().get_by_path(path)
 }
@@ -442,7 +505,8 @@ pub fn apply_path_values(
     Ok(())
 }
 
-pub fn display_setting(value: &serde_json::Value, sep: &str) -> String {
+/// String items from a JSON array setting (or a single string value).
+pub fn setting_string_list(value: &serde_json::Value) -> Vec<String> {
     match value {
         serde_json::Value::Array(items) => items
             .iter()
@@ -451,8 +515,34 @@ pub fn display_setting(value: &serde_json::Value, sep: &str) -> String {
                 other if !other.is_null() => Some(other.to_string().trim_matches('"').to_string()),
                 _ => None,
             })
-            .collect::<Vec<_>>()
-            .join(sep),
+            .collect(),
+        serde_json::Value::String(s) if !s.is_empty() => vec![s.clone()],
+        _ => Vec::new(),
+    }
+}
+
+/// Persist a string-list setting as a JSON array.
+pub fn setting_string_list_value(items: &[String]) -> serde_json::Value {
+    serde_json::Value::Array(
+        items
+            .iter()
+            .map(|item| serde_json::Value::String(item.clone()))
+            .collect(),
+    )
+}
+
+/// Drop blank entries before writing an array setting.
+pub fn persistable_string_list(items: &[String]) -> Vec<String> {
+    items
+        .iter()
+        .map(|item| item.trim().to_string())
+        .filter(|item| !item.is_empty())
+        .collect()
+}
+
+pub fn display_setting(value: &serde_json::Value, sep: &str) -> String {
+    match value {
+        serde_json::Value::Array(_) => setting_string_list(value).join(sep),
         serde_json::Value::String(s) => s.clone(),
         serde_json::Value::Bool(b) => b.to_string(),
         serde_json::Value::Number(n) => n.to_string(),
@@ -524,6 +614,12 @@ mod tests {
         assert!(loaded.runtime.selected_sync_ops.is_empty());
         assert!(loaded.runtime.selected_profiles.is_empty());
         assert!(loaded.runtime.panel_open_states.is_empty());
+        assert!(loaded.runtime.dashboard_sidebar_open);
+        assert!(loaded.runtime.flow_sidebar_open);
+        assert_eq!(loaded.runtime.dashboard_tab, "general");
+        assert!(loaded.runtime.selected_detail_pages.is_empty());
+        assert!(!loaded.runtime.rclone_restart_required);
+        assert!(!loaded.runtime.app_restart_required);
         assert!(panel_is_open(
             &loaded.runtime.panel_open_states,
             "dashboard",
@@ -539,6 +635,24 @@ mod tests {
         assert_eq!(loaded.nautilus.split_divider_pos, 0);
         assert!(loaded.nautilus.split_secondary_remote.is_empty());
         assert!(loaded.nautilus.split_secondary_path.is_empty());
+        assert!(loaded.nautilus.ops_panel_expanded);
+        assert!(loaded.nautilus.sidebar_visible);
+    }
+
+    #[test]
+    fn sidebar_visible_survives_normalize() {
+        let hidden = NautilusSettings {
+            sidebar_visible: false,
+            ..NautilusSettings::default()
+        }
+        .normalized();
+        assert!(!hidden.sidebar_visible);
+        assert!(NautilusSettings::default().sidebar_visible);
+        let missing: NautilusSettings = serde_json::from_str(
+            r#"{"starred":[],"bookmarks":[],"show_hidden":false,"layout":"list","sort_by":"name","sort_desc":false,"icon_size":48}"#,
+        )
+        .unwrap();
+        assert!(missing.sidebar_visible);
     }
 
     #[test]
@@ -609,6 +723,15 @@ mod tests {
             vec!["--transfers", "8"]
         );
         assert_eq!(settings.core.rclone_env_vars, vec!["RCLONE_VERBOSE=1"]);
+        assert_eq!(
+            pending_restart_title_key("core.rclone_binary").map(|(_, fb)| fb),
+            Some("Rclone binary")
+        );
+        assert_eq!(
+            pending_restart_title_key("core.rclone_env_vars").map(|(key, _)| key),
+            Some("settings.core.rclone_env_vars.label")
+        );
+        assert!(pending_restart_title_key("general.language").is_none());
     }
 
     #[test]
@@ -630,6 +753,27 @@ mod tests {
             &serde_json::json!(["a"]),
             &serde_json::json!(["b"])
         ));
+    }
+
+    #[test]
+    fn setting_string_list_roundtrip() {
+        assert_eq!(
+            setting_string_list(&serde_json::json!(["--rc", "--fast-list"])),
+            vec!["--rc".to_string(), "--fast-list".to_string()]
+        );
+        assert_eq!(
+            setting_string_list(&serde_json::json!("RCLONE_VERBOSE=1")),
+            vec!["RCLONE_VERBOSE=1".to_string()]
+        );
+        assert!(setting_string_list(&serde_json::json!(null)).is_empty());
+        assert_eq!(
+            persistable_string_list(&[" --rc ".into(), "".into(), "  ".into(), "--vfs".into()]),
+            vec!["--rc".to_string(), "--vfs".to_string()]
+        );
+        assert_eq!(
+            setting_string_list_value(&["https://a".into(), "https://b".into()]),
+            serde_json::json!(["https://a", "https://b"])
+        );
     }
 
     #[test]

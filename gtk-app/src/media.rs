@@ -95,6 +95,21 @@ pub fn should_warn_remote_preview(size: Option<i64>) -> bool {
     size.unwrap_or(0) >= REMOTE_PREVIEW_WARN_BYTES
 }
 
+pub fn looks_like_pdf(bytes: &[u8]) -> bool {
+    bytes.starts_with(b"%PDF")
+}
+
+/// Write preview bytes to a temp file named after the remote item.
+pub fn write_preview_temp(name: &str, bytes: &[u8]) -> Option<PathBuf> {
+    if bytes.is_empty() {
+        return None;
+    }
+    let safe = name.replace(['/', '\\', ':'], "_");
+    let dest = std::env::temp_dir().join(format!("rclone-md-preview-{safe}"));
+    std::fs::write(&dest, bytes).ok()?;
+    dest.is_file().then_some(dest)
+}
+
 pub fn read_remote_prefix(
     binary: &Path,
     extra_flags: &[String],
@@ -359,6 +374,32 @@ pub fn local_path_usage(path: &str) -> Option<String> {
     }
 }
 
+/// Caption for a local path field: optional help, item count/size, and `df` free/total.
+/// Disk stats are only queried when the engine OS matches this desktop.
+pub fn local_path_field_hint(path: &str, engine_os: &str, help: Option<&str>) -> Option<String> {
+    let mut parts = Vec::new();
+    if let Some(help) = help.filter(|s| !s.is_empty()) {
+        parts.push(help.to_string());
+    }
+    if engine_os.eq_ignore_ascii_case(std::env::consts::OS) {
+        if let Some(usage) = local_path_usage(path) {
+            parts.push(usage);
+        }
+        if let Some((free, total)) = crate::fileops::local_path_disk_usage(path) {
+            parts.push(format!(
+                "{} / {}",
+                format_bytes(free as i64),
+                format_bytes(total as i64)
+            ));
+        }
+    }
+    if parts.is_empty() {
+        None
+    } else {
+        Some(parts.join(" · "))
+    }
+}
+
 pub fn pdf_page_count(path: &Path) -> Option<u32> {
     if !path.is_file() {
         return None;
@@ -453,6 +494,15 @@ mod tests {
         let usage = local_path_usage(&dir.path().to_string_lossy()).unwrap();
         assert!(usage.contains("item"));
         assert!(local_path_usage("/definitely/missing").is_none());
+        assert_eq!(
+            local_path_field_hint("", "other-os", Some("Mount point")),
+            Some("Mount point".into())
+        );
+        assert!(local_path_field_hint("", "other-os", None).is_none());
+        let hint = local_path_field_hint(&dir.path().to_string_lossy(), std::env::consts::OS, None)
+            .unwrap();
+        assert!(hint.contains("item"));
+        assert!(hint.contains('/'));
     }
 
     #[test]
@@ -494,6 +544,18 @@ mod tests {
         assert!(pic.mime_type.contains("jpeg"));
         assert!(!should_warn_remote_preview(Some(1024)));
         assert!(should_warn_remote_preview(Some(REMOTE_PREVIEW_WARN_BYTES)));
+        assert!(looks_like_pdf(b"%PDF-1.4\n%"));
+        assert!(!looks_like_pdf(b"%!PS"));
+        assert!(!looks_like_pdf(b""));
+        let dest = write_preview_temp("Docs/a.pdf", b"%PDF-1.4\n").unwrap();
+        assert!(dest
+            .file_name()
+            .unwrap()
+            .to_string_lossy()
+            .contains("a.pdf"));
+        assert_eq!(std::fs::read(&dest).unwrap(), b"%PDF-1.4\n");
+        let _ = std::fs::remove_file(&dest);
+        assert!(write_preview_temp("empty.pdf", b"").is_none());
     }
 
     #[test]

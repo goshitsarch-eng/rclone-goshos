@@ -1,10 +1,27 @@
 [Desktop Entry]
 Name=Rclone Manager
 Comment=GTK 4 + libadwaita client for managing rclone remotes
-Exec=rclone-manager-gtk
+Comment[tr]=Rclone için kullanıcı dostu arayüz
+Comment[es]=Interfaz gráfica de usuario amigable para Rclone
+Comment[fr]=Interface graphique conviviale pour Rclone
+Comment[uk]=Зручний графічний інтерфейс для Rclone
+Comment[zh_CN]=易于使用的 Rclone 图形用户界面
+Exec=rclone-manager-gtk %U
 Icon=folder-remote
 Terminal=false
 Type=Application
 Categories=Utility;FileTools;Network;
 StartupWMClass=io.github.zarestia_dev.rclone-manager
-Keywords=rclone;cloud;sync;mount;
+Keywords=rclone;cloud;backup;sync;mount;
+MimeType=application/x-rclone-config;x-scheme-handler/rclone-manager;
+Actions=StartOnTray;
+
+[Desktop Action StartOnTray]
+Name=Start on Tray
+Name[tr]=Sistem Tepsisinde Başlat
+Name[es]=Iniciar en la bandeja de sistema
+Name[fr]=Démarrer dans la zone de notification
+Name[uk]=Запустити в системному треї
+Name[zh_CN]=启动至系统托盘
+Exec=rclone-manager-gtk --tray
+OnlyShowIn=GNOME;Unity;XFCE;KDE;

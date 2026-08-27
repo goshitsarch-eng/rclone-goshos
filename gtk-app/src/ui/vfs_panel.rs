@@ -30,11 +30,24 @@ pub fn vfs_panel(ctx: AppCtx, remote: &str, toast: adw::ToastOverlay) -> gtk::Wi
     empty.set_xalign(0.0);
     root.append(&empty);
 
-    let indexed = gtk::Label::new(None);
-    indexed.add_css_class("warning");
-    indexed.set_wrap(true);
-    indexed.set_xalign(0.0);
+    let indexed = gtk::Box::new(gtk::Orientation::Vertical, 4);
     indexed.set_visible(false);
+    let indexed_title = gtk::Label::new(Some(&ctx.t_or(
+        crate::vfs::vfs_indexed_banner_title_key(),
+        "VFS Controls Unavailable",
+    )));
+    indexed_title.add_css_class("heading");
+    indexed_title.set_xalign(0.0);
+    let indexed_label = gtk::Label::new(None);
+    indexed_label.add_css_class("warning");
+    indexed_label.set_wrap(true);
+    indexed_label.set_xalign(0.0);
+    let indexed_link =
+        gtk::LinkButton::with_label("https://github.com/rclone/rclone/issues/9120", "#9120");
+    indexed_link.set_halign(gtk::Align::Start);
+    indexed.append(&indexed_title);
+    indexed.append(&indexed_label);
+    indexed.append(&indexed_link);
     root.append(&indexed);
 
     let combo = adw::ComboRow::new();
@@ -106,8 +119,21 @@ pub fn vfs_panel(ctx: AppCtx, remote: &str, toast: adw::ToastOverlay) -> gtk::Wi
         "shared.vfsControl.advancedConfig.title",
         "Advanced Configuration",
     ));
+    let advanced_search = gtk::SearchEntry::new();
+    advanced_search.set_placeholder_text(Some(&ctx.t_or(
+        "shared.vfsControl.advancedConfig.search",
+        "Search VFS options",
+    )));
+    advanced_search.set_hexpand(true);
+    let search_row = adw::ActionRow::new();
+    search_row.set_title(&ctx.t_or(
+        "shared.vfsControl.advancedConfig.search",
+        "Search VFS options",
+    ));
+    search_row.add_suffix(&advanced_search);
     let advanced_list = gtk::ListBox::new();
     advanced_list.add_css_class("boxed-list");
+    advanced.add_row(&search_row);
     advanced.add_row(&advanced_list);
     let advanced_group = adw::PreferencesGroup::new();
     advanced_group.add(&advanced);
@@ -121,6 +147,13 @@ pub fn vfs_panel(ctx: AppCtx, remote: &str, toast: adw::ToastOverlay) -> gtk::Wi
     poll.add_suffix(&apply_poll);
     let poll_group = adw::PreferencesGroup::new();
     poll_group.add(&poll);
+    let poll_unsupported = adw::ActionRow::new();
+    poll_unsupported.set_title(&ctx.t_or(
+        "shared.vfsControl.actions.pollIntervalNotSupported",
+        "Poll interval not supported",
+    ));
+    poll_unsupported.set_visible(false);
+    poll_group.add(&poll_unsupported);
     root.append(&poll_group);
 
     let actions = gtk::Box::new(gtk::Orientation::Horizontal, 8);
@@ -151,6 +184,7 @@ pub fn vfs_panel(ctx: AppCtx, remote: &str, toast: adw::ToastOverlay) -> gtk::Wi
         let suppressing = suppressing.clone();
         let empty = empty.clone();
         let indexed = indexed.clone();
+        let indexed_label = indexed_label.clone();
         let combo = combo.clone();
         let combo_group = combo_group.clone();
         let stats = stats.clone();
@@ -159,6 +193,10 @@ pub fn vfs_panel(ctx: AppCtx, remote: &str, toast: adw::ToastOverlay) -> gtk::Wi
         let delay_box = delay_box.clone();
         let cache = cache.clone();
         let advanced_list = advanced_list.clone();
+        let advanced_search = advanced_search.clone();
+        let poll = poll.clone();
+        let apply_poll = apply_poll.clone();
+        let poll_unsupported = poll_unsupported.clone();
         let toast = toast.clone();
         Rc::new(move || {
             clear_list(&stats);
@@ -218,7 +256,8 @@ pub fn vfs_panel(ctx: AppCtx, remote: &str, toast: adw::ToastOverlay) -> gtk::Wi
 
             let fs = selected.borrow().clone();
             let indexed_fs = is_indexed_vfs(&fs);
-            indexed.set_text(&ctx.tf("shared.vfsControl.indexedWarning", &[("suffix", ":[0]")]));
+            indexed_label
+                .set_text(&ctx.tf("shared.vfsControl.indexedWarning", &[("suffix", ":[0]")]));
             indexed.set_visible(indexed_fs);
             if indexed_fs {
                 delay_box.set_visible(false);
@@ -312,11 +351,19 @@ pub fn vfs_panel(ctx: AppCtx, remote: &str, toast: adw::ToastOverlay) -> gtk::Wi
                         cache.append(&note);
                     }
                     if let Some(map) = parsed.opt.as_object() {
-                        for (key, value) in map {
-                            let row = adw::ActionRow::new();
-                            row.set_title(key);
-                            row.set_subtitle(&format_opt_value(value));
-                            advanced_list.append(&row);
+                        let query = advanced_search.text().to_string();
+                        fill_advanced_opts(&ctx, &advanced_list, map, &query);
+                    }
+                    match client.vfs_poll_interval(&fs, None) {
+                        Ok(_) => {
+                            poll.set_sensitive(true);
+                            apply_poll.set_sensitive(true);
+                            poll_unsupported.set_visible(false);
+                        }
+                        Err(_) => {
+                            poll.set_sensitive(false);
+                            apply_poll.set_sensitive(false);
+                            poll_unsupported.set_visible(true);
                         }
                     }
                 }
@@ -385,6 +432,12 @@ pub fn vfs_panel(ctx: AppCtx, remote: &str, toast: adw::ToastOverlay) -> gtk::Wi
         })
     };
     *refresh_slot.borrow_mut() = refresh_ui.clone();
+    {
+        let advanced_list = advanced_list.clone();
+        advanced_search.connect_search_changed(move |entry| {
+            apply_advanced_filter(&advanced_list, &entry.text());
+        });
+    }
     refresh_ui();
 
     {
@@ -455,7 +508,7 @@ pub fn vfs_panel(ctx: AppCtx, remote: &str, toast: adw::ToastOverlay) -> gtk::Wi
                     "shared.vfsControl.actions.messages.intervalSet",
                     &[("val", &poll.text())],
                 ))),
-                Err(e) => toast.add_toast(adw::Toast::new(&e.to_string())),
+                Err(e) => ctx.toast_error(&toast, &e.to_string()),
             }
         });
     }
@@ -474,7 +527,7 @@ pub fn vfs_panel(ctx: AppCtx, remote: &str, toast: adw::ToastOverlay) -> gtk::Wi
                         )));
                         refresh_ui();
                     }
-                    Err(e) => toast.add_toast(adw::Toast::new(&e.to_string())),
+                    Err(e) => ctx.toast_error(&toast, &e.to_string()),
                 }
             }
         });
@@ -499,7 +552,7 @@ pub fn vfs_panel(ctx: AppCtx, remote: &str, toast: adw::ToastOverlay) -> gtk::Wi
                         )));
                         refresh_ui();
                     }
-                    Err(e) => toast.add_toast(adw::Toast::new(&e.to_string())),
+                    Err(e) => ctx.toast_error(&toast, &e.to_string()),
                 }
             }
         });
@@ -533,11 +586,16 @@ fn queue_row(
     refresh_slot: Rc<RefCell<Rc<dyn Fn()>>>,
 ) -> adw::ActionRow {
     let row = adw::ActionRow::new();
-    row.set_title(&if item.name.is_empty() {
+    let name = if item.name.is_empty() {
         format!("#{}", item.id)
     } else {
         item.name.clone()
-    });
+    };
+    row.set_title(&name);
+    row.set_tooltip_text(Some(&format!(
+        "{}: {name}",
+        ctx.t_or("shared.vfsControl.queue.name", "Name")
+    )));
     let status = match queue_item_status(item) {
         QueueStatus::Uploading => ctx.t_or(
             "shared.vfsControl.queue.statusText.uploading",
@@ -553,15 +611,21 @@ fn queue_row(
             &[("seconds", &format!("{:.1}", item.expiry_secs))],
         ),
     };
-    let mut subtitle = format!("{} · {}", crate::rclone::format_bytes(item.size), status);
-    if item.tries > 0 {
-        subtitle.push_str(&format!(
-            " · {} {}",
-            item.tries,
-            ctx.t_or("shared.vfsControl.queue.tries", "try")
-        ));
-    }
-    row.set_subtitle(&subtitle);
+    let size_label = format!(
+        "{} {}",
+        ctx.t_or("shared.vfsControl.queue.size", "Size"),
+        crate::rclone::format_bytes(item.size)
+    );
+    row.set_subtitle(&crate::vfs::vfs_queue_subtitle(
+        &size_label,
+        &format!(
+            "{} {}",
+            ctx.t_or("shared.vfsControl.queue.status", "Status"),
+            status
+        ),
+        item.tries,
+        &ctx.t_or("shared.vfsControl.queue.tries", "try"),
+    ));
 
     if !item.uploading {
         if item.expiry_secs > 5.0 {
@@ -662,7 +726,7 @@ fn set_expiry(
         }
         Err(e) => toast.add_toast(adw::Toast::new(&ctx.tf(
             "shared.vfsControl.actions.messages.actionFailed",
-            &[("error", &e.to_string())],
+            &[("error", &ctx.translate_error(&e.to_string()))],
         ))),
     }
 }
@@ -692,12 +756,107 @@ fn path_row(ctx: &AppCtx, title: &str, path: &str, tooltip: &str) -> adw::Action
     row
 }
 
-fn format_opt_value(value: &serde_json::Value) -> String {
+fn format_opt_value(ctx: &AppCtx, value: &serde_json::Value) -> String {
     match value {
-        serde_json::Value::Bool(true) => "✓".into(),
-        serde_json::Value::Bool(false) => "✗".into(),
+        serde_json::Value::Bool(true) => ctx.t_or(
+            "shared.vfsControl.advancedConfig.booleanEnabled",
+            "✓ Enabled",
+        ),
+        serde_json::Value::Bool(false) => ctx.t_or(
+            "shared.vfsControl.advancedConfig.booleanDisabled",
+            "✗ Disabled",
+        ),
         serde_json::Value::String(s) => s.clone(),
         other => other.to_string(),
+    }
+}
+
+fn fill_advanced_opts(
+    ctx: &AppCtx,
+    list: &gtk::ListBox,
+    map: &serde_json::Map<String, serde_json::Value>,
+    query: &str,
+) {
+    let mut groups: Vec<(&str, Vec<String>)> = Vec::new();
+    let mut keys: Vec<_> = map.keys().cloned().collect();
+    keys.sort();
+    for key in keys {
+        let group = crate::vfs::vfs_opt_group(&key);
+        if let Some((_, items)) = groups.iter_mut().find(|(name, _)| *name == group) {
+            items.push(key);
+        } else {
+            groups.push((group, vec![key]));
+        }
+    }
+    for (group, items) in groups {
+        let header = adw::ActionRow::new();
+        header.set_title(&ctx.t_or(&crate::vfs::vfs_opt_group_i18n_key(group), group));
+        header.set_sensitive(false);
+        header.set_widget_name(&format!("group:{group}"));
+        header.add_css_class("heading");
+        list.append(&header);
+        for key in items {
+            let display = format_opt_value(ctx, &map[&key]);
+            let row = adw::ActionRow::new();
+            row.set_title(&key);
+            row.set_subtitle(&display);
+            row.set_widget_name(&key);
+            list.append(&row);
+        }
+    }
+    let empty = adw::ActionRow::new();
+    empty.set_title(&ctx.t_or(
+        "shared.vfsControl.advancedConfig.noResults",
+        "No options match your search",
+    ));
+    empty.set_widget_name("no-results");
+    empty.set_sensitive(false);
+    list.append(&empty);
+    apply_advanced_filter(list, query);
+}
+
+fn apply_advanced_filter(list: &gtk::ListBox, query: &str) {
+    let mut child = list.first_child();
+    let mut any_option = false;
+    while let Some(widget) = child {
+        let next = widget.next_sibling();
+        if let Ok(row) = widget.clone().downcast::<adw::ActionRow>() {
+            let name = row.widget_name().to_string();
+            if name.starts_with("group:") || name == "no-results" {
+                child = next;
+                continue;
+            }
+            let value = row.subtitle().unwrap_or_default().to_string();
+            let visible = crate::vfs::vfs_opt_matches(&name, &value, query);
+            row.set_visible(visible);
+            any_option |= visible;
+        }
+        child = next;
+    }
+    let mut child = list.first_child();
+    while let Some(widget) = child {
+        let next = widget.next_sibling();
+        if let Ok(row) = widget.clone().downcast::<adw::ActionRow>() {
+            let name = row.widget_name().to_string();
+            if name.starts_with("group:") {
+                let mut show = false;
+                let mut sibling = next.clone();
+                while let Some(next_row) = sibling {
+                    if let Ok(opt) = next_row.clone().downcast::<adw::ActionRow>() {
+                        let opt_name = opt.widget_name().to_string();
+                        if opt_name.starts_with("group:") || opt_name == "no-results" {
+                            break;
+                        }
+                        show |= opt.is_visible();
+                    }
+                    sibling = next_row.next_sibling();
+                }
+                row.set_visible(show);
+            } else if name == "no-results" {
+                row.set_visible(!any_option);
+            }
+        }
+        child = next;
     }
 }
 

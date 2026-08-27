@@ -1,14 +1,5 @@
 {
   "editor.formatOnSave": true,
-  "editor.defaultFormatter": "esbenp.prettier-vscode",
-  "editor.codeActionsOnSave": {
-    "source.fixAll.eslint": "explicit"
-  },
-  "eslint.validate": ["javascript", "typescript", "html"],
-  "typescript.preferences.quoteStyle": "single",
-  "html.format.enable": false,
-  "javascript.format.enable": false,
-  "typescript.format.enable": false,
   "[rust]": {
     "editor.defaultFormatter": "rust-lang.rust-analyzer",
     "editor.formatOnSave": true
@@ -20,11 +11,5 @@
     "Cargo.toml": "toml",
     "rustfmt.toml": "toml",
     ".clippy.toml": "toml"
-  },
-  "[html]": {
-    "editor.defaultFormatter": "esbenp.prettier-vscode"
-  },
-  "[json]": {
-    "editor.defaultFormatter": "esbenp.prettier-vscode"
   }
 }

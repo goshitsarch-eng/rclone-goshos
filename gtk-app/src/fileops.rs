@@ -3,6 +3,7 @@
 use crate::rclone::{remote_fs, RcClient};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
+use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -15,6 +16,9 @@ pub enum FileOp {
     Upload {
         fs: String,
         path: String,
+        /// Local source path so redo can re-upload. Empty on legacy tokens.
+        #[serde(default)]
+        source: String,
     },
     Rename {
         fs: String,
@@ -48,9 +52,14 @@ impl FileOp {
                 .mkdir(fs, path)
                 .map(|_| ())
                 .map_err(|e| e.to_string()),
-            FileOp::Upload { .. } => {
-                // Content is not retained; undo deletes the destination and redo is a no-op.
-                Ok(())
+            FileOp::Upload { fs, path, source } => {
+                if source.is_empty() {
+                    return Ok(());
+                }
+                client
+                    .copy_file("/", source, fs, path)
+                    .map(|_| ())
+                    .map_err(|e| e.to_string())
             }
             FileOp::Rename { fs, from, to } => client
                 .move_file(fs, from, fs, to)
@@ -101,6 +110,7 @@ impl FileOp {
             return Some(Self::Upload {
                 fs: "/".into(),
                 path: path.to_string(),
+                source: String::new(),
             });
         }
         None
@@ -108,7 +118,7 @@ impl FileOp {
 
     pub fn invert(&self) -> Option<Self> {
         match self {
-            Self::Mkdir { fs, path } | Self::Upload { fs, path } => Some(Self::Delete {
+            Self::Mkdir { fs, path } | Self::Upload { fs, path, .. } => Some(Self::Delete {
                 fs: fs.clone(),
                 path: path.clone(),
                 trash: None,
@@ -154,21 +164,177 @@ impl FileOp {
     }
 }
 
+/// Angular `NautilusFileOperationsService` keeps at most 20 undo entries.
+pub const MAX_UNDO_STACK: usize = 20;
+
+/// Encode one undo token. A single op stays a FileOp JSON; several become a batch.
+pub fn encode_undo(ops: &[FileOp]) -> Option<String> {
+    match ops {
+        [] => None,
+        [op] => Some(op.encode()),
+        items => Some(
+            serde_json::to_string(&json!({
+                "op": "batch",
+                "items": items,
+            }))
+            .unwrap_or_default(),
+        ),
+    }
+}
+
+/// Decode a single FileOp or a batch token into the original apply order.
+pub fn decode_undo(text: &str) -> Option<Vec<FileOp>> {
+    if let Ok(value) = serde_json::from_str::<Value>(text) {
+        if value.get("op").and_then(Value::as_str) == Some("batch") {
+            return serde_json::from_value(value.get("items")?.clone()).ok();
+        }
+    }
+    FileOp::decode(text).map(|op| vec![op])
+}
+
+/// Invert a batch in reverse order, skipping ops that cannot be undone.
+pub fn invert_ops(ops: &[FileOp]) -> Option<Vec<FileOp>> {
+    let inverted: Vec<FileOp> = ops.iter().rev().filter_map(FileOp::invert).collect();
+    if inverted.is_empty() {
+        None
+    } else {
+        Some(inverted)
+    }
+}
+
+pub fn apply_ops(client: &RcClient, ops: &[FileOp]) -> Result<(), String> {
+    for op in ops {
+        op.apply(client)?;
+    }
+    Ok(())
+}
+
+pub fn push_capped(stack: &mut Vec<String>, token: String) {
+    stack.push(token);
+    while stack.len() > MAX_UNDO_STACK {
+        stack.remove(0);
+    }
+}
+
+/// Undo token waiting for rclone jobs to finish — Angular pushes after `await transferItems`.
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PendingUndo {
+    pub job_ids: Vec<u64>,
+    pub token: String,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PendingUndoOutcome {
+    Wait,
+    Commit,
+    Drop,
+}
+
+pub fn pending_undo_from_ops(job_ids: &[u64], ops: &[FileOp]) -> Option<PendingUndo> {
+    let token = encode_undo(ops)?;
+    Some(PendingUndo {
+        job_ids: job_ids.to_vec(),
+        token,
+    })
+}
+
+pub fn pending_undo_outcome(
+    job_ids: &[u64],
+    statuses: &HashMap<u64, String>,
+) -> PendingUndoOutcome {
+    if job_ids.is_empty() {
+        return PendingUndoOutcome::Commit;
+    }
+    let mut seen = 0usize;
+    let mut failed = false;
+    let mut running = false;
+    for id in job_ids {
+        let Some(status) = statuses.get(id) else {
+            continue;
+        };
+        seen += 1;
+        match status.to_ascii_lowercase().as_str() {
+            "failed" | "stopped" | "error" => failed = true,
+            "completed" | "success" | "ok" => {}
+            _ => running = true,
+        }
+    }
+    if failed {
+        PendingUndoOutcome::Drop
+    } else if running || seen < job_ids.len() {
+        PendingUndoOutcome::Wait
+    } else {
+        PendingUndoOutcome::Commit
+    }
+}
+
+/// Commit successful pending tokens; keep waiting ones; drop failed/stopped jobs.
+pub fn settle_pending_undos(
+    pending: Vec<PendingUndo>,
+    statuses: &HashMap<u64, String>,
+) -> (Vec<String>, Vec<PendingUndo>) {
+    let mut commit = Vec::new();
+    let mut keep = Vec::new();
+    for item in pending {
+        match pending_undo_outcome(&item.job_ids, statuses) {
+            PendingUndoOutcome::Commit => commit.push(item.token),
+            PendingUndoOutcome::Wait => keep.push(item),
+            PendingUndoOutcome::Drop => {}
+        }
+    }
+    (commit, keep)
+}
+
+pub fn job_status_map<'a, I>(jobs: I) -> HashMap<u64, String>
+where
+    I: IntoIterator<Item = (u64, &'a str)>,
+{
+    jobs.into_iter()
+        .map(|(id, status)| (id, status.to_string()))
+        .collect()
+}
+
+fn is_terminal_undo_status(status: &str) -> bool {
+    matches!(
+        status.to_ascii_lowercase().as_str(),
+        "completed" | "failed" | "stopped" | "success" | "ok" | "error"
+    )
+}
+
+/// History fills missing ids; a live terminal status wins over a stale running row.
+pub fn merge_job_statuses<'a, L, H>(live: L, history: H) -> HashMap<u64, String>
+where
+    L: IntoIterator<Item = (u64, &'a str)>,
+    H: IntoIterator<Item = (u64, &'a str)>,
+{
+    let mut map = job_status_map(history);
+    for (id, status) in live {
+        if is_terminal_undo_status(status) || !map.contains_key(&id) {
+            map.insert(id, status.to_string());
+        } else if !is_terminal_undo_status(map.get(&id).map(String::as_str).unwrap_or("")) {
+            map.insert(id, status.to_string());
+        }
+    }
+    map
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct TransferItem {
     pub src_fs: String,
     pub src: String,
     pub dst_fs: String,
     pub dst: String,
     pub cut: bool,
+    pub is_dir: bool,
 }
 
 impl TransferItem {
     pub fn endpoint(&self) -> &'static str {
-        if self.cut {
-            "operations/movefile"
-        } else {
-            "operations/copyfile"
+        match (self.cut, self.is_dir) {
+            (true, true) => "sync/move",
+            (false, true) => "sync/copy",
+            (true, false) => "operations/movefile",
+            (false, false) => "operations/copyfile",
         }
     }
 
@@ -196,14 +362,28 @@ pub fn transfer_group_id(origin: &str) -> String {
 }
 
 pub fn transfer_payload(item: &TransferItem, group: &str) -> Value {
-    json!({
-        "srcFs": item.src_fs,
-        "srcRemote": item.src,
-        "dstFs": item.dst_fs,
-        "dstRemote": item.dst,
-        "_async": true,
-        "_group": group,
-    })
+    if item.is_dir {
+        let mut payload = json!({
+            "srcFs": join_fs_path(&item.src_fs, &item.src),
+            "dstFs": join_fs_path(&item.dst_fs, &item.dst),
+            "createEmptySrcDirs": true,
+            "_async": true,
+            "_group": group,
+        });
+        if item.cut {
+            payload["deleteEmptySrcDirs"] = json!(true);
+        }
+        payload
+    } else {
+        json!({
+            "srcFs": item.src_fs,
+            "srcRemote": item.src,
+            "dstFs": item.dst_fs,
+            "dstRemote": item.dst,
+            "_async": true,
+            "_group": group,
+        })
+    }
 }
 
 pub fn start_grouped_transfers(
@@ -223,6 +403,321 @@ pub fn start_grouped_transfers(
         ids.push(id);
     }
     Ok((group, ids))
+}
+
+const MANAGER_CLIPBOARD_MARK: &str = "rclone-manager-clipboard";
+
+/// Clipboard key used by Angular `cutItemPaths` (`remote:path`).
+pub fn clipboard_item_key(remote: &str, path: &str) -> String {
+    format!("{remote}:{path}")
+}
+
+/// Paths currently marked for move (cut), not copy.
+pub fn cut_item_keys(items: &[(String, String, bool, bool)]) -> HashSet<String> {
+    items
+        .iter()
+        .filter(|(_, _, cut, _)| *cut)
+        .map(|(remote, path, _, _)| clipboard_item_key(remote, path))
+        .collect()
+}
+
+/// Split-view copy/cut must use the secondary pane when only it has a selection.
+pub fn clipboard_uses_secondary(
+    split: bool,
+    primary_has_selection: bool,
+    secondary_has_selection: bool,
+) -> bool {
+    split && !primary_has_selection && secondary_has_selection
+}
+
+pub fn clipboard_marks_cut(
+    items: &[(String, String, bool, bool)],
+    remote: &str,
+    path: &str,
+) -> bool {
+    if remote.is_empty() || path.is_empty() {
+        return false;
+    }
+    cut_item_keys(items).contains(&clipboard_item_key(remote, path))
+}
+
+/// Encode Files copy/cut items so paste still works after a view rebuild.
+pub fn encode_manager_clipboard(items: &[(String, String, bool, bool)]) -> String {
+    let mut out = String::from(MANAGER_CLIPBOARD_MARK);
+    out.push('\n');
+    for (remote, path, cut, is_dir) in items {
+        out.push_str(&format!("{remote}\t{path}\t{cut}\t{is_dir}\n"));
+    }
+    out
+}
+
+pub fn parse_manager_clipboard(text: &str) -> Option<Vec<(String, String, bool, bool)>> {
+    let mut lines = text.lines();
+    if lines.next()?.trim() != MANAGER_CLIPBOARD_MARK {
+        return None;
+    }
+    let mut items = Vec::new();
+    for line in lines {
+        if line.trim().is_empty() {
+            continue;
+        }
+        let mut parts = line.split('\t');
+        let remote = parts.next()?.to_string();
+        let path = parts.next()?.to_string();
+        if remote.is_empty() || path.is_empty() {
+            continue;
+        }
+        let cut = parts.next().is_some_and(|v| v == "true");
+        let is_dir = parts.next().is_some_and(|v| v == "true");
+        items.push((remote, path, cut, is_dir));
+    }
+    if items.is_empty() {
+        None
+    } else {
+        Some(items)
+    }
+}
+
+/// Name stored on a Files list row. `AdwActionRow` is itself a `ListBoxRow`,
+/// so callers must read `widget_name` from the row, not from its inner child.
+pub fn listing_row_name(widget_name: &str, title: &str) -> Option<String> {
+    if widget_name == "column-header" {
+        return None;
+    }
+    if !widget_name.is_empty()
+        && !matches!(
+            widget_name,
+            "AdwActionRow" | "GtkListBoxRow" | "GtkBox" | "GtkFlowBoxChild"
+        )
+    {
+        return Some(widget_name.to_string());
+    }
+    let title = title.trim();
+    if title.is_empty() {
+        None
+    } else {
+        Some(title.to_string())
+    }
+}
+
+/// Whether a pointer position lies inside a widget allocation.
+pub fn point_in_rect(x: f64, y: f64, left: f64, top: f64, width: f64, height: f64) -> bool {
+    x >= left && x <= left + width && y >= top && y <= top + height
+}
+
+/// Minimum pointer target for the Files listing ⋮ control. Adwaita circular
+/// icon buttons are ~24px, which is easy to miss on a FlowBox tile.
+pub const FILE_ITEM_MENU_HIT_PX: i32 = 48;
+/// Full listing menus have ~30 actions; without a cap the popover is taller
+/// than the window and GTK presents nothing.
+pub const FILE_CONTEXT_MENU_MIN_WIDTH_PX: i32 = 260;
+pub const FILE_CONTEXT_MENU_MAX_HEIGHT_PX: i32 = 420;
+/// Angular Nautilus view-pane first paint (`GRID_RENDER_BATCH`).
+pub const LISTING_RENDER_BATCH: usize = 200;
+
+/// Next half-open range of listing rows to append (`shown..end`).
+pub fn next_listing_batch(total: usize, shown: usize) -> (usize, usize) {
+    let start = shown.min(total);
+    let end = start.saturating_add(LISTING_RENDER_BATCH).min(total);
+    (start, end)
+}
+
+/// Angular view-pane `onGridScroll` near-bottom threshold (px).
+pub const LISTING_SCROLL_LOAD_PX: f64 = 200.0;
+
+/// True when the scrolled listing is close enough to the bottom to paint the next batch.
+pub fn listing_near_bottom(value: f64, page_size: f64, upper: f64, threshold: f64) -> bool {
+    if page_size <= 0.0 || upper <= page_size {
+        return false;
+    }
+    value + page_size >= upper - threshold
+}
+
+/// `Some((shown, total))` while the listing is only partially painted.
+pub fn listing_progress_caption(shown: usize, total: usize) -> Option<(usize, usize)> {
+    if shown > 0 && shown < total {
+        Some((shown, total))
+    } else {
+        None
+    }
+}
+
+pub fn active_ops_count<I, S>(statuses: I) -> usize
+where
+    I: IntoIterator<Item = S>,
+    S: AsRef<str>,
+{
+    statuses
+        .into_iter()
+        .filter(|status| matches!(status.as_ref(), "running" | "preparing" | "starting"))
+        .count()
+}
+
+/// Angular Files `isMobile` breakpoint (`< 680`).
+pub const NAUTILUS_MOBILE_WIDTH: i32 = 680;
+
+/// Overlay the sidebar before the reserved 220px rail can block shrinking
+/// under the mobile breakpoint (`680 + 220`).
+pub const NAUTILUS_COLLAPSE_SIDEBAR_WIDTH: i32 = NAUTILUS_MOBILE_WIDTH + 220;
+
+pub fn is_narrow_files_width(width: i32) -> bool {
+    width > 0 && width < NAUTILUS_MOBILE_WIDTH
+}
+
+pub fn is_overlay_sidebar_width(width: i32) -> bool {
+    width > 0 && width < NAUTILUS_COLLAPSE_SIDEBAR_WIDTH
+}
+
+/// Angular lasso `_handleAutoScroll` edge band and per-tick step.
+pub const LASSO_EDGE_PX: f64 = 40.0;
+pub const LASSO_SCROLL_STEP: f64 = 15.0;
+
+/// Negative scrolls up, positive scrolls down; `0.0` when the pointer is inside the band.
+pub fn lasso_edge_scroll(
+    pointer_y: f64,
+    viewport_top: f64,
+    viewport_bottom: f64,
+    threshold: f64,
+    step: f64,
+) -> f64 {
+    if viewport_bottom <= viewport_top || step == 0.0 {
+        return 0.0;
+    }
+    if pointer_y < viewport_top + threshold {
+        -step.abs()
+    } else if pointer_y > viewport_bottom - threshold {
+        step.abs()
+    } else {
+        0.0
+    }
+}
+
+pub fn clamp_scroll_value(value: f64, page_size: f64, upper: f64) -> f64 {
+    let max = (upper - page_size).max(0.0);
+    value.clamp(0.0, max)
+}
+
+pub fn ops_panel_title(base: &str, active: usize) -> String {
+    if active == 0 {
+        base.to_string()
+    } else {
+        format!("{base} ({active})")
+    }
+}
+
+/// Compact Angular ops row title: `copy · Completed`.
+pub fn ops_job_title(operation: &str, status_label: &str) -> String {
+    format!("{operation} · {status_label}")
+}
+
+/// Shown as soon as `operations/copyfile` is queued (Angular `downloading`).
+pub fn download_progress_toast_key() -> &'static str {
+    "fileBrowser.fileViewer.downloading"
+}
+
+/// Success/fail only after the copyfile job finishes (not on start).
+pub fn download_result_toast_key(ok: bool) -> &'static str {
+    if ok {
+        "shared.transferActivity.actions.successDownload"
+    } else {
+        "shared.transferActivity.actions.failDownload"
+    }
+}
+
+/// rclone `job/status` payload: finished without an error.
+pub fn download_job_succeeded(status: &Value) -> bool {
+    crate::rclone::job_is_finished(status) && crate::rclone::job_error_message(status).is_none()
+}
+
+/// Files ops panel uses Cancelled for stopped jobs (Angular `fileBrowser.operations.cancelled`).
+pub fn ops_job_status_key(status: &str) -> &'static str {
+    if status.eq_ignore_ascii_case("stopped") {
+        "fileBrowser.operations.cancelled"
+    } else {
+        crate::jobs::job_status_key(status)
+    }
+}
+
+/// Angular Remote About type row: titlecase provider, or None → "Unknown".
+pub fn remote_about_type_display(remote_type: &str) -> Option<String> {
+    let trimmed = remote_type.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    let mut chars = trimmed.chars();
+    Some(match chars.next() {
+        Some(first) => first.to_uppercase().collect::<String>() + chars.as_str(),
+        None => String::new(),
+    })
+}
+
+/// Remote About object-count subtitle: `12 · 1.5 KiB`.
+pub fn remote_about_object_subtitle(count: i64, bytes: i64) -> String {
+    format!("{count} · {}", crate::rclone::format_bytes(bytes))
+}
+
+/// Multi-rename preview subtitle; failed rows append the i18n error label.
+pub fn multi_rename_preview_subtitle(new_name: &str, has_error: bool, error_label: &str) -> String {
+    if has_error {
+        format!("{new_name} — {error_label}")
+    } else {
+        new_name.to_string()
+    }
+}
+
+/// Angular Properties group titles for folder size and disk usage.
+pub fn properties_section_title_key(section: &str) -> &'static str {
+    match section {
+        "content" => "fileBrowser.properties.contentStats",
+        "storage" => "fileBrowser.properties.storage",
+        _ => "fileBrowser.properties.title",
+    }
+}
+
+/// Hash row status: loading types, failed checksum, or in-progress calculate.
+pub fn properties_hash_status_key(loading: bool, failed: bool) -> &'static str {
+    if loading {
+        "fileBrowser.properties.loadingHashes"
+    } else if failed {
+        "fileBrowser.properties.failLoadHashes"
+    } else {
+        "fileBrowser.properties.calculating"
+    }
+}
+
+/// Compact Angular ops row subtitle: `#42 · 80% · remote:path · 1.2 MB / 2.0 MB`.
+pub fn ops_job_subtitle(id: u64, percent: i32, src: &str, done: &str, total: &str) -> String {
+    format!("#{id} · {percent}% · {src} · {done} / {total}")
+}
+
+/// Keep `child_start..child_end` inside a horizontal viewport.
+pub fn scroll_child_into_view(value: f64, page: f64, child_start: f64, child_end: f64) -> f64 {
+    if page <= 0.0 {
+        return value.max(0.0);
+    }
+    if child_start < value {
+        child_start.max(0.0)
+    } else if child_end > value + page {
+        (child_end - page).max(0.0)
+    } else {
+        value
+    }
+}
+
+pub fn file_item_menu_widget_name(entry_name: &str) -> String {
+    format!("file-menu-{entry_name}")
+}
+
+pub fn is_file_item_menu_widget(widget_name: &str) -> bool {
+    widget_name.starts_with("file-menu-")
+}
+
+/// Translate a pointer position from a child widget into its parent.
+pub fn pointing_in_parent(local_x: f64, local_y: f64, parent_x: f64, parent_y: f64) -> (i32, i32) {
+    (
+        (parent_x + local_x).round() as i32,
+        (parent_y + local_y).round() as i32,
+    )
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -273,6 +768,77 @@ impl RenameItem {
             from: self.from.clone(),
             to: self.to.clone(),
         }
+    }
+}
+
+/// Build rclone transfer rows from Files clipboard tuples.
+pub fn transfers_from_clipboard(
+    items: &[(String, String, bool, bool)],
+    dest_remote: &str,
+    dest_dir: &str,
+) -> Vec<TransferItem> {
+    items
+        .iter()
+        .map(|(src_remote, src_path, cut, is_dir)| {
+            let name = src_path
+                .rsplit(['/', '\\'])
+                .next()
+                .unwrap_or(src_path.as_str());
+            let dest_dir = dest_dir.trim_end_matches(['/', '\\']);
+            let dst_path = if dest_dir.is_empty() {
+                name.to_string()
+            } else {
+                format!("{dest_dir}/{name}")
+            };
+            let (src_fs, src) = clipboard_fs_pair(src_remote, src_path);
+            let (dst_fs, dst) = clipboard_fs_pair(dest_remote, &dst_path);
+            TransferItem {
+                src_fs,
+                src,
+                dst_fs,
+                dst,
+                cut: *cut,
+                is_dir: *is_dir,
+            }
+        })
+        .collect()
+}
+
+fn clipboard_fs_pair(remote: &str, path: &str) -> (String, String) {
+    if remote == "local" {
+        ("/".into(), path.trim_start_matches(['/', '\\']).to_string())
+    } else {
+        (crate::rclone::remote_fs(remote, ""), path.to_string())
+    }
+}
+
+/// If exactly one destination folder is selected (and it is not a clipboard
+/// source), paste *into* that folder instead of the current listing.
+pub fn paste_dest_dir(
+    current_remote: &str,
+    current_path: &str,
+    selected: &[String],
+    listing_dirs: &[String],
+    clipboard: &[(String, String, bool, bool)],
+) -> String {
+    if selected.len() != 1 {
+        return current_path.to_string();
+    }
+    let name = &selected[0];
+    if name.is_empty() || !listing_dirs.iter().any(|dir| dir == name) {
+        return current_path.to_string();
+    }
+    let into_source = clipboard.iter().any(|(remote, path, _, _)| {
+        remote == current_remote && path.rsplit('/').next() == Some(name.as_str())
+    });
+    if into_source {
+        return current_path.to_string();
+    }
+    let path = current_path.trim_end_matches('/');
+    if path.is_empty() {
+        name.clone()
+    } else {
+        format!("{path}/{name}")
     }
 }
 
@@ -437,6 +1003,7 @@ pub fn collect_local_upload_items(
                 dst_fs: dest_fs.to_string(),
                 dst: dest,
                 cut: false,
+                is_dir: false,
             });
         }
     }
@@ -467,6 +1034,7 @@ fn collect_local_dir(
                 dst_fs: dest_fs.to_string(),
                 dst: dest,
                 cut: false,
+                is_dir: false,
             });
         }
     }
@@ -802,6 +1370,127 @@ pub fn is_local_open_target(remote: &str) -> bool {
     remote.is_empty() || remote == "local"
 }
 
+/// Listing context menu shape, matching Angular `nautilus-context-menu`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ListingMenuKind {
+    Empty,
+    SingleFile,
+    SingleFolder,
+    Multi,
+}
+
+impl ListingMenuKind {
+    pub fn from_selection(count: usize, first_is_dir: bool) -> Self {
+        match count {
+            0 => Self::Empty,
+            1 if first_is_dir => Self::SingleFolder,
+            1 => Self::SingleFile,
+            _ => Self::Multi,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct ListingMenuFlags {
+    pub has_clipboard: bool,
+    pub public_ok: bool,
+    pub cleanup_ok: bool,
+    pub archive_selected: bool,
+    pub can_undo: bool,
+    pub can_redo: bool,
+}
+
+/// Action ids for the Files listing context menu (`sep` is a visual divider).
+pub fn listing_context_actions(
+    kind: ListingMenuKind,
+    flags: ListingMenuFlags,
+) -> Vec<&'static str> {
+    let mut items = Vec::new();
+    match kind {
+        ListingMenuKind::Empty => {
+            items.extend(["reload", "mkdir", "sep", "upload", "uploaddir", "copyurl"]);
+            if flags.has_clipboard {
+                items.push("paste");
+            }
+            items.extend(["sep", "props"]);
+            if flags.cleanup_ok {
+                items.push("cleanup");
+            }
+            items.push("sendto");
+            push_history(&mut items, flags);
+            items.push("detach");
+        }
+        ListingMenuKind::Multi => {
+            items.extend(["copy", "cut", "copyto", "moveto"]);
+            items.extend(["sep", "mkdirsel", "rename", "archive"]);
+            if flags.archive_selected {
+                items.extend(["archivelist", "extract"]);
+            }
+            items.extend(["sep", "delete", "sep", "props", "download"]);
+            push_history(&mut items, flags);
+        }
+        ListingMenuKind::SingleFile => {
+            items.extend(["open", "native", "share", "copypath"]);
+            if flags.public_ok {
+                items.push("public");
+            }
+            items.extend([
+                "sep", "copy", "cut", "copyto", "moveto", "rename", "archive",
+            ]);
+            if flags.archive_selected {
+                items.extend(["archivelist", "extract"]);
+            }
+            items.extend(["sep", "delete", "sep", "props", "download", "star"]);
+            push_history(&mut items, flags);
+            items.push("detach");
+        }
+        ListingMenuKind::SingleFolder => {
+            items.extend(["open_submenu", "rmdirs", "copypath"]);
+            if flags.public_ok {
+                items.push("public");
+            }
+            items.extend(["sep", "copy", "cut", "copyto", "moveto"]);
+            if flags.has_clipboard {
+                items.push("paste");
+            }
+            items.extend(["rename", "archive", "sep", "delete", "sep", "props", "star"]);
+            push_history(&mut items, flags);
+            items.extend(["sendto", "detach"]);
+        }
+    }
+    items
+}
+
+pub fn listing_open_submenu_actions() -> &'static [&'static str] {
+    &["open", "tab", "window"]
+}
+
+/// Angular `hasClipboard`: internal tokens **or** OS paths (uri-list / copied files).
+pub fn menu_has_paste(internal_len: usize, system_has_paths: bool) -> bool {
+    internal_len > 0 || system_has_paths
+}
+
+pub fn clipboard_formats_have_paths(mimes: &[&str]) -> bool {
+    mimes.iter().any(|mime| {
+        matches!(
+            *mime,
+            "text/uri-list"
+                | "text/x-moz-url"
+                | "application/x-gnome-copied-files"
+                | "x-special/gnome-copied-files"
+        ) || mime.contains("uri-list")
+    })
+}
+
+fn push_history(items: &mut Vec<&'static str>, flags: ListingMenuFlags) {
+    if flags.can_undo {
+        items.push("undo");
+    }
+    if flags.can_redo {
+        items.push("redo");
+    }
+}
+
 /// Open a local path in the OS handler, or download a remote file to `$TMP` first.
 pub fn open_file_natively(
     client: Option<&RcClient>,
@@ -828,9 +1517,315 @@ pub fn open_file_natively(
     Ok(dest)
 }
 
+/// Angular `handleSelectionShortcuts` Escape order: search, picker, selection, clipboard.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum NautilusEscape {
+    ClearSearch,
+    CancelPicker,
+    ClearSelection,
+    ClearClipboard,
+    None,
+}
+
+pub fn nautilus_escape_action(
+    search_active: bool,
+    picker_active: bool,
+    has_selection: bool,
+    has_clipboard: bool,
+) -> NautilusEscape {
+    if search_active {
+        NautilusEscape::ClearSearch
+    } else if picker_active {
+        NautilusEscape::CancelPicker
+    } else if has_selection {
+        NautilusEscape::ClearSelection
+    } else if has_clipboard {
+        NautilusEscape::ClearClipboard
+    } else {
+        NautilusEscape::None
+    }
+}
+
+/// i18n key and params for the Files delete confirmation (Angular `confirmModal`).
+pub fn delete_confirm_i18n(names: &[String]) -> (&'static str, Vec<(String, String)>) {
+    match names {
+        [name] => (
+            "nautilus.modals.delete.messageSingle",
+            vec![("name".into(), name.clone())],
+        ),
+        _ => (
+            "nautilus.modals.delete.messageMultiple",
+            vec![("count".into(), names.len().to_string())],
+        ),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn manager_clipboard_roundtrip_and_rejects_plain_text() {
+        let items = vec![
+            ("testdrive".into(), "Photos".into(), false, true),
+            ("testdrive".into(), "a.txt".into(), true, false),
+        ];
+        let encoded = encode_manager_clipboard(&items);
+        assert!(encoded.starts_with("rclone-manager-clipboard"));
+        assert_eq!(parse_manager_clipboard(&encoded).as_ref(), Some(&items));
+        assert!(parse_manager_clipboard("Photos\n/tmp/a.txt").is_none());
+        assert!(parse_manager_clipboard("").is_none());
+    }
+
+    #[test]
+    fn cut_item_keys_ignore_copies_and_empty_paths() {
+        let items = vec![
+            ("testdrive".into(), "Photos/a.txt".into(), false, false),
+            ("testdrive".into(), "Photos/b.txt".into(), true, false),
+            ("other".into(), "b.txt".into(), true, false),
+            ("testdrive".into(), String::new(), true, false),
+        ];
+        let keys = cut_item_keys(&items);
+        assert_eq!(keys.len(), 3);
+        assert!(keys.contains("testdrive:Photos/b.txt"));
+        assert!(keys.contains("other:b.txt"));
+        assert!(keys.contains("testdrive:"));
+        assert!(!keys.contains("testdrive:Photos/a.txt"));
+        assert!(clipboard_marks_cut(&items, "testdrive", "Photos/b.txt"));
+        assert!(!clipboard_marks_cut(&items, "testdrive", "Photos/a.txt"));
+        assert!(!clipboard_marks_cut(&items, "testdrive", ""));
+        assert!(!clipboard_marks_cut(&[], "testdrive", "Photos/b.txt"));
+        assert_eq!(
+            clipboard_item_key("testdrive", "Photos/b.txt"),
+            "testdrive:Photos/b.txt"
+        );
+        assert!(clipboard_uses_secondary(true, false, true));
+        assert!(!clipboard_uses_secondary(true, true, true));
+        assert!(!clipboard_uses_secondary(true, false, false));
+        assert!(!clipboard_uses_secondary(false, false, true));
+    }
+
+    #[test]
+    fn listing_row_name_reads_widget_name_not_inner_child() {
+        assert_eq!(listing_row_name("Photos", "Photos"), Some("Photos".into()));
+        assert_eq!(listing_row_name("column-header", "Name"), None);
+        assert_eq!(
+            listing_row_name("AdwActionRow", "Photos"),
+            Some("Photos".into())
+        );
+        assert_eq!(listing_row_name("GtkListBoxRow", ""), None);
+        assert_eq!(listing_row_name("", "a.txt"), Some("a.txt".into()));
+    }
+
+    #[test]
+    fn point_in_rect_includes_edges_and_rejects_outside() {
+        assert!(point_in_rect(10.0, 20.0, 10.0, 20.0, 40.0, 16.0));
+        assert!(point_in_rect(50.0, 36.0, 10.0, 20.0, 40.0, 16.0));
+        assert!(point_in_rect(30.0, 28.0, 10.0, 20.0, 40.0, 16.0));
+        assert!(!point_in_rect(9.0, 28.0, 10.0, 20.0, 40.0, 16.0));
+        assert!(!point_in_rect(30.0, 37.0, 10.0, 20.0, 40.0, 16.0));
+    }
+
+    #[test]
+    fn file_item_menu_hit_target_is_large_enough() {
+        assert!(FILE_ITEM_MENU_HIT_PX >= 44);
+        assert_eq!(file_item_menu_widget_name("Photos"), "file-menu-Photos");
+        assert!(is_file_item_menu_widget("file-menu-Photos"));
+        assert!(!is_file_item_menu_widget("Photos"));
+        assert!(!is_file_item_menu_widget("file-menu"));
+        assert_eq!(pointing_in_parent(24.0, 16.0, 400.0, 300.0), (424, 316));
+        assert_eq!(pointing_in_parent(0.4, 0.6, 10.0, 20.0), (10, 21));
+        assert!(FILE_CONTEXT_MENU_MAX_HEIGHT_PX >= 300);
+        assert!(FILE_CONTEXT_MENU_MAX_HEIGHT_PX < 800);
+        assert!(FILE_CONTEXT_MENU_MIN_WIDTH_PX >= 200);
+    }
+
+    #[test]
+    fn listing_menu_kind_from_selection() {
+        assert_eq!(
+            ListingMenuKind::from_selection(0, true),
+            ListingMenuKind::Empty
+        );
+        assert_eq!(
+            ListingMenuKind::from_selection(1, false),
+            ListingMenuKind::SingleFile
+        );
+        assert_eq!(
+            ListingMenuKind::from_selection(1, true),
+            ListingMenuKind::SingleFolder
+        );
+        assert_eq!(
+            ListingMenuKind::from_selection(3, true),
+            ListingMenuKind::Multi
+        );
+    }
+
+    #[test]
+    fn listing_empty_menu_hides_item_actions() {
+        let items = listing_context_actions(
+            ListingMenuKind::Empty,
+            ListingMenuFlags {
+                has_clipboard: false,
+                cleanup_ok: true,
+                can_undo: true,
+                ..ListingMenuFlags::default()
+            },
+        );
+        assert!(items.contains(&"reload"));
+        assert!(items.contains(&"mkdir"));
+        assert!(items.contains(&"upload"));
+        assert!(items.contains(&"cleanup"));
+        assert!(items.contains(&"undo"));
+        assert!(!items.contains(&"open"));
+        assert!(!items.contains(&"delete"));
+        assert!(!items.contains(&"paste"));
+        assert!(!items.contains(&"native"));
+        assert!(!items.contains(&"share"));
+    }
+
+    #[test]
+    fn listing_empty_menu_shows_paste_when_clipboard_full() {
+        let items = listing_context_actions(
+            ListingMenuKind::Empty,
+            ListingMenuFlags {
+                has_clipboard: true,
+                ..ListingMenuFlags::default()
+            },
+        );
+        assert!(items.contains(&"paste"));
+        assert!(menu_has_paste(1, false));
+        assert!(menu_has_paste(0, true));
+        assert!(!menu_has_paste(0, false));
+        assert!(clipboard_formats_have_paths(&["text/uri-list"]));
+        assert!(clipboard_formats_have_paths(&[
+            "text/plain",
+            "application/x-gnome-copied-files"
+        ]));
+        assert!(!clipboard_formats_have_paths(&["text/plain"]));
+    }
+
+    #[test]
+    fn listing_single_file_menu_omits_folder_actions() {
+        let items = listing_context_actions(
+            ListingMenuKind::SingleFile,
+            ListingMenuFlags {
+                public_ok: true,
+                archive_selected: true,
+                ..ListingMenuFlags::default()
+            },
+        );
+        assert!(items.contains(&"open"));
+        assert!(items.contains(&"native"));
+        assert!(items.contains(&"share"));
+        assert!(items.contains(&"public"));
+        assert!(items.contains(&"extract"));
+        assert!(!items.contains(&"open_submenu"));
+        assert!(!items.contains(&"rmdirs"));
+        assert!(!items.contains(&"mkdir"));
+        assert!(!items.contains(&"upload"));
+        assert!(!items.contains(&"paste"));
+    }
+
+    #[test]
+    fn listing_single_folder_menu_uses_open_submenu() {
+        let items = listing_context_actions(
+            ListingMenuKind::SingleFolder,
+            ListingMenuFlags {
+                has_clipboard: true,
+                public_ok: false,
+                ..ListingMenuFlags::default()
+            },
+        );
+        assert!(items.contains(&"open_submenu"));
+        assert!(items.contains(&"rmdirs"));
+        assert!(items.contains(&"paste"));
+        assert!(!items.contains(&"native"));
+        assert!(!items.contains(&"share"));
+        assert!(!items.contains(&"public"));
+        assert_eq!(listing_open_submenu_actions(), &["open", "tab", "window"]);
+    }
+
+    #[test]
+    fn listing_multi_menu_is_bulk_actions() {
+        let items = listing_context_actions(ListingMenuKind::Multi, ListingMenuFlags::default());
+        assert!(items.contains(&"copy"));
+        assert!(items.contains(&"mkdirsel"));
+        assert!(items.contains(&"rename"));
+        assert!(items.contains(&"archive"));
+        assert!(items.contains(&"delete"));
+        assert!(!items.contains(&"open"));
+        assert!(!items.contains(&"native"));
+        assert!(!items.contains(&"mkdir"));
+        assert!(!items.contains(&"upload"));
+    }
+
+    #[test]
+    fn transfers_from_clipboard_join_dest_and_local_fs() {
+        let items = vec![
+            ("testdrive".into(), "Photos".into(), false, true),
+            ("testdrive".into(), "Notes/a.txt".into(), true, false),
+        ];
+        let copy = transfers_from_clipboard(&items, "testdrive", "verify-gui-folder");
+        assert_eq!(copy[0].endpoint(), "sync/copy");
+        assert_eq!(copy[0].src_fs, "testdrive:");
+        assert_eq!(copy[0].src, "Photos");
+        assert_eq!(copy[0].dst, "verify-gui-folder/Photos");
+        assert_eq!(copy[1].endpoint(), "operations/movefile");
+        assert_eq!(copy[1].dst, "verify-gui-folder/a.txt");
+        let local = transfers_from_clipboard(
+            &[(
+                "local".into(),
+                "/tmp/rclone-test-remote/Photos".into(),
+                false,
+                true,
+            )],
+            "local",
+            "/tmp/out",
+        );
+        assert_eq!(local[0].src_fs, "/");
+        assert_eq!(local[0].src, "tmp/rclone-test-remote/Photos");
+        assert_eq!(local[0].dst, "tmp/out/Photos");
+        assert!(transfers_from_clipboard(&[], "testdrive", "").is_empty());
+    }
+
+    #[test]
+    fn paste_into_selected_folder_unless_it_is_the_source() {
+        let clip = vec![("testdrive".into(), "Photos".into(), false, true)];
+        assert_eq!(
+            paste_dest_dir(
+                "testdrive",
+                "",
+                &["verify-gui-folder".into()],
+                &["Photos".into(), "verify-gui-folder".into()],
+                &clip
+            ),
+            "verify-gui-folder"
+        );
+        assert_eq!(
+            paste_dest_dir(
+                "testdrive",
+                "Inbox",
+                &["verify-gui-folder".into()],
+                &["verify-gui-folder".into()],
+                &clip
+            ),
+            "Inbox/verify-gui-folder"
+        );
+        assert_eq!(
+            paste_dest_dir(
+                "testdrive",
+                "",
+                &["Photos".into()],
+                &["Photos".into()],
+                &clip
+            ),
+            ""
+        );
+        assert_eq!(
+            paste_dest_dir("testdrive", "Inbox", &[], &["Photos".into()], &clip),
+            "Inbox"
+        );
+    }
 
     #[test]
     fn invert_rename_and_move() {
@@ -899,6 +1894,169 @@ mod tests {
     }
 
     #[test]
+    fn upload_keeps_source_for_redo_and_inverts_to_delete() {
+        let upload = FileOp::Upload {
+            fs: "testdrive:".into(),
+            path: "Photos/note.txt".into(),
+            source: "/tmp/note.txt".into(),
+        };
+        assert_eq!(
+            upload.invert(),
+            Some(FileOp::Delete {
+                fs: "testdrive:".into(),
+                path: "Photos/note.txt".into(),
+                trash: None,
+            })
+        );
+        assert_eq!(FileOp::decode(&upload.encode()), Some(upload.clone()));
+        let legacy = FileOp::decode("upload:Photos/note.txt").unwrap();
+        assert_eq!(
+            legacy,
+            FileOp::Upload {
+                fs: "/".into(),
+                path: "Photos/note.txt".into(),
+                source: String::new(),
+            }
+        );
+        let without_source =
+            FileOp::decode(r#"{"op":"upload","fs":"testdrive:","path":"Photos/note.txt"}"#)
+                .unwrap();
+        assert_eq!(
+            without_source,
+            FileOp::Upload {
+                fs: "testdrive:".into(),
+                path: "Photos/note.txt".into(),
+                source: String::new(),
+            }
+        );
+    }
+
+    #[test]
+    fn batch_undo_encodes_inverts_and_caps() {
+        let copy_a = FileOp::Copy {
+            src_fs: "testdrive:".into(),
+            src: "Photos/a.txt".into(),
+            dst_fs: "testdrive:".into(),
+            dst: "Backup/a.txt".into(),
+        };
+        let copy_b = FileOp::Copy {
+            src_fs: "testdrive:".into(),
+            src: "Photos/b.txt".into(),
+            dst_fs: "testdrive:".into(),
+            dst: "Backup/b.txt".into(),
+        };
+        assert_eq!(encode_undo(&[]), None);
+        assert_eq!(
+            decode_undo(&encode_undo(&[copy_a.clone()]).unwrap()),
+            Some(vec![copy_a.clone()])
+        );
+        let token = encode_undo(&[copy_a.clone(), copy_b.clone()]).unwrap();
+        assert!(token.contains("\"op\":\"batch\""));
+        let decoded = decode_undo(&token).unwrap();
+        assert_eq!(decoded, vec![copy_a.clone(), copy_b.clone()]);
+        assert_eq!(
+            invert_ops(&decoded),
+            Some(vec![
+                FileOp::Delete {
+                    fs: "testdrive:".into(),
+                    path: "Backup/b.txt".into(),
+                    trash: None,
+                },
+                FileOp::Delete {
+                    fs: "testdrive:".into(),
+                    path: "Backup/a.txt".into(),
+                    trash: None,
+                },
+            ])
+        );
+        assert!(invert_ops(&[FileOp::Delete {
+            fs: "testdrive:".into(),
+            path: "gone".into(),
+            trash: None,
+        }])
+        .is_none());
+        let mut stack = vec!["one".into(), "two".into()];
+        for i in 0..MAX_UNDO_STACK {
+            push_capped(&mut stack, format!("n{i}"));
+        }
+        assert_eq!(stack.len(), MAX_UNDO_STACK);
+        assert_eq!(stack.first().map(String::as_str), Some("n0"));
+        assert_eq!(decode_undo(&copy_a.encode()), Some(vec![copy_a]));
+    }
+
+    #[test]
+    fn pending_undo_waits_commits_and_drops() {
+        let copy = FileOp::Copy {
+            src_fs: "testdrive:".into(),
+            src: "Photos/a.txt".into(),
+            dst_fs: "testdrive:".into(),
+            dst: "Photos/verify-undo.txt".into(),
+        };
+        let pending = pending_undo_from_ops(&[42, 43], &[copy.clone()]).unwrap();
+        assert_eq!(pending.job_ids, vec![42, 43]);
+        assert!(pending.token.contains("verify-undo.txt"));
+        assert_eq!(
+            pending_undo_outcome(&[42], &job_status_map([(42, "running")])),
+            PendingUndoOutcome::Wait
+        );
+        assert_eq!(
+            pending_undo_outcome(&[42], &job_status_map([(42, "preparing")])),
+            PendingUndoOutcome::Wait
+        );
+        assert_eq!(
+            pending_undo_outcome(&[42, 43], &job_status_map([(42, "completed")])),
+            PendingUndoOutcome::Wait
+        );
+        assert_eq!(
+            pending_undo_outcome(
+                &[42, 43],
+                &job_status_map([(42, "completed"), (43, "completed")])
+            ),
+            PendingUndoOutcome::Commit
+        );
+        assert_eq!(
+            pending_undo_outcome(
+                &[42, 43],
+                &job_status_map([(42, "completed"), (43, "failed")])
+            ),
+            PendingUndoOutcome::Drop
+        );
+        assert_eq!(
+            pending_undo_outcome(&[42], &job_status_map([(42, "stopped")])),
+            PendingUndoOutcome::Drop
+        );
+        assert_eq!(
+            pending_undo_outcome(&[], &HashMap::new()),
+            PendingUndoOutcome::Commit
+        );
+        let (commit, keep) = settle_pending_undos(
+            vec![
+                PendingUndo {
+                    job_ids: vec![1],
+                    token: "ok".into(),
+                },
+                PendingUndo {
+                    job_ids: vec![2],
+                    token: "wait".into(),
+                },
+                PendingUndo {
+                    job_ids: vec![3],
+                    token: "fail".into(),
+                },
+            ],
+            &job_status_map([(1, "completed"), (2, "running"), (3, "failed")]),
+        );
+        assert_eq!(commit, vec!["ok".to_string()]);
+        assert_eq!(keep.len(), 1);
+        assert_eq!(keep[0].token, "wait");
+        assert!(pending_undo_from_ops(&[1], &[]).is_none());
+        let merged = merge_job_statuses([(9, "running")], [(9, "completed")]);
+        assert_eq!(merged.get(&9).map(String::as_str), Some("completed"));
+        let live_done = merge_job_statuses([(8, "failed")], [(8, "running")]);
+        assert_eq!(live_done.get(&8).map(String::as_str), Some("failed"));
+    }
+
+    #[test]
     fn stashes_local_file_for_undo() {
         let dir = tempfile::tempdir().unwrap();
         let file = dir.path().join("keep.txt");
@@ -921,6 +2079,7 @@ mod tests {
             dst_fs: "/".into(),
             dst: "Inbox/a.jpg".into(),
             cut: false,
+            is_dir: false,
         };
         let payload = transfer_payload(&item, "filemanager/abc");
         assert_eq!(payload["_group"], "filemanager/abc");
@@ -932,6 +2091,27 @@ mod tests {
             ..item.clone()
         };
         assert_eq!(cut.endpoint(), "operations/movefile");
+        let folder = TransferItem {
+            src_fs: "drive:".into(),
+            src: "Photos".into(),
+            dst_fs: "drive:".into(),
+            dst: "Backup/Photos".into(),
+            cut: false,
+            is_dir: true,
+        };
+        assert_eq!(folder.endpoint(), "sync/copy");
+        let folder_payload = transfer_payload(&folder, "filemanager/dir");
+        assert_eq!(folder_payload["srcFs"], "drive:Photos");
+        assert_eq!(folder_payload["dstFs"], "drive:Backup/Photos");
+        assert_eq!(folder_payload["createEmptySrcDirs"], true);
+        assert_eq!(
+            TransferItem {
+                cut: true,
+                ..folder
+            }
+            .endpoint(),
+            "sync/move"
+        );
         assert!(matches!(cut.file_op(), FileOp::Move { .. }));
         assert!(transfer_group_id("filemanager").starts_with("filemanager/"));
     }
@@ -1018,6 +2198,114 @@ mod tests {
     }
 
     #[test]
+    fn listing_batch_matches_angular_first_paint() {
+        assert_eq!(LISTING_RENDER_BATCH, 200);
+        assert_eq!(next_listing_batch(0, 0), (0, 0));
+        assert_eq!(next_listing_batch(50, 0), (0, 50));
+        assert_eq!(next_listing_batch(250, 0), (0, 200));
+        assert_eq!(next_listing_batch(250, 200), (200, 250));
+        assert_eq!(next_listing_batch(250, 250), (250, 250));
+        assert_eq!(next_listing_batch(10, 99), (10, 10));
+        assert_eq!(listing_progress_caption(200, 250), Some((200, 250)));
+        assert_eq!(listing_progress_caption(250, 250), None);
+        assert_eq!(listing_progress_caption(0, 250), None);
+        assert_eq!(listing_progress_caption(10, 0), None);
+        assert!(!listing_near_bottom(0.0, 400.0, 400.0, 200.0));
+        assert!(!listing_near_bottom(0.0, 0.0, 800.0, 200.0));
+        assert!(!listing_near_bottom(0.0, 400.0, 1200.0, 200.0));
+        assert!(listing_near_bottom(650.0, 400.0, 1200.0, 200.0));
+        assert!(listing_near_bottom(1000.0, 400.0, 1200.0, 200.0));
+        assert_eq!(
+            active_ops_count(["running", "completed", "preparing", "failed", "starting"]),
+            3
+        );
+        assert_eq!(active_ops_count(std::iter::empty::<&str>()), 0);
+        assert_eq!(ops_panel_title("Operations", 0), "Operations");
+        assert_eq!(ops_panel_title("Operations", 2), "Operations (2)");
+        assert_eq!(ops_job_title("copy", "Completed"), "copy · Completed");
+        assert_eq!(
+            ops_job_status_key("stopped"),
+            "fileBrowser.operations.cancelled"
+        );
+        assert_eq!(
+            ops_job_status_key("Stopped"),
+            "fileBrowser.operations.cancelled"
+        );
+        assert_eq!(
+            ops_job_status_key("completed"),
+            "detailShared.jobs.status.completed"
+        );
+        assert_eq!(
+            download_progress_toast_key(),
+            "fileBrowser.fileViewer.downloading"
+        );
+        assert_eq!(
+            download_result_toast_key(true),
+            "shared.transferActivity.actions.successDownload"
+        );
+        assert_eq!(
+            download_result_toast_key(false),
+            "shared.transferActivity.actions.failDownload"
+        );
+        assert!(download_job_succeeded(
+            &json!({ "finished": true, "success": true })
+        ));
+        assert!(!download_job_succeeded(
+            &json!({ "finished": true, "success": false, "error": "disk full" })
+        ));
+        assert!(!download_job_succeeded(&json!({ "finished": false })));
+        assert_eq!(remote_about_type_display("alias").as_deref(), Some("Alias"));
+        assert_eq!(remote_about_type_display("  s3  ").as_deref(), Some("S3"));
+        assert_eq!(remote_about_type_display(""), None);
+        assert_eq!(remote_about_type_display("   "), None);
+        assert_eq!(remote_about_object_subtitle(12, 1536), "12 · 1.5 KiB");
+        assert_eq!(
+            multi_rename_preview_subtitle("a.txt", false, "Duplicate or invalid name"),
+            "a.txt"
+        );
+        assert_eq!(
+            multi_rename_preview_subtitle("a.txt", true, "Duplicate or invalid name"),
+            "a.txt — Duplicate or invalid name"
+        );
+        assert_eq!(
+            properties_section_title_key("content"),
+            "fileBrowser.properties.contentStats"
+        );
+        assert_eq!(
+            properties_section_title_key("storage"),
+            "fileBrowser.properties.storage"
+        );
+        assert_eq!(
+            properties_hash_status_key(true, false),
+            "fileBrowser.properties.loadingHashes"
+        );
+        assert_eq!(
+            properties_hash_status_key(false, true),
+            "fileBrowser.properties.failLoadHashes"
+        );
+        assert_eq!(
+            ops_job_subtitle(42, 80, "testdrive:Photos", "8 B", "10 B"),
+            "#42 · 80% · testdrive:Photos · 8 B / 10 B"
+        );
+        assert_eq!(scroll_child_into_view(0.0, 200.0, 250.0, 320.0), 120.0);
+        assert_eq!(scroll_child_into_view(80.0, 200.0, 10.0, 60.0), 10.0);
+        assert_eq!(scroll_child_into_view(80.0, 200.0, 100.0, 160.0), 80.0);
+        assert!(is_narrow_files_width(679));
+        assert!(!is_narrow_files_width(680));
+        assert!(!is_narrow_files_width(0));
+        assert!(is_overlay_sidebar_width(899));
+        assert!(!is_overlay_sidebar_width(900));
+        assert!(is_overlay_sidebar_width(754));
+        assert_eq!(lasso_edge_scroll(10.0, 0.0, 400.0, 40.0, 15.0), -15.0);
+        assert_eq!(lasso_edge_scroll(390.0, 0.0, 400.0, 40.0, 15.0), 15.0);
+        assert_eq!(lasso_edge_scroll(200.0, 0.0, 400.0, 40.0, 15.0), 0.0);
+        assert_eq!(lasso_edge_scroll(0.0, 0.0, 0.0, 40.0, 15.0), 0.0);
+        assert_eq!(clamp_scroll_value(50.0, 400.0, 400.0), 0.0);
+        assert_eq!(clamp_scroll_value(900.0, 400.0, 1200.0), 800.0);
+        assert_eq!(clamp_scroll_value(-10.0, 400.0, 1200.0), 0.0);
+    }
+
+    #[test]
     fn labels_local_disks() {
         assert_eq!(local_disk_label("/", None), "File System");
         assert_eq!(local_disk_label("/home/me", Some("/home/me")), "Home");
@@ -1099,5 +2387,46 @@ mod tests {
         assert!(total > 0);
         assert!(free <= total);
         assert!(local_path_disk_usage("").is_none());
+    }
+
+    #[test]
+    fn nautilus_escape_follows_angular_priority() {
+        assert_eq!(
+            nautilus_escape_action(true, true, true, true),
+            NautilusEscape::ClearSearch
+        );
+        assert_eq!(
+            nautilus_escape_action(false, true, true, true),
+            NautilusEscape::CancelPicker
+        );
+        assert_eq!(
+            nautilus_escape_action(false, false, true, true),
+            NautilusEscape::ClearSelection
+        );
+        assert_eq!(
+            nautilus_escape_action(false, false, false, true),
+            NautilusEscape::ClearClipboard
+        );
+        assert_eq!(
+            nautilus_escape_action(false, false, false, false),
+            NautilusEscape::None
+        );
+        assert_eq!(
+            nautilus_escape_action(true, false, false, false),
+            NautilusEscape::ClearSearch
+        );
+    }
+
+    #[test]
+    fn delete_confirm_i18n_picks_single_or_count() {
+        let (key, params) = delete_confirm_i18n(&["README.md".into()]);
+        assert_eq!(key, "nautilus.modals.delete.messageSingle");
+        assert_eq!(params, vec![("name".into(), "README.md".into())]);
+        let (key, params) = delete_confirm_i18n(&["a".into(), "b".into(), "c".into()]);
+        assert_eq!(key, "nautilus.modals.delete.messageMultiple");
+        assert_eq!(params, vec![("count".into(), "3".into())]);
+        let (key, params) = delete_confirm_i18n(&[]);
+        assert_eq!(key, "nautilus.modals.delete.messageMultiple");
+        assert_eq!(params, vec![("count".into(), "0".into())]);
     }
 }

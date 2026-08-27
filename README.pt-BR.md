@@ -19,7 +19,7 @@
 
 <p align="center">
   <b>Uma interface gráfica poderosa e multiplataforma para gerenciar remotos do Rclone com estilo e facilidade.</b><br>
-  <i>Criado com Angular 22 + Tauri · Suporte a Linux • Windows • macOS • Android (Beta) • ARM</i>
+  <i>Linux: GTK 4 + libadwaita · Rust (Tauri) · Linux • Windows • macOS • Android (Beta) • ARM</i>
 </p>
 
 <p align="center">
@@ -143,5 +143,5 @@ Aceitamos contribuições de todas as formas!
 
 <p align="center">
   Desenvolvido com ❤️ pela Equipe de Desenvolvimento Zarestia<br>
-  <sub>Distribuído por Rclone | Construído com Angular & Tauri</sub>
+  <sub>Distribuído por Rclone | Construído com GTK 4, libadwaita e Rust</sub>
 </p>

@@ -294,6 +294,35 @@ pub struct JobInfo {
 
 /// Local start-time metadata for a job id (persisted so grouped transfer
 /// snapshots survive restart).
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum AutomationStatus {
+    #[default]
+    Enabled,
+    Disabled,
+    Running,
+    Failed,
+    Stopping,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub struct AutomationRuntime {
+    #[serde(default)]
+    pub status: AutomationStatus,
+    #[serde(default)]
+    pub last_error: Option<String>,
+    #[serde(default)]
+    pub current_job_id: Option<String>,
+    #[serde(default)]
+    pub run_count: u64,
+    #[serde(default)]
+    pub success_count: u64,
+    #[serde(default)]
+    pub failure_count: u64,
+    #[serde(default)]
+    pub stopped_count: u64,
+}
+
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct JobMeta {
     #[serde(default)]
@@ -314,6 +343,8 @@ pub struct JobMeta {
     pub target: String,
     #[serde(default)]
     pub group: String,
+    #[serde(default)]
+    pub operation: String,
     #[serde(default)]
     pub transfer_snapshot: Value,
 }
@@ -560,6 +591,34 @@ pub fn parse_header_lines(text: &str) -> serde_json::Map<String, Value> {
         map.insert(key.to_string(), json!(value.trim()));
     }
     map
+}
+
+pub fn header_pairs(config: &Value) -> Vec<(String, String)> {
+    config
+        .get("headers")
+        .and_then(|h| h.as_object())
+        .map(|map| {
+            map.iter()
+                .map(|(k, v)| (k.clone(), v.as_str().unwrap_or("").to_string()))
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+pub fn pairs_to_header_text(pairs: &[(String, String)]) -> String {
+    pairs
+        .iter()
+        .filter(|(k, _)| !k.trim().is_empty())
+        .map(|(k, v)| format!("{}: {}", k.trim(), v.trim()))
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+pub fn header_pairs_from_text(text: &str) -> Vec<(String, String)> {
+    parse_header_lines(text)
+        .into_iter()
+        .map(|(k, v)| (k, v.as_str().unwrap_or("").to_string()))
+        .collect()
 }
 
 pub fn headers_to_text(config: &Value) -> String {
@@ -841,6 +900,8 @@ pub struct AlertEvent {
     pub profile: String,
     #[serde(default)]
     pub rule_id: String,
+    #[serde(default)]
+    pub job_id: Option<u64>,
     pub created_at: DateTime<Utc>,
     pub acknowledged: bool,
 }
@@ -858,6 +919,7 @@ impl AlertEvent {
             backend: String::new(),
             profile: String::new(),
             rule_id: String::new(),
+            job_id: None,
             created_at: Utc::now(),
             acknowledged: false,
         }
@@ -890,6 +952,7 @@ pub struct RuntimeSnapshot {
     pub jobs: Vec<JobInfo>,
     pub stats: Value,
     pub local_disks: Vec<String>,
+    pub engine_online: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -921,11 +984,53 @@ pub struct AppStore {
     #[serde(default)]
     pub automation_paused: Vec<String>,
     #[serde(default)]
+    pub automation_runtime: HashMap<String, AutomationRuntime>,
+    #[serde(default)]
     pub pending_share_paths: Vec<String>,
     #[serde(default)]
     pub job_meta: HashMap<u64, JobMeta>,
+    /// Jobs and in-session mount/serve context for backends that are not active.
+    #[serde(default)]
+    pub backend_states: HashMap<String, BackendUiState>,
     #[serde(default, skip)]
     pub notifications_enabled: bool,
+}
+
+/// Per-backend UI working set (Tauri `BackendState` / `RemoteCacheContext`).
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct BackendUiState {
+    #[serde(default)]
+    pub job_history: Vec<JobInfo>,
+    #[serde(default)]
+    pub job_meta: HashMap<u64, JobMeta>,
+    #[serde(default, skip)]
+    pub mounts: Vec<MountedRemote>,
+    #[serde(default, skip)]
+    pub serves: Vec<ServeItem>,
+}
+
+fn finalize_stale_jobs(jobs: &mut [JobInfo], meta: &HashMap<u64, JobMeta>) {
+    let has_snapshot = |id: u64| {
+        meta.get(&id).is_some_and(|entry| {
+            entry
+                .transfer_snapshot
+                .as_array()
+                .is_some_and(|arr| !arr.is_empty())
+        })
+    };
+    for job in jobs {
+        if job.status != "preparing" && job.status != "starting" {
+            continue;
+        }
+        let done =
+            !job.completed.as_array().is_some_and(|arr| arr.is_empty()) || has_snapshot(job.id);
+        job.status = if done { "completed" } else { "failed" }.into();
+    }
+}
+
+fn sanitize_backend_jobs(state: &mut BackendUiState) {
+    finalize_stale_jobs(&mut state.job_history, &state.job_meta);
+    state.job_history.retain(crate::jobs::is_managed_job);
 }
 
 impl AppStore {
@@ -945,8 +1050,10 @@ impl AppStore {
             .iter()
             .map(|job| (job.id, job.status.clone()))
             .collect();
-        store.finalize_stale_preparing();
-        store.job_history.retain(crate::jobs::is_managed_job);
+        store.sanitize_job_history();
+        for state in store.backend_states.values_mut() {
+            sanitize_backend_jobs(state);
+        }
         if store.job_history.len() != before.len()
             || store.job_history.iter().any(|job| {
                 before
@@ -959,24 +1066,44 @@ impl AppStore {
         store
     }
 
+    pub fn sanitize_job_history(&mut self) {
+        finalize_stale_jobs(&mut self.job_history, &self.job_meta);
+        self.job_history.retain(crate::jobs::is_managed_job);
+    }
+
     /// Preparing rows from a previous process cannot be live; keep their
     /// snapshots but do not re-inject them as in-progress after restart.
     pub fn finalize_stale_preparing(&mut self) {
-        let has_snapshot = |id: u64| {
-            self.job_meta.get(&id).is_some_and(|meta| {
-                meta.transfer_snapshot
-                    .as_array()
-                    .is_some_and(|arr| !arr.is_empty())
-            })
-        };
-        for job in &mut self.job_history {
-            if job.status != "preparing" && job.status != "starting" {
-                continue;
-            }
-            let done =
-                !job.completed.as_array().is_some_and(|arr| arr.is_empty()) || has_snapshot(job.id);
-            job.status = if done { "completed" } else { "failed" }.into();
+        finalize_stale_jobs(&mut self.job_history, &self.job_meta);
+    }
+
+    /// Park the active job/mount/serve working set and restore the target backend.
+    pub fn swap_backend_state(
+        &mut self,
+        from: &str,
+        to: &str,
+        from_mounts: Vec<MountedRemote>,
+        from_serves: Vec<ServeItem>,
+    ) -> (Vec<MountedRemote>, Vec<ServeItem>) {
+        let from_key = crate::layout::backend_key(from);
+        let to_key = crate::layout::backend_key(to);
+        if from_key == to_key {
+            return (from_mounts, from_serves);
         }
+        self.backend_states.insert(
+            from_key,
+            BackendUiState {
+                job_history: std::mem::take(&mut self.job_history),
+                job_meta: std::mem::take(&mut self.job_meta),
+                mounts: from_mounts,
+                serves: from_serves,
+            },
+        );
+        let incoming = self.backend_states.remove(&to_key).unwrap_or_default();
+        self.job_history = incoming.job_history;
+        self.job_meta = incoming.job_meta;
+        self.sanitize_job_history();
+        (incoming.mounts, incoming.serves)
     }
 
     pub fn seed_alert_defaults(&mut self, notifications_on: bool) -> bool {
@@ -1061,6 +1188,33 @@ impl AppStore {
         }
         self.remote_order.swap(idx, next);
         true
+    }
+
+    /// Drop `from` onto `to` and insert it before the drop target.
+    pub fn move_remote_before(&mut self, from: &str, to: &str) -> bool {
+        if from == to {
+            return false;
+        }
+        let Some(from_idx) = self.remote_order.iter().position(|n| n == from) else {
+            return false;
+        };
+        if !self.remote_order.iter().any(|n| n == to) {
+            return false;
+        }
+        let name = self.remote_order.remove(from_idx);
+        let to_idx = self
+            .remote_order
+            .iter()
+            .position(|n| n == to)
+            .unwrap_or(self.remote_order.len());
+        self.remote_order.insert(to_idx, name);
+        true
+    }
+
+    /// Restore overview order to the live remote list and show every remote.
+    pub fn reset_remote_layout(&mut self, names: &[String]) {
+        self.remote_order = names.to_vec();
+        self.hidden_remotes.clear();
     }
 
     pub fn set_remote_hidden(&mut self, name: &str, hidden: bool) {
@@ -1184,11 +1338,27 @@ impl AppStore {
                 updated += 1;
             }
         }
+        let runtime_keys: Vec<String> = self.automation_runtime.keys().cloned().collect();
+        for key in runtime_keys {
+            if let Some(next) = rewrite_automation_id(&key, remote, from, to) {
+                if let Some(value) = self.automation_runtime.remove(&key) {
+                    self.automation_runtime.insert(next, value);
+                    updated += 1;
+                }
+            }
+        }
         updated
     }
 
     pub fn dismiss_job(&mut self, id: u64) {
         self.job_history.retain(|job| job.id != id);
+    }
+
+    pub fn quick_run_by_id_or_name(&self, id_or_name: &str) -> Option<QuickRun> {
+        self.quick_runs
+            .iter()
+            .find(|item| item.id == id_or_name || item.name == id_or_name)
+            .cloned()
     }
 
     pub fn remote_names(&self) -> Vec<String> {
@@ -1206,6 +1376,8 @@ impl AppStore {
             .retain(|id| !markers.iter().any(|m| id.contains(m.as_str())));
         self.automation_last_run
             .retain(|id, _| !markers.iter().any(|m| id.contains(m.as_str())));
+        self.automation_runtime
+            .retain(|id, _| !markers.iter().any(|m| id.contains(m.as_str())));
     }
 
     pub fn apply_delete_remote(&mut self, name: &str) {
@@ -1219,6 +1391,8 @@ impl AppStore {
         self.automation_paused
             .retain(|id| !markers.iter().any(|m| id.contains(m.as_str())));
         self.automation_last_run
+            .retain(|id, _| !markers.iter().any(|m| id.contains(m.as_str())));
+        self.automation_runtime
             .retain(|id, _| !markers.iter().any(|m| id.contains(m.as_str())));
     }
 
@@ -1445,6 +1619,65 @@ impl AppStore {
             self.alert_history.truncate(500);
         }
     }
+
+    pub fn remove_alert_rule(&mut self, id: &str) {
+        self.alert_rules.retain(|rule| rule.id != id);
+    }
+
+    pub fn remove_alert_action(&mut self, id: &str) {
+        self.alert_actions.retain(|action| action.id != id);
+        for rule in &mut self.alert_rules {
+            rule.action_ids.retain(|action_id| action_id != id);
+        }
+    }
+}
+
+/// Angular alert-rules fire badge + `alerts.lastFired` short date.
+pub fn format_alert_last_fired(ts: DateTime<Utc>) -> String {
+    ts.with_timezone(&chrono::Local)
+        .format("%m/%d/%y, %I:%M %p")
+        .to_string()
+}
+
+pub fn alert_rule_fire_suffix(
+    fire_count: u64,
+    last_fired: Option<DateTime<Utc>>,
+    last_fired_label: &str,
+) -> Option<String> {
+    let mut parts = Vec::new();
+    if fire_count > 0 {
+        parts.push(fire_count.to_string());
+    }
+    if let Some(ts) = last_fired {
+        parts.push(format!(
+            "{last_fired_label} {}",
+            format_alert_last_fired(ts)
+        ));
+    }
+    if parts.is_empty() {
+        None
+    } else {
+        Some(parts.join(" · "))
+    }
+}
+
+pub fn alert_rule_matches(rule: &AlertRule, query: &str) -> bool {
+    let severity = rule.severity_min.as_str();
+    let state = if rule.enabled {
+        "enabled on"
+    } else {
+        "disabled off"
+    };
+    crate::pref_search::any_field_matches(&[&rule.name, &rule.id, severity, state], query)
+}
+
+pub fn alert_action_matches(action: &AlertAction, query: &str) -> bool {
+    let state = if action.enabled {
+        "enabled on"
+    } else {
+        "disabled off"
+    };
+    crate::pref_search::any_field_matches(&[&action.name, &action.id, &action.kind, state], query)
 }
 
 pub fn dispatch_action(action: &AlertAction, event: &AlertEvent) {
@@ -1459,6 +1692,13 @@ pub fn dispatch_action(action: &AlertAction, event: &AlertEvent) {
     }
 }
 
+fn os_toast_target(event: &AlertEvent) -> crate::os_notify::NotificationTarget {
+    match event.job_id {
+        Some(id) => crate::os_notify::NotificationTarget::Job(id),
+        None => crate::os_notify::NotificationTarget::Alerts,
+    }
+}
+
 fn dispatch_action_once(action: &AlertAction, event: &AlertEvent) -> bool {
     let body = render_template(
         action
@@ -1469,11 +1709,11 @@ fn dispatch_action_once(action: &AlertAction, event: &AlertEvent) -> bool {
         event,
     );
     match action.kind.as_str() {
-        "os_toast" => notify_rust::Notification::new()
-            .summary(&event.title)
-            .body(&event.body)
-            .show()
-            .is_ok(),
+        "os_toast" => crate::os_notify::show_os_notification_target(
+            &event.title,
+            &event.body,
+            os_toast_target(event),
+        ),
         "webhook" => {
             let Some(url) = action.config.get("url").and_then(|x| x.as_str()) else {
                 return false;
@@ -1653,22 +1893,48 @@ pub struct DeleteRemotePlan {
     pub jobs: Vec<u64>,
     pub quick_runs: Vec<String>,
     pub automations: Vec<String>,
+    pub profiles: Vec<String>,
     pub job_history: usize,
 }
 
 impl DeleteRemotePlan {
     pub fn summary(&self) -> String {
         format!(
-            "Delete {}?\n\nWill stop {} mounts, {} serves, and {} jobs.\nRemove {} quick runs, {} automations, and {} history entries.",
+            "Delete {}?\n\nWill stop {} mounts, {} serves, and {} jobs.\nRemove {} profiles, {} quick runs, {} automations, and {} history entries.",
             self.name,
             self.mounts.len(),
             self.serves.len(),
             self.jobs.len(),
+            self.profiles.len(),
             self.quick_runs.len(),
             self.automations.len(),
             self.job_history
         )
     }
+
+    pub fn has_active_ops(&self) -> bool {
+        !self.mounts.is_empty() || !self.serves.is_empty() || !self.jobs.is_empty()
+    }
+
+    pub fn has_saved(&self) -> bool {
+        !self.profiles.is_empty() || !self.quick_runs.is_empty() || !self.automations.is_empty()
+    }
+}
+
+pub fn listed_remote_profiles(meta: &RemoteMeta) -> Vec<String> {
+    let mut out = Vec::new();
+    for (op, profiles) in &meta.profiles {
+        for name in profiles.keys() {
+            out.push(format!("{op}/{name}"));
+        }
+    }
+    for kind in ["vfs", "filter", "backend", "runtime"] {
+        for name in meta.helper_names(kind) {
+            out.push(format!("{kind}/{name}"));
+        }
+    }
+    out.sort();
+    out
 }
 
 pub fn rewrite_automation_id(id: &str, remote: &str, from: &str, to: &str) -> Option<String> {
@@ -1719,6 +1985,7 @@ pub fn plan_delete_remote(
         .automation_paused
         .iter()
         .chain(store.automation_last_run.keys())
+        .chain(store.automation_runtime.keys())
         .filter(|id| id.contains(&format!("remote:{name}:")) || id.contains(&format!(":{name}:")))
         .cloned()
         .collect();
@@ -1727,6 +1994,11 @@ pub fn plan_delete_remote(
         .iter()
         .filter(|j| j.remote == name)
         .count();
+    let profiles = store
+        .remotes
+        .get(name)
+        .map(listed_remote_profiles)
+        .unwrap_or_default();
     DeleteRemotePlan {
         name: name.to_string(),
         mounts,
@@ -1734,6 +2006,7 @@ pub fn plan_delete_remote(
         jobs,
         quick_runs,
         automations,
+        profiles,
         job_history,
     }
 }
@@ -1788,6 +2061,31 @@ pub fn clone_remote_meta(store: &AppStore, from: &str, to: &str) -> Option<Remot
     Some(meta)
 }
 
+pub fn remote_is_mounted(name: &str, cfg: &Value, mounts: &[MountedRemote]) -> bool {
+    let alias = cfg.get("remote").and_then(|v| v.as_str()).unwrap_or("");
+    mounts
+        .iter()
+        .any(|m| mount_matches_remote(&m.fs, &m.mount_point, name, alias))
+}
+
+pub fn mount_matches_remote(fs: &str, mount_point: &str, name: &str, alias: &str) -> bool {
+    let prefix = format!("{name}:");
+    fs == name
+        || fs == prefix
+        || fs.starts_with(&prefix)
+        || (!alias.is_empty() && paths_equivalent(fs, alias))
+        || mount_point_named(mount_point, name)
+}
+
+fn paths_equivalent(left: &str, right: &str) -> bool {
+    left.trim_end_matches('/') == right.trim_end_matches('/')
+}
+
+pub fn mount_point_named(mount_point: &str, name: &str) -> bool {
+    let point = mount_point.trim_end_matches('/');
+    point.ends_with(&format!("/{name}")) || point == name
+}
+
 pub fn build_remote_infos(
     dump: &Value,
     mounts: &[MountedRemote],
@@ -1803,7 +2101,7 @@ pub fn build_remote_infos(
                 .and_then(|x| x.as_str())
                 .unwrap_or("unknown")
                 .to_string();
-            let mounted = mounts.iter().any(|m| m.fs.starts_with(&format!("{name}:")));
+            let mounted = remote_is_mounted(name, cfg, mounts);
             let serving = serves.iter().any(|s| s.fs.starts_with(&format!("{name}:")));
             let job_active = jobs
                 .iter()
@@ -1823,19 +2121,36 @@ pub fn build_remote_infos(
     remotes
 }
 
-pub fn disk_label_from_about(about: &Value) -> String {
+#[derive(Debug, Clone, PartialEq)]
+pub enum DiskUsageState {
+    Loading,
+    Unsupported,
+    Error(String),
+    Ready { used: i64, free: i64, total: i64 },
+}
+
+pub fn disk_usage_from_about(about: &Value) -> DiskUsageState {
     let total = about.get("total").and_then(|x| x.as_i64()).unwrap_or(-1);
     let used = about.get("used").and_then(|x| x.as_i64()).unwrap_or(-1);
     let free = about.get("free").and_then(|x| x.as_i64()).unwrap_or(-1);
     if total < 0 && used < 0 && free < 0 {
-        return "Not supported".into();
+        DiskUsageState::Unsupported
+    } else {
+        DiskUsageState::Ready { used, free, total }
     }
-    format!(
-        "{} used / {} free of {}",
-        format_bytes(used),
-        format_bytes(free),
-        format_bytes(total)
-    )
+}
+
+pub fn disk_label_from_about(about: &Value) -> String {
+    match disk_usage_from_about(about) {
+        DiskUsageState::Unsupported => "Not supported".into(),
+        DiskUsageState::Ready { used, free, total } => format!(
+            "{} used / {} free of {}",
+            format_bytes(used),
+            format_bytes(free),
+            format_bytes(total)
+        ),
+        DiskUsageState::Loading | DiskUsageState::Error(_) => "Not supported".into(),
+    }
 }
 
 pub fn disk_usage_ratio(about: &Value) -> Option<f64> {
@@ -1845,6 +2160,20 @@ pub fn disk_usage_ratio(about: &Value) -> Option<f64> {
         Some((used as f64 / total as f64).clamp(0.0, 1.0))
     } else {
         None
+    }
+}
+
+/// CSS class for remote disk-usage bars — mirrors Angular `DiskUsagePanel.usageSeverity`.
+pub fn disk_usage_severity_css(ratio: f64) -> &'static str {
+    let pct = ratio * 100.0;
+    if pct >= 90.0 {
+        "disk-usage-critical"
+    } else if pct >= 80.0 {
+        "disk-usage-high"
+    } else if pct >= 60.0 {
+        "disk-usage-warning"
+    } else {
+        "disk-usage-healthy"
     }
 }
 
@@ -1917,6 +2246,70 @@ mod tests {
     use super::*;
 
     #[test]
+    fn header_pairs_roundtrip_skips_empty_keys() {
+        let config = json!({
+            "headers": {
+                "Content-Type": "application/json",
+                "X-Token": "abc"
+            }
+        });
+        let pairs = header_pairs(&config);
+        assert_eq!(pairs.len(), 2);
+        let text = pairs_to_header_text(&[
+            ("Content-Type".into(), "application/json".into()),
+            ("  ".into(), "ignored".into()),
+            ("X-Token".into(), "abc".into()),
+        ]);
+        assert!(text.contains("Content-Type: application/json"));
+        assert!(text.contains("X-Token: abc"));
+        assert!(!text.contains("ignored"));
+        assert_eq!(parse_header_lines(&text).len(), 2);
+        let from_text =
+            header_pairs_from_text("Content-Type: application/json\n: skip\nX-Token: abc");
+        assert_eq!(from_text.len(), 2);
+        assert!(from_text
+            .iter()
+            .any(|(k, v)| k == "Content-Type" && v == "application/json"));
+    }
+
+    #[test]
+    fn mounts_alias_target_and_named_point() {
+        let alias = json!({ "type": "alias", "remote": "/tmp/rclone-test-remote" });
+        let mounts = vec![MountedRemote::new(
+            "/tmp/rclone-test-remote",
+            "/home/ubuntu/rclone-manager/testdrive",
+        )];
+        assert!(remote_is_mounted("testdrive", &alias, &mounts));
+        assert!(!remote_is_mounted(
+            "dummyexport",
+            &json!({ "type": "local" }),
+            &mounts
+        ));
+        let named = vec![MountedRemote::new("/home/ubuntu", "/tmp/mnt/dummyexport")];
+        assert!(remote_is_mounted(
+            "dummyexport",
+            &json!({ "type": "local" }),
+            &named
+        ));
+        let prefixed = vec![MountedRemote::new("drive:Photos", "/mnt/drive")];
+        assert!(remote_is_mounted(
+            "drive",
+            &json!({ "type": "drive" }),
+            &prefixed
+        ));
+        assert!(mount_matches_remote(
+            "/tmp/rclone-test-remote",
+            "/home/ubuntu/rclone-manager/testdrive",
+            "testdrive",
+            "/tmp/rclone-test-remote"
+        ));
+        assert!(mount_point_named(
+            "/home/ubuntu/rclone-manager/testdrive",
+            "testdrive"
+        ));
+    }
+
+    #[test]
     fn quick_run_path_extraction() {
         let rclone = json!({
             "srcFs": "drive:src",
@@ -1925,6 +2318,24 @@ mod tests {
         let (src, dst) = quick_run_paths(&rclone, OperationType::Sync);
         assert_eq!(src.as_deref(), Some("drive:src"));
         assert_eq!(dst.as_deref(), Some("/tmp/out"));
+    }
+
+    #[test]
+    fn finds_quick_run_by_id_or_name() {
+        let mut store = AppStore::default();
+        let mut run = QuickRun::new(
+            "gui-qr-copy".into(),
+            OperationType::Copy,
+            "testdrive".into(),
+        );
+        run.id = "050de334-2571-4ead-ac77-1fb23e16b0c6".into();
+        store.quick_runs.push(run);
+        assert!(store.quick_run_by_id_or_name("gui-qr-copy").is_some());
+        assert!(store
+            .quick_run_by_id_or_name("050de334-2571-4ead-ac77-1fb23e16b0c6")
+            .is_some());
+        assert!(store.quick_run_by_id_or_name("missing").is_none());
+        assert!(store.quick_run_by_id_or_name("").is_none());
     }
 
     #[test]
@@ -1965,6 +2376,12 @@ mod tests {
         assert!(store.move_remote("a", -1));
         assert_eq!(store.remote_order, ["a", "b", "c", "d"]);
         assert!(!store.move_remote("a", -1));
+        assert!(store.move_remote_before("d", "b"));
+        assert_eq!(store.remote_order, ["a", "d", "b", "c"]);
+        assert!(!store.move_remote_before("a", "a"));
+        store.reset_remote_layout(&["b".into(), "a".into(), "c".into(), "d".into()]);
+        assert_eq!(store.remote_order, ["b", "a", "c", "d"]);
+        assert!(store.hidden_remotes.is_empty());
         assert!(store.toggle_remote_hidden("c"));
         assert_eq!(store.hidden_remotes, ["c"]);
         assert!(!store.toggle_remote_hidden("c"));
@@ -2005,6 +2422,26 @@ mod tests {
         assert_eq!(disk_usage_ratio(&json!({"total": 0, "used": 1})), None);
         assert_eq!(disk_usage_ratio(&json!({})), None);
         assert_eq!(disk_label_from_about(&json!({})), "Not supported");
+        assert_eq!(
+            disk_usage_from_about(&json!({})),
+            DiskUsageState::Unsupported
+        );
+        assert_eq!(
+            disk_usage_from_about(&json!({"used": 10, "free": 90, "total": 100})),
+            DiskUsageState::Ready {
+                used: 10,
+                free: 90,
+                total: 100
+            }
+        );
+    }
+
+    #[test]
+    fn disk_usage_severity_thresholds_match_angular() {
+        assert_eq!(disk_usage_severity_css(0.59), "disk-usage-healthy");
+        assert_eq!(disk_usage_severity_css(0.60), "disk-usage-warning");
+        assert_eq!(disk_usage_severity_css(0.85), "disk-usage-high");
+        assert_eq!(disk_usage_severity_css(0.95), "disk-usage-critical");
     }
 
     #[test]
@@ -2185,6 +2622,75 @@ mod tests {
     }
 
     #[test]
+    fn swap_backend_state_isolates_jobs() {
+        let mk = |id: u64, status: &str, remote: &str| JobInfo {
+            id,
+            operation: "copy".into(),
+            remote: remote.into(),
+            profile: "default".into(),
+            status: status.into(),
+            origin: "dashboard".into(),
+            start_time: Utc::now(),
+            error: None,
+            dry_run: false,
+            src: String::new(),
+            dst: String::new(),
+            group: format!("job/{id}"),
+            stats: json!({}),
+            transferring: json!([]),
+            duration: 0.0,
+            progress: 0.0,
+            output: json!({}),
+            completed: json!([]),
+            parent_job_id: None,
+        };
+        let mut store = AppStore::default();
+        store.remember_job(mk(11, "completed", "localdrive"));
+        store.job_meta.insert(
+            11,
+            JobMeta {
+                origin: "dashboard".into(),
+                backend: "local".into(),
+                ..Default::default()
+            },
+        );
+        let (mounts, serves) = store.swap_backend_state("local", "office", vec![], vec![]);
+        assert!(mounts.is_empty());
+        assert!(serves.is_empty());
+        assert!(store.job_history.is_empty());
+        assert!(store.job_meta.is_empty());
+        store.remember_job(mk(11, "running", "officedrive"));
+        store.job_meta.insert(
+            11,
+            JobMeta {
+                origin: "dashboard".into(),
+                backend: "office".into(),
+                ..Default::default()
+            },
+        );
+        store.swap_backend_state("office", "local", vec![], vec![]);
+        assert_eq!(store.job_history.len(), 1);
+        assert_eq!(store.job_history[0].remote, "localdrive");
+        assert_eq!(store.job_history[0].status, "completed");
+        assert_eq!(store.job_meta[&11].backend, "local");
+        store.swap_backend_state("local", "office", vec![], vec![]);
+        assert_eq!(store.job_history[0].remote, "officedrive");
+        assert_eq!(store.job_history[0].status, "running");
+        assert_eq!(store.job_meta[&11].backend, "office");
+        let same = store.swap_backend_state("office", "office", vec![], vec![]);
+        assert_eq!(store.job_history[0].id, 11);
+        assert!(same.0.is_empty());
+        let text = serde_json::to_string(&store).unwrap();
+        let loaded: AppStore = serde_json::from_str(&text).unwrap();
+        assert!(loaded.backend_states.contains_key("local"));
+        assert_eq!(
+            loaded.backend_states["local"].job_history[0].remote,
+            "localdrive"
+        );
+        assert!(loaded.backend_states["local"].mounts.is_empty());
+    }
+
+    #[test]
     fn job_meta_survives_store_json() {
         let mut store = AppStore::default();
         store.job_meta.insert(
@@ -2276,6 +2782,47 @@ mod tests {
         );
         assert!(store.alert_rules[0].auto_acknowledge);
         assert!(!store.seed_alert_defaults(false));
+        assert!(alert_rule_matches(&store.alert_rules[0], "default"));
+        assert!(alert_rule_matches(&store.alert_rules[0], ""));
+        assert!(!alert_rule_matches(&store.alert_rules[0], "webhook"));
+        assert_eq!(alert_rule_fire_suffix(0, None, "Last Fired"), None);
+        assert_eq!(
+            alert_rule_fire_suffix(3, None, "Last Fired").as_deref(),
+            Some("3")
+        );
+        let fired = DateTime::parse_from_rfc3339("2026-08-27T18:44:00Z")
+            .unwrap()
+            .with_timezone(&Utc);
+        let suffix = alert_rule_fire_suffix(2, Some(fired), "Last Fired").unwrap();
+        assert!(suffix.starts_with("2 · Last Fired "), "{suffix}");
+        assert!(suffix.contains("26"), "{suffix}");
+        assert!(alert_action_matches(&store.alert_actions[0], "toast"));
+        let mut job_event = AlertEvent::new(
+            AlertEventKind::Job,
+            AlertSeverity::High,
+            "failed".into(),
+            "boom".into(),
+        );
+        job_event.job_id = Some(9);
+        assert_eq!(
+            os_toast_target(&job_event),
+            crate::os_notify::NotificationTarget::Job(9)
+        );
+        assert_eq!(
+            os_toast_target(&AlertEvent::new(
+                AlertEventKind::System,
+                AlertSeverity::Info,
+                "hi".into(),
+                "there".into(),
+            )),
+            crate::os_notify::NotificationTarget::Alerts
+        );
+        assert!(alert_action_matches(&store.alert_actions[0], "enabled"));
+        store.remove_alert_action(&store.alert_actions[0].id.clone());
+        assert!(store.alert_actions.is_empty());
+        assert!(store.alert_rules[0].action_ids.is_empty());
+        store.remove_alert_rule(&store.alert_rules[0].id.clone());
+        assert!(store.alert_rules.is_empty());
         store.alert_actions.clear();
         store.alert_rules.clear();
         assert!(store.seed_alert_defaults(false));
@@ -2565,7 +3112,16 @@ mod tests {
     #[test]
     fn plans_and_applies_remote_delete() {
         let mut store = AppStore::default();
-        store.remotes.insert("drive".into(), RemoteMeta::default());
+        let mut meta = RemoteMeta::default();
+        meta.upsert_profile(
+            OperationType::Copy,
+            ProfileConfig {
+                name: "default".into(),
+                ..ProfileConfig::default()
+            },
+        );
+        meta.upsert_helper("vfs", "cache", json!({}));
+        store.remotes.insert("drive".into(), meta);
         store.quick_runs.push(QuickRun::new(
             "Nightly".into(),
             OperationType::Sync,
@@ -2597,10 +3153,7 @@ mod tests {
             .automation_last_run
             .insert("remote:drive:sync:default".into(), Utc::now());
         let snap = RuntimeSnapshot {
-            mounts: vec![MountedRemote {
-                fs: "drive:Photos".into(),
-                mount_point: "/mnt/drive".into(),
-            }],
+            mounts: vec![MountedRemote::new("drive:Photos", "/mnt/drive")],
             serves: vec![ServeItem {
                 id: "s1".into(),
                 addr: "127.0.0.1:8080".into(),
@@ -2639,6 +3192,10 @@ mod tests {
         assert_eq!(plan.jobs, vec![9]);
         assert_eq!(plan.quick_runs, vec!["Nightly"]);
         assert_eq!(plan.job_history, 1);
+        assert!(plan.profiles.iter().any(|p| p == "copy/default"));
+        assert!(plan.profiles.iter().any(|p| p == "vfs/cache"));
+        assert!(plan.has_active_ops());
+        assert!(plan.has_saved());
         assert!(plan.summary().contains("Delete drive"));
         store.apply_delete_remote("drive");
         assert!(!store.remotes.contains_key("drive"));

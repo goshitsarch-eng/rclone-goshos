@@ -2,14 +2,67 @@ use super::AppCtx;
 use crate::jobs::{find_active_quick_run, start_profile, stop_profile};
 use crate::operations::OperationType;
 use crate::rclone::remote_fs;
-use crate::tray_menu::{plan_tray, TrayAction, TrayCaption, TrayMenuItem};
+use crate::tray_menu::{
+    flatten_tray_menu, helper_menu_nodes, plan_tray, tray_helper_needs_restart,
+    tray_helper_signature, TrayAction, TrayCaption, TrayMenuItem,
+};
+use std::cell::RefCell;
+use std::path::PathBuf;
+use std::process::Child;
+#[cfg(any(target_os = "windows", target_os = "macos"))]
+use std::process::{Command, Stdio};
 use std::sync::mpsc::{self, Receiver, Sender};
 use std::sync::{Arc, Mutex};
+
+thread_local! {
+    static TRAY: RefCell<Option<TrayBus>> = const { RefCell::new(None) };
+}
 
 #[derive(Clone)]
 pub struct TrayBus {
     pub tx: Sender<TrayAction>,
     rx: Arc<Mutex<Receiver<TrayAction>>>,
+    handle: Option<ksni::Handle<StatusIcon>>,
+    native: Option<Arc<NativeTrayHelper>>,
+}
+
+struct NativeTrayHelper {
+    exe: PathBuf,
+    last_sig: Mutex<String>,
+    child: Mutex<Option<Child>>,
+}
+
+#[allow(dead_code)]
+impl NativeTrayHelper {
+    fn spawn(exe: PathBuf, menu: &[TrayMenuItem]) -> Option<Self> {
+        let child = spawn_native_helper(&exe, menu)?;
+        Some(Self {
+            last_sig: Mutex::new(tray_helper_signature(&flatten_tray_menu(menu))),
+            child: Mutex::new(Some(child)),
+            exe,
+        })
+    }
+
+    fn sync(&self, menu: &[TrayMenuItem]) {
+        let flat = flatten_tray_menu(menu);
+        let Ok(mut last) = self.last_sig.lock() else {
+            return;
+        };
+        if !tray_helper_needs_restart(&last, &flat) {
+            return;
+        }
+        *last = tray_helper_signature(&flat);
+        drop(last);
+        let Ok(mut slot) = self.child.lock() else {
+            return;
+        };
+        if let Some(mut child) = slot.take() {
+            let _ = child.kill();
+            let _ = child.wait();
+        }
+        *slot = spawn_native_helper(&self.exe, menu);
+        log::info!("native tray helper restarted ({} items)", flat.len());
+    }
 }
 
 impl TrayBus {
@@ -21,19 +74,66 @@ impl TrayBus {
             handle(ctx, cmd);
         }
     }
+
+    pub fn refresh(&self, ctx: &AppCtx) {
+        let (items, icon_name, title, description, busy) = plan_status(ctx);
+        if let Some(handle) = &self.handle {
+            handle.update(|icon| {
+                icon.items = items.clone();
+                icon.icon_name = icon_name;
+                icon.icon_pixmap = tray_pixmaps(busy);
+                icon.tooltip_title = title;
+                icon.tooltip_description = description;
+                icon.busy = busy;
+            });
+        }
+        if let Some(native) = &self.native {
+            native.sync(&items);
+        }
+    }
 }
 
 struct StatusIcon {
     tx: Sender<TrayAction>,
     items: Vec<TrayMenuItem>,
     icon_name: String,
+    icon_pixmap: Vec<ksni::Icon>,
     tooltip_title: String,
     tooltip_description: String,
+    busy: bool,
 }
 
 impl ksni::Tray for StatusIcon {
+    fn id(&self) -> String {
+        "io.github.zarestia_dev.rclone-manager".into()
+    }
+
+    fn activate(&mut self, _x: i32, _y: i32) {
+        let _ = self.tx.send(TrayAction::ShowWindow);
+    }
+
     fn icon_name(&self) -> String {
         self.icon_name.clone()
+    }
+
+    fn icon_pixmap(&self) -> Vec<ksni::Icon> {
+        self.icon_pixmap.clone()
+    }
+
+    fn attention_icon_name(&self) -> String {
+        self.icon_name.clone()
+    }
+
+    fn attention_icon_pixmap(&self) -> Vec<ksni::Icon> {
+        self.icon_pixmap.clone()
+    }
+
+    fn status(&self) -> ksni::Status {
+        if self.busy {
+            ksni::Status::NeedsAttention
+        } else {
+            ksni::Status::Active
+        }
     }
 
     fn title(&self) -> String {
@@ -80,22 +180,115 @@ fn to_ksni(item: &TrayMenuItem) -> ksni::MenuItem<StatusIcon> {
     .into()
 }
 
-fn tray_icon_name(theme: &str) -> &'static str {
-    match theme {
-        "symbolic" | "monochrome_light" | "monochrome_dark" => "folder-remote-symbolic",
-        _ => "folder-remote",
+fn tray_icon_name(theme: &str, busy: bool) -> &'static str {
+    match (theme, busy) {
+        ("symbolic" | "monochrome_light" | "monochrome_dark", true) => "folder-download-symbolic",
+        ("symbolic" | "monochrome_light" | "monochrome_dark", false) => "folder-remote-symbolic",
+        (_, true) => "folder-download",
+        (_, false) => "folder-remote",
     }
 }
 
-fn remote_mounts(ctx: &AppCtx, name: &str) -> Vec<String> {
-    let prefix = format!("{name}:");
-    ctx.snapshot
-        .borrow()
-        .mounts
-        .iter()
-        .filter(|m| m.fs == name || m.fs.starts_with(&prefix))
-        .map(|m| m.mount_point.clone())
+fn tray_pixmaps(busy: bool) -> Vec<ksni::Icon> {
+    [16, 22, 24]
+        .into_iter()
+        .map(|size| ksni::Icon {
+            width: size,
+            height: size,
+            data: crate::tray_menu::status_icon_argb(size, busy),
+        })
         .collect()
+}
+
+fn tray_tooltip(ctx: &AppCtx, busy: bool) -> String {
+    if !busy {
+        return ctx.t_or("tray.tooltipSubtitle", "Remotes, mounts, and transfers");
+    }
+    let snap = ctx.snapshot.borrow();
+    let jobs = snap
+        .jobs
+        .iter()
+        .filter(|job| crate::jobs::job_is_running(job) || crate::jobs::job_is_pending(job))
+        .count();
+    let mounts = snap.mounts.len();
+    let serves = snap.serves.len();
+    drop(snap);
+    let mut parts = Vec::new();
+    if jobs == 1 {
+        parts.push(ctx.t_or("tray.tooltipTask", "1 Job"));
+    } else if jobs > 1 {
+        parts.push(ctx.tf("tray.tooltipTasks", &[("count", &jobs.to_string())]));
+    }
+    if mounts == 1 {
+        parts.push(ctx.t_or("tray.tooltipMount", "1 Mount"));
+    } else if mounts > 1 {
+        parts.push(ctx.tf("tray.tooltipMounts", &[("count", &mounts.to_string())]));
+    }
+    if serves == 1 {
+        parts.push(ctx.t_or("tray.tooltipServe", "1 Serve"));
+    } else if serves > 1 {
+        parts.push(ctx.tf("tray.tooltipServes", &[("count", &serves.to_string())]));
+    }
+    if parts.is_empty() {
+        ctx.t_or("tray.tooltipSubtitle", "Remotes, mounts, and transfers")
+    } else {
+        parts.join(" · ")
+    }
+}
+
+fn plan_status(ctx: &AppCtx) -> (Vec<TrayMenuItem>, String, String, String, bool) {
+    let snap = ctx.snapshot.borrow();
+    let store = ctx.store.borrow();
+    let mut items = plan_tray(
+        &snap.remotes,
+        &store,
+        &snap.jobs,
+        &snap.mounts,
+        &snap.serves,
+        ctx.settings.borrow().core.max_tray_items.max(1),
+    );
+    drop(snap);
+    drop(store);
+    localize_plan(ctx, &mut items);
+    let busy = ctx.runtime_busy();
+    let alerts = ctx.store.borrow().unacknowledged_alerts();
+    let attention = busy || alerts > 0;
+    let icon = tray_icon_name(&ctx.settings.borrow().general.tray_icon_theme, attention).into();
+    let mut tooltip = tray_tooltip(ctx, busy);
+    if alerts > 0 {
+        tooltip = format!(
+            "{tooltip} · {} ({alerts})",
+            ctx.t_or("alerts.unacknowledged", "Unacknowledged")
+        );
+    }
+    (
+        items,
+        icon,
+        ctx.t_or("tray.tooltipDefault", "RClone Manager"),
+        tooltip,
+        attention,
+    )
+}
+
+fn remote_mounts(ctx: &AppCtx, name: &str) -> Vec<String> {
+    crate::tray_menu::remote_mounts_for(name, &ctx.snapshot.borrow().mounts)
+        .into_iter()
+        .map(|mount| mount.mount_point.clone())
+        .collect()
+}
+
+fn browse_mount_point(ctx: &AppCtx, remote: &str, profile: &str) -> Option<String> {
+    let mounts = ctx.snapshot.borrow();
+    let points = crate::tray_menu::remote_mounts_for(remote, &mounts.mounts);
+    if profile.is_empty() {
+        return points.first().map(|mount| mount.mount_point.clone());
+    }
+    points
+        .iter()
+        .find(|mount| mount.profile == profile)
+        .or_else(|| points.iter().find(|mount| mount.mount_point == profile))
+        .or_else(|| points.first())
+        .map(|mount| mount.mount_point.clone())
 }
 
 fn localize_plan(ctx: &AppCtx, items: &mut [TrayMenuItem]) {
@@ -153,7 +346,13 @@ fn localize_plan(ctx: &AppCtx, items: &mut [TrayMenuItem]) {
                 TrayAction::UnmountRemote { profile, .. } => {
                     format!("{} · {profile}", ctx.t_or("tray.unmount", "Unmount"))
                 }
-                TrayAction::BrowseRemote(_) => ctx.t_or("tray.browse", "Browse"),
+                TrayAction::BrowseRemote { profile, .. } => {
+                    if profile.is_empty() {
+                        ctx.t_or("tray.browse", "Browse")
+                    } else {
+                        format!("{} · {profile}", ctx.t_or("tray.browse", "Browse"))
+                    }
+                }
                 TrayAction::BrowseInApp(_) => ctx.t_or("tray.browseInApp", "Browse (In App)"),
                 TrayAction::StartProfile { op, profile, .. } => {
                     format!("{} {op} · {profile}", ctx.t_or("tray.start", "Start"))
@@ -183,24 +382,123 @@ fn localize_plan(ctx: &AppCtx, items: &mut [TrayMenuItem]) {
     }
 }
 
+pub fn start_or_reuse(ctx: &AppCtx) -> Option<TrayBus> {
+    if let Some(bus) = TRAY.with(|slot| slot.borrow().clone()) {
+        bus.refresh(ctx);
+        return Some(bus);
+    }
+    let bus = start(ctx);
+    TRAY.with(|slot| *slot.borrow_mut() = bus.clone());
+    bus
+}
+
+#[allow(dead_code)]
+fn spawn_native_helper(exe: &PathBuf, menu: &[TrayMenuItem]) -> Option<Child> {
+    #[cfg(target_os = "windows")]
+    {
+        return spawn_windows_notifyicon(exe, menu);
+    }
+    #[cfg(target_os = "macos")]
+    {
+        return spawn_macos_status_item(exe, menu);
+    }
+    #[cfg(not(any(target_os = "windows", target_os = "macos")))]
+    {
+        let _ = (exe, menu);
+        None
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn spawn_windows_notifyicon(exe: &PathBuf, menu: &[TrayMenuItem]) -> Option<Child> {
+    let path = dirs::config_dir()?.join("rclone-manager/tray-notifyicon.ps1");
+    if let Some(parent) = path.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+    std::fs::write(
+        &path,
+        crate::platform::windows_notifyicon_ps1_nodes(
+            &exe.to_string_lossy(),
+            &helper_menu_nodes(menu),
+        ),
+    )
+    .ok()?;
+    let ps = if which::which("powershell").is_ok() {
+        "powershell"
+    } else {
+        "pwsh"
+    };
+    Command::new(ps)
+        .args([
+            "-NoProfile",
+            "-WindowStyle",
+            "Hidden",
+            "-File",
+            path.to_str()?,
+        ])
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .ok()
+}
+
+#[cfg(target_os = "macos")]
+fn spawn_macos_status_item(exe: &PathBuf, menu: &[TrayMenuItem]) -> Option<Child> {
+    let path = dirs::config_dir()?.join("rclone-manager/tray-status-item.swift");
+    if let Some(parent) = path.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+    std::fs::write(
+        &path,
+        crate::platform::macos_status_item_swift_nodes(
+            &exe.to_string_lossy(),
+            &helper_menu_nodes(menu),
+        ),
+    )
+    .ok()?;
+    Command::new("swift")
+        .arg(&path)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .ok()
+}
+
+#[cfg(any(target_os = "windows", target_os = "macos"))]
+fn start_native_helper(ctx: &AppCtx) -> Option<TrayBus> {
+    let exe = std::env::current_exe().ok()?;
+    let (items, ..) = plan_status(ctx);
+    let native = NativeTrayHelper::spawn(exe, &items)?;
+    log::info!(
+        "{} tray helper started ({} items)",
+        crate::platform::tray_backend(),
+        flatten_tray_menu(&items).len()
+    );
+    let (tx, rx) = mpsc::channel();
+    Some(TrayBus {
+        tx,
+        rx: Arc::new(Mutex::new(rx)),
+        handle: None,
+        native: Some(Arc::new(native)),
+    })
+}
+
 pub fn start(ctx: &AppCtx) -> Option<TrayBus> {
     if !ctx.settings.borrow().general.tray_enabled {
         return None;
     }
+    #[cfg(target_os = "windows")]
+    {
+        return start_native_helper(ctx);
+    }
+    #[cfg(target_os = "macos")]
+    {
+        return start_native_helper(ctx);
+    }
     let (tx, rx) = mpsc::channel();
-    let snap = ctx.snapshot.borrow();
-    let store = ctx.store.borrow();
-    let mut items = plan_tray(
-        &snap.remotes,
-        &store,
-        &snap.jobs,
-        &snap.mounts,
-        &snap.serves,
-        ctx.settings.borrow().core.max_tray_items.max(1),
-    );
-    drop(snap);
-    drop(store);
-    localize_plan(ctx, &mut items);
+    let (items, icon_name, title, description, busy) = plan_status(ctx);
     let remotes = items
         .iter()
         .filter(|i| {
@@ -213,24 +511,29 @@ pub fn start(ctx: &AppCtx) -> Option<TrayBus> {
                 })
         })
         .count();
-    let bus = TrayBus {
-        tx: tx.clone(),
-        rx: Arc::new(Mutex::new(rx)),
-    };
     let icon = StatusIcon {
         tx: tx.clone(),
         items,
-        icon_name: tray_icon_name(&ctx.settings.borrow().general.tray_icon_theme).into(),
-        tooltip_title: ctx.t_or("tray.tooltipDefault", "RClone Manager"),
-        tooltip_description: ctx.t_or("tray.tooltipSubtitle", "Remotes, mounts, and transfers"),
+        icon_name,
+        icon_pixmap: tray_pixmaps(busy),
+        tooltip_title: title,
+        tooltip_description: description,
+        busy,
     };
+    let service = ksni::TrayService::new(icon);
+    let handle = service.handle();
     std::thread::Builder::new()
         .name("rclone-manager-sni".into())
         .spawn(move || {
-            let service = ksni::TrayService::new(icon);
             let _ = service.run();
         })
         .ok();
+    let bus = TrayBus {
+        tx: tx.clone(),
+        rx: Arc::new(Mutex::new(rx)),
+        handle: Some(handle),
+        native: None,
+    };
     log::info!("StatusNotifier tray started ({remotes} remotes)");
     Some(bus)
 }
@@ -274,7 +577,7 @@ pub fn handle(ctx: &AppCtx, cmd: TrayAction) {
                     .as_ref()
                     .and_then(|m| m.get_profile(OperationType::Mount, &profile))
                     .unwrap_or_default();
-                if let Err(e) = start_profile(
+                match start_profile(
                     &c,
                     &remote,
                     OperationType::Mount,
@@ -282,13 +585,19 @@ pub fn handle(ctx: &AppCtx, cmd: TrayAction) {
                     meta.as_ref(),
                     "tray",
                 ) {
-                    log::warn!("tray mount {remote} failed: {e}");
-                    let point = dirs::home_dir()
-                        .unwrap_or_default()
-                        .join("mnt")
-                        .join(&remote);
-                    let _ = std::fs::create_dir_all(&point);
-                    let _ = c.mount(&remote_fs(&remote, ""), &point.to_string_lossy(), "mount");
+                    Ok(point) => ctx.stamp_mount(&remote_fs(&remote, ""), &point, &profile, "tray"),
+                    Err(e) => {
+                        log::warn!("tray mount {remote} failed: {e}");
+                        let point = dirs::home_dir()
+                            .unwrap_or_default()
+                            .join("mnt")
+                            .join(&remote);
+                        let _ = std::fs::create_dir_all(&point);
+                        let point = point.to_string_lossy().into_owned();
+                        if c.mount(&remote_fs(&remote, ""), &point, "mount").is_ok() {
+                            ctx.stamp_mount(&remote_fs(&remote, ""), &point, &profile, "tray");
+                        }
+                    }
                 }
             }
             ctx.refresh_runtime();
@@ -313,12 +622,12 @@ pub fn handle(ctx: &AppCtx, cmd: TrayAction) {
             }
             ctx.refresh_runtime();
         }
-        TrayAction::BrowseRemote(name) => {
-            if let Some(point) = remote_mounts(ctx, &name).into_iter().next() {
+        TrayAction::BrowseRemote { remote, profile } => {
+            if let Some(point) = browse_mount_point(ctx, &remote, &profile) {
                 let _ = open::that(point);
             } else {
                 ctx.request_show();
-                ctx.request_browse(&name, "");
+                ctx.request_browse(&remote, "");
             }
         }
         TrayAction::BrowseInApp(name) => {

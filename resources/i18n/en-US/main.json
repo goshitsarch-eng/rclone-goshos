@@ -83,6 +83,26 @@
     "everyMinutesAt": "Every {{n}} minutes at {{times}}",
     "atMinutesBetween": "At minutes {{mins}} between {{start}} and {{end}}",
     "atHours": "At {{hours}}",
+    "lastWeekdayOfMonthAt": "Last weekday of the month at {{time}}",
+    "atTime": "At {{time}}",
+    "onDays": "on days {{days}}",
+    "onDay": "on day {{day}}",
+    "inMonths": "in {{months}}",
+    "onWeekdays": "on {{days}}",
+    "onWeekdaysWord": "on weekdays",
+    "onWeekendsWord": "on weekends",
+    "onLastDay": "on the last day of the month",
+    "onLastWeekday": "on the last weekday of the month",
+    "onEveryNDays": "every {{n}} days",
+    "onNearestWeekday": "on the nearest weekday to day {{day}}",
+    "onNthWeekday": "on the {{nth}} {{day}}",
+    "onLastNamedWeekday": "on the last {{day}}",
+    "atMinuteHour": "At minute {{min}} of hour {{hour}}",
+    "nearestWeekdayAt": "Nearest weekday to day {{day}} at {{time}}",
+    "everyNDaysAt": "Every {{n}} days at {{time}}",
+    "composed": "{{head}}, {{tail}}",
+    "weekdaysAtTimes": "Weekdays at {{times}}",
+    "weekendsAtTimes": "Weekends at {{times}}",
     "days": {
       "0": "Sunday",
       "1": "Monday",
@@ -135,7 +155,7 @@
     "vfsPollUpdated": "Poll interval updated",
     "vfsQueueExpiry": "Queue id / expiry",
     "vfsExpiryUpdated": "Queue expiry updated",
-    "flagsApplyHelp": "Edits are sent to rclone via options/set. Categories match the Angular flag panels.",
+    "flagsApplyHelp": "Edits are sent to rclone via options/set. Categories match the flag panels.",
     "flagsWriteEngine": "Write flags to the running engine",
     "jsonMode": "JSON",
     "jsonPayload": "Raw options/set payload",
@@ -192,6 +212,7 @@
     "cron": "Cron schedule",
     "linkedHelpers": "Linked helper profiles",
     "filterFlags": "Filter flags",
+    "filterKeys": "Filter keys",
     "importCliFlags": "Import rclone CLI flags",
     "cliImport": "CLI import",
     "jsonDocument": "JSON document",
@@ -538,6 +559,7 @@
       "apiKey": "API Key",
       "gatewayUrl": "Gateway URL",
       "customGateway": "Custom Gateway",
+      "callMeBot": "CallMeBot",
       "messageTemplate": "Message Template",
       "messageTemplateHint": "Supports Handlebars variables",
       "telegram_info": "You can find your Bot Token from @BotFather and your Chat ID from @userinfobot.",
@@ -555,6 +577,9 @@
       "from": "From Address",
       "to": "To Address",
       "encryption": "Encryption",
+      "encryptionNone": "None",
+      "encryptionTls": "TLS (Port 465)",
+      "encryptionStarttls": "StartTLS (Port 587)",
       "subjectTemplate": "Subject Template",
       "headers": "HTTP/S Headers",
       "presets": "Presets",
@@ -562,6 +587,7 @@
       "slack": "Slack",
       "headerKey": "Header Name",
       "headerValue": "Value",
+      "addHeader": "Add header",
       "editorTitle": "Alert action",
       "telegramMode": "Telegram mode",
       "envVars": "Environment variables (KEY=value)",
@@ -576,7 +602,8 @@
     "acknowledge": "Acknowledge",
     "addRule": "Add rule",
     "addAction": "Add action",
-    "templateKeys": "Insert template key"
+    "templateKeys": "Insert template key",
+    "statsLine": "{{total}} total · {{ack}} ack · {{open}} open · {{delivered}} delivered · last {{last}}"
   },
   "settings": {
     "resetAll": {
@@ -857,9 +884,11 @@
       "add": "Add remote or quick run",
       "developer": "Developer",
       "trayActions": "Tray actions",
-      "memoryUnavailable": "Memory stats unavailable"
+      "memoryUnavailable": "Memory stats unavailable",
+      "remoteVisible": "Visible in sidebar and overview"
     },
-    "detach": "Detach the current workspace into a new window"
+    "detach": "Detach the current workspace into a new window",
+    "closeOverlay": "Close overlay and return to the base view"
   },
   "onboarding": {
     "loadingTitle": "Initializing RClone Manager",
@@ -1318,6 +1347,7 @@
       "nameTaken": "A remote with this name already exists",
       "remoteType": "Remote Type",
       "noMatchingTypes": "No matching remote types",
+      "noMatchingProviders": "No matching providers",
       "loadingOptions": "Loading configuration options...",
       "fields": "Fields",
       "switchToForm": "Switch to Form Mode",
@@ -1573,6 +1603,20 @@
   },
   "backup": {
     "analyzeFailed": "Failed to analyze backup file",
+    "importConfig": {
+      "title": "Import rclone.conf",
+      "heading": "Import remotes from this configuration file?",
+      "file": "File",
+      "remotes": "Remotes",
+      "overwrite": "Replace remotes that already exist",
+      "import": "Import",
+      "cancel": "Cancel",
+      "empty": "No remotes found in this file",
+      "failed": "Could not read rclone.conf: {{error}}",
+      "noEngine": "rclone is not running",
+      "success": "Imported {{count}} remotes",
+      "partial": "Imported {{created}}, skipped {{skipped}}, failed {{failed}}"
+    },
     "restore": {
       "title": "Restore Backup",
       "ariaClose": "Close restore preview",
@@ -1610,6 +1654,7 @@
         "profile": "Restore Specific Profile"
       },
       "selectProfile": "Select Profile",
+      "restoreAs": "Restore as (optional rename)",
       "note": "Backup Note",
       "passwordRequired": "Password Required",
       "encryptedWarning": "This backup is encrypted. Enter the correct password to decrypt and restore.",
@@ -1769,6 +1814,8 @@
     "fileViewer": {
       "closeViewer": "Close viewer",
       "download": "Download {{name}}",
+      "previousPage": "Previous page",
+      "nextPage": "Next page",
       "previousFile": "Previous file",
       "nextFile": "Next file",
       "loadingContent": "Loading content",
@@ -2119,6 +2166,12 @@
       "openFlathub": "Open Flathub",
       "loadInfoFailed": "Failed to load rclone info.",
       "license": "License",
+      "toolkit": "GTK 4 + libadwaita",
+      "copyVersion": "Rclone Manager {version} · rclone {rclone}",
+      "licenseId": "GPL-3.0-or-later",
+      "gnuGpl": "GNU GPL v3",
+      "leadName": "Zarestia Dev",
+      "ackTextGtk": "This application is built with GTK 4 + libadwaita and relies on the excellent Rclone project for cloud storage management.",
       "licenseText1": "This application is free and open source software distributed under the",
       "orLater": "or later.",
       "licenseText2": "This program comes with no warranty. You are free to use, modify, and distribute this software according to the GPL v3 license terms.",
@@ -2191,6 +2244,12 @@
       "resetAll": "Reset All Settings",
       "noSettingsFound": "No settings found matching",
       "trySearching": "Try searching for:",
+      "searchSuggestions": {
+        "apiPort": "API port",
+        "startup": "startup",
+        "debug": "debug",
+        "bandwidth": "bandwidth"
+      },
       "readyToRestartHeader": "Settings Requiring Restart",
       "readyToRestartDesc": "The following changes require an engine restart to take effect:",
       "discardChanges": "Discard Changes",
@@ -2251,6 +2310,10 @@
       "passwordHint": "This password will be required to restore the backup.",
       "includeSecrets": "Include secret keys",
       "includeSecretsHint": "Include sensitive credentials in the backup. Encryption is required.",
+      "format": "Format",
+      "formatZip": "Zip backup",
+      "formatConf": "rclone.conf",
+      "confSuccess": "rclone.conf exported",
       "exportNow": "Export Now",
       "exporting": "Exporting...",
       "fullBackup": "Full Backup",
@@ -2261,7 +2324,8 @@
       "configFiles": "Configuration files",
       "externalConfig": "External configuration file",
       "profiles": "Include Profiles",
-      "profilesHint": "Select specific profiles to include in the backup.",
+      "profilesHint": "Select specific remotes to include in a full backup.",
+      "encryptBackup": "Encrypt backup",
       "categories": {
         "settings": {
           "label": "Application Settings",
@@ -2612,6 +2676,8 @@
     }
   },
   "nautilus": {
+    "loadMore": "Show {{count}} more",
+    "progressiveRender": "Showing {{shown}} of {{total}}",
     "sidebar": {
       "configureTitle": "Configure Sidebar Items",
       "configureDescription": "Drag items to reorder them, or toggle the eye icon to hide or show drives and cloud remotes in the sidebar."
@@ -2632,7 +2698,8 @@
       "fileSystem": "File System",
       "bookmarks": "Bookmarks",
       "localDisk": "Local Disk",
-      "pathPlaceholder": "remote:path or /local/path"
+      "pathPlaceholder": "remote:path or /local/path",
+      "detachedTab": "{app} — {title}"
     },
     "bookmarks": {
       "emptyHint": "No bookmarks"
@@ -2780,6 +2847,8 @@
       "delete": "Delete",
       "compress": "Compress",
       "copy": "Copy",
+      "copyTo": "Copy to…",
+      "moveTo": "Move to…",
       "cut": "Cut",
       "rename": "Rename",
       "paste": "Paste",
@@ -2801,6 +2870,7 @@
       "star": "Star / Unstar",
       "bookmark": "Bookmark",
       "pathOptions": "Path options",
+      "selectionActions": "Selection actions",
       "move": "Move",
       "openNative": "Open native",
       "copyUrl": "Copy URL into folder…",
@@ -2838,6 +2908,7 @@
       "nothingToRedo": "Nothing to redo",
       "cannotUndo": "This action cannot be undone",
       "selectValid": "Select a valid item to continue",
+      "nothingSelected": "Select a file or folder first",
       "selectNewFolderItems": "Select items to move into a new folder",
       "selectToDownload": "Select a file to download",
       "selectToShare": "Select a file to share",
@@ -2851,7 +2922,8 @@
       "getPublicLinkStarted": "Generating public link...",
       "archiveCreateStarted": "Archive creation started...",
       "sendToAdded": "Added '{{remote}}{{path}}' to File Manager menu",
-      "sendToRemoved": "Removed '{{remote}}{{path}}' from File Manager menu"
+      "sendToRemoved": "Removed '{{remote}}{{path}}' from File Manager menu",
+      "locationNotAllowed": "That location is not allowed for this picker"
     },
     "androidShare": {
       "uploadHere": "Upload {{count}} shared file(s) to this folder",
@@ -3509,7 +3581,11 @@
     "folders": "Folders",
     "maintenance": "Maintenance",
     "relaunch": "Relaunch",
-    "gcStarted": "Garbage collection started"
+    "gcStarted": "Garbage collection started",
+    "rcloneConfig": "rclone config",
+    "rcloneCache": "rclone cache",
+    "rcloneTemp": "rclone temp",
+    "configEncrypted": "rclone.conf encrypted"
   },
   "flow": {
     "title": "Flow",
@@ -3585,6 +3661,7 @@
   },
   "templates": {
     "title": "Templates",
+    "search": "Search templates…",
     "presetTitle": "Presets & Templates",
     "applyPresets": "Apply Default Presets",
     "userTemplates": "Saved User Templates",

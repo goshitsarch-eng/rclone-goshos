@@ -1,11 +1,17 @@
+mod automation_card;
 mod dashboard;
 mod dialogs;
+mod flag_widget;
 mod flow;
+mod installation_options;
 mod interactive;
 mod job_panels;
+mod json_editor;
 mod nautilus;
 mod onboarding;
+mod operation_control;
 mod preferences;
+mod quick_run_card;
 mod remote_config;
 mod tray;
 mod vfs_panel;
@@ -17,6 +23,9 @@ use crate::platform::PowerInhibitor;
 use crate::rclone::RcloneEngine;
 use crate::settings::AppSettings;
 use crate::store::{AppStore, RuntimeSnapshot};
+use adw::prelude::*;
+use gtk::glib;
+use gtk::prelude::*;
 use std::cell::{Cell, RefCell};
 use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
@@ -32,25 +41,46 @@ pub struct AppCtx {
     pub snapshot: Rc<RefCell<RuntimeSnapshot>>,
     pub selected_remote: Rc<RefCell<Option<String>>>,
     pub selected_quick_run: Rc<RefCell<Option<String>>>,
+    pub selected_automation: Rc<RefCell<Option<String>>>,
     pub pending_browse: Rc<RefCell<Option<(String, String)>>>,
+    pub pending_files_overlay: Rc<RefCell<Option<(String, String)>>>,
     pub pending_nav: Rc<RefCell<Option<crate::navigation::NavTarget>>>,
     pub pending_show: Rc<Cell<bool>>,
     pub pending_quit: Rc<Cell<bool>>,
+    pub pending_reload: Rc<Cell<bool>>,
+    pub pending_reopen_prefs: Rc<Cell<bool>>,
+    pub reload_destroy: Rc<Cell<bool>>,
+    pub ui_generation: Rc<Cell<u64>>,
+    pub active_workspace: Rc<RefCell<String>>,
     pub shutdown_prompt_open: Rc<Cell<bool>>,
     pub inhibitor: Rc<RefCell<PowerInhibitor>>,
     pub watch_mtimes: Rc<RefCell<HashMap<String, u64>>>,
+    pub pending_watch: Rc<RefCell<HashMap<String, crate::automation::WatchPending>>>,
     pub watch_hub: Rc<RefCell<crate::watch::WatchHub>>,
     pub fsinfo_cache: Rc<RefCell<HashMap<String, crate::rclone::FsInfo>>>,
     pub pending_picker: Rc<RefCell<Option<crate::picker::PickerRequest>>>,
+    pub pending_config_import: Rc<RefCell<Vec<std::path::PathBuf>>>,
+    pub config_import_open: Rc<Cell<bool>>,
     pub connection: Rc<RefCell<crate::connection::ConnectionStatus>>,
     pub connection_detail: Rc<RefCell<String>>,
     pub last_connection_check: Rc<RefCell<Option<std::time::Instant>>>,
     pub updates: Rc<RefCell<crate::updater::PendingUpdates>>,
     pub last_update_check: Rc<RefCell<Option<std::time::Instant>>>,
     pub action_busy: Rc<RefCell<HashSet<String>>>,
+    pub folder_opening: Rc<RefCell<HashSet<String>>>,
     pub check_status_overrides: Rc<RefCell<HashMap<String, String>>>,
     pub hidden_check_ids: Rc<RefCell<HashSet<String>>>,
+    pub hidden_transfer_ids: Rc<RefCell<HashSet<String>>>,
+    pub pending_job_toasts: Rc<RefCell<Vec<(u64, String)>>>,
     dump_cache: Rc<RefCell<Option<(std::time::Instant, serde_json::Value)>>>,
+    pub overlay_windows: Rc<RefCell<Vec<OverlayEntry>>>,
+    pub on_overlays_changed: Rc<RefCell<Option<Rc<dyn Fn()>>>>,
+}
+
+#[derive(Clone)]
+pub struct OverlayEntry {
+    pub window: gtk::Window,
+    pub spec: crate::navigation::OverlaySpec,
 }
 
 impl AppCtx {
@@ -74,25 +104,40 @@ impl AppCtx {
             snapshot: Rc::new(RefCell::new(RuntimeSnapshot::default())),
             selected_remote: Rc::new(RefCell::new(None)),
             selected_quick_run: Rc::new(RefCell::new(None)),
+            selected_automation: Rc::new(RefCell::new(None)),
             pending_browse: Rc::new(RefCell::new(None)),
+            pending_files_overlay: Rc::new(RefCell::new(None)),
             pending_nav: Rc::new(RefCell::new(None)),
             pending_show: Rc::new(Cell::new(false)),
             pending_quit: Rc::new(Cell::new(false)),
+            pending_reload: Rc::new(Cell::new(false)),
+            pending_reopen_prefs: Rc::new(Cell::new(false)),
+            reload_destroy: Rc::new(Cell::new(false)),
+            ui_generation: Rc::new(Cell::new(0)),
+            active_workspace: Rc::new(RefCell::new("main_menu".into())),
             shutdown_prompt_open: Rc::new(Cell::new(false)),
             inhibitor: Rc::new(RefCell::new(PowerInhibitor::new())),
             watch_mtimes: Rc::new(RefCell::new(HashMap::new())),
+            pending_watch: Rc::new(RefCell::new(HashMap::new())),
             watch_hub: Rc::new(RefCell::new(crate::watch::WatchHub::new())),
             fsinfo_cache: Rc::new(RefCell::new(HashMap::new())),
             pending_picker: Rc::new(RefCell::new(None)),
+            pending_config_import: Rc::new(RefCell::new(Vec::new())),
+            config_import_open: Rc::new(Cell::new(false)),
             connection: Rc::new(RefCell::new(crate::connection::ConnectionStatus::Checking)),
             connection_detail: Rc::new(RefCell::new(String::new())),
             last_connection_check: Rc::new(RefCell::new(Some(std::time::Instant::now()))),
             updates: Rc::new(RefCell::new(crate::updater::PendingUpdates::default())),
             last_update_check: Rc::new(RefCell::new(Some(std::time::Instant::now()))),
             action_busy: Rc::new(RefCell::new(HashSet::new())),
+            folder_opening: Rc::new(RefCell::new(HashSet::new())),
             check_status_overrides: Rc::new(RefCell::new(HashMap::new())),
             hidden_check_ids: Rc::new(RefCell::new(HashSet::new())),
+            hidden_transfer_ids: Rc::new(RefCell::new(HashSet::new())),
+            pending_job_toasts: Rc::new(RefCell::new(Vec::new())),
             dump_cache: Rc::new(RefCell::new(None)),
+            overlay_windows: Rc::new(RefCell::new(Vec::new())),
+            on_overlays_changed: Rc::new(RefCell::new(None)),
         };
         ctx.apply_remote_layout();
         {
@@ -108,7 +153,87 @@ impl AppCtx {
             .ensure_paths(&[crate::settings::AppSettings::log_path()
                 .to_string_lossy()
                 .into_owned()]);
+        crate::platform::start_metered_watch();
         ctx
+    }
+
+    pub fn register_overlay(
+        &self,
+        window: &impl IsA<gtk::Window>,
+        spec: crate::navigation::OverlaySpec,
+    ) {
+        let win = window.upcast_ref::<gtk::Window>().clone();
+        {
+            let ctx = self.clone();
+            win.connect_close_request(move |_| {
+                glib::timeout_add_local_once(std::time::Duration::from_millis(0), {
+                    let ctx = ctx.clone();
+                    move || ctx.sync_overlays()
+                });
+                glib::Propagation::Proceed
+            });
+        }
+        self.overlay_windows
+            .borrow_mut()
+            .push(OverlayEntry { window: win, spec });
+        self.sync_overlays();
+    }
+
+    pub fn close_overlays(&self) {
+        let windows: Vec<gtk::Window> = self
+            .overlay_windows
+            .borrow_mut()
+            .drain(..)
+            .map(|entry| entry.window)
+            .collect();
+        for window in windows {
+            window.close();
+        }
+        self.sync_overlays();
+    }
+
+    pub fn overlay_count(&self) -> usize {
+        self.overlay_windows
+            .borrow()
+            .iter()
+            .filter(|entry| entry.window.is_visible())
+            .count()
+    }
+
+    pub fn snapshot_overlay_specs(&self) -> Vec<crate::navigation::OverlaySpec> {
+        self.sync_overlays();
+        self.overlay_windows
+            .borrow()
+            .iter()
+            .filter(|entry| entry.window.is_visible())
+            .map(|entry| entry.spec.clone())
+            .collect()
+    }
+
+    pub fn focus_overlay_kind(&self, kind: crate::navigation::OverlayKind) -> bool {
+        self.sync_overlays();
+        let found = self.overlay_windows.borrow().iter().find_map(|entry| {
+            if entry.spec.kind() == kind && entry.window.is_visible() {
+                Some(entry.window.clone())
+            } else {
+                None
+            }
+        });
+        if let Some(window) = found {
+            window.present();
+            true
+        } else {
+            false
+        }
+    }
+
+    pub fn sync_overlays(&self) {
+        self.overlay_windows
+            .borrow_mut()
+            .retain(|entry| entry.window.is_visible());
+        if let Some(cb) = self.on_overlays_changed.borrow().clone() {
+            cb();
+        }
     }
 
     fn cached_dump(&self, client: &crate::rclone::RcClient) -> serde_json::Value {
@@ -120,6 +245,21 @@ impl AppCtx {
         let dump = client.dump_config().unwrap_or(serde_json::json!({}));
         *self.dump_cache.borrow_mut() = Some((std::time::Instant::now(), dump.clone()));
         dump
+    }
+
+    pub fn config_dump(&self) -> serde_json::Value {
+        self.client()
+            .map(|client| self.cached_dump(&client))
+            .unwrap_or(serde_json::json!({}))
+    }
+
+    pub fn remote_cfg_alias(&self, name: &str) -> String {
+        self.config_dump()
+            .get(name)
+            .and_then(|cfg| cfg.get("remote"))
+            .and_then(|value| value.as_str())
+            .unwrap_or("")
+            .to_string()
     }
 
     pub fn runtime_busy(&self) -> bool {
@@ -161,17 +301,44 @@ impl AppCtx {
         })
     }
 
+    pub fn is_folder_opening(&self, remote: &str) -> bool {
+        crate::jobs::is_folder_opening(&self.folder_opening.borrow(), remote)
+    }
+
+    pub fn folder_open_guard(&self, remote: &str) -> Option<FolderOpenGuard> {
+        if !crate::jobs::begin_folder_open(&mut self.folder_opening.borrow_mut(), remote) {
+            return None;
+        }
+        Some(FolderOpenGuard {
+            ctx: self.clone(),
+            remote: remote.to_string(),
+        })
+    }
+
     pub fn open_typed_path(&self, current_remote: &str, raw: &str) {
+        let Some(_guard) = self.folder_open_guard(current_remote) else {
+            return;
+        };
         let typed = crate::path_kind::parse_typed_path(raw, current_remote);
         if typed.kind == crate::path_kind::PathKind::Local {
-            if self.engine_os().eq_ignore_ascii_case(std::env::consts::OS) {
+            let host_path = std::path::Path::new(&typed.path);
+            if host_path.exists() || self.engine_os().eq_ignore_ascii_case(std::env::consts::OS) {
                 let _ = open::that(&typed.path);
                 return;
             }
-            self.request_browse("local", &typed.path);
+            self.request_browse_or_overlay("local", &typed.path);
             return;
         }
-        self.request_browse(&typed.remote, &typed.path);
+        self.request_browse_or_overlay(&typed.remote, &typed.path);
+    }
+
+    pub fn backend_display_name(&self) -> String {
+        let active = self.settings.borrow().core.active_backend.clone();
+        if active.is_empty() {
+            "local".into()
+        } else {
+            active
+        }
     }
 
     pub fn browse_remote_home(&self, name: &str) {
@@ -190,7 +357,7 @@ impl AppCtx {
             self.open_typed_path(name, &point);
             return;
         }
-        self.request_browse(name, "");
+        self.request_browse_or_overlay(name, "");
     }
 
     pub fn browse_quick_run(&self, qr: &crate::store::QuickRun) {
@@ -229,6 +396,10 @@ impl AppCtx {
 
     pub fn tf(&self, key: &str, params: &[(&str, &str)]) -> String {
         self.i18n.borrow().tf(key, params)
+    }
+
+    pub fn tf_or(&self, key: &str, fallback: &str, params: &[(&str, &str)]) -> String {
+        self.i18n.borrow().tf_or(key, fallback, params)
     }
 
     pub fn option_label(&self, name: &str, kind: &str, fallback: &str) -> String {
@@ -283,7 +454,12 @@ impl AppCtx {
             if let Some(app) = pending.app.as_ref().filter(|u| u.available) {
                 self.store
                     .borrow_mut()
-                    .record_event(crate::alerts::update_event("app", &app.latest, &app.url));
+                    .record_event(crate::alerts::update_event(
+                        "app",
+                        &app.latest,
+                        &app.url,
+                        &|key, params| self.tf(key, params),
+                    ));
             }
             if let Some(rclone) = pending.rclone.as_ref().filter(|u| u.available) {
                 self.store
@@ -292,6 +468,7 @@ impl AppCtx {
                         "rclone",
                         &rclone.latest,
                         &rclone.url,
+                        &|key, params| self.tf(key, params),
                     ));
             }
             self.persist();
@@ -317,6 +494,18 @@ impl AppCtx {
         });
     }
 
+    pub fn request_browse_or_overlay(&self, remote: &str, path: &str) {
+        if crate::navigation::overlay_files_for_workspace(&self.active_workspace.borrow()) {
+            *self.pending_files_overlay.borrow_mut() = Some((remote.to_string(), path.to_string()));
+            return;
+        }
+        self.request_browse(remote, path);
+    }
+
+    pub fn take_files_overlay(&self) -> Option<(String, String)> {
+        self.pending_files_overlay.borrow_mut().take()
+    }
+
     pub fn request_nav(&self, target: crate::navigation::NavTarget) {
         *self.pending_nav.borrow_mut() = Some(target);
     }
@@ -339,6 +528,28 @@ impl AppCtx {
 
     pub fn take_quit(&self) -> bool {
         self.pending_quit.replace(false)
+    }
+
+    pub fn request_reload_ui(&self, reopen_prefs: bool) {
+        self.pending_reopen_prefs.set(reopen_prefs);
+        self.pending_reload.set(true);
+    }
+
+    pub fn take_reload(&self) -> bool {
+        self.pending_reload.replace(false)
+    }
+
+    pub fn take_reopen_prefs(&self) -> bool {
+        self.pending_reopen_prefs.replace(false)
+    }
+
+    pub fn take_reload_destroy(&self) -> bool {
+        self.reload_destroy.replace(false)
+    }
+
+    pub fn bump_generation(&self) {
+        self.ui_generation
+            .set(self.ui_generation.get().wrapping_add(1));
     }
 
     pub fn apply_persisted_options(&self) {
@@ -378,14 +589,107 @@ impl AppCtx {
         self.request_browse(&remote, &path);
     }
 
+    pub fn enqueue_config_import(&self, path: std::path::PathBuf) {
+        if path.as_os_str().is_empty() {
+            return;
+        }
+        let mut pending = self.pending_config_import.borrow_mut();
+        if pending.iter().any(|p| p == &path) {
+            return;
+        }
+        pending.push(path);
+    }
+
+    pub fn take_config_import(&self) -> Option<std::path::PathBuf> {
+        if self.config_import_open.get() {
+            return None;
+        }
+        let mut pending = self.pending_config_import.borrow_mut();
+        if pending.is_empty() {
+            None
+        } else {
+            Some(pending.remove(0))
+        }
+    }
+
     pub fn persist(&self) {
         self.save_remote_layout();
         let _ = self.settings.borrow().save();
         let _ = self.store.borrow().save();
     }
 
+    pub fn record_started_job(
+        &self,
+        result: &str,
+        remote: &str,
+        profile: &crate::store::ProfileConfig,
+        origin: &str,
+        op: &str,
+        src: &str,
+        dst: &str,
+        quick_run_id: &str,
+    ) {
+        let meta = crate::jobs::job_meta_for(
+            remote,
+            profile,
+            origin,
+            &self.backend_key(),
+            quick_run_id,
+            op,
+        );
+        let profile_name = meta.profile.clone();
+        {
+            let mut store = self.store.borrow_mut();
+            crate::jobs::remember_started(&mut store.job_meta, result, meta);
+            for id in crate::jobs::parse_started_ids(result) {
+                store.remember_job(crate::jobs::started_operation_job(
+                    id,
+                    op,
+                    remote,
+                    &profile_name,
+                    origin,
+                    src,
+                    dst,
+                ));
+            }
+        }
+        self.persist();
+    }
+
+    pub fn stamp_mount(&self, fs: &str, mount_point: &str, profile: &str, origin: &str) {
+        if mount_point.is_empty() {
+            return;
+        }
+        let mut snap = self.snapshot.borrow_mut();
+        if let Some(mount) = snap
+            .mounts
+            .iter_mut()
+            .find(|item| item.mount_point == mount_point)
+        {
+            if !profile.is_empty() {
+                mount.profile = profile.to_string();
+            }
+            if !origin.is_empty() {
+                mount.origin = origin.to_string();
+            }
+            if !fs.is_empty() {
+                mount.fs = fs.to_string();
+            }
+            return;
+        }
+        let mut mount = crate::rclone::MountedRemote::new(fs, mount_point);
+        mount.profile = profile.to_string();
+        mount.origin = origin.to_string();
+        snap.mounts.push(mount);
+    }
+
     pub fn backend_key(&self) -> String {
         crate::layout::backend_key(&self.settings.borrow().core.active_backend)
+    }
+
+    pub fn is_local_backend(&self) -> bool {
+        let active = self.settings.borrow().core.active_backend.clone();
+        active.is_empty() || active == "local"
     }
 
     /// OS of the active extra RC backend, or this process (`linux` / `windows` / `macos`).
@@ -452,8 +756,29 @@ impl AppCtx {
     }
 
     pub fn switch_backend(&self, name: &str) {
+        let from = self.settings.borrow().core.active_backend.clone();
+        let from_key = crate::layout::backend_key(&from);
+        let to_key = crate::layout::backend_key(name);
         self.fsinfo_cache.borrow_mut().clear();
         self.save_remote_layout();
+        if from_key != to_key {
+            let (from_mounts, from_serves) = {
+                let mut snap = self.snapshot.borrow_mut();
+                snap.jobs.clear();
+                snap.remotes.clear();
+                (
+                    std::mem::take(&mut snap.mounts),
+                    std::mem::take(&mut snap.serves),
+                )
+            };
+            let (mounts, serves) =
+                self.store
+                    .borrow_mut()
+                    .swap_backend_state(&from, name, from_mounts, from_serves);
+            let mut snap = self.snapshot.borrow_mut();
+            snap.mounts = mounts;
+            snap.serves = serves;
+        }
         self.settings.borrow_mut().core.active_backend = if name == "local" {
             String::new()
         } else {
@@ -612,17 +937,35 @@ impl AppCtx {
 
     pub fn refresh_runtime(&self) {
         let Some(client) = self.client() else {
+            let was_online = self.snapshot.borrow().engine_online;
+            self.snapshot.borrow_mut().engine_online = false;
+            if was_online {
+                let event = crate::alerts::engine_event(
+                    false,
+                    "rclone engine is offline",
+                    &|key, params| self.tf(key, params),
+                );
+                self.store.borrow_mut().record_event(event);
+                self.persist();
+            }
             return;
         };
         let dump = self.cached_dump(&client);
-        let mounts = client.list_mounts().unwrap_or_default();
+        let previous_mounts = self.snapshot.borrow().mounts.clone();
+        let mounts = crate::rclone::merge_mount_context(
+            client.list_mounts().unwrap_or_default(),
+            &previous_mounts,
+        );
         let serves = client.serve_list().unwrap_or_default();
         let stats = client.stats(None).unwrap_or(serde_json::json!({}));
         let disks = client
             .local_disks()
             .unwrap_or_else(|_| local_fallback_disks(&self.engine_os()));
         let hidden = self.store.borrow().hidden_remotes.clone();
-        let known: Vec<u64> = self.store.borrow().job_meta.keys().copied().collect();
+        let known = {
+            let store = self.store.borrow();
+            crate::jobs::known_job_ids(&store.job_history, &store.job_meta)
+        };
         let mut jobs = crate::jobs::merge_preparing_jobs(
             collect_jobs(&client, &known),
             &self.store.borrow().job_history,
@@ -636,10 +979,19 @@ impl AppCtx {
         }
         let remotes = crate::store::build_remote_infos(&dump, &mounts, &serves, &jobs, &hidden);
         let previous = self.snapshot.borrow().jobs.clone();
-        let previous_mounts = self.snapshot.borrow().mounts.clone();
         let previous_serves = self.snapshot.borrow().serves.clone();
+        let was_online = self.snapshot.borrow().engine_online;
         notify_job_changes(self, &previous, &jobs);
         emit_runtime_alerts(self, &previous_mounts, &mounts, &previous_serves, &serves);
+        if !was_online {
+            self.store
+                .borrow_mut()
+                .record_event(crate::alerts::engine_event(
+                    true,
+                    "rclone engine is online",
+                    &|key, params| self.tf(key, params),
+                ));
+        }
         let mut snap = self.snapshot.borrow_mut();
         snap.remotes = remotes;
         snap.mounts = mounts;
@@ -647,6 +999,7 @@ impl AppCtx {
         snap.stats = stats;
         snap.local_disks = disks;
         snap.jobs = jobs;
+        snap.engine_online = true;
         drop(snap);
         self.apply_effective_bandwidth();
         self.update_power_inhibit();
@@ -656,13 +1009,16 @@ impl AppCtx {
         let client = self
             .client()
             .ok_or_else(|| self.t_or("errors.engineOffline", "rclone engine is offline"))?;
-        let mounts = client.list_mounts().map_err(|e| e.to_string())?;
+        let previous_mounts = self.snapshot.borrow().mounts.clone();
+        let mounts = crate::rclone::merge_mount_context(
+            client.list_mounts().map_err(|e| e.to_string())?,
+            &previous_mounts,
+        );
         let dump = self.cached_dump(&client);
         let serves = self.snapshot.borrow().serves.clone();
         let jobs = self.snapshot.borrow().jobs.clone();
         let hidden = self.store.borrow().hidden_remotes.clone();
         let remotes = crate::store::build_remote_infos(&dump, &mounts, &serves, &jobs, &hidden);
-        let previous_mounts = self.snapshot.borrow().mounts.clone();
         emit_runtime_alerts(self, &previous_mounts, &mounts, &serves, &serves);
         let count = mounts.len();
         let mut snap = self.snapshot.borrow_mut();
@@ -771,32 +1127,57 @@ impl AppCtx {
         let records = crate::automation::collect(&self.store.borrow());
         let dirty = self.watch_hub.borrow().consume_dirty();
         let now = chrono::Utc::now();
+        let tick_now = std::time::Instant::now();
         let mut fired = false;
         let mut mtimes = self.watch_mtimes.borrow_mut();
+        let mut pending_watch = self.pending_watch.borrow_mut();
         for record in records {
             if self.store.borrow().is_automation_paused(&record.id) {
                 continue;
             }
             let due_cron = record.cron_enabled
                 && crate::automation::cron_is_due(&record.cron, record.last_run, now);
-            let mut due_watch = record.watch_enabled
-                && (crate::automation::watch_triggered(
+            if record.watch_enabled {
+                let matching = crate::watch::dirty_for_sources(&record.sources, &dirty);
+                let mtime_hit = crate::automation::watch_triggered(
                     &record.sources,
                     &mut mtimes,
                     record.watch_changed_only,
-                ) || crate::watch::dirty_matches(&record.sources, &dirty));
-            if due_watch {
-                if let Some(last) = record.last_run {
-                    if record.watch_delay > 0
-                        && (now - last).num_seconds() < record.watch_delay as i64
-                    {
-                        due_watch = false;
-                    }
+                );
+                if !matching.is_empty() || mtime_hit {
+                    let paths = if matching.is_empty() {
+                        record.sources.clone()
+                    } else {
+                        matching.into_iter().collect()
+                    };
+                    crate::automation::note_watch_change(
+                        pending_watch.entry(record.id.clone()).or_default(),
+                        paths,
+                    );
                 }
             }
+            let due_watch = record.watch_enabled
+                && pending_watch.get(&record.id).is_some_and(|pending| {
+                    crate::automation::watch_ready(pending, record.watch_delay, tick_now)
+                });
             if due_cron || due_watch {
+                let scoped = if due_watch
+                    && record.watch_changed_only
+                    && record.operation != crate::operations::OperationType::Bisync
+                {
+                    pending_watch.get(&record.id).map(|pending| {
+                        crate::automation::compute_scoped_targets(
+                            &record.sources,
+                            &record.destinations,
+                            &pending.paths,
+                        )
+                    })
+                } else {
+                    None
+                };
+                let scoped_ref = scoped.as_deref().filter(|pairs| !pairs.is_empty());
                 let mut store = self.store.borrow_mut();
-                match crate::automation::fire(&client, &mut store, &record, now) {
+                match crate::automation::fire(&client, &mut store, &record, now, scoped_ref) {
                     Ok(id) => {
                         log::info!("automation {} started {id}", record.name);
                         store.record_event(crate::alerts::automation_event(
@@ -804,6 +1185,7 @@ impl AppCtx {
                             &record.remote,
                             true,
                             &id,
+                            &|key, params| self.tf(key, params),
                         ));
                         fired = true;
                     }
@@ -814,12 +1196,17 @@ impl AppCtx {
                             &record.remote,
                             false,
                             &e,
+                            &|key, params| self.tf(key, params),
                         ));
                         fired = true;
                     }
                 }
+                if due_watch {
+                    pending_watch.remove(&record.id);
+                }
             }
         }
+        drop(pending_watch);
         drop(mtimes);
         if fired {
             self.persist();
@@ -828,16 +1215,117 @@ impl AppCtx {
     }
 
     pub fn toast(&self, overlay: &adw::ToastOverlay, message: impl AsRef<str>) {
-        overlay.add_toast(adw::Toast::new(message.as_ref()));
+        let toast = adw::Toast::new(message.as_ref());
+        toast.set_button_label(Some(&self.t_or("common.ok", "OK")));
+        overlay.add_toast(toast);
+    }
+
+    /// Translate backend JSON/keys, then toast (Angular `NotificationService.show`).
+    pub fn toast_error(&self, overlay: &adw::ToastOverlay, message: impl AsRef<str>) {
+        self.toast(overlay, self.translate_error(message.as_ref()));
+    }
+
+    /// Toast on the nearest `ToastOverlay` (ancestor, self, or window content).
+    pub fn toast_near(&self, parent: &impl IsA<gtk::Widget>, message: impl AsRef<str>) {
+        let toast = adw::Toast::new(message.as_ref());
+        toast.set_button_label(Some(&self.t_or("common.ok", "OK")));
+        toast.set_timeout(5);
+        if let Some(overlay) = find_toast_overlay(parent.upcast_ref()) {
+            overlay.add_toast(toast);
+        }
+    }
+
+    pub fn toast_error_near(&self, parent: &impl IsA<gtk::Widget>, message: impl AsRef<str>) {
+        self.toast_near(parent, self.translate_error(message.as_ref()));
+    }
+
+    pub fn toast_job_stop_result(
+        &self,
+        parent: &impl IsA<gtk::Widget>,
+        result: Result<impl std::fmt::Display, impl std::fmt::Display>,
+    ) {
+        match result {
+            Ok(_) => self.toast_near(
+                parent,
+                self.t_or(
+                    crate::jobs::job_stopped_toast_key(),
+                    "Job stopped successfully",
+                ),
+            ),
+            Err(e) => {
+                let error = self.translate_error(&e.to_string());
+                self.toast_near(
+                    parent,
+                    self.tf_or(
+                        crate::jobs::job_stop_failed_toast_key(),
+                        "Job execution failed: {{error}}",
+                        &[("error", &error)],
+                    ),
+                );
+            }
+        }
+    }
+
+    pub fn toast_serve_stop_result(
+        &self,
+        parent: &impl IsA<gtk::Widget>,
+        id: &str,
+        result: Result<impl std::fmt::Display, impl std::fmt::Display>,
+    ) {
+        match result {
+            Ok(_) => self.toast_near(
+                parent,
+                self.tf_or(
+                    "serve.successStop",
+                    "Successfully stopped serve {{id}}",
+                    &[("id", id)],
+                ),
+            ),
+            Err(e) => {
+                let error = self.translate_error(&e.to_string());
+                self.toast_near(
+                    parent,
+                    self.tf_or(
+                        "serve.failedStop",
+                        "Failed to stop serve {{id}}: {{error}}",
+                        &[("id", id), ("error", &error)],
+                    ),
+                );
+            }
+        }
+    }
+
+    pub fn toast_action(
+        &self,
+        overlay: &adw::ToastOverlay,
+        message: impl AsRef<str>,
+        button: impl AsRef<str>,
+        on_click: impl Fn() + 'static,
+    ) {
+        let toast = adw::Toast::new(message.as_ref());
+        toast.set_timeout(5);
+        toast.set_button_label(Some(button.as_ref()));
+        toast.connect_button_clicked(move |_| on_click());
+        overlay.add_toast(toast);
     }
 
     pub fn notify(&self, title: &str, body: &str) {
+        self.notify_target(title, body, crate::platform::NotificationTarget::ShowWindow);
+    }
+
+    pub fn notify_target(
+        &self,
+        title: &str,
+        body: &str,
+        target: crate::platform::NotificationTarget,
+    ) {
         if self.settings.borrow().general.notifications {
-            let _ = notify_rust::Notification::new()
-                .summary(title)
-                .body(body)
-                .show();
+            let _ = crate::platform::show_os_notification_target(title, body, target);
         }
+    }
+
+    pub fn take_job_toasts(&self) -> Vec<(u64, String)> {
+        self.pending_job_toasts.borrow_mut().drain(..).collect()
     }
 
     pub fn apply_theme(&self) {
@@ -862,6 +1350,17 @@ impl Drop for ActionBusyGuard {
     fn drop(&mut self) {
         self.ctx
             .set_busy(&self.remote, &self.op, &self.profile, false);
+    }
+}
+
+pub struct FolderOpenGuard {
+    ctx: AppCtx,
+    remote: String,
+}
+
+impl Drop for FolderOpenGuard {
+    fn drop(&mut self) {
+        crate::jobs::end_folder_open(&mut self.ctx.folder_opening.borrow_mut(), &self.remote);
     }
 }
 
@@ -920,8 +1419,37 @@ fn collect_jobs(client: &crate::rclone::RcClient, known: &[u64]) -> Vec<crate::s
         }
         jobs.push(crate::jobs::job_from_status(jobid, &status, Some(&stats)));
     }
-    jobs.retain(crate::jobs::is_managed_job);
+    jobs.retain(|job| crate::jobs::keep_collected_job(job, known));
     jobs
+}
+
+fn find_toast_overlay(widget: &gtk::Widget) -> Option<adw::ToastOverlay> {
+    if let Ok(overlay) = widget.clone().downcast::<adw::ToastOverlay>() {
+        return Some(overlay);
+    }
+    if let Some(overlay) = widget
+        .ancestor(adw::ToastOverlay::static_type())
+        .and_downcast::<adw::ToastOverlay>()
+    {
+        return Some(overlay);
+    }
+    if let Some(root) = widget.root() {
+        if let Ok(win) = root.downcast::<adw::ApplicationWindow>() {
+            if let Some(content) = win.content() {
+                if let Ok(overlay) = content.clone().downcast::<adw::ToastOverlay>() {
+                    return Some(overlay);
+                }
+                let mut child = content.first_child();
+                while let Some(node) = child {
+                    if let Ok(overlay) = node.clone().downcast::<adw::ToastOverlay>() {
+                        return Some(overlay);
+                    }
+                    child = node.next_sibling();
+                }
+            }
+        }
+    }
+    None
 }
 
 fn notify_job_changes(
@@ -930,7 +1458,24 @@ fn notify_job_changes(
     current: &[crate::store::JobInfo],
 ) {
     let mut dirty = false;
-    for event in crate::alerts::job_events(previous, current) {
+    if crate::automation::apply_job_transitions(&mut ctx.store.borrow_mut(), previous, current) > 0
+    {
+        dirty = true;
+    }
+    for event in crate::alerts::job_events(previous, current, &|key, params| ctx.tf(key, params)) {
+        if event.severity == crate::store::AlertSeverity::High {
+            if let Some(id) = event.job_id {
+                if current
+                    .iter()
+                    .find(|job| job.id == id)
+                    .is_some_and(crate::jobs::should_toast_job_failure)
+                {
+                    ctx.pending_job_toasts
+                        .borrow_mut()
+                        .push((id, event.title.clone()));
+                }
+            }
+        }
         ctx.store.borrow_mut().record_event(event);
         dirty = true;
     }
@@ -984,7 +1529,9 @@ fn emit_runtime_alerts(
     serves: &[crate::rclone::ServeItem],
 ) {
     let mut dirty = false;
-    for event in crate::alerts::mount_events(previous_mounts, mounts) {
+    for event in
+        crate::alerts::mount_events(previous_mounts, mounts, &|key, params| ctx.tf(key, params))
+    {
         ctx.store.borrow_mut().push_log(
             &event.remote,
             crate::logs::format_now(
@@ -997,7 +1544,9 @@ fn emit_runtime_alerts(
         ctx.store.borrow_mut().record_event(event);
         dirty = true;
     }
-    for event in crate::alerts::serve_events(previous_serves, serves) {
+    for event in
+        crate::alerts::serve_events(previous_serves, serves, &|key, params| ctx.tf(key, params))
+    {
         ctx.store.borrow_mut().push_log(
             &event.remote,
             crate::logs::format_now(
@@ -1031,6 +1580,7 @@ pub(super) fn detail_page_switcher(
     stack: &adw::ViewStack,
     page: &Rc<RefCell<String>>,
     pages: &[(&str, String)],
+    on_change: Option<Rc<dyn Fn(&str)>>,
 ) -> gtk::Box {
     use gtk::prelude::*;
     let row = gtk::Box::new(gtk::Orientation::Horizontal, 0);
@@ -1054,10 +1604,14 @@ pub(super) fn detail_page_switcher(
         let stack = stack.clone();
         let page = page.clone();
         let name = (*name).to_string();
+        let on_change = on_change.clone();
         btn.connect_toggled(move |button| {
             if button.is_active() {
                 *page.borrow_mut() = name.clone();
                 stack.set_visible_child_name(&name);
+                if let Some(cb) = &on_change {
+                    cb(&name);
+                }
             }
         });
         row.append(&btn);

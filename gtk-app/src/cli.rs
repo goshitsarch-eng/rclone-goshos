@@ -14,6 +14,7 @@ pub struct CliArgs {
     pub logs_dir: Option<PathBuf>,
     pub tray: bool,
     pub hidden: bool,
+    pub tray_action: Option<String>,
 }
 
 impl CliArgs {
@@ -53,6 +54,13 @@ pub fn parse_cli_args(args: &[String]) -> CliArgs {
             parsed.tray = true;
         } else if arg == "--hidden" {
             parsed.hidden = true;
+        } else if let Some(value) = value_of(arg, "--tray-action") {
+            parsed.tray_action = Some(value.to_string());
+        } else if arg == "--tray-action" {
+            i += 1;
+            if let Some(value) = args.get(i) {
+                parsed.tray_action = Some(value.clone());
+            }
         }
         i += 1;
     }
@@ -88,8 +96,44 @@ pub fn set_launch_args(args: Vec<String>) {
     *LAUNCH_ARGS.lock().unwrap_or_else(|e| e.into_inner()) = args;
 }
 
+/// Decode one GApplication `options_dict` value without assuming the variant is a string.
+/// Boolean flags such as `--auto-add` panic in glib if they are read as bytestrings first.
+pub fn option_flag_from_variant(
+    name: &str,
+    value: &glib::Variant,
+) -> Option<(String, Option<String>)> {
+    if *value.type_() == *glib::VariantTy::BOOLEAN {
+        return value
+            .get::<bool>()
+            .filter(|on| *on)
+            .map(|_| (name.to_string(), None));
+    }
+    let text = value
+        .str()
+        .map(ToOwned::to_owned)
+        .or_else(|| value.get::<String>())
+        .or_else(|| {
+            value
+                .get::<PathBuf>()
+                .map(|p| p.to_string_lossy().into_owned())
+        })?;
+    Some((
+        name.to_string(),
+        if text.is_empty() { None } else { Some(text) },
+    ))
+}
+
 /// Re-insert GIO-consumed flags so a second instance can deep-link the primary.
+///
+/// Flags are inserted after argv0 so leftover tokens stay as values. GLib
+/// `OptionArg::None` consumes `--about` / `--preferences` and leaves `rclone`
+/// in leftover; appending the flag would yield `app rclone --about` and drop
+/// the page.
 pub fn merge_option_flags(args: &mut Vec<String>, flags: &[(String, Option<String>)]) {
+    if args.is_empty() {
+        return;
+    }
+    let mut insert_at = 1;
     for (name, value) in flags {
         let flag = format!("--{name}");
         if args
@@ -98,10 +142,12 @@ pub fn merge_option_flags(args: &mut Vec<String>, flags: &[(String, Option<Strin
         {
             continue;
         }
-        args.push(flag);
+        args.insert(insert_at, flag);
+        insert_at += 1;
         if let Some(value) = value {
             if !value.is_empty() {
-                args.push(value.clone());
+                args.insert(insert_at, value.clone());
+                insert_at += 1;
             }
         }
     }
@@ -160,6 +206,14 @@ mod tests {
         assert!(args.tray);
         assert!(!args.hidden);
         assert!(args.start_hidden());
+        let action = parse_cli_args(&["app".into(), "--tray-action".into(), "show-window".into()]);
+        assert_eq!(action.tray_action.as_deref(), Some("show-window"));
+        assert_eq!(
+            parse_cli_args(&["app".into(), "--tray-action=quit".into()])
+                .tray_action
+                .as_deref(),
+            Some("quit")
+        );
     }
 
     #[test]
@@ -218,5 +272,95 @@ mod tests {
         );
         merge_option_flags(&mut args, &[("about".into(), None)]);
         assert_eq!(args.iter().filter(|arg| *arg == "--about").count(), 1);
+    }
+
+    #[test]
+    fn inserts_consumed_flags_before_leftover_page_tokens() {
+        let mut about = vec!["app".into(), "rclone".into()];
+        merge_option_flags(&mut about, &[("about".into(), None)]);
+        assert_eq!(
+            about,
+            vec!["app".to_string(), "--about".into(), "rclone".into()]
+        );
+        assert_eq!(
+            crate::navigation::parse_launch_args(&about, false),
+            Some(crate::navigation::LaunchRequest {
+                target: crate::navigation::NavTarget::About {
+                    page: Some("about-rclone".into())
+                },
+                standalone: false,
+            })
+        );
+
+        let mut prefs = vec!["app".into(), "security".into()];
+        merge_option_flags(&mut prefs, &[("preferences".into(), None)]);
+        assert_eq!(
+            prefs,
+            vec!["app".to_string(), "--preferences".into(), "security".into()]
+        );
+        assert_eq!(
+            crate::navigation::parse_launch_args(&prefs, false),
+            Some(crate::navigation::LaunchRequest {
+                target: crate::navigation::NavTarget::Preferences {
+                    page: Some("security".into())
+                },
+                standalone: false,
+            })
+        );
+
+        let mut both = vec!["app".into(), "rclone".into(), "security".into()];
+        merge_option_flags(
+            &mut both,
+            &[("about".into(), None), ("preferences".into(), None)],
+        );
+        assert_eq!(
+            both,
+            vec![
+                "app".to_string(),
+                "--about".into(),
+                "--preferences".into(),
+                "rclone".into(),
+                "security".into()
+            ]
+        );
+    }
+
+    #[test]
+    fn merges_dialog_flags_for_restore_preview() {
+        let mut args = vec!["app".into()];
+        merge_option_flags(
+            &mut args,
+            &[
+                ("dialog".into(), Some("restore-preview".into())),
+                (
+                    "dialog-data".into(),
+                    Some(r#"{"path":"/tmp/rclone-manager-gui-backup.zip"}"#.into()),
+                ),
+            ],
+        );
+        let req = crate::platform::parse_dialog_args(&args).expect("dialog request");
+        assert_eq!(req.kind, "restore-preview");
+        assert_eq!(req.data["path"], "/tmp/rclone-manager-gui-backup.zip");
+    }
+
+    #[test]
+    fn option_flag_reads_bool_before_string() {
+        use glib::prelude::ToVariant;
+        assert_eq!(
+            option_flag_from_variant("auto-add", &true.to_variant()),
+            Some(("auto-add".into(), None))
+        );
+        assert_eq!(
+            option_flag_from_variant("auto-add", &false.to_variant()),
+            None
+        );
+        assert_eq!(
+            option_flag_from_variant("logs", &"testdrive".to_variant()),
+            Some(("logs".into(), Some("testdrive".into())))
+        );
+        assert_eq!(
+            option_flag_from_variant("logs", &"".to_variant()),
+            Some(("logs".into(), None))
+        );
     }
 }

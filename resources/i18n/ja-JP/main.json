@@ -77,6 +77,32 @@
     "nthWeekdayAt": "{{nth}} の{{day}} {{time}}",
     "inMonthsAt": "{{months}} {{time}}",
     "inMonthsOnDayAt": "{{months}} {{dom}} 日 {{time}}",
+    "atTimes": "{{times}}",
+    "hourlyAtMinutes": "毎時 {{mins}} 分",
+    "everyHoursBetween": "{{start}}〜{{end}} の間、{{n}} 時間ごと",
+    "everyMinutesAt": "{{times}} に {{n}} 分ごと",
+    "atMinutesBetween": "{{start}}〜{{end}} の {{mins}} 分",
+    "atHours": "{{hours}}",
+    "lastWeekdayOfMonthAt": "毎月最後の平日 {{time}}",
+    "atTime": "{{time}}",
+    "onDays": "{{days}} 日",
+    "onDay": "{{day}} 日",
+    "inMonths": "{{months}}",
+    "onWeekdays": "{{days}}",
+    "onWeekdaysWord": "平日",
+    "onWeekendsWord": "週末",
+    "onLastDay": "月末日",
+    "onLastWeekday": "月末の平日",
+    "onEveryNDays": "{{n}} 日ごと",
+    "onNearestWeekday": "{{day}} 日に最も近い平日",
+    "onNthWeekday": "{{nth}} {{day}}",
+    "onLastNamedWeekday": "最後の {{day}}",
+    "atMinuteHour": "{{hour}} 時 {{min}} 分",
+    "nearestWeekdayAt": "{{day}} 日に最も近い平日 {{time}}",
+    "everyNDaysAt": "{{n}} 日ごと {{time}}",
+    "composed": "{{head}}、{{tail}}",
+    "weekdaysAtTimes": "平日 {{times}}",
+    "weekendsAtTimes": "週末 {{times}}",
     "days": {
       "0": "日曜日",
       "1": "月曜日",
@@ -128,7 +154,7 @@
     "vfsPollUpdated": "Poll interval updated",
     "vfsQueueExpiry": "Queue id / expiry",
     "vfsExpiryUpdated": "Queue expiry updated",
-    "flagsApplyHelp": "Edits are sent to rclone via options/set. Categories match the Angular flag panels.",
+    "flagsApplyHelp": "Edits are sent to rclone via options/set. Categories match the flag panels.",
     "flagsWriteEngine": "Write flags to the running engine",
     "jsonMode": "JSON",
     "jsonPayload": "Raw options/set payload",
@@ -185,6 +211,7 @@
     "cron": "Cron schedule",
     "linkedHelpers": "Linked helper profiles",
     "filterFlags": "Filter flags",
+    "filterKeys": "キーを絞り込み",
     "importCliFlags": "Import rclone CLI flags",
     "cliImport": "CLI import",
     "jsonDocument": "JSON document",
@@ -532,6 +559,7 @@
       "apiKey": "APIキー",
       "gatewayUrl": "ゲートウェイ URL",
       "customGateway": "カスタムゲートウェイ",
+      "callMeBot": "CallMeBot",
       "messageTemplate": "メッセージテンプレート",
       "messageTemplateHint": "Handlebars変数をサポートしています",
       "telegram_info": "Bot Tokenは @BotFather から、チャット ID は @userinfobot から取得できます。",
@@ -549,6 +577,9 @@
       "from": "送信元アドレス",
       "to": "送信先アドレス",
       "encryption": "暗号化",
+      "encryptionNone": "なし",
+      "encryptionTls": "TLS（ポート 465）",
+      "encryptionStarttls": "StartTLS（ポート 587）",
       "subjectTemplate": "件名テンプレート",
       "headers": "HTTP/S ヘッダー",
       "presets": "プリセット",
@@ -556,6 +587,7 @@
       "slack": "Slack",
       "headerKey": "ヘッダー名",
       "headerValue": "値",
+      "addHeader": "ヘッダーを追加",
       "editorTitle": "Alert action",
       "telegramMode": "Telegram mode",
       "envVars": "Environment variables (KEY=value)",
@@ -570,7 +602,8 @@
     "acknowledge": "Acknowledge",
     "addRule": "Add rule",
     "addAction": "Add action",
-    "templateKeys": "Insert template key"
+    "templateKeys": "Insert template key",
+    "statsLine": "合計 {{total}} · 確認 {{ack}} · 未確認 {{open}} · 配信 {{delivered}} · 最終 {{last}}"
   },
   "settings": {
     "resetAll": {
@@ -851,9 +884,11 @@
       "add": "Add remote or quick run",
       "developer": "Developer",
       "trayActions": "Tray actions",
-      "memoryUnavailable": "メモリ統計を取得できません"
+      "memoryUnavailable": "メモリ統計を取得できません",
+      "remoteVisible": "サイドバーと概要に表示"
     },
-    "detach": "Detach the current workspace into a new window"
+    "detach": "Detach the current workspace into a new window",
+    "closeOverlay": "Close overlay and return to the base view"
   },
   "onboarding": {
     "loadingTitle": "RClone Manager を初期化中",
@@ -1308,6 +1343,7 @@
       "nameTaken": "この名前のリモートは既に存在します",
       "remoteType": "リモートタイプ",
       "noMatchingTypes": "一致するリモートタイプはありません",
+      "noMatchingProviders": "一致するプロバイダーはありません",
       "loadingOptions": "設定オプションを読み込み中...",
       "fields": "フィールド",
       "switchToForm": "フォームモードに切り替え",
@@ -1567,6 +1603,20 @@
   },
   "backup": {
     "analyzeFailed": "バックアップファイルの解析に失敗しました",
+    "importConfig": {
+      "title": "Import rclone.conf",
+      "heading": "Import remotes from this configuration file?",
+      "file": "File",
+      "remotes": "Remotes",
+      "overwrite": "Replace remotes that already exist",
+      "import": "Import",
+      "cancel": "Cancel",
+      "empty": "No remotes found in this file",
+      "failed": "Could not read rclone.conf: {{error}}",
+      "noEngine": "rclone is not running",
+      "success": "Imported {{count}} remotes",
+      "partial": "Imported {{created}}, skipped {{skipped}}, failed {{failed}}"
+    },
     "restore": {
       "title": "バックアップの復元",
       "ariaClose": "復元プレビューを閉じる",
@@ -1604,6 +1654,7 @@
         "profile": "特定のプロファイルのみ復元"
       },
       "selectProfile": "プロファイルを選択",
+      "restoreAs": "別の名前で復元（任意）",
       "note": "バックアップメモ",
       "passwordRequired": "パスワードが必要です",
       "encryptedWarning": "このバックアップは暗号化されています。復号化して復元するには正しいパスワードを入力してください。",
@@ -1763,6 +1814,8 @@
     "fileViewer": {
       "closeViewer": "ビューアーを閉じる",
       "download": "{{name}} をダウンロード",
+      "previousPage": "前のページ",
+      "nextPage": "次のページ",
       "previousFile": "前のファイル",
       "nextFile": "次のファイル",
       "loadingContent": "コンテンツを読み込み中",
@@ -2113,6 +2166,12 @@
       "openFlathub": "Flathub を開く",
       "loadInfoFailed": "Rclone情報の読み込みに失敗しました。",
       "license": "ライセンス",
+      "toolkit": "GTK 4 + libadwaita",
+      "copyVersion": "Rclone Manager {version} · rclone {rclone}",
+      "licenseId": "GPL-3.0-or-later",
+      "gnuGpl": "GNU GPL v3",
+      "leadName": "Zarestia Dev",
+      "ackTextGtk": "このアプリケーションは GTK 4 + libadwaita で構築され、クラウドストレージ管理に優れた Rclone プロジェクトを利用しています。",
       "licenseText1": "本アプリケーションは、以下のライセンスの下で配布されるオープンソースソフトウェアです:",
       "orLater": "（またはそれ以降）",
       "licenseText2": "本プログラムは無保証で提供されます。GPL v3 ライセンスの条項に従って自由に使用、改変、配布することができます。",
@@ -2185,6 +2244,12 @@
       "resetAll": "全ての設定をリセット",
       "noSettingsFound": "一致する設定が見つかりません",
       "trySearching": "検索キーワードの例:",
+      "searchSuggestions": {
+        "apiPort": "APIポート",
+        "startup": "スタートアップ",
+        "debug": "デバッグ",
+        "bandwidth": "帯域幅"
+      },
       "readyToRestartHeader": "再起動が必要な設定",
       "readyToRestartDesc": "以下の変更を有効にするにはエンジンの再起動が必要です:",
       "discardChanges": "変更を破棄",
@@ -2245,6 +2310,10 @@
       "passwordHint": "バックアップを復元する際にこのパスワードが必要になります。",
       "includeSecrets": "秘密鍵・シークレットを含める",
       "includeSecretsHint": "バックアップに機密資格情報を含めます。暗号化が必須です。",
+      "format": "Format",
+      "formatZip": "Zip backup",
+      "formatConf": "rclone.conf",
+      "confSuccess": "rclone.conf exported",
       "exportNow": "今すぐエクスポート",
       "exporting": "エクスポート中...",
       "fullBackup": "完全バックアップ",
@@ -2256,6 +2325,7 @@
       "externalConfig": "外部設定ファイル",
       "profiles": "プロファイルを含める",
       "profilesHint": "バックアップに含める特定のプロファイルを選択します。",
+      "encryptBackup": "Encrypt backup",
       "categories": {
         "settings": {
           "label": "アプリケーション設定",
@@ -2606,6 +2676,8 @@
     }
   },
   "nautilus": {
+    "loadMore": "さらに {{count}} 件表示",
+    "progressiveRender": "{{shown}} / {{total}} 件を表示",
     "sidebar": {
       "configureTitle": "サイドバー項目の設定",
       "configureDescription": "ドラッグして並べ替えたり、目のアイコンでサイドバーのドライブやクラウドリモートの表示/非表示を切り替えたりできます。"
@@ -2626,7 +2698,8 @@
       "fileSystem": "ファイルシステム",
       "bookmarks": "ブックマーク",
       "localDisk": "ローカルディスク",
-      "pathPlaceholder": "remote:path or /local/path"
+      "pathPlaceholder": "remote:path or /local/path",
+      "detachedTab": "{app} — {title}"
     },
     "bookmarks": {
       "emptyHint": "ブックマークはありません"
@@ -2774,6 +2847,8 @@
       "delete": "削除",
       "compress": "圧縮",
       "copy": "コピー",
+      "copyTo": "コピー先…",
+      "moveTo": "移動先…",
       "cut": "切り取り",
       "rename": "名前を変更",
       "paste": "貼り付け",
@@ -2792,7 +2867,10 @@
       "copyPublicLink": "公開リンクをコピー",
       "createFolderWithItems": "選択項目から新しいフォルダを作成...",
       "renameMultiple": "一括名前変更...",
+      "star": "スター / 解除",
+      "bookmark": "ブックマーク",
       "pathOptions": "Path options",
+      "selectionActions": "選択した項目の操作",
       "move": "Move",
       "openNative": "Open native",
       "copyUrl": "Copy URL into folder…",
@@ -2808,6 +2886,9 @@
       "showHidden": "隠しファイルを表示",
       "toggleLayout": "レイアウトの切り替え",
       "viewOptions": "表示オプション",
+      "star": "このフォルダをスター",
+      "starred": "スター済み",
+      "unstarred": "スターから削除",
       "smaller": "Smaller",
       "larger": "Larger"
     },
@@ -2827,6 +2908,7 @@
       "nothingToRedo": "やり直す操作はありません",
       "cannotUndo": "この操作は元に戻せません",
       "selectValid": "続行するには有効な項目を選択してください",
+      "nothingSelected": "先にファイルまたはフォルダーを選択してください",
       "selectNewFolderItems": "新しいフォルダに移動する項目を選択",
       "selectToDownload": "ダウンロードするファイルを選択",
       "selectToShare": "共有するファイルを選択",
@@ -2840,7 +2922,8 @@
       "getPublicLinkStarted": "公開リンクを生成中...",
       "archiveCreateStarted": "圧縮を開始しました...",
       "sendToAdded": "'{{remote}}{{path}}' をファイルマネージャーメニューに追加しました",
-      "sendToRemoved": "'{{remote}}{{path}}' をファイルマネージャーメニューから削除しました"
+      "sendToRemoved": "'{{remote}}{{path}}' をファイルマネージャーメニューから削除しました",
+      "locationNotAllowed": "この選択ではその場所は使えません"
     },
     "androidShare": {
       "uploadHere": "{{count}} 個の共有ファイルをこのフォルダにアップロード",
@@ -3498,7 +3581,11 @@
     "folders": "Folders",
     "maintenance": "Maintenance",
     "relaunch": "Relaunch",
-    "gcStarted": "Garbage collection started"
+    "gcStarted": "Garbage collection started",
+    "rcloneConfig": "rclone 設定",
+    "rcloneCache": "rclone キャッシュ",
+    "rcloneTemp": "rclone 一時領域",
+    "configEncrypted": "rclone.conf は暗号化済み"
   },
   "flow": {
     "title": "Flow",
@@ -3574,6 +3661,7 @@
   },
   "templates": {
     "title": "テンプレート",
+    "search": "テンプレートを検索…",
     "presetTitle": "プリセットとテンプレート",
     "applyPresets": "デフォルトのプリセットを適用",
     "userTemplates": "保存されたユーザーテンプレート",

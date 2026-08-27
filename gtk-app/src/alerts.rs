@@ -13,48 +13,83 @@ pub fn job_event(
     event.remote = job.remote.clone();
     event.origin = job.origin.clone();
     event.profile = job.profile.clone();
+    event.job_id = Some(job.id);
     event
 }
 
-pub fn job_events(previous: &[JobInfo], current: &[JobInfo]) -> Vec<AlertEvent> {
+pub type FormatFn<'a> = &'a dyn Fn(&str, &[(&str, &str)]) -> String;
+
+pub fn job_events(previous: &[JobInfo], current: &[JobInfo], tf: FormatFn<'_>) -> Vec<AlertEvent> {
     let mut out = Vec::new();
     for job in current {
         let was = previous.iter().find(|j| j.id == job.id);
-        if job.status == "failed" && was.map(|j| j.status.as_str()) != Some("failed") {
+        let params = [
+            ("type", job.operation.as_str()),
+            ("remote", job.remote.as_str()),
+            ("profile", job.profile.as_str()),
+            ("backend", job.origin.as_str()),
+            ("error", job.error.as_deref().unwrap_or("rclone job failed")),
+        ];
+        if was.is_none() && !matches!(job.status.as_str(), "completed" | "failed" | "stopped") {
+            out.push(job_event(
+                job,
+                AlertSeverity::Info,
+                tf("notification.title.jobStarted", &params),
+                tf("notification.body.jobStarted", &params),
+            ));
+        } else if job.status == "failed" && was.map(|j| j.status.as_str()) != Some("failed") {
             out.push(job_event(
                 job,
                 AlertSeverity::High,
-                format!("Job #{} failed", job.id),
-                job.error
-                    .clone()
-                    .unwrap_or_else(|| "rclone job failed".into()),
+                tf("notification.title.jobFailed", &params),
+                tf("notification.body.jobFailed", &params),
             ));
         } else if job.status == "completed" && was.map(|j| j.status.as_str()) == Some("running") {
             out.push(job_event(
                 job,
                 AlertSeverity::Info,
-                format!("Job #{} completed", job.id),
-                format!("{} finished", job.operation),
+                tf("notification.title.jobCompleted", &params),
+                tf("notification.body.jobCompleted", &params),
+            ));
+        } else if job.status == "stopped"
+            && was.is_some_and(|j| !matches!(j.status.as_str(), "stopped" | "completed" | "failed"))
+        {
+            out.push(job_event(
+                job,
+                AlertSeverity::Warning,
+                tf("notification.title.jobStopped", &params),
+                tf("notification.body.jobStopped", &params),
             ));
         }
     }
     out
 }
 
-pub fn mount_events(previous: &[MountedRemote], current: &[MountedRemote]) -> Vec<AlertEvent> {
+pub fn mount_events(
+    previous: &[MountedRemote],
+    current: &[MountedRemote],
+    tf: FormatFn<'_>,
+) -> Vec<AlertEvent> {
     let mut out = Vec::new();
     for mount in current {
         if !previous
             .iter()
             .any(|p| p.fs == mount.fs && p.mount_point == mount.mount_point)
         {
+            let remote = infer_remote(&mount.fs);
+            let params = [
+                ("remote", remote.as_str()),
+                ("profile", "default"),
+                ("backend", "local"),
+                ("mountPoint", mount.mount_point.as_str()),
+            ];
             let mut event = AlertEvent::new(
                 AlertEventKind::Mount,
                 AlertSeverity::Info,
-                format!("Mounted {}", mount.fs),
-                format!("{} → {}", mount.fs, mount.mount_point),
+                tf("notification.title.mountSucceeded", &params),
+                tf("notification.body.mountSucceeded", &params),
             );
-            event.remote = infer_remote(&mount.fs);
+            event.remote = remote;
             event.origin = "mount".into();
             out.push(event);
         }
@@ -64,13 +99,20 @@ pub fn mount_events(previous: &[MountedRemote], current: &[MountedRemote]) -> Ve
             .iter()
             .any(|c| c.fs == mount.fs && c.mount_point == mount.mount_point)
         {
+            let remote = infer_remote(&mount.fs);
+            let params = [
+                ("remote", remote.as_str()),
+                ("profile", "default"),
+                ("backend", "local"),
+                ("mountPoint", mount.mount_point.as_str()),
+            ];
             let mut event = AlertEvent::new(
                 AlertEventKind::Mount,
                 AlertSeverity::Warning,
-                format!("Unmounted {}", mount.fs),
-                format!("{} left {}", mount.fs, mount.mount_point),
+                tf("notification.title.unmountSucceeded", &params),
+                tf("notification.body.unmountSucceeded", &params),
             );
-            event.remote = infer_remote(&mount.fs);
+            event.remote = remote;
             event.origin = "mount".into();
             out.push(event);
         }
@@ -78,30 +120,48 @@ pub fn mount_events(previous: &[MountedRemote], current: &[MountedRemote]) -> Ve
     out
 }
 
-pub fn serve_events(previous: &[ServeItem], current: &[ServeItem]) -> Vec<AlertEvent> {
+pub fn serve_events(
+    previous: &[ServeItem],
+    current: &[ServeItem],
+    tf: FormatFn<'_>,
+) -> Vec<AlertEvent> {
     let mut out = Vec::new();
     for serve in current {
         if !previous.iter().any(|p| p.id == serve.id) {
+            let remote = infer_remote(&serve.fs);
+            let params = [
+                ("remote", remote.as_str()),
+                ("profile", serve.profile.as_str()),
+                ("backend", "local"),
+                ("type", serve.serve_type.as_str()),
+            ];
             let mut event = AlertEvent::new(
                 AlertEventKind::Serve,
                 AlertSeverity::Info,
-                format!("Serving {} on {}", serve.serve_type, serve.addr),
-                format!("{} · {}", serve.fs, serve.addr),
+                tf("notification.title.serveStarted", &params),
+                tf("notification.body.serveStarted", &params),
             );
-            event.remote = infer_remote(&serve.fs);
+            event.remote = remote;
             event.origin = "serve".into();
             out.push(event);
         }
     }
     for serve in previous {
         if !current.iter().any(|c| c.id == serve.id) {
+            let remote = infer_remote(&serve.fs);
+            let params = [
+                ("remote", remote.as_str()),
+                ("profile", serve.profile.as_str()),
+                ("backend", "local"),
+                ("type", serve.serve_type.as_str()),
+            ];
             let mut event = AlertEvent::new(
                 AlertEventKind::Serve,
                 AlertSeverity::Warning,
-                format!("Stopped {} serve", serve.serve_type),
-                format!("{} · {}", serve.fs, serve.addr),
+                tf("notification.title.serveStopped", &params),
+                tf("notification.body.serveStopped", &params),
             );
-            event.remote = infer_remote(&serve.fs);
+            event.remote = remote;
             event.origin = "serve".into();
             out.push(event);
         }
@@ -109,7 +169,19 @@ pub fn serve_events(previous: &[ServeItem], current: &[ServeItem]) -> Vec<AlertE
     out
 }
 
-pub fn automation_event(name: &str, remote: &str, ok: bool, detail: &str) -> AlertEvent {
+pub fn automation_event(
+    name: &str,
+    remote: &str,
+    ok: bool,
+    detail: &str,
+    tf: FormatFn<'_>,
+) -> AlertEvent {
+    let params = [
+        ("type", "cron"),
+        ("automation", name),
+        ("backend", "local"),
+        ("error", detail),
+    ];
     let mut event = AlertEvent::new(
         AlertEventKind::Automation,
         if ok {
@@ -117,30 +189,39 @@ pub fn automation_event(name: &str, remote: &str, ok: bool, detail: &str) -> Ale
         } else {
             AlertSeverity::High
         },
+        tf(
+            if ok {
+                "notification.title.automationStarted"
+            } else {
+                "notification.title.automationFailed"
+            },
+            &params,
+        ),
         if ok {
-            format!("Automation {name} started")
+            tf("notification.body.automationStarted", &params)
         } else {
-            format!("Automation {name} failed")
+            tf("notification.body.automationFailed", &params)
         },
-        detail.to_string(),
     );
     event.remote = remote.to_string();
     event.origin = "automation".into();
     event
 }
 
-pub fn update_event(kind: &str, version: &str, url: &str) -> AlertEvent {
+pub fn update_event(kind: &str, version: &str, url: &str, tf: FormatFn<'_>) -> AlertEvent {
+    let params = [("version", version), ("kind", kind), ("url", url)];
     let mut event = AlertEvent::new(
         AlertEventKind::Update,
         AlertSeverity::Info,
-        format!("{kind} update available"),
-        format!("{version} · {url}"),
+        tf("notification.title.updateFound", &params),
+        tf("notification.body.updateFound", &params),
     );
     event.origin = "updater".into();
     event
 }
 
-pub fn engine_event(online: bool, detail: &str) -> AlertEvent {
+pub fn engine_event(online: bool, detail: &str, tf: FormatFn<'_>) -> AlertEvent {
+    let params = [("error", detail), ("detail", detail)];
     AlertEvent::new(
         AlertEventKind::Engine,
         if online {
@@ -148,11 +229,14 @@ pub fn engine_event(online: bool, detail: &str) -> AlertEvent {
         } else {
             AlertSeverity::High
         },
-        if online {
-            "rclone engine online".into()
-        } else {
-            "rclone engine offline".into()
-        },
+        tf(
+            if online {
+                "notification.title.engineRestarted"
+            } else {
+                "notification.title.engineConnectionFailed"
+            },
+            &params,
+        ),
         detail.to_string(),
     )
 }
@@ -165,6 +249,15 @@ fn infer_remote(fs: &str) -> String {
 mod tests {
     use super::*;
     use chrono::Utc;
+
+    fn tf(key: &str, params: &[(&str, &str)]) -> String {
+        let mut out = key.to_string();
+        for (_, value) in params {
+            out.push(' ');
+            out.push_str(value);
+        }
+        out
+    }
 
     fn job(id: u64, status: &str) -> JobInfo {
         JobInfo {
@@ -198,21 +291,33 @@ mod tests {
     fn job_events_emit_fail_and_complete() {
         let prev = vec![job(1, "running"), job(2, "running")];
         let curr = vec![job(1, "failed"), job(2, "completed")];
-        let events = job_events(&prev, &curr);
+        let started = job_events(&[], &[job(9, "running")], &tf);
+        assert_eq!(started.len(), 1);
+        assert!(started[0].title.contains("notification.title.jobStarted"));
+        assert!(job_events(&[job(9, "running")], &[job(9, "running")], &tf).is_empty());
+        let events = job_events(&prev, &curr, &tf);
         assert_eq!(events.len(), 2);
         assert!(events.iter().any(|e| e.severity == AlertSeverity::High));
-        assert!(events.iter().any(|e| e.title.contains("completed")));
+        assert_eq!(
+            events
+                .iter()
+                .find(|e| e.severity == AlertSeverity::High)
+                .and_then(|e| e.job_id),
+            Some(1)
+        );
+        assert!(events
+            .iter()
+            .any(|e| e.title.contains("notification.title.jobCompleted")));
+        let stopped = job_events(&[job(3, "running")], &[job(3, "stopped")], &tf);
+        assert_eq!(stopped.len(), 1);
+        assert_eq!(stopped[0].severity, AlertSeverity::Warning);
+        assert!(stopped[0].title.contains("notification.title.jobStopped"));
+        assert!(job_events(&[job(3, "stopped")], &[job(3, "stopped")], &tf).is_empty());
     }
 
     #[test]
     fn mount_and_serve_start_and_stop() {
-        let started = mount_events(
-            &[],
-            &[MountedRemote {
-                fs: "drive:".into(),
-                mount_point: "/mnt/drive".into(),
-            }],
-        );
+        let started = mount_events(&[], &[MountedRemote::new("drive:", "/mnt/drive")], &tf);
         assert_eq!(started.len(), 1);
         assert_eq!(started[0].kind, AlertEventKind::Mount);
         assert_eq!(started[0].remote, "drive");
@@ -227,6 +332,7 @@ mod tests {
                 option_count: 0,
             }],
             &[],
+            &tf,
         );
         assert_eq!(stopped[0].kind, AlertEventKind::Serve);
         assert_eq!(stopped[0].severity, AlertSeverity::Warning);
@@ -235,14 +341,14 @@ mod tests {
 
     #[test]
     fn automation_and_update_kinds() {
-        let ok = automation_event("nightly", "drive", true, "#12");
+        let ok = automation_event("nightly", "drive", true, "#12", &tf);
         assert_eq!(ok.kind, AlertEventKind::Automation);
         assert_eq!(ok.severity, AlertSeverity::Info);
-        let fail = automation_event("nightly", "drive", false, "offline");
+        let fail = automation_event("nightly", "drive", false, "offline", &tf);
         assert_eq!(fail.severity, AlertSeverity::High);
-        let update = update_event("app", "v2.0.0", "https://example");
+        let update = update_event("app", "v2.0.0", "https://example", &tf);
         assert_eq!(update.kind, AlertEventKind::Update);
-        let engine = engine_event(false, "rcd exited");
+        let engine = engine_event(false, "rcd exited", &tf);
         assert_eq!(engine.kind, AlertEventKind::Engine);
     }
 }

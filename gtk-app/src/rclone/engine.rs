@@ -63,6 +63,7 @@ impl RcloneEngine {
         }
         let password = crate::keyring::resolve_config_password(&settings.core.config_password);
         crate::security::apply_config_password_env(&mut cmd, &password);
+        crate::repair::apply_fusermount_path(&mut cmd);
         let log_path = crate::settings::AppSettings::log_path();
         if let Some(parent) = log_path.parent() {
             let _ = std::fs::create_dir_all(parent);
@@ -343,6 +344,175 @@ fn cron_normalize_dow(dow: &str) -> String {
     out
 }
 
+fn cron_normalize_mon(mon: &str) -> String {
+    let mut out = mon.to_ascii_uppercase();
+    for (name, num) in [
+        ("JANUARY", "1"),
+        ("FEBRUARY", "2"),
+        ("SEPTEMBER", "9"),
+        ("OCTOBER", "10"),
+        ("NOVEMBER", "11"),
+        ("DECEMBER", "12"),
+        ("MARCH", "3"),
+        ("APRIL", "4"),
+        ("JUNE", "6"),
+        ("JULY", "7"),
+        ("AUGUST", "8"),
+        ("JAN", "1"),
+        ("FEB", "2"),
+        ("MAR", "3"),
+        ("APR", "4"),
+        ("MAY", "5"),
+        ("JUN", "6"),
+        ("JUL", "7"),
+        ("AUG", "8"),
+        ("SEP", "9"),
+        ("OCT", "10"),
+        ("NOV", "11"),
+        ("DEC", "12"),
+    ] {
+        out = out.replace(name, num);
+    }
+    out
+}
+
+fn cron_format_named_field(value: &str, name_fn: impl Fn(&str) -> String) -> String {
+    value
+        .split(',')
+        .map(|part| {
+            let part = part.trim();
+            if let Some((start, end)) = part.split_once('-') {
+                if !start.eq_ignore_ascii_case("L") {
+                    return format!("{}-{}", name_fn(start.trim()), name_fn(end.trim()));
+                }
+            }
+            name_fn(part)
+        })
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
+fn describe_cron_time_fragment(min: &str, hour: &str, i18n: &crate::i18n::I18n) -> String {
+    if cron_is_int(min) && cron_is_int(hour) {
+        let time = cron_time(hour, min);
+        return i18n.tf_or("cron.atTime", &format!("At {time}"), &[("time", &time)]);
+    }
+    if cron_is_int(min) && cron_is_int_list(hour) {
+        let times = cron_join_and(
+            &hour
+                .split(',')
+                .map(|h| cron_time(h.trim(), min))
+                .collect::<Vec<_>>(),
+        );
+        return i18n.tf_or("cron.atTimes", &format!("At {times}"), &[("times", &times)]);
+    }
+    if min.starts_with("*/") && (hour == "*" || hour.is_empty()) {
+        let n = min.trim_start_matches("*/");
+        return i18n.tf_or(
+            "cron.everyMinutes",
+            &format!("Every {n} minutes"),
+            &[("n", n)],
+        );
+    }
+    i18n.tf_or(
+        "cron.atMinuteHour",
+        &format!("At minute {min} of hour {hour}"),
+        &[("min", min), ("hour", hour)],
+    )
+}
+
+fn describe_cron_dom_fragment(dom: &str, i18n: &crate::i18n::I18n) -> String {
+    if dom.eq_ignore_ascii_case("L") {
+        return i18n.t_or("cron.onLastDay", "on the last day of the month");
+    }
+    if dom.eq_ignore_ascii_case("LW") {
+        return i18n.t_or("cron.onLastWeekday", "on the last weekday of the month");
+    }
+    if let Some(n) = dom.strip_prefix("*/") {
+        return i18n.tf_or("cron.onEveryNDays", "every {{n}} days", &[("n", n)]);
+    }
+    if cron_is_int(dom) {
+        return i18n.tf_or("cron.onDay", "on day {{day}}", &[("day", dom)]);
+    }
+    if dom.len() > 1 && dom.ends_with(['W', 'w']) {
+        let day = dom.trim_end_matches(['W', 'w']);
+        return i18n.tf_or(
+            "cron.onNearestWeekday",
+            "on the nearest weekday to day {{day}}",
+            &[("day", day)],
+        );
+    }
+    i18n.tf_or("cron.onDays", "on days {{days}}", &[("days", dom)])
+}
+
+fn describe_cron_mon_fragment(mon: &str, i18n: &crate::i18n::I18n) -> String {
+    let months = cron_format_named_field(mon, |m| cron_month_name(m, i18n));
+    i18n.tf_or("cron.inMonths", "in {{months}}", &[("months", &months)])
+}
+
+fn describe_cron_dow_fragment(dow: &str, i18n: &crate::i18n::I18n) -> String {
+    if dow == "1-5" {
+        return i18n.t_or("cron.onWeekdaysWord", "on weekdays");
+    }
+    if cron_is_weekend(dow) {
+        return i18n.t_or("cron.onWeekendsWord", "on weekends");
+    }
+    if let Some((day, nth)) = dow.split_once('#') {
+        if cron_is_int(day) && cron_is_int(nth) {
+            let day_name = cron_day_name(day, i18n);
+            let nth = cron_ordinal(nth);
+            return i18n.tf_or(
+                "cron.onNthWeekday",
+                "on the {{nth}} {{day}}",
+                &[("nth", &nth), ("day", &day_name)],
+            );
+        }
+    }
+    if let Some(day) = dow.strip_suffix('L').or_else(|| dow.strip_suffix('l')) {
+        if cron_is_int(day) {
+            let day_name = cron_day_name(day, i18n);
+            return i18n.tf_or(
+                "cron.onLastNamedWeekday",
+                "on the last {{day}}",
+                &[("day", &day_name)],
+            );
+        }
+    }
+    let days = cron_format_named_field(dow, |d| cron_day_name(d, i18n));
+    i18n.tf_or("cron.onWeekdays", "on {{days}}", &[("days", &days)])
+}
+
+fn describe_cron_generic(
+    min: &str,
+    hour: &str,
+    dom: &str,
+    mon: &str,
+    dow: &str,
+    i18n: &crate::i18n::I18n,
+) -> String {
+    let head = describe_cron_time_fragment(min, hour, i18n);
+    let mut tail = Vec::new();
+    if dom != "*" {
+        tail.push(describe_cron_dom_fragment(dom, i18n));
+    }
+    if mon != "*" {
+        tail.push(describe_cron_mon_fragment(mon, i18n));
+    }
+    if dow != "*" {
+        tail.push(describe_cron_dow_fragment(dow, i18n));
+    }
+    tail.retain(|part| !part.is_empty());
+    if tail.is_empty() {
+        return head;
+    }
+    let tail = tail.join(", ");
+    i18n.tf_or(
+        "cron.composed",
+        &format!("{head}, {tail}"),
+        &[("head", &head), ("tail", &tail)],
+    )
+}
+
 pub fn describe_cron_i18n(expression: &str, i18n: &crate::i18n::I18n) -> String {
     let trimmed = expression.trim();
     if trimmed.eq_ignore_ascii_case("@reboot") {
@@ -369,6 +539,8 @@ pub fn describe_cron_i18n(expression: &str, i18n: &crate::i18n::I18n) -> String 
     let (min, hour, dom, mon, dow_raw) = (fields[0], fields[1], fields[2], fields[3], fields[4]);
     let dow_owned = cron_normalize_dow(dow_raw);
     let dow = dow_owned.as_str();
+    let mon_owned = cron_normalize_mon(mon);
+    let mon = mon_owned.as_str();
     if min.starts_with("*/")
         && hour.contains('-')
         && cron_is_int(hour.split('-').next().unwrap_or(""))
@@ -526,21 +698,57 @@ pub fn describe_cron_i18n(expression: &str, i18n: &crate::i18n::I18n) -> String 
             format!("At {hours}")
         };
     }
-    if cron_is_int(min) && cron_is_int(hour) && dom == "*" && mon == "*" && dow == "1-5" {
-        let time = cron_time(hour, min);
-        return if i18n.has("cron.weekdaysAt") {
-            i18n.tf("cron.weekdaysAt", &[("time", &time)])
-        } else {
-            format!("Weekdays at {time}")
-        };
+    if cron_is_int(min)
+        && (cron_is_int(hour) || cron_is_int_list(hour))
+        && dom == "*"
+        && mon == "*"
+        && dow == "1-5"
+    {
+        if cron_is_int(hour) {
+            let time = cron_time(hour, min);
+            return if i18n.has("cron.weekdaysAt") {
+                i18n.tf("cron.weekdaysAt", &[("time", &time)])
+            } else {
+                format!("Weekdays at {time}")
+            };
+        }
+        let times = cron_join_and(
+            &hour
+                .split(',')
+                .map(|h| cron_time(h.trim(), min))
+                .collect::<Vec<_>>(),
+        );
+        return i18n.tf_or(
+            "cron.weekdaysAtTimes",
+            &format!("Weekdays at {times}"),
+            &[("times", &times)],
+        );
     }
-    if cron_is_int(min) && cron_is_int(hour) && dom == "*" && mon == "*" && cron_is_weekend(dow) {
-        let time = cron_time(hour, min);
-        return if i18n.has("cron.weekendsAt") {
-            i18n.tf("cron.weekendsAt", &[("time", &time)])
-        } else {
-            format!("Weekends at {time}")
-        };
+    if cron_is_int(min)
+        && (cron_is_int(hour) || cron_is_int_list(hour))
+        && dom == "*"
+        && mon == "*"
+        && cron_is_weekend(dow)
+    {
+        if cron_is_int(hour) {
+            let time = cron_time(hour, min);
+            return if i18n.has("cron.weekendsAt") {
+                i18n.tf("cron.weekendsAt", &[("time", &time)])
+            } else {
+                format!("Weekends at {time}")
+            };
+        }
+        let times = cron_join_and(
+            &hour
+                .split(',')
+                .map(|h| cron_time(h.trim(), min))
+                .collect::<Vec<_>>(),
+        );
+        return i18n.tf_or(
+            "cron.weekendsAtTimes",
+            &format!("Weekends at {times}"),
+            &[("times", &times)],
+        );
     }
     if cron_is_int(min)
         && cron_is_int(hour)
@@ -612,9 +820,10 @@ pub fn describe_cron_i18n(expression: &str, i18n: &crate::i18n::I18n) -> String 
     }
     if cron_is_int(min)
         && cron_is_int(hour)
-        && mon.contains(',')
+        && mon != "*"
         && dow == "*"
         && (cron_is_int(dom) || dom == "*")
+        && !cron_is_int(mon)
     {
         let time = cron_time(hour, min);
         let months = cron_month_list(mon, i18n);
@@ -634,6 +843,15 @@ pub fn describe_cron_i18n(expression: &str, i18n: &crate::i18n::I18n) -> String 
             format!("In {months} at {time}")
         };
     }
+    if cron_is_int(min) && cron_is_int(hour) && dom == "*" && mon != "*" && dow == "*" {
+        let time = cron_time(hour, min);
+        let months = cron_month_list(mon, i18n);
+        return if i18n.has("cron.inMonthsAt") {
+            i18n.tf("cron.inMonthsAt", &[("months", &months), ("time", &time)])
+        } else {
+            format!("In {months} at {time}")
+        };
+    }
     if cron_is_int(min) && cron_is_int(hour) && cron_is_int(dom) && cron_is_int(mon) && dow == "*" {
         let time = cron_time(hour, min);
         let month = cron_month_name(mon, i18n);
@@ -646,13 +864,34 @@ pub fn describe_cron_i18n(expression: &str, i18n: &crate::i18n::I18n) -> String 
             format!("Yearly on {month} {dom} at {time}")
         };
     }
-    if cron_is_int(min) && cron_is_int(hour) && dom.contains(',') && mon == "*" && dow == "*" {
+    if cron_is_int(min)
+        && cron_is_int(hour)
+        && (dom.contains(',') || (dom.contains('-') && !dom.to_ascii_uppercase().contains('L')))
+        && mon == "*"
+        && dow == "*"
+    {
         let time = cron_time(hour, min);
         return if i18n.has("cron.monthlyDaysAt") {
             i18n.tf("cron.monthlyDaysAt", &[("days", dom), ("time", &time)])
         } else {
             format!("Monthly on days {dom} at {time}")
         };
+    }
+    if cron_is_int(min)
+        && cron_is_int(hour)
+        && dom.len() > 1
+        && dom.ends_with(['W', 'w'])
+        && !dom.eq_ignore_ascii_case("LW")
+        && mon == "*"
+        && dow == "*"
+    {
+        let day = dom.trim_end_matches(['W', 'w']);
+        let time = cron_time(hour, min);
+        return i18n.tf_or(
+            "cron.nearestWeekdayAt",
+            &format!("Nearest weekday to day {day} at {time}"),
+            &[("day", day), ("time", &time)],
+        );
     }
     if cron_is_int(min) && cron_is_int(hour) && cron_is_int(dom) && mon == "*" && dow == "*" {
         let time = cron_time(hour, min);
@@ -687,6 +926,15 @@ pub fn describe_cron_i18n(expression: &str, i18n: &crate::i18n::I18n) -> String 
             format!("Every {n} days")
         };
     }
+    if cron_is_int(min) && cron_is_int(hour) && dom.starts_with("*/") && mon == "*" && dow == "*" {
+        let n = dom.trim_start_matches("*/");
+        let time = cron_time(hour, min);
+        return i18n.tf_or(
+            "cron.everyNDaysAt",
+            &format!("Every {n} days at {time}"),
+            &[("n", n), ("time", &time)],
+        );
+    }
     if cron_is_int(min) && cron_is_int(hour) && dom == "*" && mon == "*" && cron_is_int(dow) {
         let time = cron_time(hour, min);
         let day = cron_day_name(dow, i18n);
@@ -711,7 +959,21 @@ pub fn describe_cron_i18n(expression: &str, i18n: &crate::i18n::I18n) -> String 
             format!("Weekly on {days} at {time}")
         };
     }
-    expression.to_string()
+    if cron_is_int(min)
+        && cron_is_int(hour)
+        && dom == "*"
+        && mon == "*"
+        && dow.contains('-')
+        && !dow.contains('#')
+    {
+        let time = cron_time(hour, min);
+        let days = cron_format_named_field(dow, |d| cron_day_name(d, i18n));
+        if i18n.has("cron.weeklyOnDaysAt") {
+            return i18n.tf("cron.weeklyOnDaysAt", &[("days", &days), ("time", &time)]);
+        }
+        return format!("Weekly on {days} at {time}");
+    }
+    describe_cron_generic(min, hour, dom, mon, dow, i18n)
 }
 
 #[cfg(test)]
@@ -820,6 +1082,30 @@ mod tests {
             describe_cron_i18n("0 9 * * 1", &i18n),
             "Weekly on Monday at 9:00"
         );
+        assert_eq!(
+            describe_cron("0 9 * * 1-3"),
+            "Weekly on Monday-Wednesday at 9:00"
+        );
+        assert_eq!(describe_cron("0 9 * MAR *"), "In March at 9:00");
+        assert_eq!(
+            describe_cron("0 9 1-15 * *"),
+            "Monthly on days 1-15 at 9:00"
+        );
+        assert_eq!(
+            describe_cron("0 9,18 * * 1-5"),
+            "Weekdays at 9:00 and 18:00"
+        );
+        assert_eq!(describe_cron("0 9 */2 * *"), "Every 2 days at 9:00");
+        assert_eq!(
+            describe_cron("0 9 15W * *"),
+            "Nearest weekday to day 15 at 9:00"
+        );
+        assert_eq!(describe_cron("0 9 15 * 1"), "At 9:00, on day 15, on Monday");
+        let tr = crate::i18n::I18n::load("tr-TR");
+        assert_eq!(describe_cron_i18n("*/5 * * * *", &tr), "Her 5 dakikada");
+        let mixed = describe_cron_i18n("0 9 15 * 1", &tr);
+        assert_ne!(mixed, "0 9 15 * 1");
+        assert!(mixed.contains("Pazartesi") || mixed.contains("15"));
     }
 
     #[test]

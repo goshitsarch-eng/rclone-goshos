@@ -36,7 +36,7 @@ pub async fn start_web_server(
             .and_then(|p| p.parse::<u16>().ok())
             .unwrap_or(1420);
         info!("🔧 Development mode detected!");
-        info!("   → Angular dev server: http://localhost:{dev_port} (with hot reload)");
+        info!("   → Static UI: web/ (GTK is the desktop client)");
         info!("   → API server: http://localhost:{port}/api");
     }
 
@@ -120,7 +120,8 @@ fn find_static_dir(app_handle: &AppHandle) -> Option<std::path::PathBuf> {
 
     let candidates = [
         std::path::PathBuf::from("/usr/lib/rclone-manager-headless/browser"),
-        std::path::PathBuf::from("dist/rclone-manager/browser"),
+        std::path::PathBuf::from("/usr/lib/RClone Manager Headless/browser"),
+        std::path::PathBuf::from("web"),
     ];
 
     for path in &candidates {
@@ -132,10 +133,7 @@ fn find_static_dir(app_handle: &AppHandle) -> Option<std::path::PathBuf> {
 
     std::env::current_exe()
         .ok()
-        .and_then(|exe| {
-            exe.parent()
-                .map(|p| p.join("../../../dist/rclone-manager/browser"))
-        })
+        .and_then(|exe| exe.parent().map(|p| p.join("../../../web")))
         .filter(|p| p.exists())
         .inspect(|p| info!("📁 Static files: {}", p.display()))
 }
@@ -165,7 +163,7 @@ fn build_app(
             app = app.fallback_service(serve_dir);
         }
         None => {
-            info!("⚠️  No static files found. Build with: npm run build:headless");
+            info!("⚠️  No static files found. Expected web/index.html next to the backend.");
             app = app.route("/", get(handlers::root_handler));
         }
     }
