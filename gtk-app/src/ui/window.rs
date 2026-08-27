@@ -76,7 +76,9 @@ fn apply_launch(app: &adw::Application, ctx: &AppCtx, args: &[String], first: bo
     let standalone_dialogs = ctx.settings.borrow().general.standalone_dialogs;
     let launch = crate::navigation::parse_launch_args(args, standalone_dialogs);
     if let Some(launch) = &launch {
-        ctx.request_nav(launch.target.clone());
+        if !(launch.standalone && crate::navigation::standalone_skips_main_nav(&launch.target)) {
+            ctx.request_nav(launch.target.clone());
+        }
     }
     if !ctx.store.borrow().pending_share_paths.is_empty() && launch.is_none() {
         ctx.request_nav(NavTarget::Files {
@@ -2252,7 +2254,11 @@ fn apply_nav(
             dashboard.navigate(tab, remote.as_deref());
         }
         NavTarget::Files { remote, path } => {
-            *ctx.pending_browse.borrow_mut() = Some((remote, path));
+            if crate::navigation::overlay_files_for_workspace(&ctx.active_workspace.borrow()) {
+                *ctx.pending_files_overlay.borrow_mut() = Some((remote, path));
+            } else {
+                *ctx.pending_browse.borrow_mut() = Some((remote, path));
+            }
         }
         NavTarget::Flow { quick_run } => {
             stack.set_visible_child_name("flow");

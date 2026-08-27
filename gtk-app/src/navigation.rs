@@ -887,6 +887,16 @@ fn is_standalone_target(
     }
 }
 
+/// Standalone Files / Flow / Dashboard windows already present the workspace.
+/// Driving the hidden main window as well switches the stack to Files and
+/// spawns a second overlay at `local:` (Angular opens one browser window).
+pub fn standalone_skips_main_nav(target: &NavTarget) -> bool {
+    matches!(
+        target,
+        NavTarget::Files { .. } | NavTarget::Flow { .. } | NavTarget::Dashboard { .. }
+    )
+}
+
 /// Dashboard and Flow keep their workspace visible and open Files in a
 /// detached window, matching Angular's Files overlay from those views.
 pub fn overlay_files_for_workspace(workspace: &str) -> bool {
@@ -1635,6 +1645,21 @@ mod tests {
             workspace_open_plan("nautilus", "main_menu"),
             WorkspaceOpen::OverlayDashboard
         );
+        assert!(standalone_skips_main_nav(&NavTarget::Files {
+            remote: "starred".into(),
+            path: String::new(),
+        }));
+        assert!(standalone_skips_main_nav(&NavTarget::Flow {
+            quick_run: None
+        }));
+        assert!(standalone_skips_main_nav(&NavTarget::Dashboard {
+            tab: AppTab::General,
+            remote: None,
+        }));
+        assert!(!standalone_skips_main_nav(&NavTarget::Repair));
+        assert!(!standalone_skips_main_nav(&NavTarget::Preferences {
+            page: None
+        }));
         assert_eq!(
             workspace_open_plan("main_menu", "main_menu"),
             WorkspaceOpen::SwitchStack
