@@ -874,3 +874,6 @@ This client is the GTK 4 + libadwaita desktop UI. It talks to a local `rclone rc
 
 - Live GUI: testdrive Copy JSON mode shows chip `createEmptySrcDirs · false`, info banner for srcFs/dstFs, parse error `Invalid JSON syntax. Please check your formatting.`, and warning `Unknown option(s): 'nope'`
 - Live GUI: Delete Remote for testdrive lists Saved Profiles (17) with icons (`archivecreate/default`, `backend/default`, …) plus Associated Quick Runs (1); Cancel leaves the remote intact
+
+- Operation, helper, start-operation, Quick Run, and wizard runtime flag rows use typed `FlagWidget` controls (Switch / Combo / SearchCombo / MultiSelect / Spin / Duration-Size Entry) instead of plain `AdwEntryRow` text
+- Live GUI: testdrive Copy `gui-copy-test` shows **Create Empty Src Dirs** as a switch; toggling ON then Save persists `createEmptySrcDirs: true`; toggling OFF then Save restores `false`
