@@ -75,6 +75,185 @@ pub fn same_nav_location(a_remote: &str, a_path: &str, b_remote: &str, b_path: &
     a_remote == b_remote && a_path.trim_matches('/') == b_path.trim_matches('/')
 }
 
+/// Angular `PathService.parseLocation`. GTK maps `/` and `local` to the local remote.
+pub fn parse_location(raw_input: &str, known_remotes: &[String]) -> Option<(String, String)> {
+    if raw_input.is_empty() {
+        return None;
+    }
+    let mut normalized = raw_input.replace('\\', "/");
+    if normalized.len() > 1 && normalized.ends_with('/') {
+        normalized.pop();
+    }
+    if normalized.eq_ignore_ascii_case("starred") || normalized.eq_ignore_ascii_case("starred:") {
+        return Some(("starred".into(), String::new()));
+    }
+
+    for remote in known_remotes {
+        if !is_drive_remote(remote) {
+            continue;
+        }
+        let r_norm = remote.replace('\\', "/");
+        let r_low = r_norm.to_lowercase();
+        let in_low = normalized.to_lowercase();
+        let prefix_ok = in_low == r_low
+            || in_low.starts_with(&format!("{r_low}/"))
+            || in_low.starts_with(&format!("{r_low}:"));
+        if !prefix_ok {
+            continue;
+        }
+        let rest = if normalized.len() >= r_norm.len() {
+            normalized[r_norm.len()..]
+                .trim_start_matches(['/', ':'])
+                .to_string()
+        } else {
+            String::new()
+        };
+        return Some(drive_location(remote, &rest));
+    }
+
+    if let Some(colon) = normalized.find(':') {
+        if colon > 0 {
+            let r_name = &normalized[..colon];
+            if r_name != "/" && !r_name.is_empty() {
+                let r_path = normalized[colon + 1..].trim_start_matches('/').to_string();
+                return Some((r_name.to_string(), r_path));
+            }
+        }
+    }
+
+    if normalized.starts_with('/') {
+        return Some((
+            "local".into(),
+            if normalized == "/" {
+                "/".into()
+            } else {
+                normalized
+            },
+        ));
+    }
+
+    if known_remotes
+        .iter()
+        .any(|r| r == &normalized || r == raw_input)
+    {
+        return Some((normalized, String::new()));
+    }
+
+    if known_remotes.iter().any(|r| r == "/") {
+        let clean = normalized.trim_start_matches('/').to_string();
+        return Some((
+            "local".into(),
+            if clean.is_empty() {
+                "/".into()
+            } else {
+                format!("/{clean}")
+            },
+        ));
+    }
+
+    None
+}
+
+fn is_drive_remote(name: &str) -> bool {
+    name == "/"
+        || name.eq_ignore_ascii_case("local")
+        || name.starts_with('/')
+        || looks_like_windows_root(name)
+}
+
+fn looks_like_windows_root(name: &str) -> bool {
+    let n = name.replace('\\', "/");
+    let bytes = n.as_bytes();
+    bytes.len() >= 2 && bytes[0].is_ascii_alphabetic() && bytes[1] == b':'
+}
+
+fn drive_location(remote: &str, rest: &str) -> (String, String) {
+    if remote == "/" || remote.eq_ignore_ascii_case("local") {
+        let path = if rest.is_empty() {
+            "/".into()
+        } else if rest.starts_with('/') {
+            rest.to_string()
+        } else {
+            format!("/{rest}")
+        };
+        return ("local".into(), path);
+    }
+    if remote.starts_with('/') {
+        let path = if rest.is_empty() {
+            remote.to_string()
+        } else {
+            format!("{}/{rest}", remote.trim_end_matches('/'))
+        };
+        return ("local".into(), path);
+    }
+    (remote.to_string(), rest.to_string())
+}
+
+/// Path bar: Angular `parseLocation`, then relative append (`navigateToPath` fallback).
+pub fn resolve_path_bar(
+    raw_input: &str,
+    known_remotes: &[String],
+    current_remote: &str,
+    current_path: &str,
+) -> (String, String) {
+    let trimmed = raw_input.trim();
+    if trimmed.is_empty() {
+        return (current_remote.to_string(), current_path.to_string());
+    }
+    if let Some(parsed) = parse_location(trimmed, known_remotes) {
+        return parsed;
+    }
+    let normalized = trimmed.replace('\\', "/");
+    let normalized = normalized.trim_matches('/').to_string();
+    if current_remote == "starred" || current_remote.is_empty() {
+        return ("local".into(), normalized);
+    }
+    let path = if current_path.is_empty() || current_path == "/" {
+        if current_remote == "local" && !normalized.starts_with('/') {
+            format!("/{normalized}")
+        } else if current_path == "/" && current_remote == "local" {
+            format!("/{normalized}")
+        } else {
+            normalized
+        }
+    } else {
+        format!("{}/{normalized}", current_path.trim_end_matches('/'))
+    };
+    (current_remote.to_string(), path)
+}
+
+/// Parent folder + leaf name when `path` is a file (Angular `pendingPreviewFilePath`).
+pub fn split_file_nav(path: &str, is_file: bool) -> Option<(String, String)> {
+    if !is_file || path.is_empty() || path.ends_with('/') || path.ends_with('\\') {
+        return None;
+    }
+    let trimmed = path.trim_end_matches(['/', '\\']);
+    let name = trimmed
+        .rsplit(['/', '\\'])
+        .next()
+        .filter(|n| !n.is_empty())?
+        .to_string();
+    Some((parent_remote_path(trimmed), name))
+}
+
+/// `operations/stat` when present; otherwise Angular-style file-name heuristic.
+pub fn classify_nav_file(stat_is_dir: Option<bool>, remote: &str, path: &str) -> bool {
+    if path.is_empty() {
+        return false;
+    }
+    match stat_is_dir {
+        Some(is_dir) => !is_dir,
+        None => {
+            let spec = if remote == "local" {
+                path.to_string()
+            } else {
+                format!("{remote}:{path}")
+            };
+            crate::jobs::source_looks_like_file(&spec)
+        }
+    }
+}
+
 /// Starred (and stale generation) results must not replace the collection list.
 /// Angular `starredMode` cancels in-flight `listReadGroups` before painting stars.
 pub fn should_apply_directory_list(starred: bool, current_gen: u64, job_gen: u64) -> bool {
@@ -415,5 +594,87 @@ mod tests {
         assert!(!should_apply_directory_list(true, 3, 3));
         assert!(!should_apply_directory_list(false, 4, 3));
         assert!(!should_apply_directory_list(true, 4, 3));
+    }
+
+    #[test]
+    fn parse_location_matches_angular_rules() {
+        let remotes = ["testdrive".into(), "local".into(), "guilocal".into()];
+        assert_eq!(
+            parse_location("testdrive:Photos/README.md", &remotes),
+            Some(("testdrive".into(), "Photos/README.md".into()))
+        );
+        assert_eq!(
+            parse_location("testdrive", &remotes),
+            Some(("testdrive".into(), String::new()))
+        );
+        assert_eq!(
+            parse_location("/tmp/foo", &remotes),
+            Some(("local".into(), "/tmp/foo".into()))
+        );
+        assert_eq!(
+            parse_location("local:/tmp/bar", &remotes),
+            Some(("local".into(), "/tmp/bar".into()))
+        );
+        assert_eq!(
+            parse_location("starred", &remotes),
+            Some(("starred".into(), String::new()))
+        );
+        assert_eq!(parse_location("Photos", &remotes), None);
+        assert_eq!(
+            parse_location("Photos", &["testdrive".into(), "/".into()]),
+            Some(("local".into(), "/Photos".into()))
+        );
+        assert_eq!(
+            parse_location("/home/me/docs", &["/home/me".into(), "testdrive".into()]),
+            Some(("local".into(), "/home/me/docs".into()))
+        );
+        assert_eq!(
+            parse_location("C:\\Users\\ada", &["C:".into()]),
+            Some(("C:".into(), "Users/ada".into()))
+        );
+    }
+
+    #[test]
+    fn resolve_path_bar_appends_relative_segments() {
+        let remotes = ["testdrive".into(), "local".into()];
+        assert_eq!(
+            resolve_path_bar("Photos", &remotes, "testdrive", ""),
+            ("testdrive".into(), "Photos".into())
+        );
+        assert_eq!(
+            resolve_path_bar("README.md", &remotes, "testdrive", "Photos"),
+            ("testdrive".into(), "Photos/README.md".into())
+        );
+        assert_eq!(
+            resolve_path_bar("testdrive:Docs", &remotes, "testdrive", "Photos"),
+            ("testdrive".into(), "Docs".into())
+        );
+        assert_eq!(
+            resolve_path_bar("", &remotes, "testdrive", "Photos"),
+            ("testdrive".into(), "Photos".into())
+        );
+    }
+
+    #[test]
+    fn split_file_nav_and_classify_file() {
+        assert_eq!(
+            split_file_nav("Photos/README.md", true),
+            Some(("Photos".into(), "README.md".into()))
+        );
+        assert_eq!(
+            split_file_nav("README.md", true),
+            Some((String::new(), "README.md".into()))
+        );
+        assert_eq!(split_file_nav("Photos", false), None);
+        assert_eq!(split_file_nav("Photos/", true), None);
+        assert!(classify_nav_file(
+            Some(false),
+            "testdrive",
+            "Photos/README.md"
+        ));
+        assert!(!classify_nav_file(Some(true), "testdrive", "Photos"));
+        assert!(classify_nav_file(None, "testdrive", "Photos/README.md"));
+        assert!(!classify_nav_file(None, "testdrive", "Photos"));
+        assert!(!classify_nav_file(None, "testdrive", ""));
     }
 }

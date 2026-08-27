@@ -1390,6 +1390,23 @@ pub fn listing_open_submenu_actions() -> &'static [&'static str] {
     &["open", "tab", "window"]
 }
 
+/// Angular `hasClipboard`: internal tokens **or** OS paths (uri-list / copied files).
+pub fn menu_has_paste(internal_len: usize, system_has_paths: bool) -> bool {
+    internal_len > 0 || system_has_paths
+}
+
+pub fn clipboard_formats_have_paths(mimes: &[&str]) -> bool {
+    mimes.iter().any(|mime| {
+        matches!(
+            *mime,
+            "text/uri-list"
+                | "text/x-moz-url"
+                | "application/x-gnome-copied-files"
+                | "x-special/gnome-copied-files"
+        ) || mime.contains("uri-list")
+    })
+}
+
 fn push_history(items: &mut Vec<&'static str>, flags: ListingMenuFlags) {
     if flags.can_undo {
         items.push("undo");
@@ -1587,6 +1604,15 @@ mod tests {
             },
         );
         assert!(items.contains(&"paste"));
+        assert!(menu_has_paste(1, false));
+        assert!(menu_has_paste(0, true));
+        assert!(!menu_has_paste(0, false));
+        assert!(clipboard_formats_have_paths(&["text/uri-list"]));
+        assert!(clipboard_formats_have_paths(&[
+            "text/plain",
+            "application/x-gnome-copied-files"
+        ]));
+        assert!(!clipboard_formats_have_paths(&["text/plain"]));
     }
 
     #[test]

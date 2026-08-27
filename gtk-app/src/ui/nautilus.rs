@@ -87,6 +87,7 @@ pub struct NautilusView {
     listing_menu_open: Rc<Cell<bool>>,
     listing_popover: gtk::Popover,
     hover_open: Rc<RefCell<Option<String>>>,
+    pending_preview: Rc<RefCell<Option<String>>>,
     undo: Rc<RefCell<Vec<String>>>,
     redo: Rc<RefCell<Vec<String>>>,
     tab_bar: gtk::Box,
@@ -651,6 +652,7 @@ impl NautilusView {
             listing_menu_open: Rc::new(Cell::new(false)),
             listing_popover,
             hover_open: Rc::new(RefCell::new(None)),
+            pending_preview: Rc::new(RefCell::new(None)),
             undo: Rc::new(RefCell::new(vec![])),
             redo: Rc::new(RefCell::new(vec![])),
             tab_bar,
@@ -1152,7 +1154,7 @@ impl NautilusView {
                 self.ctx.t_or("nautilus.contextMenu.moveTo", "Move to…"),
                 "moveto",
             ));
-            if !self.clipboard.borrow().is_empty() {
+            if self.listing_has_paste() {
                 items.push((
                     self.ctx.t_or("nautilus.contextMenu.paste", "Paste"),
                     "paste",
@@ -3165,11 +3167,32 @@ impl NautilusView {
 
     pub fn navigate_to(&self, input: &str) {
         if input == "starred:" || input == "starred" {
+            self.pending_preview.borrow_mut().take();
+            self.show_starred();
+            return;
+        }
+        let current = self.current.borrow().clone();
+        let known = self.known_nav_remotes();
+        let (remote, path) =
+            listing::resolve_path_bar(input, &known, &current.remote, &current.path);
+        if remote == "starred" {
+            self.pending_preview.borrow_mut().take();
             self.show_starred();
             return;
         }
         if let Some(req) = self.ctx.pending_picker.borrow().as_ref() {
-            if !crate::picker::is_location_allowed(input, &req.config) {
+            let target = if remote == "local" {
+                if path.is_empty() {
+                    "/".into()
+                } else {
+                    path.clone()
+                }
+            } else if path.is_empty() {
+                format!("{remote}:")
+            } else {
+                format!("{remote}:{path}")
+            };
+            if !crate::picker::is_location_allowed(&target, &req.config) {
                 self.toast.add_toast(adw::Toast::new(&self.ctx.t_or(
                     "nautilus.notifications.locationNotAllowed",
                     "That location is not allowed for this picker",
@@ -3177,8 +3200,14 @@ impl NautilusView {
                 return;
             }
         }
-        let current = self.current.borrow().clone();
-        let (remote, path) = split_remote_path(input);
+        let is_file = self.path_is_file(&remote, &path);
+        let (path, preview) = if let Some((parent, name)) = listing::split_file_nav(&path, is_file)
+        {
+            (parent, Some(name))
+        } else {
+            (path, None)
+        };
+        *self.pending_preview.borrow_mut() = preview;
         if listing::same_nav_location(&current.remote, &current.path, &remote, &path) {
             self.current.borrow_mut().starred = false;
             self.sync_current_tab();
@@ -3192,6 +3221,29 @@ impl NautilusView {
         self.sync_current_tab();
         self.close_sidebar_if_narrow();
         self.reload();
+    }
+
+    fn known_nav_remotes(&self) -> Vec<String> {
+        let mut names: Vec<String> = self.ctx.store.borrow().remotes.keys().cloned().collect();
+        names.push("local".into());
+        names.push("starred".into());
+        names
+    }
+
+    fn path_is_file(&self, remote: &str, path: &str) -> bool {
+        let stat = self.ctx.client().and_then(|client| {
+            let (fs, remote_path) = listing::list_target(remote, path);
+            client
+                .stat(&fs, &remote_path)
+                .ok()
+                .flatten()
+                .map(|item| item.is_dir)
+        });
+        listing::classify_nav_file(stat, remote, path)
+    }
+
+    fn listing_has_paste(&self) -> bool {
+        crate::fileops::menu_has_paste(self.clipboard.borrow().len(), system_clipboard_has_paths())
     }
 
     fn show_path_entry(&self) {
@@ -4636,6 +4688,15 @@ impl NautilusView {
         self.populate_entries(&entries, primary);
         if primary {
             self.refresh_listing_status();
+            if let Some(name) = self.pending_preview.borrow_mut().take() {
+                if entries
+                    .iter()
+                    .any(|entry| entry.name == name && !entry.is_dir)
+                {
+                    self.ensure_name_selected(&name, true);
+                    self.open_viewer(&name);
+                }
+            }
         }
     }
 
@@ -5986,7 +6047,7 @@ impl NautilusView {
             .is_some_and(|name| self.selected_is_directory(name));
         let kind = crate::fileops::ListingMenuKind::from_selection(selected.len(), first_is_dir);
         let flags = crate::fileops::ListingMenuFlags {
-            has_clipboard: !self.clipboard.borrow().is_empty(),
+            has_clipboard: self.listing_has_paste(),
             public_ok: info.as_ref().is_none_or(|i| i.has_feature("PublicLink"))
                 && !selected.is_empty(),
             cleanup_ok: info.as_ref().is_none_or(|i| i.has_feature("CleanUp")),
@@ -6772,6 +6833,21 @@ fn overlay_dialog_open(widget: &impl IsA<gtk::Widget>) -> bool {
         }
     }
     false
+}
+
+fn system_clipboard_has_paths() -> bool {
+    let Some(display) = gtk::gdk::Display::default() else {
+        return false;
+    };
+    let formats = display.clipboard().formats();
+    let mimes: Vec<String> = formats
+        .mime_types()
+        .iter()
+        .map(|mime| mime.to_string())
+        .collect();
+    crate::fileops::clipboard_formats_have_paths(
+        &mimes.iter().map(String::as_str).collect::<Vec<_>>(),
+    )
 }
 
 fn clear_list(list: &gtk::ListBox) {
