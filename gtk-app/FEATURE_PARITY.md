@@ -1110,3 +1110,9 @@ This client is the GTK 4 + libadwaita desktop UI. It talks to a local `rclone rc
 
 - Preferences array settings (extra flags, env vars, connectivity URLs) use add/remove item rows instead of a single delimited field
 - Alert action editor groups fields under Basic Information and Configuration; rule editor titles Basic Information and Filters
+
+- Live GUI: `--preferences core` Additional Rclone Flags / Environment Variables / Connectivity Check URLs each have **Add Item** plus per-row remove
+- Live GUI: Add Item on flags creates **Item 1**; typing `--fast-list` queues **Pending engine restart** (Discard / close, Save not clicked)
+- Live GUI: Connectivity Check URLs shows **https://www.google.com** with remove
+- Live GUI: `--alerts` Add action editor sections **Basic Information** (name, enabled, action type) and **Configuration**
+- Locale files include `remoteConfig.filterKeys` and `wizards.remoteConfig.noMatchingProviders` (8 non-en locales)
