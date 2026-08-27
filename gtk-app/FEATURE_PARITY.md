@@ -838,3 +838,12 @@ This client is the GTK 4 + libadwaita desktop UI. It talks to a local `rclone rc
 - Embedded file-picker chrome appends the live selection summary (`Select a folder · 2 folders selected`)
 - Sidebar mount/serve badges use `mount.mountedWithProfile` / `mountedMultiple` and `serve.servingWithProfile` / `servingMultiple`
 - Live GUI: custom bandwidth `xyz` stays in the EntryRow across poll ticks with a red invalid outline (Apply stays inactive); applying `2M` updates Saved/Live to 2M
+- Path fields get Angular-style inline autocomplete: list the parent folder, filter the last segment, and offer Up Folder / folder rows
+- `FilePickerConfig.default_remote` scopes typed relative paths (`Photos` → `remote:Photos`) on remote-config, Start Operation, and Quick Run
+- Destination path badges follow Angular `getPathStatus` (mount/sync/copy/bisync); bisync also shows a source badge when the resolved path is local
+- Mount save/start refuse a non-local dest with `wizards.appOperation.mountDestMustBeLocal`
+- Watch controls are hidden unless the op is automatable and the active RC backend is local; 0s delay shows `watchZeroDelayWarning`
+- Quick Run remote has a remotes dropdown and refuses Save with `selectRemoteFirst` when remotes exist but none is chosen
+- Live GUI: Copy source `testdrive:Pho` lists **Photos** (folder); picking it fills `testdrive:Photos/`
+- Live GUI: testdrive Copy dest `testdrive:verify-multi` Path check shows **Directory has files**
+- Live GUI: testdrive Mount dest `testdrive:Photos` Save is blocked with **Mount destination must be a local folder**; stored mount point stays `/tmp/rclone-testdrive-mnt`
