@@ -15,6 +15,9 @@ pub enum FileOp {
     Upload {
         fs: String,
         path: String,
+        /// Local source path so redo can re-upload. Empty on legacy tokens.
+        #[serde(default)]
+        source: String,
     },
     Rename {
         fs: String,
@@ -48,9 +51,14 @@ impl FileOp {
                 .mkdir(fs, path)
                 .map(|_| ())
                 .map_err(|e| e.to_string()),
-            FileOp::Upload { .. } => {
-                // Content is not retained; undo deletes the destination and redo is a no-op.
-                Ok(())
+            FileOp::Upload { fs, path, source } => {
+                if source.is_empty() {
+                    return Ok(());
+                }
+                client
+                    .copy_file("/", source, fs, path)
+                    .map(|_| ())
+                    .map_err(|e| e.to_string())
             }
             FileOp::Rename { fs, from, to } => client
                 .move_file(fs, from, fs, to)
@@ -101,6 +109,7 @@ impl FileOp {
             return Some(Self::Upload {
                 fs: "/".into(),
                 path: path.to_string(),
+                source: String::new(),
             });
         }
         None
@@ -108,7 +117,7 @@ impl FileOp {
 
     pub fn invert(&self) -> Option<Self> {
         match self {
-            Self::Mkdir { fs, path } | Self::Upload { fs, path } => Some(Self::Delete {
+            Self::Mkdir { fs, path } | Self::Upload { fs, path, .. } => Some(Self::Delete {
                 fs: fs.clone(),
                 path: path.clone(),
                 trash: None,
@@ -1414,6 +1423,44 @@ mod tests {
         }
         .invert()
         .is_none());
+    }
+
+    #[test]
+    fn upload_keeps_source_for_redo_and_inverts_to_delete() {
+        let upload = FileOp::Upload {
+            fs: "testdrive:".into(),
+            path: "Photos/note.txt".into(),
+            source: "/tmp/note.txt".into(),
+        };
+        assert_eq!(
+            upload.invert(),
+            Some(FileOp::Delete {
+                fs: "testdrive:".into(),
+                path: "Photos/note.txt".into(),
+                trash: None,
+            })
+        );
+        assert_eq!(FileOp::decode(&upload.encode()), Some(upload.clone()));
+        let legacy = FileOp::decode("upload:Photos/note.txt").unwrap();
+        assert_eq!(
+            legacy,
+            FileOp::Upload {
+                fs: "/".into(),
+                path: "Photos/note.txt".into(),
+                source: String::new(),
+            }
+        );
+        let without_source =
+            FileOp::decode(r#"{"op":"upload","fs":"testdrive:","path":"Photos/note.txt"}"#)
+                .unwrap();
+        assert_eq!(
+            without_source,
+            FileOp::Upload {
+                fs: "testdrive:".into(),
+                path: "Photos/note.txt".into(),
+                source: String::new(),
+            }
+        );
     }
 
     #[test]

@@ -1779,11 +1779,17 @@ impl NautilusView {
     fn attach_tab_reorder(&self, widget: &impl IsA<gtk::Widget>, id: u32) {
         let source = gtk::DragSource::new();
         source.set_actions(gtk::gdk::DragAction::MOVE);
-        source.connect_prepare(move |_, _, _| {
-            Some(gtk::gdk::ContentProvider::for_value(
-                &crate::dnd::encode_tab_payload(id).to_value(),
-            ))
-        });
+        let start = Rc::new(Cell::new((0.0_f64, 0.0_f64)));
+        {
+            let start = start.clone();
+            let host = widget.clone().upcast::<gtk::Widget>();
+            source.connect_prepare(move |_, x, y| {
+                start.set(widget_point_in_root(&host, x, y).unwrap_or((x, y)));
+                Some(gtk::gdk::ContentProvider::for_value(
+                    &crate::dnd::encode_tab_payload(id).to_value(),
+                ))
+            });
+        }
         {
             let view = self.clone();
             source.connect_drag_begin(move |_, drag| {
@@ -1804,6 +1810,21 @@ impl NautilusView {
                 row.append(&gtk::Image::from_icon_name("folder-symbolic"));
                 row.append(&gtk::Label::new(Some(&title)));
                 icon.set_child(Some(&row));
+            });
+        }
+        {
+            let view = self.clone();
+            let host = widget.clone().upcast::<gtk::Widget>();
+            let start = start.clone();
+            source.connect_drag_end(move |_, _, delete_data| {
+                if delete_data {
+                    return;
+                }
+                let end = pointer_in_root(&host).unwrap_or_else(|| start.get());
+                let bounds = root_bounds(&host).unwrap_or((0.0, 0.0, 0.0, 0.0));
+                if crate::dnd::should_detach_tab(false, start.get(), end, bounds) {
+                    view.detach_tab(id);
+                }
             });
         }
         widget.add_controller(source);
@@ -1828,7 +1849,8 @@ impl NautilusView {
                 self.reorder_tab(from_id, *to_id);
                 return true;
             }
-            return false;
+            self.detach_tab(from_id);
+            return true;
         }
         let Some(items) =
             crate::dnd::decode_payload(text).or_else(|| self.pending_drag.borrow().clone())
@@ -3646,6 +3668,7 @@ impl NautilusView {
                         crate::fileops::FileOp::Upload {
                             fs: item.dst_fs.clone(),
                             path: item.dst.clone(),
+                            source: item.src.clone(),
                         }
                         .encode(),
                     );
@@ -4528,28 +4551,29 @@ impl NautilusView {
     }
 
     pub fn detach_current_tab(&self) {
+        let id = self.current.borrow().id;
+        self.detach_tab(id);
+    }
+
+    fn detach_tab(&self, id: u32) {
+        let Some(tab) = self.tabs.borrow().iter().find(|t| t.id == id).cloned() else {
+            return;
+        };
         let Some(win) = self.root.root().and_downcast::<gtk::Window>() else {
             return;
         };
         let Some(app) = win.application().and_downcast::<adw::Application>() else {
             return;
         };
-        let current = self.current.borrow().clone();
         let files = self.ctx.t_or("nautilus.titles.files", "Files");
         let title = self.ctx.tf_or(
             "nautilus.titles.detachedTab",
             "{app} — {title}",
-            &[("app", &files), ("title", &current.title)],
+            &[("app", &files), ("title", &tab.title)],
         );
-        super::window::present_files_overlay(
-            &app,
-            &self.ctx,
-            &current.remote,
-            &current.path,
-            Some(&title),
-        );
+        super::window::present_files_overlay(&app, &self.ctx, &tab.remote, &tab.path, Some(&title));
         if self.tabs.borrow().len() > 1 {
-            self.close_current_tab();
+            self.close_tab(id);
         }
     }
 
@@ -5447,6 +5471,25 @@ impl NautilusView {
         }
         row
     }
+}
+
+fn widget_point_in_root(widget: &gtk::Widget, x: f64, y: f64) -> Option<(f64, f64)> {
+    let root = widget.root()?;
+    let point = widget.compute_point(&root, &gtk::graphene::Point::new(x as f32, y as f32))?;
+    Some((f64::from(point.x()), f64::from(point.y())))
+}
+
+fn pointer_in_root(widget: &gtk::Widget) -> Option<(f64, f64)> {
+    let native = widget.native()?;
+    let device = widget.display().default_seat()?.pointer()?;
+    let (sx, sy, _) = native.surface()?.device_position(&device)?;
+    let (tx, ty) = native.surface_transform();
+    Some((sx - tx, sy - ty))
+}
+
+fn root_bounds(widget: &gtk::Widget) -> Option<(f64, f64, f64, f64)> {
+    let root = widget.root()?;
+    Some((0.0, 0.0, root.width() as f64, root.height() as f64))
 }
 
 fn fs_remote(remote: &str, path: &str) -> (String, String) {

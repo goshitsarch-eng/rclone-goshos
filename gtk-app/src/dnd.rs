@@ -15,6 +15,35 @@ pub fn decode_tab_payload(text: &str) -> Option<u32> {
     text.strip_prefix(TAB_PAYLOAD_PREFIX)?.parse().ok()
 }
 
+/// Angular `onNativeDragEnd` vertical threshold before a tab detaches.
+pub const TAB_DETACH_DY: f64 = 70.0;
+/// Angular window-edge padding (`clientX < -20` / `>= innerWidth + 20`).
+pub const TAB_DETACH_OUTSIDE_PAD: f64 = 20.0;
+
+/// True when a tab drag should open a detached Files window.
+///
+/// Matches Angular `nautilus-tabs.component.ts` `onNativeDragEnd`: skip when the
+/// drop already reordered a tab; otherwise detach if the pointer left the
+/// window or moved more than [`TAB_DETACH_DY`] vertically.
+pub fn should_detach_tab(
+    drop_succeeded: bool,
+    start: (f64, f64),
+    end: (f64, f64),
+    window: (f64, f64, f64, f64),
+) -> bool {
+    if drop_succeeded {
+        return false;
+    }
+    let (ex, ey) = end;
+    let (wx, wy, ww, wh) = window;
+    let outside = ex < wx - TAB_DETACH_OUTSIDE_PAD
+        || ey < wy - TAB_DETACH_OUTSIDE_PAD
+        || ex >= wx + ww + TAB_DETACH_OUTSIDE_PAD
+        || ey >= wy + wh + TAB_DETACH_OUTSIDE_PAD;
+    let significant_dy = (ey - start.1).abs() > TAB_DETACH_DY;
+    outside || significant_dy
+}
+
 /// Angular CDK `moveItemInArray`.
 pub fn move_item_in_array<T>(items: &mut Vec<T>, from: usize, to: usize) {
     if from == to || from >= items.len() || to >= items.len() {
@@ -359,6 +388,59 @@ mod tests {
         assert_eq!(decode_tab_payload(&encode_tab_payload(42)), Some(42));
         assert_eq!(decode_tab_payload("rclone-manager-files"), None);
         assert_eq!(decode_tab_payload("rclone-manager-tab:x"), None);
+    }
+
+    #[test]
+    fn should_detach_tab_matches_angular_thresholds() {
+        let window = (0.0, 0.0, 800.0, 600.0);
+        assert!(!should_detach_tab(
+            true,
+            (10.0, 10.0),
+            (10.0, 400.0),
+            window
+        ));
+        assert!(!should_detach_tab(
+            false,
+            (40.0, 20.0),
+            (80.0, 80.0),
+            window
+        ));
+        assert!(should_detach_tab(
+            false,
+            (40.0, 20.0),
+            (40.0, 20.0 + TAB_DETACH_DY + 1.0),
+            window
+        ));
+        assert!(should_detach_tab(
+            false,
+            (40.0, 20.0),
+            (-30.0, 20.0),
+            window
+        ));
+        assert!(should_detach_tab(
+            false,
+            (40.0, 20.0),
+            (820.0 + TAB_DETACH_OUTSIDE_PAD, 20.0),
+            window
+        ));
+        assert!(should_detach_tab(
+            false,
+            (40.0, 20.0),
+            (40.0, -25.0),
+            window
+        ));
+        assert!(!should_detach_tab(
+            false,
+            (40.0, 20.0),
+            (40.0, 20.0 + TAB_DETACH_DY),
+            window
+        ));
+        assert!(!should_detach_tab(
+            false,
+            (0.0, 0.0),
+            (0.0, 0.0),
+            (0.0, 0.0, 0.0, 0.0)
+        ));
     }
 
     #[test]
