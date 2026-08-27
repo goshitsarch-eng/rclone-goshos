@@ -10327,27 +10327,28 @@ pub(crate) fn transfer_activity_row(
     }
     wrap.append(&header);
 
+    let (src_path, dst_path) = crate::transfers::transfer_card_paths(parsed, job_src, job_dst);
     let paths = gtk::Box::new(gtk::Orientation::Horizontal, 8);
-    let src_pill = gtk::Label::new(Some(crate::transfers::transfer_path_display(&parsed.src)));
+    let src_pill = gtk::Label::new(Some(crate::transfers::transfer_path_display(&src_path)));
     src_pill.set_xalign(0.0);
     src_pill.set_hexpand(true);
     src_pill.set_ellipsize(gtk::pango::EllipsizeMode::Middle);
     src_pill.set_selectable(true);
     src_pill.add_css_class("monospace");
     src_pill.add_css_class("dim-label");
-    src_pill.set_tooltip_text(Some(crate::transfers::transfer_path_display(&parsed.src)));
+    src_pill.set_tooltip_text(Some(crate::transfers::transfer_path_display(&src_path)));
     paths.append(&src_pill);
     let arrow = gtk::Image::from_icon_name("go-next-symbolic");
     arrow.add_css_class("dim-label");
     paths.append(&arrow);
-    let dst_pill = gtk::Label::new(Some(crate::transfers::transfer_path_display(&parsed.dst)));
+    let dst_pill = gtk::Label::new(Some(crate::transfers::transfer_path_display(&dst_path)));
     dst_pill.set_xalign(0.0);
     dst_pill.set_hexpand(true);
     dst_pill.set_ellipsize(gtk::pango::EllipsizeMode::Middle);
     dst_pill.set_selectable(true);
     dst_pill.add_css_class("monospace");
     dst_pill.add_css_class("dim-label");
-    dst_pill.set_tooltip_text(Some(crate::transfers::transfer_path_display(&parsed.dst)));
+    dst_pill.set_tooltip_text(Some(crate::transfers::transfer_path_display(&dst_path)));
     paths.append(&dst_pill);
     wrap.append(&paths);
 

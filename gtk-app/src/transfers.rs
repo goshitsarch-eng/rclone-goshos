@@ -180,6 +180,15 @@ pub fn transfer_path_display(path: &str) -> &str {
     }
 }
 
+/// Qualify leaf-only rclone transfer paths with the parent job src/dst so the
+/// card pills show `testdrive:Photos/ok.txt` instead of just `ok.txt`.
+pub fn transfer_card_paths(row: &TransferRow, job_src: &str, job_dst: &str) -> (String, String) {
+    (
+        qualify_transfer_side(&row.src, job_src, &row.name),
+        qualify_transfer_side(&row.dst, job_dst, &row.name),
+    )
+}
+
 /// Angular `speedClass` thresholds (10 MiB/s fast, 1 MiB/s medium).
 pub fn transfer_speed_class(speed: f64) -> &'static str {
     if speed > 10_485_760.0 {
@@ -805,6 +814,35 @@ mod tests {
         assert_eq!(transfer_speed_class(12_000_000.0), "speed-fast");
         assert_eq!(transfer_path_display(""), "—");
         assert_eq!(transfer_path_display("testdrive:a"), "testdrive:a");
+        let leaf_only = parse_completed_transfer_row(&json!({
+            "name": "ok.txt",
+            "bytes": 3,
+            "size": 3,
+            "percentage": 100
+        }));
+        assert_eq!(leaf_only.src, "ok.txt");
+        assert_eq!(
+            transfer_card_paths(&leaf_only, "testdrive:Photos", "testdrive:verify-ops"),
+            (
+                "testdrive:Photos/ok.txt".into(),
+                "testdrive:verify-ops/ok.txt".into()
+            )
+        );
+        let already = parse_completed_transfer_row(&json!({
+            "name": "bad.txt",
+            "srcFs": "testdrive:Photos",
+            "srcRemote": "bad.txt",
+            "dstFs": "testdrive:verify-ops",
+            "dstRemote": "bad.txt",
+            "error": "denied"
+        }));
+        assert_eq!(
+            transfer_card_paths(&already, "testdrive:Photos", "testdrive:verify-ops"),
+            (
+                "testdrive:Photos/bad.txt".into(),
+                "testdrive:verify-ops/bad.txt".into()
+            )
+        );
         assert_eq!(
             transfer_size_caption(&done),
             format!(
