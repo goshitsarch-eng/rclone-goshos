@@ -224,6 +224,45 @@ pub fn parse_expiry_pair(text: &str) -> (String, String) {
     (id, expiry)
 }
 
+/// Angular `vfs-control-panel` advanced-config grouping.
+pub fn vfs_opt_group(key: &str) -> &'static str {
+    let k = key.to_ascii_lowercase();
+    if k.contains("perm") || k.contains("mode") || k.contains("chmod") {
+        "Permissions"
+    } else if k.contains("size") || k.contains("chunk") || k.contains("buffer") {
+        "Sizes"
+    } else if k.contains("age")
+        || k.contains("timeout")
+        || k.contains("delay")
+        || k.contains("interval")
+        || k.contains("duration")
+        || k.ends_with("time")
+    {
+        "Durations"
+    } else if k.starts_with("no")
+        || k.contains("enable")
+        || k.contains("disable")
+        || k.contains("usedisk")
+        || k == "readonly"
+        || k == "caseinsensitive"
+    {
+        "Booleans"
+    } else if k.contains("count")
+        || k.contains("limit")
+        || k.contains("max")
+        || k.contains("min")
+        || k.contains("poll")
+    {
+        "Numbers"
+    } else {
+        "Strings"
+    }
+}
+
+pub fn vfs_opt_matches(key: &str, value: &str, query: &str) -> bool {
+    crate::config_search::matches_config_search(key, value, "", query)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -312,5 +351,15 @@ mod tests {
             ..delayed
         };
         assert_eq!(queue_item_status(&waiting), QueueStatus::Waiting);
+    }
+
+    #[test]
+    fn groups_and_filters_advanced_opt_keys() {
+        assert_eq!(vfs_opt_group("DirPerms"), "Permissions");
+        assert_eq!(vfs_opt_group("ChunkSize"), "Sizes");
+        assert_eq!(vfs_opt_group("DirCacheTime"), "Durations");
+        assert_eq!(vfs_opt_group("ReadOnly"), "Booleans");
+        assert!(vfs_opt_matches("ChunkSize", "128Mi", "chunk"));
+        assert!(!vfs_opt_matches("ReadOnly", "false", "perm"));
     }
 }

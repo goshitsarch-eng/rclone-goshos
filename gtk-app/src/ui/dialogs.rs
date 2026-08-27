@@ -3108,6 +3108,56 @@ fn add_flag_option_row(
             });
             group.add(&row);
         }
+        crate::value_mapper::ControlKind::MultiSelect => {
+            let row = adw::ExpanderRow::new();
+            row.set_title(&title);
+            row.set_subtitle(&help);
+            let selected: Vec<String> = current_text
+                .split([',', ' '])
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .map(|s| s.to_ascii_lowercase())
+                .collect();
+            let mut items = Vec::new();
+            for (value, hint) in &option.examples {
+                let check = gtk::CheckButton::with_label(value);
+                if !hint.is_empty() {
+                    check.set_tooltip_text(Some(hint));
+                }
+                check.set_active(selected.iter().any(|s| s == &value.to_ascii_lowercase()));
+                let wrap = adw::ActionRow::new();
+                wrap.set_title(value);
+                if !hint.is_empty() {
+                    wrap.set_subtitle(hint);
+                }
+                wrap.add_prefix(&check);
+                row.add_row(&wrap);
+                items.push((value.clone(), check));
+            }
+            let checks = Rc::new(items);
+            for (_, check) in checks.iter() {
+                let edits = edits.clone();
+                let block = block.to_string();
+                let field = option.field_name.clone();
+                let type_name = option.type_name.clone();
+                let checks = checks.clone();
+                check.connect_active_notify(move |_| {
+                    let joined = checks
+                        .iter()
+                        .filter(|(_, c)| c.is_active())
+                        .map(|(v, _)| v.clone())
+                        .collect::<Vec<_>>()
+                        .join(",");
+                    push_flag_edit(
+                        &edits,
+                        &block,
+                        &field,
+                        crate::flags::parse_flag_value(&type_name, &joined),
+                    );
+                });
+            }
+            group.add(&row);
+        }
         crate::value_mapper::ControlKind::Input => {
             let row = adw::EntryRow::new();
             row.set_title(&title);

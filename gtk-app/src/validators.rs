@@ -307,16 +307,16 @@ pub fn validate_remote_name(
     let raw = value;
     let value = value.trim();
     if value.is_empty() {
-        return Err("Remote name is required".into());
+        return Err("wizards.remoteConfig.remoteNameRequired".into());
     }
     if !is_remote_name(value) {
-        return Err("Remote name contains invalid characters".into());
+        return Err("wizards.remoteConfig.invalidChars".into());
     }
     if value.starts_with('-') || value.starts_with(' ') {
-        return Err("Remote name cannot start with dash or space".into());
+        return Err("wizards.remoteConfig.invalidStart".into());
     }
     if raw.ends_with(' ') {
-        return Err("Remote name cannot end with space".into());
+        return Err("wizards.remoteConfig.invalidEnd".into());
     }
     if editing.is_some_and(|current| current.eq_ignore_ascii_case(value)) {
         return Ok(());
@@ -325,7 +325,7 @@ pub fn validate_remote_name(
         .iter()
         .any(|name| name.trim().eq_ignore_ascii_case(value))
     {
-        return Err("This remote name is already in use".into());
+        return Err("wizards.remoteConfig.nameTaken".into());
     }
     Ok(())
 }
@@ -481,9 +481,23 @@ mod tests {
         assert!(validate_remote_name("-bad", &[], None).is_err());
         assert!(validate_remote_name("bad/", &[], None).is_err());
         assert!(validate_remote_name("drive ", &[], None).is_err());
-        assert!(validate_remote_name("Drive", &["drive".into()], None).is_err());
+        assert_eq!(
+            validate_remote_name("Drive", &["drive".into()], None).unwrap_err(),
+            "wizards.remoteConfig.nameTaken"
+        );
         assert!(validate_remote_name("Drive", &["drive".into()], Some("drive")).is_ok());
-        assert!(validate_remote_name("", &[], None).is_err());
+        assert_eq!(
+            validate_remote_name("", &[], None).unwrap_err(),
+            "wizards.remoteConfig.remoteNameRequired"
+        );
+        assert_eq!(
+            validate_remote_name("-bad", &[], None).unwrap_err(),
+            "wizards.remoteConfig.invalidStart"
+        );
+        assert_eq!(
+            validate_remote_name("drive ", &[], None).unwrap_err(),
+            "wizards.remoteConfig.invalidEnd"
+        );
     }
 
     #[test]

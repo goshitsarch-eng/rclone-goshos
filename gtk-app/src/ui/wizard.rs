@@ -18,6 +18,7 @@ use crate::value_mapper::{
     matches_provider_rule, ControlKind,
 };
 use adw::prelude::*;
+use gtk::glib;
 use gtk::prelude::*;
 use serde_json::{json, Value};
 use std::cell::{Cell, RefCell};
@@ -37,6 +38,7 @@ enum FieldWidget {
     Switch(adw::SwitchRow),
     Combo(adw::ComboRow, Rc<Vec<String>>),
     Spin(adw::SpinRow),
+    Multi(adw::ExpanderRow, Rc<Vec<(String, gtk::CheckButton)>>),
 }
 
 impl FieldWidget {
@@ -46,6 +48,7 @@ impl FieldWidget {
             Self::Switch(row) => group.add(row),
             Self::Combo(row, _) => group.add(row),
             Self::Spin(row) => group.add(row),
+            Self::Multi(row, _) => group.add(row),
         }
     }
 
@@ -55,6 +58,27 @@ impl FieldWidget {
             Self::Switch(row) => group.remove(row),
             Self::Combo(row, _) => group.remove(row),
             Self::Spin(row) => group.remove(row),
+            Self::Multi(row, _) => group.remove(row),
+        }
+    }
+
+    fn set_visible(&self, visible: bool) {
+        match self {
+            Self::Entry(row) => row.set_visible(visible),
+            Self::Switch(row) => row.set_visible(visible),
+            Self::Combo(row, _) => row.set_visible(visible),
+            Self::Spin(row) => row.set_visible(visible),
+            Self::Multi(row, _) => row.set_visible(visible),
+        }
+    }
+
+    fn search_help(&self) -> String {
+        match self {
+            Self::Entry(row) => row.tooltip_text().unwrap_or_default().to_string(),
+            Self::Switch(row) => row.subtitle().unwrap_or_default().to_string(),
+            Self::Combo(row, _) => row.subtitle().unwrap_or_default().to_string(),
+            Self::Spin(row) => row.subtitle().unwrap_or_default().to_string(),
+            Self::Multi(row, _) => row.subtitle().to_string(),
         }
     }
 
@@ -74,22 +98,39 @@ impl FieldWidget {
                     v.to_string()
                 }
             }
+            Self::Multi(_, items) => items
+                .iter()
+                .filter(|(_, check)| check.is_active())
+                .map(|(value, _)| value.clone())
+                .collect::<Vec<_>>()
+                .join(","),
         }
     }
 
     fn connect_change(&self, callback: impl Fn() + 'static) {
+        let callback = Rc::new(callback);
         match self {
             Self::Entry(row) => {
+                let callback = callback.clone();
                 row.connect_changed(move |_| callback());
             }
             Self::Switch(row) => {
+                let callback = callback.clone();
                 row.connect_active_notify(move |_| callback());
             }
             Self::Combo(row, _) => {
+                let callback = callback.clone();
                 row.connect_selected_notify(move |_| callback());
             }
             Self::Spin(row) => {
+                let callback = callback.clone();
                 row.connect_changed(move |_| callback());
+            }
+            Self::Multi(_, items) => {
+                for (_, check) in items.iter() {
+                    let callback = callback.clone();
+                    check.connect_active_notify(move |_| callback());
+                }
             }
         }
     }
@@ -106,6 +147,17 @@ impl FieldWidget {
             Self::Spin(row) => {
                 if let Ok(v) = text.parse::<f64>() {
                     row.set_value(v);
+                }
+            }
+            Self::Multi(_, items) => {
+                let selected: Vec<String> = text
+                    .split([',', ' '])
+                    .map(str::trim)
+                    .filter(|s| !s.is_empty())
+                    .map(|s| s.to_ascii_lowercase())
+                    .collect();
+                for (value, check) in items.iter() {
+                    check.set_active(selected.iter().any(|s| s == &value.to_ascii_lowercase()));
                 }
             }
         }
@@ -194,9 +246,9 @@ fn present_ex(
                     row.remove_css_class("error");
                     row.set_tooltip_text(None);
                 }
-                Err(msg) => {
+                Err(key) => {
                     row.add_css_class("error");
-                    row.set_tooltip_text(Some(&msg));
+                    row.set_tooltip_text(Some(&ctx.t_or(&key, &key)));
                 }
             }
         });
@@ -219,11 +271,19 @@ fn present_ex(
     };
     let label_refs: Vec<&str> = labels.iter().map(|s| s.as_str()).collect();
     type_row.set_model(Some(&gtk::StringList::new(&label_refs)));
+    let type_search = adw::EntryRow::new();
+    type_search.set_title(&ctx.t_or("wizards.remoteConfig.remoteType", "Provider"));
+    if let Some(label) = labels.first() {
+        type_search.set_text(label);
+    }
+    attach_provider_typeahead(&ctx, &type_search, &type_row, &providers, &labels);
+    type_row.set_visible(false);
 
     let fields_group = adw::PreferencesGroup::new();
     fields_group.set_title(&ctx.t_or("wizards.remoteConfig.fields", "Provider options"));
     let advanced_group = adw::PreferencesGroup::new();
     advanced_group.set_title(&ctx.t_or("wizards.remoteConfig.advancedOptions", "Advanced options"));
+    let field_query = Rc::new(RefCell::new(String::new()));
     let state = Rc::new(RefCell::new(WizardState {
         providers: providers.clone(),
         fields: HashMap::new(),
@@ -267,6 +327,7 @@ fn present_ex(
         providers.first(),
         true,
         &rebuilding,
+        &field_query.borrow(),
     );
     if !current_vendor(&state).is_empty() {
         rebuild_fields(
@@ -278,12 +339,16 @@ fn present_ex(
             providers.first(),
             true,
             &rebuilding,
+            &field_query.borrow(),
         );
     }
     if let Some(ref params) = existing_params {
         if let Some(type_name) = crate::providers::dump_provider_type(params) {
             if let Some(idx) = crate::providers::provider_index_by_name(&providers, &type_name) {
                 type_row.set_selected(idx as u32);
+                if let Some(label) = labels.get(idx) {
+                    type_search.set_text(label);
+                }
             }
         }
         apply_dump_to_wizard_fields(&state, params);
@@ -307,6 +372,7 @@ fn present_ex(
         let json_view = json_view.clone();
         let obscure_fields = obscure_fields.clone();
         let obscure_refresh = obscure_refresh.clone();
+        let field_query = field_query.clone();
         type_row.connect_selected_notify(move |row| {
             let provider = providers.get(row.selected() as usize);
             *obscure_fields.borrow_mut() = provider
@@ -324,6 +390,7 @@ fn present_ex(
                 provider,
                 true,
                 &rebuilding,
+                &field_query.borrow(),
             );
             if json_mode.get() {
                 fill_json_view(
@@ -660,11 +727,29 @@ fn present_ex(
     let identity = adw::PreferencesGroup::new();
     identity.set_title(&ctx.t_or("wizards.remoteConfig.remoteName", "Identity"));
     identity.add(&name);
+    identity.add(&type_search);
     identity.add(&type_row);
     setup.add(&identity);
 
     let mode_group = adw::PreferencesGroup::new();
     mode_group.set_title(&ctx.t_or("wizards.remoteConfig.fields", "Fields"));
+    let field_search = gtk::SearchEntry::new();
+    field_search.set_placeholder_text(Some(
+        &ctx.t_or("wizards.remoteConfig.searchFields", "Search fields"),
+    ));
+    field_search.set_hexpand(true);
+    {
+        let state = state.clone();
+        let field_query = field_query.clone();
+        field_search.connect_search_changed(move |entry| {
+            *field_query.borrow_mut() = entry.text().to_string();
+            apply_field_search(&state, &field_query.borrow());
+        });
+    }
+    let field_search_row = adw::ActionRow::new();
+    field_search_row.set_title(&ctx.t_or("wizards.remoteConfig.searchFields", "Search fields"));
+    field_search_row.add_suffix(&field_search);
+    mode_group.add(&field_search_row);
     let adv_switch = adw::SwitchRow::new();
     let adv_on = ctx.t_or("wizards.remoteConfig.hideAdvanced", "Hide Advanced Options");
     let adv_off = ctx.t_or("wizards.remoteConfig.showAdvanced", "Show Advanced Options");
@@ -1528,7 +1613,7 @@ fn present_ex(
                         "wizards.remoteConfig.remoteNameRequired",
                         "Invalid remote name",
                     )),
-                    Some(&e),
+                    Some(&ctx.t_or(&e, &e)),
                 );
                 err.add_response("ok", &ctx.t_or("common.ok", "OK"));
                 err.present(Some(&dialog));
@@ -1744,6 +1829,7 @@ fn rebuild_fields(
     provider: Option<&Provider>,
     include_advanced: bool,
     rebuilding: &Rc<Cell<bool>>,
+    query: &str,
 ) {
     if rebuilding.get() {
         return;
@@ -1802,7 +1888,9 @@ fn rebuild_fields(
         provider,
         include_advanced,
         rebuilding,
+        query,
     );
+    apply_field_search(state, query);
     rebuilding.set(false);
 }
 
@@ -1815,6 +1903,7 @@ fn attach_vendor_watchers(
     provider: &Provider,
     include_advanced: bool,
     rebuilding: &Rc<Cell<bool>>,
+    query: &str,
 ) {
     for key in ["provider", "vendor"] {
         let Some(widget) = state.borrow().fields.get(key).cloned() else {
@@ -1827,6 +1916,7 @@ fn attach_vendor_watchers(
         let state = state.clone();
         let provider = provider.clone();
         let rebuilding = rebuilding.clone();
+        let query = query.to_string();
         widget.connect_change(move || {
             if rebuilding.get() {
                 return;
@@ -1840,6 +1930,7 @@ fn attach_vendor_watchers(
                 Some(&provider),
                 include_advanced,
                 &rebuilding,
+                &query,
             );
         });
     }
@@ -1936,6 +2027,39 @@ fn option_row(
                 row.set_selected(idx as u32);
             }
             FieldWidget::Combo(row, values)
+        }
+        ControlKind::MultiSelect => {
+            let row = adw::ExpanderRow::new();
+            row.set_title(&title);
+            row.set_subtitle(&option.help);
+            let selected: Vec<String> = initial
+                .split([',', ' '])
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .map(|s| s.to_ascii_lowercase())
+                .collect();
+            let mut items = Vec::new();
+            for (value, help) in &examples {
+                let check = gtk::CheckButton::with_label(value);
+                if !help.is_empty() {
+                    check.set_tooltip_text(Some(help));
+                }
+                check.set_active(selected.iter().any(|s| s == &value.to_ascii_lowercase()));
+                let wrap = adw::ActionRow::new();
+                wrap.set_title(value);
+                if !help.is_empty() {
+                    wrap.set_subtitle(help);
+                }
+                wrap.add_prefix(&check);
+                wrap.set_activatable(true);
+                {
+                    let check = check.clone();
+                    wrap.connect_activated(move |_| check.set_active(!check.is_active()));
+                }
+                row.add_row(&wrap);
+                items.push((value.clone(), check));
+            }
+            FieldWidget::Multi(row, Rc::new(items))
         }
         ControlKind::Numeric => {
             let row = adw::SpinRow::with_range(-1_000_000_000.0, 1_000_000_000.0, 1.0);
@@ -2511,4 +2635,125 @@ fn collect_runtime_json(view: &gtk::TextView, rows: &[(String, adw::EntryRow, St
         }
     }
     serde_json::to_string_pretty(&value).unwrap_or_else(|_| "{}".into())
+}
+
+fn apply_field_search(state: &Rc<RefCell<WizardState>>, query: &str) {
+    for (name, widget) in state.borrow().fields.iter() {
+        let help = widget.search_help();
+        widget.set_visible(crate::config_search::matches_config_search(
+            name, &help, "", query,
+        ));
+    }
+}
+
+fn attach_provider_typeahead(
+    ctx: &AppCtx,
+    search: &adw::EntryRow,
+    type_row: &adw::ComboRow,
+    providers: &[Provider],
+    labels: &[String],
+) {
+    let names: Vec<String> = if providers.is_empty() {
+        labels
+            .iter()
+            .map(|label| label.split(" — ").next().unwrap_or(label).to_string())
+            .collect()
+    } else {
+        providers.iter().map(|p| p.name.clone()).collect()
+    };
+    let descriptions: Vec<String> = if providers.is_empty() {
+        vec![String::new(); names.len()]
+    } else {
+        providers.iter().map(|p| p.description.clone()).collect()
+    };
+    let labels = labels.to_vec();
+    let popover = gtk::Popover::new();
+    popover.set_parent(search);
+    popover.set_autohide(true);
+    popover.set_has_arrow(false);
+    popover.set_position(gtk::PositionType::Bottom);
+    let list = gtk::ListBox::new();
+    list.add_css_class("boxed-list");
+    let scroll = gtk::ScrolledWindow::new();
+    scroll.set_min_content_height(80);
+    scroll.set_max_content_height(280);
+    scroll.set_propagate_natural_width(true);
+    scroll.set_child(Some(&list));
+    popover.set_child(Some(&scroll));
+    {
+        let popover = popover.clone();
+        search.connect_destroy(move |_| popover.unparent());
+    }
+    let applying = Rc::new(Cell::new(false));
+    let generation = Rc::new(Cell::new(0u32));
+    let fill = {
+        let search = search.clone();
+        let type_row = type_row.clone();
+        let list = list.clone();
+        let popover = popover.clone();
+        let applying = applying.clone();
+        let names = names.clone();
+        let descriptions = descriptions.clone();
+        let labels = labels.clone();
+        let empty_label = ctx.t_or(
+            "wizards.remoteConfig.noMatchingTypes",
+            "No matching remote types",
+        );
+        Rc::new(move || {
+            while let Some(child) = list.first_child() {
+                list.remove(&child);
+            }
+            let hits =
+                crate::config_search::filter_providers(&search.text(), &names, &descriptions);
+            if hits.is_empty() {
+                let empty = adw::ActionRow::new();
+                empty.set_activatable(false);
+                empty.set_title(&empty_label);
+                list.append(&empty);
+            }
+            for hit in hits.into_iter().take(40) {
+                let item = adw::ActionRow::new();
+                let title = labels.get(hit.index).cloned().unwrap_or(hit.name.clone());
+                item.set_title(&title);
+                if !hit.description.is_empty() {
+                    item.set_subtitle(&hit.description);
+                }
+                item.set_activatable(true);
+                let search = search.clone();
+                let type_row = type_row.clone();
+                let applying = applying.clone();
+                let popover = popover.clone();
+                let idx = hit.index as u32;
+                item.connect_activated(move |_| {
+                    applying.set(true);
+                    search.set_text(&title);
+                    type_row.set_selected(idx);
+                    applying.set(false);
+                    popover.popdown();
+                });
+                list.append(&item);
+            }
+            popover.popup();
+        })
+    };
+    {
+        let fill = fill.clone();
+        let applying = applying.clone();
+        let generation = generation.clone();
+        search.connect_changed(move |_| {
+            if applying.get() {
+                return;
+            }
+            let next = generation.get().wrapping_add(1);
+            generation.set(next);
+            let fill = fill.clone();
+            let generation = generation.clone();
+            glib::timeout_add_local(std::time::Duration::from_millis(160), move || {
+                if generation.get() == next {
+                    fill();
+                }
+                glib::ControlFlow::Break
+            });
+        });
+    }
 }

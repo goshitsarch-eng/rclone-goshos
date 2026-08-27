@@ -106,8 +106,21 @@ pub fn vfs_panel(ctx: AppCtx, remote: &str, toast: adw::ToastOverlay) -> gtk::Wi
         "shared.vfsControl.advancedConfig.title",
         "Advanced Configuration",
     ));
+    let advanced_search = gtk::SearchEntry::new();
+    advanced_search.set_placeholder_text(Some(&ctx.t_or(
+        "shared.vfsControl.advancedConfig.search",
+        "Search VFS options",
+    )));
+    advanced_search.set_hexpand(true);
+    let search_row = adw::ActionRow::new();
+    search_row.set_title(&ctx.t_or(
+        "shared.vfsControl.advancedConfig.search",
+        "Search VFS options",
+    ));
+    search_row.add_suffix(&advanced_search);
     let advanced_list = gtk::ListBox::new();
     advanced_list.add_css_class("boxed-list");
+    advanced.add_row(&search_row);
     advanced.add_row(&advanced_list);
     let advanced_group = adw::PreferencesGroup::new();
     advanced_group.add(&advanced);
@@ -159,6 +172,7 @@ pub fn vfs_panel(ctx: AppCtx, remote: &str, toast: adw::ToastOverlay) -> gtk::Wi
         let delay_box = delay_box.clone();
         let cache = cache.clone();
         let advanced_list = advanced_list.clone();
+        let advanced_search = advanced_search.clone();
         let toast = toast.clone();
         Rc::new(move || {
             clear_list(&stats);
@@ -312,10 +326,18 @@ pub fn vfs_panel(ctx: AppCtx, remote: &str, toast: adw::ToastOverlay) -> gtk::Wi
                         cache.append(&note);
                     }
                     if let Some(map) = parsed.opt.as_object() {
-                        for (key, value) in map {
+                        let query = advanced_search.text().to_string();
+                        let mut keys: Vec<_> = map.keys().cloned().collect();
+                        keys.sort();
+                        for key in keys {
+                            let value = &map[&key];
+                            let display = format_opt_value(value);
+                            let group = crate::vfs::vfs_opt_group(&key);
                             let row = adw::ActionRow::new();
-                            row.set_title(key);
-                            row.set_subtitle(&format_opt_value(value));
+                            row.set_title(&key);
+                            row.set_subtitle(&format!("{group} · {display}"));
+                            row.set_widget_name(&key);
+                            row.set_visible(crate::vfs::vfs_opt_matches(&key, &display, &query));
                             advanced_list.append(&row);
                         }
                     }
@@ -385,6 +407,22 @@ pub fn vfs_panel(ctx: AppCtx, remote: &str, toast: adw::ToastOverlay) -> gtk::Wi
         })
     };
     *refresh_slot.borrow_mut() = refresh_ui.clone();
+    {
+        let advanced_list = advanced_list.clone();
+        advanced_search.connect_search_changed(move |entry| {
+            let query = entry.text().to_string();
+            let mut child = advanced_list.first_child();
+            while let Some(widget) = child {
+                let next = widget.next_sibling();
+                if let Ok(row) = widget.clone().downcast::<adw::ActionRow>() {
+                    let key = row.widget_name().to_string();
+                    let value = row.subtitle().unwrap_or_default().to_string();
+                    row.set_visible(crate::vfs::vfs_opt_matches(&key, &value, &query));
+                }
+                child = next;
+            }
+        });
+    }
     refresh_ui();
 
     {

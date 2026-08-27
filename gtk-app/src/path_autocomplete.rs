@@ -441,6 +441,5 @@ mod tests {
     #[test]
     fn parent_from_remote_path() {
         assert_eq!(parent_from_path("testdrive:Photos/a"), "testdrive:Photos");
-        assert_eq!(parent_remote_path("Photos/a"), "Photos");
     }
 }

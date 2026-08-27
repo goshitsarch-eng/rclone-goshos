@@ -812,9 +812,14 @@ fn operation_page(
     }
 
     let auto_start = adw::SwitchRow::new();
-    auto_start.set_title(&ctx.t_or(
+    let op_label = ctx.t_or(
+        &format!("modals.remoteConfig.steps.{}", op.as_str()),
+        op.api_label(),
+    );
+    auto_start.set_title(&ctx.tf_or(
         "wizards.appOperation.enableAutoStart",
-        "Start with application",
+        "Enable Auto-{type} on Startup",
+        &[("type", &op_label)],
     ));
     auto_start.set_active(initial.app.auto_start);
     let cron_enabled = adw::SwitchRow::new();
