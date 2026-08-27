@@ -868,3 +868,6 @@ This client is the GTK 4 + libadwaita desktop UI. It talks to a local `rclone rc
 - Helper sidebar pages have JSON mode with key highlight, matching operation-profile JSON search
 - Files tab strip scrolls when tabs overflow; middle-click closes a tab
 - Live GUI: testdrive Remote step shows **alias — Alias for an existing remote**, Search fields, Show Advanced Options, and **remote (Required)**
+
+- Structured JSON editor (chips, parse/unknown-key banners, key/value autocomplete, restrict-mode masking, src/dst path reconciliation) replaces raw TextView JSON on operation profiles, helper pages, wizard JSON, and helper-profile dialogs
+- Delete-remote confirmation lists mounts/serves/jobs with icons plus saved profiles, quick runs, and automations

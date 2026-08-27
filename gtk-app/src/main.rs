@@ -21,6 +21,7 @@ mod guidance;
 mod i18n;
 mod interactive;
 mod jobs;
+mod json_editor;
 mod keyring;
 mod layout;
 mod logs;

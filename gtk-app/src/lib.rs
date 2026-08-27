@@ -23,6 +23,7 @@ pub mod guidance;
 pub mod i18n;
 pub mod interactive;
 pub mod jobs;
+pub mod json_editor;
 pub mod keyring;
 pub mod layout;
 pub mod logs;

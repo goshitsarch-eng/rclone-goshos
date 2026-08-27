@@ -1820,22 +1820,48 @@ pub struct DeleteRemotePlan {
     pub jobs: Vec<u64>,
     pub quick_runs: Vec<String>,
     pub automations: Vec<String>,
+    pub profiles: Vec<String>,
     pub job_history: usize,
 }
 
 impl DeleteRemotePlan {
     pub fn summary(&self) -> String {
         format!(
-            "Delete {}?\n\nWill stop {} mounts, {} serves, and {} jobs.\nRemove {} quick runs, {} automations, and {} history entries.",
+            "Delete {}?\n\nWill stop {} mounts, {} serves, and {} jobs.\nRemove {} profiles, {} quick runs, {} automations, and {} history entries.",
             self.name,
             self.mounts.len(),
             self.serves.len(),
             self.jobs.len(),
+            self.profiles.len(),
             self.quick_runs.len(),
             self.automations.len(),
             self.job_history
         )
     }
+
+    pub fn has_active_ops(&self) -> bool {
+        !self.mounts.is_empty() || !self.serves.is_empty() || !self.jobs.is_empty()
+    }
+
+    pub fn has_saved(&self) -> bool {
+        !self.profiles.is_empty() || !self.quick_runs.is_empty() || !self.automations.is_empty()
+    }
+}
+
+pub fn listed_remote_profiles(meta: &RemoteMeta) -> Vec<String> {
+    let mut out = Vec::new();
+    for (op, profiles) in &meta.profiles {
+        for name in profiles.keys() {
+            out.push(format!("{op}/{name}"));
+        }
+    }
+    for kind in ["vfs", "filter", "backend", "runtime"] {
+        for name in meta.helper_names(kind) {
+            out.push(format!("{kind}/{name}"));
+        }
+    }
+    out.sort();
+    out
 }
 
 pub fn rewrite_automation_id(id: &str, remote: &str, from: &str, to: &str) -> Option<String> {
@@ -1895,6 +1921,11 @@ pub fn plan_delete_remote(
         .iter()
         .filter(|j| j.remote == name)
         .count();
+    let profiles = store
+        .remotes
+        .get(name)
+        .map(listed_remote_profiles)
+        .unwrap_or_default();
     DeleteRemotePlan {
         name: name.to_string(),
         mounts,
@@ -1902,6 +1933,7 @@ pub fn plan_delete_remote(
         jobs,
         quick_runs,
         automations,
+        profiles,
         job_history,
     }
 }
@@ -2901,7 +2933,16 @@ mod tests {
     #[test]
     fn plans_and_applies_remote_delete() {
         let mut store = AppStore::default();
-        store.remotes.insert("drive".into(), RemoteMeta::default());
+        let mut meta = RemoteMeta::default();
+        meta.upsert_profile(
+            OperationType::Copy,
+            ProfileConfig {
+                name: "default".into(),
+                ..ProfileConfig::default()
+            },
+        );
+        meta.upsert_helper("vfs", "cache", json!({}));
+        store.remotes.insert("drive".into(), meta);
         store.quick_runs.push(QuickRun::new(
             "Nightly".into(),
             OperationType::Sync,
@@ -2972,6 +3013,10 @@ mod tests {
         assert_eq!(plan.jobs, vec![9]);
         assert_eq!(plan.quick_runs, vec!["Nightly"]);
         assert_eq!(plan.job_history, 1);
+        assert!(plan.profiles.iter().any(|p| p == "copy/default"));
+        assert!(plan.profiles.iter().any(|p| p == "vfs/cache"));
+        assert!(plan.has_active_ops());
+        assert!(plan.has_saved());
         assert!(plan.summary().contains("Delete drive"));
         store.apply_delete_remote("drive");
         assert!(!store.remotes.contains_key("drive"));

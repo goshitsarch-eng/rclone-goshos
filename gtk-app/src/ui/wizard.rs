@@ -333,13 +333,18 @@ fn present_ex(
     let show_advanced = Rc::new(Cell::new(false));
     let json_mode = Rc::new(Cell::new(ctx.settings.borrow().runtime.show_json_mode));
     let show_cmd = Rc::new(Cell::new(false));
-    let json_view = gtk::TextView::new();
-    json_view.set_wrap_mode(gtk::WrapMode::WordChar);
-    json_view.set_monospace(true);
-    json_view.set_left_margin(8);
-    json_view.set_right_margin(8);
-    json_view.set_top_margin(8);
-    json_view.set_bottom_margin(8);
+    let json_editor = super::json_editor::JsonEditor::new(&ctx);
+    json_editor.set_restrict(ctx.settings.borrow().general.restrict);
+    if let Some(provider) = providers.first() {
+        json_editor.set_fields(
+            provider
+                .options
+                .iter()
+                .map(crate::json_editor::JsonFieldDef::from_provider)
+                .collect(),
+        );
+    }
+    let json_view = json_editor.view.clone();
     fill_json_view(
         &json_view,
         &collect_params(&state),
@@ -397,6 +402,7 @@ fn present_ex(
         let rebuilding = rebuilding.clone();
         let json_mode = json_mode.clone();
         let json_view = json_view.clone();
+        let json_editor = json_editor.clone();
         let obscure_fields = obscure_fields.clone();
         let obscure_refresh = obscure_refresh.clone();
         let field_query = field_query.clone();
@@ -408,6 +414,16 @@ fn present_ex(
             if let Some(refresh) = obscure_refresh.borrow().clone() {
                 refresh();
             }
+            json_editor.set_fields(
+                provider
+                    .map(|p| {
+                        p.options
+                            .iter()
+                            .map(crate::json_editor::JsonFieldDef::from_provider)
+                            .collect()
+                    })
+                    .unwrap_or_default(),
+            );
             rebuild_fields(
                 &parent,
                 &ctx,
@@ -997,12 +1013,9 @@ fn present_ex(
         "wizards.remoteConfig.jsonEditorInfo.runtimeRemote",
         "Edit the remote parameters as JSON. Switch back to form to apply.",
     )));
-    let json_scroll = gtk::ScrolledWindow::new();
-    json_scroll.set_min_content_height(240);
-    json_scroll.set_hexpand(true);
-    json_scroll.set_vexpand(true);
-    json_scroll.set_child(Some(&json_view));
-    json_group.add(&json_scroll);
+    json_editor.root.set_hexpand(true);
+    json_editor.root.set_vexpand(true);
+    json_group.add(&json_editor.root);
     json_group.set_visible(json_mode.get());
     setup.add(&json_group);
 
@@ -2871,13 +2884,18 @@ pub(super) fn inline_provider_editor(
     let command_options = Rc::new(RefCell::new(
         crate::command_options::initial_command_options(),
     ));
-    let json_view = gtk::TextView::new();
-    json_view.set_wrap_mode(gtk::WrapMode::WordChar);
-    json_view.set_monospace(true);
-    json_view.set_left_margin(8);
-    json_view.set_right_margin(8);
-    json_view.set_top_margin(8);
-    json_view.set_bottom_margin(8);
+    let json_editor = super::json_editor::JsonEditor::new(ctx);
+    json_editor.set_restrict(ctx.settings.borrow().general.restrict);
+    if let Some(provider) = provider.as_ref() {
+        json_editor.set_fields(
+            provider
+                .options
+                .iter()
+                .map(crate::json_editor::JsonFieldDef::from_provider)
+                .collect(),
+        );
+    }
+    let json_view = json_editor.view.clone();
 
     rebuild_fields(
         parent,
@@ -2969,10 +2987,7 @@ pub(super) fn inline_provider_editor(
     advanced_group.set_visible(false);
     let json_group = adw::PreferencesGroup::new();
     json_group.set_title(&ctx.t_or("wizards.remoteConfig.switchToJson", "Parameters JSON"));
-    let json_scroll = gtk::ScrolledWindow::new();
-    json_scroll.set_min_content_height(180);
-    json_scroll.set_child(Some(&json_view));
-    json_group.add(&json_scroll);
+    json_group.add(&json_editor.root);
     json_group.set_visible(false);
     {
         let advanced_group = advanced_group.clone();

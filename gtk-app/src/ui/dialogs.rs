@@ -5579,6 +5579,115 @@ pub fn start_operation(
     dialog.present(Some(parent));
 }
 
+fn delete_remote_details(ctx: &AppCtx, plan: &crate::store::DeleteRemotePlan) -> gtk::Box {
+    let box_ = gtk::Box::new(gtk::Orientation::Vertical, 8);
+    box_.set_hexpand(true);
+    if plan.has_active_ops() {
+        let title = gtk::Label::new(Some(&ctx.t_or(
+            "home.deleteRemote.activeOperationsTitle",
+            "Active Operations Running",
+        )));
+        title.add_css_class("heading");
+        title.set_xalign(0.0);
+        box_.append(&title);
+        let desc = gtk::Label::new(Some(&ctx.t_or(
+            "home.deleteRemote.activeOperationsDesc",
+            "The following active operations are currently running on this remote and will be forcefully terminated:",
+        )));
+        desc.set_wrap(true);
+        desc.set_xalign(0.0);
+        desc.add_css_class("dim-label");
+        box_.append(&desc);
+        for point in &plan.mounts {
+            box_.append(&delete_detail_row(
+                "drive-harddisk-symbolic",
+                &ctx.t_or("home.deleteRemote.willUnmount", "Will Unmount"),
+                point,
+            ));
+        }
+        for serve in &plan.serves {
+            box_.append(&delete_detail_row(
+                "network-server-symbolic",
+                &ctx.t_or("home.deleteRemote.willStop", "Will Stop"),
+                serve,
+            ));
+        }
+        for job in &plan.jobs {
+            box_.append(&delete_detail_row(
+                "emblem-synchronizing-symbolic",
+                &ctx.t_or("home.deleteRemote.willCancel", "Will Cancel"),
+                &format!("#{job}"),
+            ));
+        }
+    }
+    if !plan.profiles.is_empty() {
+        let title = gtk::Label::new(Some(&ctx.tf_or(
+            "home.deleteRemote.savedProfilesTitle",
+            "Saved Profiles ({{count}})",
+            &[("count", &plan.profiles.len().to_string())],
+        )));
+        title.add_css_class("heading");
+        title.set_xalign(0.0);
+        box_.append(&title);
+        for profile in plan.profiles.iter().take(12) {
+            box_.append(&delete_detail_row(
+                "document-properties-symbolic",
+                profile,
+                "",
+            ));
+        }
+    }
+    if !plan.quick_runs.is_empty() {
+        let title = gtk::Label::new(Some(&ctx.tf_or(
+            "home.deleteRemote.quickRunsTitle",
+            "Associated Quick Runs ({{count}})",
+            &[("count", &plan.quick_runs.len().to_string())],
+        )));
+        title.add_css_class("heading");
+        title.set_xalign(0.0);
+        box_.append(&title);
+        for name in plan.quick_runs.iter().take(8) {
+            box_.append(&delete_detail_row(
+                "media-playback-start-symbolic",
+                name,
+                "",
+            ));
+        }
+    }
+    if !plan.automations.is_empty() {
+        let title = gtk::Label::new(Some(&ctx.tf_or(
+            "home.deleteRemote.automationsTitle",
+            "Scheduled Automations ({{count}})",
+            &[("count", &plan.automations.len().to_string())],
+        )));
+        title.add_css_class("heading");
+        title.set_xalign(0.0);
+        box_.append(&title);
+        for name in plan.automations.iter().take(8) {
+            box_.append(&delete_detail_row("x-office-calendar-symbolic", name, ""));
+        }
+    }
+    let scroll = gtk::ScrolledWindow::new();
+    scroll.set_min_content_height(120);
+    scroll.set_max_content_height(280);
+    scroll.set_child(Some(&box_));
+    let wrap = gtk::Box::new(gtk::Orientation::Vertical, 0);
+    wrap.append(&scroll);
+    wrap
+}
+
+fn delete_detail_row(icon: &str, title: &str, subtitle: &str) -> adw::ActionRow {
+    let row = adw::ActionRow::new();
+    row.set_title(title);
+    if !subtitle.is_empty() {
+        row.set_subtitle(subtitle);
+    }
+    let image = gtk::Image::from_icon_name(icon);
+    image.set_valign(gtk::Align::Center);
+    row.add_prefix(&image);
+    row
+}
+
 pub fn delete_remote(
     parent: &impl IsA<gtk::Widget>,
     ctx: AppCtx,
@@ -5591,8 +5700,13 @@ pub fn delete_remote(
     let plan = crate::store::plan_delete_remote(name, &ctx.store.borrow(), &ctx.snapshot.borrow());
     let dialog = adw::AlertDialog::new(
         Some(&ctx.t_or("home.deleteRemote.title", "Delete Remote")),
-        Some(&plan.summary()),
+        Some(&ctx.tf_or(
+            "home.deleteRemote.message",
+            "Are you sure you want to delete '{{name}}'? This action cannot be undone.",
+            &[("name", name)],
+        )),
     );
+    dialog.set_extra_child(Some(&delete_remote_details(&ctx, &plan)));
     dialog.add_response("cancel", &ctx.t("common.cancel"));
     dialog.add_response("delete", &ctx.t("common.delete"));
     dialog.set_response_appearance("delete", adw::ResponseAppearance::Destructive);
@@ -11093,29 +11207,32 @@ pub fn helper_profiles(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, remote: &str
     let name = adw::EntryRow::new();
     name.set_title(&ctx.t_or("wizards.cliImport.profileName", "Profile name"));
     name.set_text("default");
-    let json_view = gtk::TextView::new();
-    json_view.set_monospace(true);
-    json_view.set_wrap_mode(gtk::WrapMode::Word);
+    let editor = super::json_editor::JsonEditor::new(&ctx);
+    if let Some(key) = crate::json_editor::info_banner_key(None, Some("vfs")) {
+        editor.set_info(Some(&ctx.t_or(key, "")));
+    }
     let load = {
         let ctx = ctx.clone();
         let remote = remote.to_string();
         let name = name.clone();
-        let json_view = json_view.clone();
+        let editor = editor.clone();
         let kind = kind.clone();
         move || {
             let kind_name = ["vfs", "filter", "backend", "runtime"]
                 .get(kind.selected() as usize)
                 .copied()
                 .unwrap_or("vfs");
-            let text = ctx
+            if let Some(key) = crate::json_editor::info_banner_key(None, Some(kind_name)) {
+                editor.set_info(Some(&ctx.t_or(key, "")));
+            }
+            let value = ctx
                 .store
                 .borrow()
                 .remotes
                 .get(&remote)
                 .and_then(|m| m.helper_profile(kind_name, &name.text()))
-                .map(|v| serde_json::to_string_pretty(&v).unwrap_or_else(|_| "{}".into()))
-                .unwrap_or_else(|| "{}".into());
-            json_view.buffer().set_text(&text);
+                .unwrap_or_else(|| serde_json::json!({}));
+            editor.set_value(&value);
         }
     };
     load();
@@ -11130,17 +11247,17 @@ pub fn helper_profiles(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, remote: &str
         let ctx = ctx.clone();
         let remote = remote.to_string();
         let name = name.clone();
-        let json_view = json_view.clone();
+        let editor = editor.clone();
         let kind = kind.clone();
         save.connect_clicked(move |_| {
             let kind_name = ["vfs", "filter", "backend", "runtime"]
                 .get(kind.selected() as usize)
                 .copied()
                 .unwrap_or("vfs");
-            let buffer = json_view.buffer();
-            let text = buffer.text(&buffer.start_iter(), &buffer.end_iter(), false);
-            let value = serde_json::from_str::<serde_json::Value>(text.as_str())
-                .unwrap_or(serde_json::json!({}));
+            let value = match editor.parsed() {
+                Ok(map) => serde_json::Value::Object(map),
+                Err(_) => serde_json::json!({}),
+            };
             let key = name.text().to_string();
             if key.is_empty() {
                 return;
@@ -11167,14 +11284,11 @@ pub fn helper_profiles(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, remote: &str
     let group = adw::PreferencesGroup::new();
     group.add(&kind);
     group.add(&name);
-    let scroll = gtk::ScrolledWindow::new();
-    scroll.set_vexpand(true);
-    scroll.set_min_content_height(240);
-    scroll.set_child(Some(&json_view));
+    editor.root.set_vexpand(true);
     let box_ = gtk::Box::new(gtk::Orientation::Vertical, 8);
     box_.set_margin_top(12);
     box_.append(&group);
-    box_.append(&scroll);
+    box_.append(&editor.root);
     box_.append(&save);
     dialog.set_child(Some(&box_));
     present_window_or_dialog(parent, &ctx, &dialog);

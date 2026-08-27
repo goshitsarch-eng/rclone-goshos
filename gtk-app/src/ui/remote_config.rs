@@ -1096,6 +1096,23 @@ fn operation_page(
             options.push(option.clone());
         }
     }
+    let field_defs: Vec<crate::json_editor::JsonFieldDef> = {
+        let mut defs: Vec<_> = options
+            .iter()
+            .filter(|flag| !(op == OperationType::Serve && flag.field_name == "type"))
+            .map(crate::json_editor::JsonFieldDef::from_flag)
+            .collect();
+        if op == OperationType::Serve {
+            for serve_type in serve_types.iter() {
+                for flag in crate::flags::collect_serve_flags(blocks, serve_type) {
+                    if !defs.iter().any(|def| def.key == flag.field_name) {
+                        defs.push(crate::json_editor::JsonFieldDef::from_flag(&flag));
+                    }
+                }
+            }
+        }
+        defs
+    };
     for flag in options {
         if op == OperationType::Serve && flag.field_name == "type" {
             continue;
@@ -1143,24 +1160,59 @@ fn operation_page(
         "Edit this profile's rclone flags as a JSON object",
     ));
     json_toggle.set_active(ctx.settings.borrow().runtime.show_json_mode);
-    let json_view = gtk::TextView::new();
-    json_view.set_monospace(true);
-    json_view.set_wrap_mode(gtk::WrapMode::WordChar);
-    let json_doc = if ctx.settings.borrow().general.restrict {
-        crate::restrict::redact_value(&rclone)
-    } else {
-        rclone.clone()
-    };
-    json_view
-        .buffer()
-        .set_text(&serde_json::to_string_pretty(&json_doc).unwrap_or_else(|_| "{}".into()));
-    let json_scroll = gtk::ScrolledWindow::new();
-    json_scroll.set_min_content_height(180);
-    json_scroll.set_child(Some(&json_view));
-    json_scroll.set_visible(json_toggle.is_active());
+    let editor = super::json_editor::JsonEditor::new(&ctx);
+    editor.set_fields(field_defs);
+    editor.set_structural(crate::json_editor::structural_keys(Some(op)));
+    editor.set_operation(Some(op));
+    if let Some(key) = crate::json_editor::info_banner_key(Some(op), None) {
+        editor.set_info(Some(&ctx.t_or(key, "")));
+    }
+    editor.set_restrict(ctx.settings.borrow().general.restrict);
+    editor.set_value(&rclone);
+    editor.root.set_visible(json_toggle.is_active());
+    {
+        let src = src.clone();
+        let dst = dst.clone();
+        let extra_sources = extra_sources.clone();
+        let serve = serve.clone();
+        let serve_types = serve_types.clone();
+        let mount_type = mount_type.clone();
+        let mount_types = mount_types.clone();
+        editor.on_paths(Rc::new(move |recon| {
+            if let Some(sources) = recon.sources {
+                if let Some(first) = sources.first() {
+                    if src.text() != first.as_str() {
+                        src.set_text(first);
+                    }
+                }
+                for (idx, path) in sources.iter().skip(1).enumerate() {
+                    if let Some(row) = extra_sources.borrow().get(idx) {
+                        if row.text() != path.as_str() {
+                            row.set_text(path);
+                        }
+                    }
+                }
+            }
+            if let Some(dest) = recon.dest {
+                if dst.text() != dest.as_str() {
+                    dst.set_text(&dest);
+                }
+            }
+            if let Some(kind) = recon.serve_type {
+                if let Some(idx) = serve_types.iter().position(|item| item == &kind) {
+                    serve.set_selected(idx as u32);
+                }
+            }
+            if let Some(kind) = recon.mount_type {
+                if let Some(idx) = mount_types.iter().position(|item| item == &kind) {
+                    mount_type.set_selected(idx as u32);
+                }
+            }
+        }));
+    }
     {
         let ctx = ctx.clone();
-        let json_scroll = json_scroll.clone();
+        let editor_root = editor.root.clone();
         let flag_rows = flag_rows.clone();
         let serve_flag_rows = serve_flag_rows.clone();
         let search = search.clone();
@@ -1170,7 +1222,7 @@ fn operation_page(
             let on = row.is_active();
             ctx.settings.borrow_mut().runtime.show_json_mode = on;
             ctx.persist();
-            json_scroll.set_visible(on);
+            editor_root.set_visible(on);
             search.set_title(&ctx.t_or(
                 if on {
                     "remoteConfig.filterKeys"
@@ -1194,11 +1246,11 @@ fn operation_page(
         let serve = serve.clone();
         let serve_types = serve_types.clone();
         let json_toggle = json_toggle.clone();
-        let json_view = json_view.clone();
+        let editor = editor.clone();
         search.connect_changed(move |entry| {
             let query = entry.text().to_string();
             if json_toggle.is_active() {
-                highlight_json_keys(&json_view.buffer(), &query);
+                editor.highlight_search(&query);
                 return;
             }
             for (field, row, _) in flag_rows.borrow().iter() {
@@ -1332,7 +1384,14 @@ fn operation_page(
     let json_holder = adw::ActionRow::new();
     json_holder.set_title(&ctx.t_or("remoteConfig.jsonDocument", "JSON document"));
     json_holder.set_activatable(false);
-    json_holder.set_child(Some(&json_scroll));
+    json_holder.set_child(Some(&editor.root));
+    json_holder.set_visible(json_toggle.is_active());
+    {
+        let json_holder = json_holder.clone();
+        json_toggle.connect_active_notify(move |row| {
+            json_holder.set_visible(row.is_active());
+        });
+    }
     flags_group.add(&json_holder);
 
     let page = adw::PreferencesPage::new();
@@ -1356,6 +1415,8 @@ fn operation_page(
         let names = switcher.names.clone();
         let src = src.clone();
         let dst = dst.clone();
+        let editor = editor.clone();
+        let flag_rows = flag_rows.clone();
         combo.connect_selected_notify(move |row| {
             let Some(name) = names.borrow().get(row.selected() as usize).cloned() else {
                 return;
@@ -1371,6 +1432,14 @@ fn operation_page(
                 let rclone = flatten_rclone(&profile.rclone);
                 src.set_text(&default_source(&remote, &rclone));
                 dst.set_text(&default_dest(&remote, &rclone, op));
+                editor.set_value(&rclone);
+                for (field, row, _) in flag_rows.borrow().iter() {
+                    if let Some(value) = rclone.get(field) {
+                        row.set_text(&value_to_text(value));
+                    } else {
+                        row.set_text("");
+                    }
+                }
             }
         });
     }
@@ -1422,7 +1491,7 @@ fn operation_page(
         let flag_rows = flag_rows.clone();
         let serve_flag_rows = serve_flag_rows.clone();
         let json_toggle = json_toggle.clone();
-        let json_view = json_view.clone();
+        let editor = editor.clone();
         let serve_types = serve_types.clone();
         let mount_types = mount_types.clone();
         let mount_type = mount_type.clone();
@@ -1453,10 +1522,12 @@ fn operation_page(
                 );
             }
             if json_toggle.is_active() {
-                let buffer = json_view.buffer();
-                let text = buffer.text(&buffer.start_iter(), &buffer.end_iter(), false);
-                if let Ok(map) = crate::flags::parse_json_object(&text) {
-                    flags.extend(map);
+                match editor.parsed() {
+                    Ok(map) => flags.extend(map),
+                    Err(err) => {
+                        dialogs::toast_near(&editor.view, &err);
+                        return;
+                    }
                 }
             } else {
                 if let Some((row, field, msg)) =
@@ -1623,7 +1694,7 @@ fn helper_page(
                 },
             )
         };
-    for (_, option) in options {
+    for (_, option) in &options {
         let row = flag_entry(&ctx, option, &current);
         flags_group.add(&row);
         flag_rows
@@ -1633,25 +1704,27 @@ fn helper_page(
     let json_toggle = adw::SwitchRow::new();
     json_toggle.set_title(&ctx.t_or("remoteConfig.jsonMode", "JSON mode"));
     json_toggle.set_active(flag_rows.borrow().is_empty());
-    let json_view = gtk::TextView::new();
-    json_view.set_monospace(true);
-    json_view.set_wrap_mode(gtk::WrapMode::WordChar);
-    json_view
-        .buffer()
-        .set_text(&serde_json::to_string_pretty(&current).unwrap_or_else(|_| "{}".into()));
-    let json_scroll = gtk::ScrolledWindow::new();
-    json_scroll.set_min_content_height(160);
-    json_scroll.set_child(Some(&json_view));
-    json_scroll.set_visible(json_toggle.is_active());
+    let helper_defs: Vec<crate::json_editor::JsonFieldDef> = options
+        .iter()
+        .map(|(_, option)| crate::json_editor::JsonFieldDef::from_flag(option))
+        .collect();
+    let editor = super::json_editor::JsonEditor::new(&ctx);
+    editor.set_fields(helper_defs);
+    if let Some(key) = crate::json_editor::info_banner_key(None, Some(kind)) {
+        editor.set_info(Some(&ctx.t_or(key, "")));
+    }
+    editor.set_restrict(ctx.settings.borrow().general.restrict);
+    editor.set_value(&current);
+    editor.root.set_visible(json_toggle.is_active());
     flags_group.add(&json_toggle);
     {
-        let json_scroll = json_scroll.clone();
+        let editor_root = editor.root.clone();
         let flag_rows = flag_rows.clone();
         let search = search.clone();
         let ctx = ctx.clone();
         json_toggle.connect_active_notify(move |row| {
             let on = row.is_active();
-            json_scroll.set_visible(on);
+            editor_root.set_visible(on);
             search.set_title(&ctx.t_or(
                 if on {
                     "remoteConfig.filterKeys"
@@ -1673,11 +1746,11 @@ fn helper_page(
     {
         let flag_rows = flag_rows.clone();
         let json_toggle = json_toggle.clone();
-        let json_view = json_view.clone();
+        let editor = editor.clone();
         search.connect_changed(move |entry| {
             let query = entry.text().to_string();
             if json_toggle.is_active() {
-                highlight_json_keys(&json_view.buffer(), &query);
+                editor.highlight_search(&query);
                 return;
             }
             for (field, row, _) in flag_rows.borrow().iter() {
@@ -1690,12 +1763,24 @@ fn helper_page(
         });
     }
 
+    let json_holder = adw::ActionRow::new();
+    json_holder.set_title(&ctx.t_or("remoteConfig.jsonDocument", "JSON document"));
+    json_holder.set_activatable(false);
+    json_holder.set_child(Some(&editor.root));
+    json_holder.set_visible(json_toggle.is_active());
+    {
+        let json_holder = json_holder.clone();
+        json_toggle.connect_active_notify(move |row| {
+            json_holder.set_visible(row.is_active());
+        });
+    }
+    flags_group.add(&json_holder);
+
     let page = adw::PreferencesPage::new();
     page.add(&switcher.group);
     page.add(&flags_group);
     let box_ = gtk::Box::new(gtk::Orientation::Vertical, 0);
     box_.append(&page);
-    box_.append(&json_scroll);
 
     {
         let ctx = ctx.clone();
@@ -1704,7 +1789,7 @@ fn helper_page(
         let combo = switcher.combo.clone();
         let names = switcher.names.clone();
         let flag_rows = flag_rows.clone();
-        let json_view = json_view.clone();
+        let editor = editor.clone();
         combo.connect_selected_notify(move |row| {
             let Some(name) = names.borrow().get(row.selected() as usize).cloned() else {
                 return;
@@ -1717,9 +1802,7 @@ fn helper_page(
                 .get(&remote)
                 .and_then(|m| m.helper_profile(kind, &name))
                 .unwrap_or_else(|| json!({}));
-            json_view
-                .buffer()
-                .set_text(&serde_json::to_string_pretty(&value).unwrap_or_else(|_| "{}".into()));
+            editor.set_value(&value);
             for (field, row, _) in flag_rows.borrow().iter() {
                 if let Some(v) = value.get(field) {
                     row.set_text(&value_to_text(v));
@@ -1745,7 +1828,7 @@ fn helper_page(
         let selected = selected.clone();
         let flag_rows = flag_rows.clone();
         let json_toggle = json_toggle.clone();
-        let json_view = json_view.clone();
+        let editor = editor.clone();
         move || {
             let name = selected.borrow().clone();
             if name.is_empty() {
@@ -1753,13 +1836,12 @@ fn helper_page(
             }
             let mut obj = Map::new();
             if json_toggle.is_active() {
-                let buffer = json_view.buffer();
-                let text = buffer.text(&buffer.start_iter(), &buffer.end_iter(), false);
-                if let Ok(Value::Object(map)) = serde_json::from_str::<Value>(&text) {
-                    obj = map;
-                } else if !text.trim().is_empty() {
-                    dialogs::toast_near(&json_view, "Invalid JSON");
-                    return;
+                match editor.parsed() {
+                    Ok(map) => obj = map,
+                    Err(err) => {
+                        dialogs::toast_near(&editor.view, &err);
+                        return;
+                    }
                 }
             } else {
                 if let Some((row, field, msg)) =
@@ -2243,41 +2325,6 @@ fn runtime_provider_flags(ctx: &AppCtx, remote: &str) -> Vec<FlagOption> {
         .map(|item| item.r#type.clone())
         .unwrap_or_default();
     runtime_flags_for_type(ctx, &remote_type)
-}
-
-fn highlight_json_keys(buffer: &gtk::TextBuffer, query: &str) {
-    let table = buffer.tag_table();
-    let tag = match table.lookup("json-search-hit") {
-        Some(tag) => tag,
-        None => {
-            let tag = gtk::TextTag::builder()
-                .name("json-search-hit")
-                .background("#f5c21133")
-                .build();
-            table.add(&tag);
-            tag
-        }
-    };
-    let start = buffer.start_iter();
-    let end = buffer.end_iter();
-    buffer.remove_tag(&tag, &start, &end);
-    if query.trim().is_empty() {
-        return;
-    }
-    let text = buffer.text(&start, &end, false).to_string();
-    let Ok(value) = serde_json::from_str::<Value>(&text) else {
-        return;
-    };
-    for key in crate::config_search::filter_json_keys(&value, query) {
-        let needle = format!("\"{key}\"");
-        if let Some(pos) = text.find(&needle) {
-            let mut hit_start = buffer.start_iter();
-            hit_start.set_offset(text[..pos].chars().count() as i32);
-            let mut hit_end = hit_start;
-            hit_end.forward_chars(needle.chars().count() as i32);
-            buffer.apply_tag(&tag, &hit_start, &hit_end);
-        }
-    }
 }
 
 fn flag_entry(ctx: &AppCtx, flag: &FlagOption, current: &Value) -> adw::EntryRow {

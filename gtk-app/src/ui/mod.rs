@@ -4,6 +4,7 @@ mod dialogs;
 mod flow;
 mod interactive;
 mod job_panels;
+mod json_editor;
 mod nautilus;
 mod onboarding;
 mod operation_control;
