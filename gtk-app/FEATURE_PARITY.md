@@ -1189,3 +1189,10 @@ This client is the GTK 4 + libadwaita desktop UI. It talks to a local `rclone rc
 - Archive extract failures show `translate_error` instead of a raw `RcError`
 
 - Live GUI: `--file-viewer testdrive:Photos/sample.sql` shows **Remote preview via operations/cat**, SQL keywords **SELECT** / **FROM** / **WHERE** / **AND** / **ORDER BY** in blue, `-- testdrive syntax sample` and `/* block comment */` in gray, `'active'` in green, `42` in orange; Edit then Cancel keeps the highlighted source
+
+- Transfer-activity cards show Angular speed-dot (fast/medium/slow) next to MiB/s when speed > 0; check-resolve progress uses the same indicator
+- Start Operation profile switch reloads extra source rows so leftover multi-source paths are not started
+
+- Live GUI: `--start-operation testdrive:copy` switch to **gui-copy-test** clears the extra `testdrive:` source from **gui-copy-multi** and loads `testdrive:speedsrc` → `testdrive:speeddst3`
+- Live GUI: testdrive Operations **Start** on **gui-copy-test** toasts **Successfully started Copy for testdrive (gui-copy-test)**; dashboard Job Information shows live **77% · 36.9 MiB of 48.0 MiB** and **Transfer Speed: 2.0 MiB/s**
+- Live GUI: `--job` / Job Detail for copy **#24749** shows **Completed · 100% · 39.8s**, transfer tabs **Recent (1)**
