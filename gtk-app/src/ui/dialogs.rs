@@ -9451,14 +9451,16 @@ pub fn job_detail(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, job_id: u64) {
             ctx.store.borrow_mut().dismiss_job(job_id);
             ctx.persist();
             ctx.refresh_runtime();
-            ctx.toast_near(
-                &toast_parent,
-                ctx.t_or(
-                    crate::jobs::job_deleted_toast_key(),
-                    "Job deleted successfully",
-                ),
+            let message = ctx.t_or(
+                crate::jobs::job_deleted_toast_key(),
+                "Job deleted successfully",
             );
             dialog.close();
+            let ctx = ctx.clone();
+            let toast_parent = toast_parent.clone();
+            glib::idle_add_local_once(move || {
+                ctx.toast_near(&toast_parent, message);
+            });
         });
     }
     let box_ = gtk::Box::new(gtk::Orientation::Vertical, 8);

@@ -23,6 +23,7 @@ use crate::platform::PowerInhibitor;
 use crate::rclone::RcloneEngine;
 use crate::settings::AppSettings;
 use crate::store::{AppStore, RuntimeSnapshot};
+use adw::prelude::*;
 use gtk::glib;
 use gtk::prelude::*;
 use std::cell::{Cell, RefCell};
@@ -1361,18 +1362,19 @@ fn find_toast_overlay(widget: &gtk::Widget) -> Option<adw::ToastOverlay> {
     {
         return Some(overlay);
     }
-    if let Some(child) = widget.first_child() {
-        if let Ok(overlay) = child.clone().downcast::<adw::ToastOverlay>() {
-            return Some(overlay);
-        }
-        if let Some(overlay) = find_toast_overlay(&child) {
-            return Some(overlay);
-        }
-    }
     if let Some(root) = widget.root() {
-        if let Some(child) = root.first_child() {
-            if let Ok(overlay) = child.downcast::<adw::ToastOverlay>() {
-                return Some(overlay);
+        if let Ok(win) = root.downcast::<adw::ApplicationWindow>() {
+            if let Some(content) = win.content() {
+                if let Ok(overlay) = content.clone().downcast::<adw::ToastOverlay>() {
+                    return Some(overlay);
+                }
+                let mut child = content.first_child();
+                while let Some(node) = child {
+                    if let Ok(overlay) = node.clone().downcast::<adw::ToastOverlay>() {
+                        return Some(overlay);
+                    }
+                    child = node.next_sibling();
+                }
             }
         }
     }

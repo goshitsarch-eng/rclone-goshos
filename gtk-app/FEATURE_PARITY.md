@@ -1155,3 +1155,8 @@ This client is the GTK 4 + libadwaita desktop UI. It talks to a local `rclone rc
 - Live GUI: `--job 55555` (mount, stored dest `/mnt/unused`) Paths **Mount Point** `/tmp/rclone-testdrive-mnt`
 - Live GUI: `--job 42424` copy Paths Destination remains `testdrive:verify-ops` (no mount overlay)
 - Live GUI: `--remote testdrive --tab operations` Sync/Bisync/Copy tooltips **One-way synchronization** / **Bidirectional sync** / **Copy files (keep source)**; More items include **Generate public download URLs for files**
+
+- Downloads toast `fileBrowser.fileViewer.downloading` on start and success/fail only after the copyfile job finishes
+- Manual job stop / remove-from-history toast `backendSuccess.job.stopped` / `backendSuccess.job.deleted`
+
+- Live GUI: `--job 55559` Remove closes Job Detail; window toast **Job deleted successfully** (OK)
