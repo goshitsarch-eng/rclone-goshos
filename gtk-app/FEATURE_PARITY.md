@@ -1005,3 +1005,8 @@ This client is the GTK 4 + libadwaita desktop UI. It talks to a local `rclone rc
 - Live GUI: `--browse testdrive` opens a single Files window at testdrive (batch250 / Docs / Photos, **28 items**)
 - Live GUI: `--browse testdrive --dashboard` opens Remotes (Status overview **3 / 5 active · 60%**) plus one testdrive Files overlay
 - Live GUI: testdrive folder Actions → **Open** slides to Back / Open / Open in New Tab / Open in New Window; New Tab adds a **Photos** tab
+
+- Files Escape matches Angular: close listing menu, then search, picker, selection, or clipboard (no longer always reloads crumbs)
+- Files Ctrl+Y is redo (Angular); system-clipboard paste stays on the context menu
+- Files shortcuts attach to the window on realize (capture) so they work after a popover leaves focus on the header
+- Live GUI: testdrive Photos Actions then Escape closes the menu while **"Photos" selected**; a second Escape restores **28 items**
