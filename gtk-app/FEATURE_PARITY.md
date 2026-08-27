@@ -1119,3 +1119,7 @@ This client is the GTK 4 + libadwaita desktop UI. It talks to a local `rclone rc
 
 - Files delete, empty trash, and remove-empty-folders ask for confirmation (Angular confirmModal)
 - New Folder / Rename prompts use `nautilus.modals.*`; listing/upload/delete/rename/share/extract errors use i18n toasts
+
+- Live GUI: `--browse testdrive:Photos` Delete on README.md shows **Delete Items** / Are you sure you want to delete "README.md"? Cancel leaves the file
+- Live GUI: Remove empty folders shows **Remove Empty Folders** / Are you sure you want to remove all empty folders in "…" with Cancel
+- Empty Trash confirm is the same helper; testdrive (alias) hides the menu when fsinfo lacks CleanUp
