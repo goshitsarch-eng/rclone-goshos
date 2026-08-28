@@ -17,6 +17,7 @@
     "refresh": "Yenile",
     "browse": "Gözat",
     "delete": "Sil",
+    "remove": "Kaldır",
     "edit": "Düzenle",
     "copy": "Kopyala",
     "retry": "Yeniden Dene",
@@ -1677,7 +1678,10 @@
         "requiresPassword": "Bu yedeğin şifresini çözmek için parola gerekiyor.",
         "decryptFailed": "Yedek şifresi çözülemedi. Şifrenizi kontrol edin.",
         "generic": "Geri yükleme sırasında bir hata oluştu: {{error}}"
-      }
+      },
+      "confirmTitle": "Bu yedek geri yüklensin mi?",
+      "confirmMessage": "Mevcut ayarlarınız, uzak birimleriniz, profilleriniz ve geçmişiniz bu yedeğin içeriğiyle değiştirilecek. Bu işlem geri alınamaz.",
+      "confirmAction": "Geri Yükle"
     },
     "launchRestoreFailed": "Geri yükleme akışı başlatılamadı",
     "backupSuccess": "Yedekleme başarıyla oluşturuldu",
@@ -2253,7 +2257,9 @@
       "logContext": "Günlük Bağlamı",
       "logLevel": "Günlük Seviyesi",
       "allLevels": "Tüm Seviyeler",
-      "searchPlaceholder": "Günlüklerde ara..."
+      "searchPlaceholder": "Günlüklerde ara...",
+      "clearEngineMessage": "Tüm uzak birimlerin günlük geçmişi silinsin ve diskteki rclone.log boşaltılsın mı? Bu işlem geri alınamaz.",
+      "clearRemoteMessage": "Bu uzak birimin günlük geçmişi silinsin mi? Bu işlem geri alınamaz."
     },
     "preferences": {
       "title": "Tercihler",
@@ -2479,7 +2485,9 @@
         "passwordRemoved": "Parola anahtarlıktan kaldırıldı",
         "passwordsMismatch": "Parolalar eşleşmiyor"
       },
-      "addTitle": "Remote RC backend"
+      "addTitle": "Remote RC backend",
+      "removeBackend": "Arka ucu kaldır",
+      "removeBackendMessage": "“{{name}}” kaldırılsın mı? Sunucusu, bağlantı noktası ve kayıtlı kimlik bilgileri silinir."
     },
     "quickAdd": {
       "title": "Hızlı Uzak Sunucu Ekle",
@@ -3203,7 +3211,8 @@
       "unsupportedArchive": "Desteklenmeyen arşiv türü. .rcman dosyası olmalıdır",
       "invalidArchive": "Geçersiz yedekleme arşivi biçimi",
       "restoreFailed": "Yedekleme geri yükleme başarısız oldu: {{error}}",
-      "secretRequirePassword": "Bu yedekleme gizli bir anahtarla korunuyor ve şifre gerektiriyor"
+      "secretRequirePassword": "Bu yedekleme gizli bir anahtarla korunuyor ve şifre gerektiriyor",
+      "encryptRequirePassword": "Şifreleme için en az 4 karakterlik bir zip parolası gerekir"
     },
     "backend": {
       "nameEmpty": "Arka uç adı boş olamaz",

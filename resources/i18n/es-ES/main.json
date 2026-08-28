@@ -17,6 +17,7 @@
     "refresh": "Actualizar",
     "browse": "Navegar",
     "delete": "Borrar",
+    "remove": "Eliminar",
     "edit": "Editar",
     "copy": "Copiar",
     "retry": "Reintentar",
@@ -1677,7 +1678,10 @@
         "requiresPassword": "Esta copia de seguridad requiere una contraseña para descifrarla.",
         "decryptFailed": "Error al descifrar la copia de seguridad. Comprueba tu contraseña.",
         "generic": "Se ha producido un error durante la restauración: {{error}}"
-      }
+      },
+      "confirmTitle": "¿Restaurar esta copia de seguridad?",
+      "confirmMessage": "Tu configuración, remotos, perfiles e historial actuales se reemplazarán por el contenido de esta copia. Esto no se puede deshacer.",
+      "confirmAction": "Restaurar"
     },
     "launchRestoreFailed": "Error al iniciar el flujo de restauración",
     "backupSuccess": "Copia de seguridad creada correctamente",
@@ -2253,7 +2257,9 @@
       "logContext": "Contexto del registro",
       "logLevel": "Nivel de registro",
       "allLevels": "Todos los niveles",
-      "searchPlaceholder": "Buscar registros..."
+      "searchPlaceholder": "Buscar registros...",
+      "clearEngineMessage": "¿Borrar el historial de registros de todos los remotos y vaciar rclone.log en disco? Esto no se puede deshacer.",
+      "clearRemoteMessage": "¿Borrar el historial de registros de este remoto? Esto no se puede deshacer."
     },
     "preferences": {
       "title": "Preferencias",
@@ -2479,7 +2485,9 @@
         "passwordRemoved": "Contraseña eliminada del llavero",
         "passwordsMismatch": "Las contraseñas no coinciden"
       },
-      "addTitle": "Remote RC backend"
+      "addTitle": "Remote RC backend",
+      "removeBackend": "Eliminar backend",
+      "removeBackendMessage": "¿Eliminar «{{name}}»? Se borrarán su host, puerto y credenciales guardadas."
     },
     "quickAdd": {
       "title": "Añadir remoto rápido",
@@ -3203,7 +3211,8 @@
       "unsupportedArchive": "Tipo de archivo no soportado. Debe ser un archivo .rcman",
       "invalidArchive": "Formato de archivo de copia de seguridad no válido",
       "restoreFailed": "Fallo en la restauración de la copia de seguridad: {{error}}",
-      "secretRequirePassword": "Esta copia de seguridad está protegida por un secreto y requiere una contraseña"
+      "secretRequirePassword": "Esta copia de seguridad está protegida por un secreto y requiere una contraseña",
+      "encryptRequirePassword": "El cifrado necesita una contraseña zip de al menos 4 caracteres"
     },
     "backend": {
       "nameEmpty": "El nombre del backend no puede estar vacío",

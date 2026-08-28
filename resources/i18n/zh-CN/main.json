@@ -17,6 +17,7 @@
     "refresh": "刷新",
     "browse": "浏览",
     "delete": "删除",
+    "remove": "移除",
     "edit": "编辑",
     "copy": "复制",
     "retry": "重试",
@@ -1677,7 +1678,10 @@
         "requiresPassword": "此备份需要密码才能解密",
         "decryptFailed": "备份解密失败，请检查密码",
         "generic": "恢复过程中发生错误：{{error}}"
-      }
+      },
+      "confirmTitle": "要恢复此备份吗？",
+      "confirmMessage": "当前的设置、远程存储、配置文件和历史记录将被此备份的内容替换。此操作无法撤销。",
+      "confirmAction": "恢复"
     },
     "launchRestoreFailed": "启动恢复流程失败",
     "backupSuccess": "备份创建成功",
@@ -2253,7 +2257,9 @@
       "logContext": "日志上下文",
       "logLevel": "日志等级",
       "allLevels": "所有等级",
-      "searchPlaceholder": "搜索日志..."
+      "searchPlaceholder": "搜索日志...",
+      "clearEngineMessage": "要清除所有远程存储的日志历史并清空磁盘上的 rclone.log 吗？此操作无法撤销。",
+      "clearRemoteMessage": "要清除此远程存储的日志历史吗？此操作无法撤销。"
     },
     "preferences": {
       "title": "偏好设置",
@@ -2479,7 +2485,9 @@
         "passwordRemoved": "密码已从密钥链移除",
         "passwordsMismatch": "两次密码不一致"
       },
-      "addTitle": "Remote RC backend"
+      "addTitle": "Remote RC backend",
+      "removeBackend": "移除后端",
+      "removeBackendMessage": "要移除“{{name}}”吗？其主机、端口和已保存的凭据都会被删除。"
     },
     "quickAdd": {
       "title": "快速添加远程存储",
@@ -3203,7 +3211,8 @@
       "unsupportedArchive": "不支持的压缩包类型，必须是 .rcman 文件",
       "invalidArchive": "无效的备份存档格式",
       "restoreFailed": "备份恢复失败: {{error}}",
-      "secretRequirePassword": "此备份受密码保护，需要输入密码"
+      "secretRequirePassword": "此备份受密码保护，需要输入密码",
+      "encryptRequirePassword": "加密需要至少 4 个字符的 zip 密码"
     },
     "backend": {
       "nameEmpty": "后端名称不能为空",

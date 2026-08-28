@@ -17,6 +17,7 @@
     "refresh": "Actualiser",
     "browse": "Parcourir",
     "delete": "Supprimer",
+    "remove": "Supprimer",
     "edit": "Modifier",
     "copy": "Copier",
     "retry": "Réessayer",
@@ -1677,7 +1678,10 @@
         "requiresPassword": "Cette sauvegarde nécessite un mot de passe pour déchiffrer.",
         "decryptFailed": "Échec du déchiffrement de la sauvegarde. Vérifiez votre mot de passe.",
         "generic": "Une erreur s'est produite lors de l'export : {{error}}"
-      }
+      },
+      "confirmTitle": "Restaurer cette sauvegarde ?",
+      "confirmMessage": "Vos paramètres, distants, profils et historique actuels seront remplacés par le contenu de cette sauvegarde. Action irréversible.",
+      "confirmAction": "Restaurer"
     },
     "launchRestoreFailed": "Échec du lancement du flux de restauration",
     "backupSuccess": "Sauvegarde créée avec succès",
@@ -2253,7 +2257,9 @@
       "logContext": "Contexte de log",
       "logLevel": "Niveau de log",
       "allLevels": "Tous les Niveaux",
-      "searchPlaceholder": "Rechercher dans les logs..."
+      "searchPlaceholder": "Rechercher dans les logs...",
+      "clearEngineMessage": "Effacer l’historique des journaux de tous les distants et vider rclone.log sur le disque ? Action irréversible.",
+      "clearRemoteMessage": "Effacer l’historique des journaux de ce distant ? Action irréversible."
     },
     "preferences": {
       "title": "Préférences",
@@ -2479,7 +2485,9 @@
         "passwordRemoved": "Mot de passe supprimé du trousseau",
         "passwordsMismatch": "Les mots de passe ne correspondent pas"
       },
-      "addTitle": "Remote RC backend"
+      "addTitle": "Remote RC backend",
+      "removeBackend": "Supprimer le backend",
+      "removeBackendMessage": "Supprimer « {{name}} » ? Son hôte, son port et ses identifiants enregistrés seront effacés."
     },
     "quickAdd": {
       "title": "Ajout rapide d'un dépôt distant",
@@ -3203,7 +3211,8 @@
       "unsupportedArchive": "Type d'archive non pris en charge. Doit être un fichier .rcman",
       "invalidArchive": "Format d'archive de sauvegarde invalide",
       "restoreFailed": "La restauration de la sauvegarde a échoué : {{error}}",
-      "secretRequirePassword": "Cette sauvegarde est protégée par un secret et nécessite un mot de passe"
+      "secretRequirePassword": "Cette sauvegarde est protégée par un secret et nécessite un mot de passe",
+      "encryptRequirePassword": "Le chiffrement nécessite un mot de passe zip d’au moins 4 caractères"
     },
     "backend": {
       "nameEmpty": "Nom du dépôt distant ne peut pas être vide",

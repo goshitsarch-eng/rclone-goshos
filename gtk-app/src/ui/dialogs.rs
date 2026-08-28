@@ -3036,22 +3036,54 @@ pub fn logs(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, remote: Option<String>)
     };
     let clear = gtk::Button::from_icon_name("edit-clear-symbolic");
     clear.set_tooltip_text(Some(&ctx.t_or("modals.logs.clearAll", "Clear")));
+    clear.add_css_class("destructive-action");
     {
         let ctx = ctx.clone();
         let key = key.clone();
         let reload = reload.clone();
         let apply = apply.clone();
         let search = search.clone();
+        let parent = parent.clone();
         clear.connect_clicked(move |_| {
-            if key == "_engine" {
-                ctx.store.borrow_mut().logs.clear();
-                crate::logs::clear_log_file();
-            } else {
-                ctx.store.borrow_mut().logs.remove(&key);
-            }
-            ctx.persist();
-            reload();
-            apply(&search.text());
+            // On the engine view this discards every remote's history *and*
+            // truncates rclone.log on disk — worth asking about first.
+            let engine = key == "_engine";
+            let ctx_ok = ctx.clone();
+            let key_ok = key.clone();
+            let reload_ok = reload.clone();
+            let apply_ok = apply.clone();
+            let search_ok = search.clone();
+            confirm(
+                &parent,
+                &ctx,
+                &ctx.t_or("modals.logs.clearAll", "Clear"),
+                &ctx.t_or(
+                    if engine {
+                        "modals.logs.clearEngineMessage"
+                    } else {
+                        "modals.logs.clearRemoteMessage"
+                    },
+                    if engine {
+                        "Clear every remote's log history and empty rclone.log on disk? This cannot be undone."
+                    } else {
+                        "Clear this remote's log history? This cannot be undone."
+                    },
+                ),
+                "clear",
+                &ctx.t_or("modals.logs.clearAll", "Clear"),
+                true,
+                move || {
+                    if engine {
+                        ctx_ok.store.borrow_mut().logs.clear();
+                        crate::logs::clear_log_file();
+                    } else {
+                        ctx_ok.store.borrow_mut().logs.remove(&key_ok);
+                    }
+                    ctx_ok.persist();
+                    reload_ok();
+                    apply_ok(&search_ok.text());
+                },
+            );
         });
     }
     let refresh = gtk::Button::from_icon_name("view-refresh-symbolic");
@@ -4295,6 +4327,10 @@ pub fn backends(parent: &impl IsA<gtk::Widget>, ctx: AppCtx) {
         use_btn.set_valign(gtk::Align::Center);
         let remove = gtk::Button::from_icon_name("user-trash-symbolic");
         remove.set_valign(gtk::Align::Center);
+        remove.add_css_class("destructive-action");
+        remove.set_tooltip_text(Some(
+            &ctx.t_or("modals.backend.removeBackend", "Remove backend"),
+        ));
         {
             let backend = backend.clone();
             let parent = parent.clone();
@@ -4355,17 +4391,39 @@ pub fn backends(parent: &impl IsA<gtk::Widget>, ctx: AppCtx) {
             let parent = parent.clone();
             let dialog = dialog.clone();
             remove.connect_clicked(move |_| {
-                ctx.settings
-                    .borrow_mut()
-                    .core
-                    .extra_backends
-                    .retain(|b| b.name != name);
-                if ctx.settings.borrow().core.active_backend == name {
-                    ctx.settings.borrow_mut().core.active_backend.clear();
-                }
-                ctx.persist();
-                dialog.close();
-                backends(&parent, ctx.clone());
+                // Removing drops the host, port and stored credentials with no
+                // way back, so confirm before doing it.
+                let ctx_ok = ctx.clone();
+                let parent_ok = parent.clone();
+                let dialog_ok = dialog.clone();
+                let name_ok = name.clone();
+                confirm(
+                    &parent,
+                    &ctx,
+                    &ctx.t_or("modals.backend.removeBackend", "Remove backend"),
+                    &ctx.tf_or(
+                        "modals.backend.removeBackendMessage",
+                        "Remove “{name}”? Its host, port and saved credentials are deleted.",
+                        &[("name", &name)],
+                    ),
+                    "remove",
+                    &ctx.t_or("common.remove", "Remove"),
+                    true,
+                    move || {
+                        ctx_ok
+                            .settings
+                            .borrow_mut()
+                            .core
+                            .extra_backends
+                            .retain(|b| b.name != name_ok);
+                        if ctx_ok.settings.borrow().core.active_backend == name_ok {
+                            ctx_ok.settings.borrow_mut().core.active_backend.clear();
+                        }
+                        ctx_ok.persist();
+                        dialog_ok.close();
+                        backends(&parent_ok, ctx_ok.clone());
+                    },
+                );
             });
         }
         let edit = gtk::Button::from_icon_name("document-edit-symbolic");
@@ -8152,6 +8210,7 @@ pub fn export_backup(
         let remote_row = remote_row.clone();
         let note = note.clone();
         let password = password.clone();
+        let encrypt = encrypt.clone();
         let secrets = secrets.clone();
         let format_row = format_row.clone();
         let backend_row = backend_row.clone();
@@ -8169,6 +8228,7 @@ pub fn export_backup(
             }
             let note_text = note.text().to_string();
             let zip_pass = password.text().to_string();
+            let want_encryption = encrypt.is_active();
             let include_secrets = secrets.is_active();
             let as_conf = format_row.selected() == 1;
             let file_dialog = gtk::FileDialog::new();
@@ -8268,6 +8328,19 @@ pub fn export_backup(
                             } else {
                                 None
                             };
+                            // Asking for encryption and getting a plaintext zip
+                            // — with a success toast — is the worst outcome
+                            // here: the archive carries rclone.conf.
+                            if want_encryption && pw.is_none() {
+                                ctx.toast_error(
+                                    &toast,
+                                    &ctx.t_or(
+                                        "backendErrors.backup.encryptRequirePassword",
+                                        "Encryption needs a zip password of at least 4 characters",
+                                    ),
+                                );
+                                return;
+                            }
                             if include_secrets && pw.is_none() {
                                 ctx.toast_error(
                                     &toast,
@@ -8680,7 +8753,31 @@ pub fn restore_preview(
         let on_done = on_done.clone();
         let scope_labels = scope_labels.clone();
         let parent_win = parent.clone().upcast::<gtk::Window>();
-        restore.connect_clicked(move |_| {
+        // Restoring replaces the live settings and store outright; ask first.
+        let confirmed = Rc::new(std::cell::Cell::new(false));
+        restore.connect_clicked(move |btn| {
+            if !confirmed.get() {
+                let confirmed = confirmed.clone();
+                let btn = btn.clone();
+                confirm(
+                    &parent_win,
+                    &ctx,
+                    &ctx.t_or("backup.restore.confirmTitle", "Restore this backup?"),
+                    &ctx.t_or(
+                        "backup.restore.confirmMessage",
+                        "Your current settings, remotes, profiles and history will be replaced by the contents of this backup. This cannot be undone.",
+                    ),
+                    "restore",
+                    &ctx.t_or("backup.restore.confirmAction", "Restore"),
+                    true,
+                    move || {
+                        confirmed.set(true);
+                        btn.emit_clicked();
+                    },
+                );
+                return;
+            }
+            confirmed.set(false);
             let pw = password.text().to_string();
             let pw = if pw.is_empty() {
                 None

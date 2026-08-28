@@ -17,6 +17,7 @@
     "refresh": "更新",
     "browse": "参照",
     "delete": "削除",
+    "remove": "削除",
     "edit": "編集",
     "copy": "コピー",
     "retry": "再試行",
@@ -1677,7 +1678,10 @@
         "requiresPassword": "このバックアップの復号化にはパスワードが必要です。",
         "decryptFailed": "バックアップの復号化に失敗しました。パスワードを確認してください。",
         "generic": "復元中にエラーが発生しました: {{error}}"
-      }
+      },
+      "confirmTitle": "このバックアップを復元しますか？",
+      "confirmMessage": "現在の設定・リモート・プロファイル・履歴は、このバックアップの内容で置き換えられます。元に戻せません。",
+      "confirmAction": "復元"
     },
     "launchRestoreFailed": "復元フローの起動に失敗しました",
     "backupSuccess": "バックアップを正常に作成しました",
@@ -2253,7 +2257,9 @@
       "logContext": "ログコンテキスト",
       "logLevel": "ログレベル",
       "allLevels": "全てのレベル",
-      "searchPlaceholder": "ログを検索..."
+      "searchPlaceholder": "ログを検索...",
+      "clearEngineMessage": "すべてのリモートのログ履歴を消去し、ディスク上の rclone.log を空にしますか？元に戻せません。",
+      "clearRemoteMessage": "このリモートのログ履歴を消去しますか？元に戻せません。"
     },
     "preferences": {
       "title": "環境設定",
@@ -2479,7 +2485,9 @@
         "passwordRemoved": "キーチェーンからパスワードを削除しました",
         "passwordsMismatch": "パスワードが一致しません"
       },
-      "addTitle": "Remote RC backend"
+      "addTitle": "Remote RC backend",
+      "removeBackend": "バックエンドを削除",
+      "removeBackendMessage": "「{{name}}」を削除しますか？ホスト・ポート・保存された認証情報が削除されます。"
     },
     "quickAdd": {
       "title": "リモートのクイック追加",
@@ -3203,7 +3211,8 @@
       "unsupportedArchive": "サポートされていないファイル形式です。.rcman ファイルである必要があります",
       "invalidArchive": "無効なバックアップファイル形式です",
       "restoreFailed": "バックアップの復元に失敗しました: {{error}}",
-      "secretRequirePassword": "このバックアップはシークレットで保護されているためパスワードが必要です"
+      "secretRequirePassword": "このバックアップはシークレットで保護されているためパスワードが必要です",
+      "encryptRequirePassword": "暗号化には 4 文字以上の ZIP パスワードが必要です"
     },
     "backend": {
       "nameEmpty": "バックエンド名を空欄にすることはできません",
