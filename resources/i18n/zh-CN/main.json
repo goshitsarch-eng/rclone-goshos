@@ -17,6 +17,7 @@
     "refresh": "刷新",
     "browse": "浏览",
     "delete": "删除",
+    "remove": "移除",
     "edit": "编辑",
     "copy": "复制",
     "retry": "重试",
@@ -1677,7 +1678,10 @@
         "requiresPassword": "此备份需要密码才能解密",
         "decryptFailed": "备份解密失败，请检查密码",
         "generic": "恢复过程中发生错误：{{error}}"
-      }
+      },
+      "confirmTitle": "要恢复此备份吗？",
+      "confirmMessage": "当前的设置、远程存储、配置文件和历史记录将被此备份的内容替换。此操作无法撤销。",
+      "confirmAction": "恢复"
     },
     "launchRestoreFailed": "启动恢复流程失败",
     "backupSuccess": "备份创建成功",
@@ -1839,6 +1843,7 @@
       "cancel": "取消",
       "saveSuccess": "文件保存成功",
       "saveError": "文件保存失败",
+      "truncatedReadOnly": "仅显示前 {{size}} — 此文件过大，无法在此编辑",
       "archiveContents": "归档内容",
       "shortcutTargets": "快捷方式目标",
       "extract": "解压",
@@ -2155,6 +2160,17 @@
       "devTeam": "开发团队",
       "leadDeveloper": "主开发者",
       "acknowledgments": "致谢",
+      "poweredBy": "技术支持",
+      "poweredByDescription": "每一次传输、挂载、服务和远程存储都由 rclone 完成。本应用只是调用它的 Remote Control API，没有重新实现任何部分。",
+      "sponsorRclone": "赞助 rclone",
+      "sponsorRcloneSubtitle": "支持本应用所依赖的项目",
+      "builtOn": "构建基础",
+      "contributors": "贡献者",
+      "contributorsSubtitle": "所有帮助构建 RClone Manager 的人",
+      "translators": "翻译者",
+      "translatorsSubtitle": "在 Crowdin 上翻译本应用的志愿者",
+      "fullCredits": "完整致谢",
+      "fullCreditsSubtitle": "每个依赖项及其许可证",
       "ackText": "本应用基于现代 Web 技术构建，并依赖优秀的 Rclone 项目进行云存储管理。",
       "noReleaseNotes": "暂无更新说明",
       "killSuccess": "Rclone 进程已结束",
@@ -2241,7 +2257,9 @@
       "logContext": "日志上下文",
       "logLevel": "日志等级",
       "allLevels": "所有等级",
-      "searchPlaceholder": "搜索日志..."
+      "searchPlaceholder": "搜索日志...",
+      "clearEngineMessage": "要清除所有远程存储的日志历史并清空磁盘上的 rclone.log 吗？此操作无法撤销。",
+      "clearRemoteMessage": "要清除此远程存储的日志历史吗？此操作无法撤销。"
     },
     "preferences": {
       "title": "偏好设置",
@@ -2467,7 +2485,9 @@
         "passwordRemoved": "密码已从密钥链移除",
         "passwordsMismatch": "两次密码不一致"
       },
-      "addTitle": "Remote RC backend"
+      "addTitle": "Remote RC backend",
+      "removeBackend": "移除后端",
+      "removeBackendMessage": "要移除“{{name}}”吗？其主机、端口和已保存的凭据都会被删除。"
     },
     "quickAdd": {
       "title": "快速添加远程存储",
@@ -2735,6 +2755,7 @@
     "empty": {
       "noStarred": "暂无收藏文件",
       "folderEmpty": "文件夹为空",
+      "folderHint": "将文件拖放到此处，或使用工具栏上传文件或新建文件夹。",
       "noFiles": "Archive is empty"
     },
     "selection": {
@@ -3191,7 +3212,8 @@
       "unsupportedArchive": "不支持的压缩包类型，必须是 .rcman 文件",
       "invalidArchive": "无效的备份存档格式",
       "restoreFailed": "备份恢复失败: {{error}}",
-      "secretRequirePassword": "此备份受密码保护，需要输入密码"
+      "secretRequirePassword": "此备份受密码保护，需要输入密码",
+      "encryptRequirePassword": "加密需要至少 4 个字符的 zip 密码"
     },
     "backend": {
       "nameEmpty": "后端名称不能为空",
@@ -3221,7 +3243,8 @@
       "startFailed": "启动自动化引擎失败：{{error}}",
       "stopFailed": "停止自动化引擎失败：{{error}}",
       "invalidCron": "Cron 表达式无效：{{error}}",
-      "automationNotFound": "未找到自动化"
+      "automationNotFound": "未找到自动化",
+      "unsupportedType": "此自动化类型 ({{type}}) 无法被排程"
     },
     "system": {
       "unlockFailed": "解锁失败：{{error}}"

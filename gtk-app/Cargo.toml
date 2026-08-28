@@ -1,12 +1,13 @@
 [package]
 name = "rclone-manager-gtk"
-version = "0.3.2"
+version = "0.3.3"
 description = "GTK 4 + libadwaita desktop client for Rclone Manager"
 authors = ["Hakan İSMAİL"]
 edition = "2021"
 license = "GPL-3.0-or-later"
 default-run = "rclone-manager-gtk"
-rust-version = "1.80"
+# `Option::is_none_or` (used in 16 places) is stable since 1.82.
+rust-version = "1.82"
 
 [[bin]]
 name = "rclone-manager-gtk"
@@ -23,7 +24,7 @@ glib = "0.20"
 gio = "0.20"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-ureq = { version = "2", features = ["json"] }
+ureq = { version = "2", features = ["json", "native-tls"] }
 dirs = "6"
 uuid = { version = "1", features = ["v4"] }
 chrono = { version = "0.4", features = ["serde"] }

@@ -362,7 +362,7 @@ We use automated linting and formatting to maintain code quality. **All code mus
 
 - **Linting**: `cd gtk-app && cargo clippy`
 - **Formatting**: `cd gtk-app && cargo fmt`
-- **Tests**: `cd gtk-app && cargo test --lib`
+- **Tests**: `cd gtk-app && cargo test -- --test-threads=1` (`--lib` alone skips the `ui/` modules, which are only compiled into the binary)
 
 #### Backend (Rust)
 
@@ -372,7 +372,7 @@ We use automated linting and formatting to maintain code quality. **All code mus
 #### Run All Checks & Fixes
 
 ```bash
-cd gtk-app && cargo test --lib
+cd gtk-app && cargo test -- --test-threads=1
 cd src-tauri && cargo fmt -- --check
 npm run audit:i18n
 ```
@@ -398,7 +398,7 @@ Currently, the project uses manual testing. We welcome contributions to add auto
 1. **Ensure your code passes all checks**:
 
    ```bash
-   cd gtk-app && cargo test --lib
+   cd gtk-app && cargo test -- --test-threads=1
    cd src-tauri && cargo fmt -- --check
    ```
 

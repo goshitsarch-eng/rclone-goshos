@@ -17,6 +17,7 @@
     "refresh": "Atualizar",
     "browse": "Navegar",
     "delete": "Excluir",
+    "remove": "Remover",
     "edit": "Editar",
     "copy": "Cópia",
     "retry": "Tente novamente",
@@ -1677,7 +1678,10 @@
         "requiresPassword": "Esta cópia de segurança requer uma senha para ser descriptografada.",
         "decryptFailed": "Falha ao descriptografar o backup. Verifique sua senha.",
         "generic": "Ocorreu um erro durante a restauração: {{error}}"
-      }
+      },
+      "confirmTitle": "Restaurar este backup?",
+      "confirmMessage": "Suas configurações, remotos, perfis e histórico atuais serão substituídos pelo conteúdo deste backup. Isso não pode ser desfeito.",
+      "confirmAction": "Restaurar"
     },
     "launchRestoreFailed": "Falha ao iniciar o fluxo de restauração",
     "backupSuccess": "Cópia de segurança criada com sucesso",
@@ -1839,6 +1843,7 @@
       "cancel": "Cancelar",
       "saveSuccess": "Arquivo salvo com sucesso",
       "saveError": "Falha ao salvar arquivo",
+      "truncatedReadOnly": "Mostrando os primeiros {{size}} — este arquivo é grande demais para editar aqui",
       "archiveContents": "Conteúdo do Arquivo",
       "shortcutTargets": "Alvos de Atalho",
       "extract": "Extrair",
@@ -2155,6 +2160,17 @@
       "devTeam": "Equipe de Desenvolvimento",
       "leadDeveloper": "Desenvolvedor Sênior ou Líder de Desenvolvimento",
       "acknowledgments": "Reconhecidos",
+      "poweredBy": "Desenvolvido com",
+      "poweredByDescription": "Cada transferência, montagem, serviço e remoto é executado pelo rclone. Este aplicativo apenas usa sua API Remote Control e não reimplementa nada.",
+      "sponsorRclone": "Patrocinar o rclone",
+      "sponsorRcloneSubtitle": "Apoie o projeto do qual este depende",
+      "builtOn": "Construído sobre",
+      "contributors": "Contribuidores",
+      "contributorsSubtitle": "Todos que ajudaram a construir o RClone Manager",
+      "translators": "Tradutores",
+      "translatorsSubtitle": "Os voluntários que traduzem este aplicativo no Crowdin",
+      "fullCredits": "Agradecimentos completos",
+      "fullCreditsSubtitle": "Cada dependência, com sua licença",
       "ackText": "Essa aplicação é desenvolvida com tecnologias web modernas e depende do excelente projeto Rclone para o gerenciamento de armazenamento em nuvem.",
       "noReleaseNotes": "Nenhuma nota de lançamento disponível.",
       "killSuccess": "O processo do rclone foi finalizado com sucesso",
@@ -2241,7 +2257,9 @@
       "logContext": "Contexto de Log",
       "logLevel": "Nível de Log",
       "allLevels": "Todos os Níveis",
-      "searchPlaceholder": "Pesquisar logs..."
+      "searchPlaceholder": "Pesquisar logs...",
+      "clearEngineMessage": "Limpar o histórico de logs de todos os remotos e esvaziar o rclone.log no disco? Isso não pode ser desfeito.",
+      "clearRemoteMessage": "Limpar o histórico de logs deste remoto? Isso não pode ser desfeito."
     },
     "preferences": {
       "title": "Preferências",
@@ -2467,7 +2485,9 @@
         "passwordRemoved": "Senha removida do keychain",
         "passwordsMismatch": "As senhas não correspondem"
       },
-      "addTitle": "Remote RC backend"
+      "addTitle": "Remote RC backend",
+      "removeBackend": "Remover backend",
+      "removeBackendMessage": "Remover “{{name}}”? Seu host, porta e credenciais salvas serão excluídos."
     },
     "quickAdd": {
       "title": "Adicionar Remoto Rápido",
@@ -2735,6 +2755,7 @@
     "empty": {
       "noStarred": "Arquivos Sem Estrela",
       "folderEmpty": "O diretório está vazio",
+      "folderHint": "Solte arquivos aqui ou use a barra de ferramentas para enviar ou criar uma pasta.",
       "noFiles": "Archive is empty"
     },
     "selection": {
@@ -3191,7 +3212,8 @@
       "unsupportedArchive": "Tipo de arquivo não suportado. Deve ser um arquivo .rcman",
       "invalidArchive": "Formato de arquivo de backup inválido",
       "restoreFailed": "Falha na restauração do backup: {{error}}",
-      "secretRequirePassword": "Esta cópia de segurança está protegida por um segredo e requer uma senha"
+      "secretRequirePassword": "Esta cópia de segurança está protegida por um segredo e requer uma senha",
+      "encryptRequirePassword": "A criptografia exige uma senha zip de pelo menos 4 caracteres"
     },
     "backend": {
       "nameEmpty": "Nome do backend não pode estar vazio",
@@ -3221,7 +3243,8 @@
       "startFailed": "Falha ao iniciar o motor de automação: {{error}}",
       "stopFailed": "Falha ao parar o motor de automação: {{error}}",
       "invalidCron": "Expressão cron inválida: {{error}}",
-      "automationNotFound": "Automação não encontrada"
+      "automationNotFound": "Automação não encontrada",
+      "unsupportedType": "Este tipo de automação ({{type}}) não pode ser agendado"
     },
     "system": {
       "unlockFailed": "Falha ao desbloquear: {{error}}"

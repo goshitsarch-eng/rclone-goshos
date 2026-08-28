@@ -126,7 +126,7 @@ fn build_card(
     card.set_margin_start(2);
     card.set_margin_end(2);
 
-    let header = adw::ActionRow::new();
+    let header = crate::ui::rows::action_row();
     header.set_title(&record.name);
     header.set_subtitle(&format!(
         "{} · {} · {}",
@@ -184,7 +184,21 @@ fn build_card(
         bind_run(ctx, toast, record, &run);
         header.add_suffix(&run);
         if let Some(on_activate) = on_activate {
-            header.connect_activated(move |_| on_activate());
+            // `AdwActionRow::activated` only fires for a row that is a direct
+            // child of a GtkListBox; this one lives inside a card Box, so the
+            // signal never reached the caller and clicking the card did
+            // nothing. Drive it from a click gesture instead.
+            header.set_activatable(true);
+            let click = gtk::GestureClick::new();
+            click.set_button(gtk::gdk::BUTTON_PRIMARY);
+            click.connect_released(move |gesture, n_press, _, _| {
+                if n_press != 1 {
+                    return;
+                }
+                gesture.set_state(gtk::EventSequenceState::Claimed);
+                on_activate();
+            });
+            header.add_controller(click);
         }
     }
 
@@ -251,9 +265,11 @@ fn detailed_body(ctx: &AppCtx, record: &AutomationRecord) -> gtk::Widget {
     body.set_margin_bottom(8);
 
     let schedule = adw::PreferencesGroup::new();
-    schedule.set_title(&ctx.t_or("dashboard.generalDetail.schedule", "Schedule"));
+    schedule.set_title(&crate::ui::rows::escape(
+        ctx.t_or("dashboard.generalDetail.schedule", "Schedule"),
+    ));
     if record.cron_enabled && !record.cron.is_empty() {
-        let row = adw::ActionRow::new();
+        let row = crate::ui::rows::action_row();
         row.set_title(&ctx.t_or("dashboard.generalDetail.cronExpression", "Cron Expression:"));
         row.set_subtitle(&record.cron);
         row.set_tooltip_text(Some(&crate::rclone::describe_cron_i18n(
@@ -307,7 +323,9 @@ fn detailed_body(ctx: &AppCtx, record: &AutomationRecord) -> gtk::Widget {
     body.append(&schedule);
 
     let stats = adw::PreferencesGroup::new();
-    stats.set_title(&ctx.t_or("dashboard.generalDetail.statistics", "Statistics"));
+    stats.set_title(&crate::ui::rows::escape(
+        ctx.t_or("dashboard.generalDetail.statistics", "Statistics"),
+    ));
     let (ok, fail, stop, runs) = crate::automation::stat_counts(record);
     stats.add(&labeled_row(
         ctx,
@@ -338,9 +356,11 @@ fn detailed_body(ctx: &AppCtx, record: &AutomationRecord) -> gtk::Widget {
     let paths = crate::automation::path_rows(record);
     if !paths.is_empty() {
         let group = adw::PreferencesGroup::new();
-        group.set_title(&ctx.t_or("dashboard.generalDetail.paths", "Paths"));
+        group.set_title(&crate::ui::rows::escape(
+            ctx.t_or("dashboard.generalDetail.paths", "Paths"),
+        ));
         for (key, path) in paths {
-            let row = adw::ActionRow::new();
+            let row = crate::ui::rows::action_row();
             row.set_title(&ctx.t_or(
                 key,
                 if key.contains("source") {
@@ -367,8 +387,10 @@ fn detailed_body(ctx: &AppCtx, record: &AutomationRecord) -> gtk::Widget {
 
     if let Some(error) = record.last_error.as_deref().filter(|e| !e.is_empty()) {
         let group = adw::PreferencesGroup::new();
-        group.set_title(&ctx.t_or("dashboard.generalDetail.lastError", "Last Error"));
-        let row = adw::ActionRow::new();
+        group.set_title(&crate::ui::rows::escape(
+            ctx.t_or("dashboard.generalDetail.lastError", "Last Error"),
+        ));
+        let row = crate::ui::rows::action_row();
         row.set_subtitle(error);
         row.set_title(&ctx.t_or("dashboard.generalDetail.lastError", "Last Error"));
         let copy = gtk::Button::from_icon_name("edit-copy-symbolic");
@@ -404,7 +426,7 @@ fn detailed_body(ctx: &AppCtx, record: &AutomationRecord) -> gtk::Widget {
 }
 
 fn labeled_row(ctx: &AppCtx, key: &str, fallback: &str, value: &str) -> adw::ActionRow {
-    let row = adw::ActionRow::new();
+    let row = crate::ui::rows::action_row();
     row.set_title(&ctx.t_or(key, fallback));
     row.set_subtitle(value);
     row

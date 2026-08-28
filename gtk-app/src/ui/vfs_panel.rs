@@ -50,7 +50,7 @@ pub fn vfs_panel(ctx: AppCtx, remote: &str, toast: adw::ToastOverlay) -> gtk::Wi
     indexed.append(&indexed_link);
     root.append(&indexed);
 
-    let combo = adw::ComboRow::new();
+    let combo = crate::ui::rows::combo_row();
     combo.set_title(&ctx.t_or("shared.vfsControl.vfsInstance", "VFS Instance"));
     combo.set_visible(false);
     let combo_group = adw::PreferencesGroup::new();
@@ -114,7 +114,7 @@ pub fn vfs_panel(ctx: AppCtx, remote: &str, toast: adw::ToastOverlay) -> gtk::Wi
     root.append(&cache_label);
     root.append(&cache);
 
-    let advanced = adw::ExpanderRow::new();
+    let advanced = crate::ui::rows::expander_row();
     advanced.set_title(&ctx.t_or(
         "shared.vfsControl.advancedConfig.title",
         "Advanced Configuration",
@@ -125,7 +125,7 @@ pub fn vfs_panel(ctx: AppCtx, remote: &str, toast: adw::ToastOverlay) -> gtk::Wi
         "Search VFS options",
     )));
     advanced_search.set_hexpand(true);
-    let search_row = adw::ActionRow::new();
+    let search_row = crate::ui::rows::action_row();
     search_row.set_title(&ctx.t_or(
         "shared.vfsControl.advancedConfig.search",
         "Search VFS options",
@@ -139,7 +139,7 @@ pub fn vfs_panel(ctx: AppCtx, remote: &str, toast: adw::ToastOverlay) -> gtk::Wi
     advanced_group.add(&advanced);
     root.append(&advanced_group);
 
-    let poll = adw::EntryRow::new();
+    let poll = crate::ui::rows::entry_row();
     poll.set_title(&ctx.t_or("shared.vfsControl.actions.pollInterval", "Poll Interval"));
     poll.set_text("1m");
     let apply_poll = gtk::Button::with_label(&ctx.t_or("common.apply", "Set interval"));
@@ -147,7 +147,7 @@ pub fn vfs_panel(ctx: AppCtx, remote: &str, toast: adw::ToastOverlay) -> gtk::Wi
     poll.add_suffix(&apply_poll);
     let poll_group = adw::PreferencesGroup::new();
     poll_group.add(&poll);
-    let poll_unsupported = adw::ActionRow::new();
+    let poll_unsupported = crate::ui::rows::action_row();
     poll_unsupported.set_title(&ctx.t_or(
         "shared.vfsControl.actions.pollIntervalNotSupported",
         "Poll interval not supported",
@@ -342,7 +342,7 @@ pub fn vfs_panel(ctx: AppCtx, remote: &str, toast: adw::ToastOverlay) -> gtk::Wi
                         ));
                     }
                     if parsed.disk_cache_enabled() {
-                        let note = adw::ActionRow::new();
+                        let note = crate::ui::rows::action_row();
                         note.set_title(&ctx.t_or("shared.vfsControl.cacheInfo.note", "Note:"));
                         note.set_subtitle(&ctx.t_or(
                             "shared.vfsControl.cacheInfo.noteText",
@@ -380,7 +380,7 @@ pub fn vfs_panel(ctx: AppCtx, remote: &str, toast: adw::ToastOverlay) -> gtk::Wi
                 Ok(value) => {
                     let items = parse_vfs_queue(&value);
                     if items.is_empty() {
-                        let row = adw::ActionRow::new();
+                        let row = crate::ui::rows::action_row();
                         row.set_title(&ctx.t_or(
                             "shared.vfsControl.queue.empty",
                             "No files queued for upload",
@@ -414,7 +414,7 @@ pub fn vfs_panel(ctx: AppCtx, remote: &str, toast: adw::ToastOverlay) -> gtk::Wi
                     }
                 }
                 Err(e) => {
-                    let row = adw::ActionRow::new();
+                    let row = crate::ui::rows::action_row();
                     row.set_title(
                         &ctx.t_or("remoteConfig.vfsQueueUnavailable", "Queue unavailable"),
                     );
@@ -450,7 +450,10 @@ pub fn vfs_panel(ctx: AppCtx, remote: &str, toast: adw::ToastOverlay) -> gtk::Wi
                 return;
             }
             let idx = row.selected() as usize;
-            if let Some(name) = known_names.borrow().get(idx).cloned() {
+            // `refresh_ui` rebuilds the dropdown and takes
+            // `known_names.borrow_mut()`, so the read must end first.
+            let name = known_names.borrow().get(idx).cloned();
+            if let Some(name) = name {
                 *selected.borrow_mut() = name;
                 refresh_ui();
             }
@@ -519,7 +522,11 @@ pub fn vfs_panel(ctx: AppCtx, remote: &str, toast: adw::ToastOverlay) -> gtk::Wi
         let refresh_ui = refresh_ui.clone();
         refresh_meta.connect_clicked(move |_| {
             if let Some(client) = ctx.client() {
-                match client.vfs_refresh_ex(&selected.borrow(), None, true) {
+                // The `Ref` from a match scrutinee lives for the whole match,
+                // and `refresh_ui` reassigns `selected` when the VFS list
+                // changes — take an owned copy first.
+                let target = selected.borrow().clone();
+                match client.vfs_refresh_ex(&target, None, true) {
                     Ok(_) => {
                         toast.add_toast(adw::Toast::new(&ctx.t_or(
                             "shared.vfsControl.actions.messages.directoryRefreshed",
@@ -539,7 +546,8 @@ pub fn vfs_panel(ctx: AppCtx, remote: &str, toast: adw::ToastOverlay) -> gtk::Wi
         let refresh_ui = refresh_ui.clone();
         clear_cache.connect_clicked(move |_| {
             if let Some(client) = ctx.client() {
-                match client.vfs_forget(&selected.borrow()) {
+                let target = selected.borrow().clone();
+                match client.vfs_forget(&target) {
                     Ok(value) => {
                         let count = value
                             .get("forgotten")
@@ -585,7 +593,7 @@ fn queue_row(
     delay_box: gtk::Box,
     refresh_slot: Rc<RefCell<Rc<dyn Fn()>>>,
 ) -> adw::ActionRow {
-    let row = adw::ActionRow::new();
+    let row = crate::ui::rows::action_row();
     let name = if item.name.is_empty() {
         format!("#{}", item.id)
     } else {
@@ -732,14 +740,14 @@ fn set_expiry(
 }
 
 fn add_stat(list: &gtk::ListBox, title: &str, value: &str) {
-    let row = adw::ActionRow::new();
+    let row = crate::ui::rows::action_row();
     row.set_title(title);
     row.set_subtitle(value);
     list.append(&row);
 }
 
 fn path_row(ctx: &AppCtx, title: &str, path: &str, tooltip: &str) -> adw::ActionRow {
-    let row = adw::ActionRow::new();
+    let row = crate::ui::rows::action_row();
     row.set_title(title);
     row.set_subtitle(path);
     let open = gtk::Button::from_icon_name("folder-open-symbolic");
@@ -789,7 +797,7 @@ fn fill_advanced_opts(
         }
     }
     for (group, items) in groups {
-        let header = adw::ActionRow::new();
+        let header = crate::ui::rows::action_row();
         header.set_title(&ctx.t_or(&crate::vfs::vfs_opt_group_i18n_key(group), group));
         header.set_sensitive(false);
         header.set_widget_name(&format!("group:{group}"));
@@ -797,14 +805,14 @@ fn fill_advanced_opts(
         list.append(&header);
         for key in items {
             let display = format_opt_value(ctx, &map[&key]);
-            let row = adw::ActionRow::new();
+            let row = crate::ui::rows::action_row();
             row.set_title(&key);
             row.set_subtitle(&display);
             row.set_widget_name(&key);
             list.append(&row);
         }
     }
-    let empty = adw::ActionRow::new();
+    let empty = crate::ui::rows::action_row();
     empty.set_title(&ctx.t_or(
         "shared.vfsControl.advancedConfig.noResults",
         "No options match your search",

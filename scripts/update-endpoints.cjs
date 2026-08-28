@@ -130,21 +130,52 @@ function groupCommands(commands) {
   return groups;
 }
 
+// rclone's help text is prose, not Rust. Rustdoc compiles both indented blocks
+// (4+ spaces) and unlabelled ``` fences as doctests, so every shell snippet and
+// JSON sample in this help becomes a failing doctest. Emit them as `text`
+// blocks: same rendering, not compiled.
+const TEXT_FENCE = '```text';
+
 function docLines(text, indent) {
   const normalized = text.replace(/\r\n/g, '\n').replace(/\t/g, '    ');
   const rawLines = normalized.split('\n');
   const stripped = rawLines.map(l => l.replace(/\s+$/, ''));
   const LIST_RE = /^\s*[-*]\s+/;
+  const FENCE_RE = /^\s*```/;
   const out = [];
   let inList = false;
   let listIndent = 0;
+  let inFence = false;
+  let inIndentedBlock = false;
+
+  const closeIndentedBlock = () => {
+    if (inIndentedBlock) {
+      out.push(`${indent}/// \`\`\``);
+      inIndentedBlock = false;
+    }
+  };
+
   for (const line of stripped) {
+    if (FENCE_RE.test(line)) {
+      closeIndentedBlock();
+      // An unlabelled fence defaults to Rust; label it so it is not compiled.
+      out.push(inFence ? `${indent}/// \`\`\`` : `${indent}/// ${TEXT_FENCE}`);
+      inFence = !inFence;
+      inList = false;
+      continue;
+    }
+    if (inFence) {
+      out.push(`${indent}/// ${line}`);
+      continue;
+    }
     if (line.length === 0) {
       inList = false;
+      // A blank line inside an indented block does not end it.
       out.push(`${indent}///`);
       continue;
     }
     if (LIST_RE.test(line)) {
+      closeIndentedBlock();
       inList = true;
       listIndent = line.match(/^\s*/)[0].length;
       out.push(`${indent}/// ${line}`);
@@ -156,9 +187,22 @@ function docLines(text, indent) {
       const trimmed = line.trimStart();
       const paddedLine = ' '.repeat(target) + trimmed;
       out.push(`${indent}/// ${paddedLine}`);
-    } else {
-      out.push(`${indent}/// ${line}`);
+      continue;
     }
+    if (/^ {4,}\S/.test(line)) {
+      if (!inIndentedBlock) {
+        out.push(`${indent}/// ${TEXT_FENCE}`);
+        inIndentedBlock = true;
+      }
+      out.push(`${indent}/// ${line.trimStart()}`);
+      continue;
+    }
+    closeIndentedBlock();
+    out.push(`${indent}/// ${line}`);
+  }
+  closeIndentedBlock();
+  if (inFence) {
+    out.push(`${indent}/// \`\`\``);
   }
   return out;
 }

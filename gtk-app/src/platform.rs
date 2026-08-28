@@ -41,6 +41,45 @@ pub fn send_to_path_param(path: Option<&str>) -> String {
         .unwrap_or_default()
 }
 
+/// Escape a value that gets interpolated inside a double-quoted shell word —
+/// the `"{remote}"` / `"{path}"` slots in the Send-to script and in `Exec=`
+/// lines. Inside double quotes the shell still expands `$(…)`, `` `…` `` and
+/// `\`, so a remote path such as `Photos$(id)` would otherwise run as code the
+/// next time the menu entry is used.
+pub fn escape_double_quoted(value: &str) -> String {
+    let mut out = String::with_capacity(value.len());
+    for ch in value.chars() {
+        match ch {
+            '\\' | '"' | '$' | '`' => {
+                out.push('\\');
+                out.push(ch);
+            }
+            '\n' | '\r' => out.push(' '),
+            _ => out.push(ch),
+        }
+    }
+    out
+}
+
+/// Escape a value that gets interpolated into a double-quoted Python string
+/// literal in the generated Nautilus `MenuProvider` extension. `exec_path`
+/// already carries its own quotes, so without this the emitted module is not
+/// valid Python and GNOME Files silently skips it.
+pub fn escape_python_string(value: &str) -> String {
+    let mut out = String::with_capacity(value.len());
+    for ch in value.chars() {
+        match ch {
+            '\\' => out.push_str("\\\\"),
+            '"' => out.push_str("\\\""),
+            '\n' => out.push_str("\\n"),
+            '\r' => out.push_str("\\r"),
+            '\t' => out.push_str("\\t"),
+            _ => out.push(ch),
+        }
+    }
+    out
+}
+
 fn apply_template(template: &str, replacements: &[(&str, &str)]) -> String {
     let mut content = template.to_string();
     for &(key, value) in replacements {
@@ -170,6 +209,72 @@ pub fn install_user_mime_package() -> Result<PathBuf, String> {
     Ok(path)
 }
 
+/// Icon sizes installed into the user's hicolor theme, largest last so a
+/// desktop that picks the final match still gets a crisp one.
+pub const APP_ICON_SIZES: &[(&str, &[u8])] = &[
+    ("32x32", include_bytes!("../../src-tauri/icons/32x32.png")),
+    ("64x64", include_bytes!("../../src-tauri/icons/64x64.png")),
+    (
+        "128x128",
+        include_bytes!("../../src-tauri/icons/128x128.png"),
+    ),
+    (
+        "256x256",
+        include_bytes!("../../src-tauri/icons/128x128@2x.png"),
+    ),
+    ("512x512", include_bytes!("../../src-tauri/icons/icon.png")),
+];
+
+/// The Send-to templates for Dolphin and Nemo ask for `rclone-manager`, so the
+/// icon is installed under that name as well as the application ID.
+pub const APP_ICON_NAMES: &[&str] = &[crate::APP_ID, "rclone-manager"];
+
+pub fn icons_dir() -> PathBuf {
+    std::env::var("XDG_DATA_HOME")
+        .map(PathBuf::from)
+        .unwrap_or_else(|_| home_dir().join(".local/share"))
+        .join("icons/hicolor")
+}
+
+pub fn app_icon_path(size: &str, name: &str) -> PathBuf {
+    icons_dir()
+        .join(size)
+        .join("apps")
+        .join(format!("{name}.png"))
+}
+
+/// Install the application icon into the user's hicolor theme.
+///
+/// Without this the desktop entry falls back to the generic `folder-remote`
+/// stock icon in the launcher, the dock, the window switcher and the Dolphin /
+/// Nemo Send-to entries.
+pub fn install_user_icons() -> Result<(), String> {
+    let mut wrote_any = false;
+    for (size, bytes) in APP_ICON_SIZES {
+        for name in APP_ICON_NAMES {
+            let path = app_icon_path(size, name);
+            if let Some(parent) = path.parent() {
+                std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+            }
+            if std::fs::read(&path).ok().as_deref() == Some(*bytes) {
+                continue;
+            }
+            std::fs::write(&path, bytes).map_err(|e| e.to_string())?;
+            wrote_any = true;
+        }
+    }
+    if wrote_any {
+        // Best effort: desktops that cache the theme index need a nudge.
+        let _ = std::process::Command::new("gtk-update-icon-cache")
+            .arg("-q")
+            .arg("-t")
+            .arg("-f")
+            .arg(icons_dir())
+            .status();
+    }
+    Ok(())
+}
+
 pub const METAINFO_ID: &str = "io.github.zarestia_dev.rclone-manager.metainfo.xml";
 
 pub fn metainfo_dir() -> PathBuf {
@@ -193,14 +298,13 @@ pub fn install_user_metainfo() -> Result<PathBuf, String> {
 }
 
 pub use crate::os_notify::{
-    drain_notification_clicks, show_os_notification, show_os_notification_target,
-    NotificationTarget,
+    drain_notification_clicks, show_os_notification_target, NotificationTarget,
 };
 
 /// XDG autostart entry. `--tray` matches Tauri `tauri_plugin_autostart`.
 pub fn autostart_desktop_entry(exec: &str) -> String {
     format!(
-        "[Desktop Entry]\nType=Application\nName=Rclone Manager\nComment=Manage rclone remotes, mounts, and transfers\nExec={exec} --tray\nIcon=folder-remote\nTerminal=false\nCategories=Network;FileTransfer;\nX-GNOME-Autostart-enabled=true\n"
+        "[Desktop Entry]\nType=Application\nName=Rclone Manager\nComment=Manage rclone remotes, mounts, and transfers\nExec={exec} --tray\nIcon=io.github.zarestia_dev.rclone-manager\nTerminal=false\nCategories=Network;FileTransfer;\nX-GNOME-Autostart-enabled=true\n"
     )
 }
 
@@ -1067,11 +1171,11 @@ pub fn nautilus_python_extension(
         NAUTILUS_EXTENSION,
         &[
             ("class_name", class_name),
-            ("exec_path", exec_path),
-            ("remote", remote),
-            ("path", path),
+            ("exec_path", &escape_python_string(exec_path)),
+            ("remote", &escape_python_string(remote)),
+            ("path", &escape_python_string(path)),
             ("uuid", uuid),
-            ("name", name),
+            ("name", &escape_python_string(name)),
         ],
     )
 }
@@ -1081,10 +1185,12 @@ fn register_linux_send_to(remote: &str, path: Option<&str>) -> Result<(), String
     let exec = current_exe_quoted();
     let path_val = path.unwrap_or("");
     let home = home_dir();
+    let remote_arg = escape_double_quoted(remote);
+    let path_arg = escape_double_quoted(path_val);
     let replacements = [
         ("exec_path", exec.as_str()),
-        ("remote", remote),
-        ("path", path_val),
+        ("remote", remote_arg.as_str()),
+        ("path", path_arg.as_str()),
         ("name", name.as_str()),
     ];
 
@@ -1216,6 +1322,7 @@ pub fn windows_registry_ps1(
     )
 }
 
+#[cfg_attr(not(target_os = "windows"), allow(dead_code))]
 fn windows_upload_label(remote: &str, path: &str) -> String {
     if path.is_empty() {
         format!("Upload to {remote}")
@@ -1311,6 +1418,8 @@ pub fn macos_info_plist(name: &str, uuid: &str) -> String {
 }
 
 pub fn macos_document_wflow(exe: &str, remote: &str, path: &str) -> String {
+    let remote = escape_double_quoted(remote);
+    let path = escape_double_quoted(path);
     let cmd = escape_xml(&format!(
         "exec \"{exe}\" --send-to-remote \"{remote}\" --send-to-path \"{path}\" \"$@\""
     ));
@@ -1955,6 +2064,117 @@ mod tests {
         assert!(nautilus_python_dir()
             .to_string_lossy()
             .contains("nautilus-python/extensions"));
+    }
+
+    #[test]
+    fn nautilus_python_extension_emits_parseable_python() {
+        // `exec_path` arrives already double-quoted, so it has to be escaped for
+        // the Python string literal it lands in — otherwise the module is a
+        // SyntaxError and GNOME Files silently drops the menu entry.
+        let py = nautilus_python_extension(
+            "testdrive (RClone Manager)",
+            "\"/opt/rclone-manager-gtk\"",
+            "testdrive",
+            "Photos",
+            "RCloneManagerExtension_abc123",
+            "abc123",
+        );
+        assert!(py.contains(r#"exec_path = "\"/opt/rclone-manager-gtk\"".strip('"')"#));
+        assert!(!py.contains(r#"= ""/opt"#));
+    }
+
+    #[test]
+    fn send_to_templates_neutralize_shell_metacharacters() {
+        let hostile = "Photos$(touch /tmp/pwned)`id`\"x";
+        let py = nautilus_python_extension(
+            "n",
+            "\"/opt/app\"",
+            "drive",
+            hostile,
+            "RCloneManagerExtension_x",
+            "x",
+        );
+        // The quote is escaped, so it cannot close the Python string literal
+        // that `{path}` is interpolated into.
+        assert!(py.contains(r#""--send-to-path", "Photos$(touch /tmp/pwned)`id`\"x""#));
+        assert!(!py.contains(r#"`id`"x"#));
+
+        let shell = escape_double_quoted(hostile);
+        // Every metacharacter is backslash-escaped, so the shell sees literals.
+        assert_eq!(shell, "Photos\\$(touch /tmp/pwned)\\`id\\`\\\"x");
+        assert!(!shell.contains("s$("));
+        assert!(!shell.contains(")`i"));
+    }
+
+    #[test]
+    fn escape_double_quoted_leaves_ordinary_paths_alone() {
+        assert_eq!(escape_double_quoted("Photos/2024 Trip"), "Photos/2024 Trip");
+        assert_eq!(escape_double_quoted(""), "");
+        assert_eq!(escape_double_quoted("a\nb"), "a b");
+        assert_eq!(escape_double_quoted("a\\b"), "a\\\\b");
+    }
+
+    #[test]
+    fn escape_python_string_handles_quotes_and_newlines() {
+        assert_eq!(escape_python_string("plain"), "plain");
+        assert_eq!(escape_python_string("a\"b"), "a\\\"b");
+        assert_eq!(escape_python_string("a\\b"), "a\\\\b");
+        assert_eq!(escape_python_string("a\nb"), "a\\nb");
+        assert_eq!(escape_python_string("a\tb"), "a\\tb");
+    }
+
+    #[test]
+    fn app_icons_install_into_the_hicolor_theme() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        // SAFETY: single-threaded test run (`--test-threads=1`); restored below.
+        let previous = std::env::var("XDG_DATA_HOME").ok();
+        unsafe { std::env::set_var("XDG_DATA_HOME", dir.path()) };
+
+        let result = install_user_icons();
+        let installed: Vec<(bool, usize)> = APP_ICON_SIZES
+            .iter()
+            .map(|(size, bytes)| {
+                let path = app_icon_path(size, crate::APP_ID);
+                (path.exists(), bytes.len())
+            })
+            .collect();
+        let alias = app_icon_path("128x128", "rclone-manager");
+        let alias_exists = alias.exists();
+        let sample = app_icon_path("64x64", crate::APP_ID);
+        let sample_bytes = std::fs::read(&sample).ok();
+
+        match previous {
+            Some(value) => unsafe { std::env::set_var("XDG_DATA_HOME", value) },
+            None => unsafe { std::env::remove_var("XDG_DATA_HOME") },
+        }
+
+        assert!(result.is_ok(), "{result:?}");
+        assert!(installed.iter().all(|(exists, _)| *exists));
+        assert!(
+            installed.iter().all(|(_, len)| *len > 0),
+            "icons must not be empty"
+        );
+        // The Dolphin / Nemo Send-to templates reference `rclone-manager`.
+        assert!(alias_exists, "alias icon name must be installed too");
+        assert_eq!(
+            sample_bytes.as_deref(),
+            Some(include_bytes!("../../src-tauri/icons/64x64.png").as_slice())
+        );
+        assert!(sample
+            .to_string_lossy()
+            .contains("icons/hicolor/64x64/apps"));
+    }
+
+    #[test]
+    fn desktop_entries_reference_the_app_icon_not_a_stock_one() {
+        // `folder-remote` is a generic stock icon: the launcher, dock and
+        // window switcher all showed it instead of the application's own.
+        let desktop = include_str!("../data/io.github.zarestia_dev.rclone-manager.desktop");
+        assert!(desktop.contains("Icon=io.github.zarestia_dev.rclone-manager"));
+        assert!(!desktop.contains("folder-remote"));
+        let autostart = autostart_desktop_entry("/opt/rclone-manager-gtk");
+        assert!(autostart.contains("Icon=io.github.zarestia_dev.rclone-manager"));
+        assert!(!autostart.contains("folder-remote"));
     }
 
     #[test]

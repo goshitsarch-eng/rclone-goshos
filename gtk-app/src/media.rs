@@ -279,7 +279,19 @@ fn mp4_picture(data: &[u8]) -> Option<PictureData> {
     find_mp4_atom(data, b"covr").and_then(parse_covr_atom)
 }
 
+/// Container atoms nest, and a corrupt or crafted file can nest them without
+/// bound — unbounded recursion here would overflow the stack and abort the
+/// process. Real files are only a few levels deep.
+const MP4_MAX_DEPTH: u8 = 16;
+
 fn find_mp4_atom<'a>(data: &'a [u8], name: &[u8; 4]) -> Option<&'a [u8]> {
+    find_mp4_atom_at(data, name, 0)
+}
+
+fn find_mp4_atom_at<'a>(data: &'a [u8], name: &[u8; 4], depth: u8) -> Option<&'a [u8]> {
+    if depth >= MP4_MAX_DEPTH {
+        return None;
+    }
     let mut offset = 0;
     while offset + 8 <= data.len() {
         let size = u32_be(&data[offset..offset + 4])? as usize;
@@ -301,7 +313,7 @@ fn find_mp4_atom<'a>(data: &'a [u8], name: &[u8; 4]) -> Option<&'a [u8]> {
                 offset + 8
             };
             if nested_start < end {
-                if let Some(found) = find_mp4_atom(&data[nested_start..end], name) {
+                if let Some(found) = find_mp4_atom_at(&data[nested_start..end], name, depth + 1) {
                     return Some(found);
                 }
             }
@@ -471,6 +483,49 @@ pub fn is_path_field(name: &str, help: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn mp4_atom_search_is_depth_bounded() {
+        // A file that nests container atoms without bound used to recurse until
+        // the stack overflowed and the process aborted.
+        fn payload() -> Vec<u8> {
+            let mut atom = Vec::new();
+            atom.extend_from_slice(&12u32.to_be_bytes());
+            atom.extend_from_slice(b"covr");
+            atom.extend_from_slice(&[1, 2, 3, 4]);
+            atom
+        }
+        fn wrap(levels: usize) -> Vec<u8> {
+            let mut buf = payload();
+            for _ in 0..levels {
+                let size = (buf.len() + 8) as u32;
+                let mut next = Vec::with_capacity(size as usize);
+                next.extend_from_slice(&size.to_be_bytes());
+                next.extend_from_slice(b"udta");
+                next.extend_from_slice(&buf);
+                buf = next;
+            }
+            buf
+        }
+
+        // Shallow nesting still resolves — real files are only a few deep.
+        assert_eq!(
+            find_mp4_atom(&wrap(4), b"covr"),
+            Some(&[1u8, 2, 3, 4][..]),
+            "normal files must still work"
+        );
+
+        // Past the cap the search gives up instead of recursing further. Without
+        // a cap this would keep descending for as many levels as the file has.
+        assert_eq!(
+            find_mp4_atom(&wrap(usize::from(MP4_MAX_DEPTH) + 4), b"covr"),
+            None,
+            "the depth cap must engage"
+        );
+
+        // And a pathologically deep file returns rather than blowing the stack.
+        assert_eq!(find_mp4_atom(&wrap(50_000), b"covr"), None);
+    }
+
     use super::*;
 
     #[test]

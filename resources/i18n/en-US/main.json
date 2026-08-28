@@ -17,6 +17,7 @@
     "refresh": "Refresh",
     "browse": "Browse",
     "delete": "Delete",
+    "remove": "Remove",
     "edit": "Edit",
     "copy": "Copy",
     "retry": "Retry",
@@ -1677,7 +1678,10 @@
         "requiresPassword": "This backup requires a password to decrypt.",
         "decryptFailed": "Failed to decrypt backup. Check your password.",
         "generic": "An error occurred during restore: {{error}}"
-      }
+      },
+      "confirmTitle": "Restore this backup?",
+      "confirmMessage": "Your current settings, remotes, profiles and history will be replaced by the contents of this backup. This cannot be undone.",
+      "confirmAction": "Restore"
     },
     "launchRestoreFailed": "Failed to launch restore flow",
     "backupSuccess": "Backup created successfully",
@@ -1839,6 +1843,7 @@
       "cancel": "Cancel",
       "saveSuccess": "File saved successfully",
       "saveError": "Failed to save file",
+      "truncatedReadOnly": "Showing the first {{size}} — this file is too large to edit here",
       "archiveContents": "Archive Contents",
       "shortcutTargets": "Shortcut Targets",
       "extract": "Extract",
@@ -2155,6 +2160,17 @@
       "devTeam": "Development Team",
       "leadDeveloper": "Lead Developer",
       "acknowledgments": "Acknowledgments",
+      "poweredBy": "Powered by",
+      "poweredByDescription": "Every transfer, mount, serve and remote is performed by rclone. This app drives its Remote Control API and reimplements none of it.",
+      "sponsorRclone": "Sponsor rclone",
+      "sponsorRcloneSubtitle": "Support the project this one depends on",
+      "builtOn": "Built on",
+      "contributors": "Contributors",
+      "contributorsSubtitle": "Everyone who has helped build RClone Manager",
+      "translators": "Translators",
+      "translatorsSubtitle": "The volunteers translating this app on Crowdin",
+      "fullCredits": "Full acknowledgements",
+      "fullCreditsSubtitle": "Every dependency, with its license",
       "ackText": "This application is built with modern web technologies and relies on the excellent Rclone project for cloud storage management.",
       "noReleaseNotes": "No release notes available.",
       "killSuccess": "Rclone process killed successfully",
@@ -2241,7 +2257,9 @@
       "logContext": "Log Context",
       "logLevel": "Log Level",
       "allLevels": "All Levels",
-      "searchPlaceholder": "Search logs..."
+      "searchPlaceholder": "Search logs...",
+      "clearEngineMessage": "Clear every remote's log history and empty rclone.log on disk? This cannot be undone.",
+      "clearRemoteMessage": "Clear this remote's log history? This cannot be undone."
     },
     "preferences": {
       "title": "Preferences",
@@ -2467,7 +2485,9 @@
         "passwordRemoved": "Password removed from keychain",
         "passwordsMismatch": "Passwords do not match"
       },
-      "addTitle": "Remote RC backend"
+      "addTitle": "Remote RC backend",
+      "removeBackend": "Remove backend",
+      "removeBackendMessage": "Remove “{{name}}”? Its host, port and saved credentials are deleted."
     },
     "quickAdd": {
       "title": "Quick Add Remote",
@@ -2735,6 +2755,7 @@
     "empty": {
       "noStarred": "No Starred Files",
       "folderEmpty": "Folder is Empty",
+      "folderHint": "Drop files here, or use the toolbar to upload or create a folder.",
       "noFiles": "Archive is empty"
     },
     "selection": {
@@ -3191,7 +3212,8 @@
       "unsupportedArchive": "Unsupported archive type. Must be a .rcman file",
       "invalidArchive": "Invalid backup archive format",
       "restoreFailed": "Backup restore failed: {{error}}",
-      "secretRequirePassword": "This backup is protected by a secret and requires a password"
+      "secretRequirePassword": "This backup is protected by a secret and requires a password",
+      "encryptRequirePassword": "Encryption needs a zip password of at least 4 characters"
     },
     "backend": {
       "nameEmpty": "Backend name cannot be empty",
@@ -3221,7 +3243,8 @@
       "startFailed": "Failed to start automation engine: {{error}}",
       "stopFailed": "Failed to stop automation engine: {{error}}",
       "invalidCron": "Invalid cron expression: {{error}}",
-      "automationNotFound": "Automation not found"
+      "automationNotFound": "Automation not found",
+      "unsupportedType": "This automation type ({{type}}) cannot be scheduled"
     },
     "system": {
       "unlockFailed": "Unlock failed: {{error}}"

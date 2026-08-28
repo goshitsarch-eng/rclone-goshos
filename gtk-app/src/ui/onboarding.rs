@@ -217,7 +217,7 @@ fn page_features(
     desc.set_xalign(0.0);
     box_.append(&desc);
     for option in MAIN_UI_OPTIONS {
-        let row = adw::ActionRow::new();
+        let row = crate::ui::rows::action_row();
         row.set_title(&ctx.t_or(option.title_key, option.id));
         row.set_subtitle(&ctx.t_or(option.desc_key, ""));
         row.add_prefix(&gtk::Image::from_icon_name(option.icon));
@@ -253,14 +253,14 @@ fn page_install(
     )));
     box_.append(&status);
 
-    let mode = adw::ComboRow::new();
+    let mode = crate::ui::rows::combo_row();
     mode.set_title(&ctx.t_or("onboarding.options.recommended", "Install location"));
     mode.set_model(Some(&gtk::StringList::new(&[
         &ctx.t_or("onboarding.options.default", "Default"),
         &ctx.t_or("onboarding.options.custom", "Custom"),
         &ctx.t_or("onboarding.options.existing", "Existing"),
     ])));
-    let custom = adw::EntryRow::new();
+    let custom = crate::ui::rows::entry_row();
     custom.set_title(&ctx.t_or(
         "onboarding.installButton.selectPath",
         "Custom install directory",
@@ -288,7 +288,7 @@ fn page_install(
         });
     }
     custom.add_suffix(&browse);
-    let binary = adw::EntryRow::new();
+    let binary = crate::ui::rows::entry_row();
     binary.set_title(&ctx.t_or(
         "onboarding.installButton.selectBinary",
         "Existing rclone binary",
@@ -641,7 +641,7 @@ fn page_config(
     desc.add_css_class("dim-label");
     desc.set_wrap(true);
     desc.set_xalign(0.0);
-    let path = adw::EntryRow::new();
+    let path = crate::ui::rows::entry_row();
     path.set_title(&ctx.t_or("modals.backend.selectConfigFile", "rclone.conf path"));
     let current =
         crate::repair::config_path_from_flags(&ctx.settings.borrow().core.rclone_additional_flags)
@@ -684,7 +684,9 @@ fn page_config(
         });
     }
     let group = adw::PreferencesGroup::new();
-    group.set_title(&ctx.t_or(OnboardingCard::SelectConfig.title_key(), "Configuration"));
+    group.set_title(&crate::ui::rows::escape(
+        ctx.t_or(OnboardingCard::SelectConfig.title_key(), "Configuration"),
+    ));
     group.add(&path);
     box_.append(&title);
     box_.append(&desc);
@@ -723,7 +725,7 @@ fn page_password(
     desc.add_css_class("dim-label");
     desc.set_wrap(true);
     desc.set_xalign(0.0);
-    let password = adw::PasswordEntryRow::new();
+    let password = crate::ui::rows::password_entry_row();
     password.set_title(&ctx.t_or(
         OnboardingCard::PasswordRequired.title_key(),
         "rclone.conf password",
@@ -818,7 +820,7 @@ fn page_view(
     let group = gtk::CheckButton::new();
     let selected = ctx.settings.borrow().general.default_view.clone();
     for option in MAIN_UI_OPTIONS {
-        let row = adw::ActionRow::new();
+        let row = crate::ui::rows::action_row();
         row.set_activatable(true);
         row.set_title(&ctx.t_or(option.title_key, option.id));
         row.set_subtitle(&format!(

@@ -1,6 +1,6 @@
 {
   "name": "rclone-manager",
-  "version": "0.3.2",
+  "version": "0.3.3",
   "private": true,
   "scripts": {
     "tauri": "tauri",
@@ -12,7 +12,7 @@
     "build:headless": "npm run tauri build -- --config src-tauri/tauri.conf.headless.json --features web-server,tray -- --no-default-features",
     "gtk": "cargo run --manifest-path gtk-app/Cargo.toml",
     "gtk:build": "cargo build --manifest-path gtk-app/Cargo.toml --release",
-    "gtk:test": "cargo test --manifest-path gtk-app/Cargo.toml --lib",
+    "gtk:test": "cargo test --manifest-path gtk-app/Cargo.toml -- --test-threads=1",
     "audit:i18n": "node scripts/audit-i18n-keys.cjs",
     "sync:flags": "node scripts/update-flags.cjs",
     "sync:providers": "node scripts/update-providers.cjs",

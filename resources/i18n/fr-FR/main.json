@@ -17,6 +17,7 @@
     "refresh": "Actualiser",
     "browse": "Parcourir",
     "delete": "Supprimer",
+    "remove": "Supprimer",
     "edit": "Modifier",
     "copy": "Copier",
     "retry": "Réessayer",
@@ -1677,7 +1678,10 @@
         "requiresPassword": "Cette sauvegarde nécessite un mot de passe pour déchiffrer.",
         "decryptFailed": "Échec du déchiffrement de la sauvegarde. Vérifiez votre mot de passe.",
         "generic": "Une erreur s'est produite lors de l'export : {{error}}"
-      }
+      },
+      "confirmTitle": "Restaurer cette sauvegarde ?",
+      "confirmMessage": "Vos paramètres, distants, profils et historique actuels seront remplacés par le contenu de cette sauvegarde. Action irréversible.",
+      "confirmAction": "Restaurer"
     },
     "launchRestoreFailed": "Échec du lancement du flux de restauration",
     "backupSuccess": "Sauvegarde créée avec succès",
@@ -1839,6 +1843,7 @@
       "cancel": "Annuler",
       "saveSuccess": "Fichier enregistré avec succès",
       "saveError": "Échec d'enregistrement du fichier",
+      "truncatedReadOnly": "Affichage des {{size}} premiers — ce fichier est trop volumineux pour être modifié ici",
       "archiveContents": "Contenu des archives",
       "shortcutTargets": "Cibles des raccourcis",
       "extract": "Extraire",
@@ -2155,6 +2160,17 @@
       "devTeam": "Équipe de développement",
       "leadDeveloper": "Développeur Principal",
       "acknowledgments": "Remerciements",
+      "poweredBy": "Propulsé par",
+      "poweredByDescription": "Chaque transfert, montage, service et distant est effectué par rclone. Cette application pilote son API Remote Control et n’en réimplémente rien.",
+      "sponsorRclone": "Soutenir rclone",
+      "sponsorRcloneSubtitle": "Soutenez le projet dont celui-ci dépend",
+      "builtOn": "Construit sur",
+      "contributors": "Contributeurs",
+      "contributorsSubtitle": "Toutes les personnes qui ont aidé à construire RClone Manager",
+      "translators": "Traducteurs",
+      "translatorsSubtitle": "Les bénévoles qui traduisent cette application sur Crowdin",
+      "fullCredits": "Remerciements complets",
+      "fullCreditsSubtitle": "Chaque dépendance, avec sa licence",
       "ackText": "Cette application est construite avec des technologies web modernes et repose sur l'excellent projet rclone pour la gestion du stockage cloud.",
       "noReleaseNotes": "Aucune note de version disponible.",
       "killSuccess": "Processus de rclone  tué avec succès",
@@ -2241,7 +2257,9 @@
       "logContext": "Contexte de log",
       "logLevel": "Niveau de log",
       "allLevels": "Tous les Niveaux",
-      "searchPlaceholder": "Rechercher dans les logs..."
+      "searchPlaceholder": "Rechercher dans les logs...",
+      "clearEngineMessage": "Effacer l’historique des journaux de tous les distants et vider rclone.log sur le disque ? Action irréversible.",
+      "clearRemoteMessage": "Effacer l’historique des journaux de ce distant ? Action irréversible."
     },
     "preferences": {
       "title": "Préférences",
@@ -2467,7 +2485,9 @@
         "passwordRemoved": "Mot de passe supprimé du trousseau",
         "passwordsMismatch": "Les mots de passe ne correspondent pas"
       },
-      "addTitle": "Remote RC backend"
+      "addTitle": "Remote RC backend",
+      "removeBackend": "Supprimer le backend",
+      "removeBackendMessage": "Supprimer « {{name}} » ? Son hôte, son port et ses identifiants enregistrés seront effacés."
     },
     "quickAdd": {
       "title": "Ajout rapide d'un dépôt distant",
@@ -2735,6 +2755,7 @@
     "empty": {
       "noStarred": "Aucun fichier favori",
       "folderEmpty": "Le dossier est vide",
+      "folderHint": "Déposez des fichiers ici, ou utilisez la barre d’outils pour en téléverser ou créer un dossier.",
       "noFiles": "Archive is empty"
     },
     "selection": {
@@ -3191,7 +3212,8 @@
       "unsupportedArchive": "Type d'archive non pris en charge. Doit être un fichier .rcman",
       "invalidArchive": "Format d'archive de sauvegarde invalide",
       "restoreFailed": "La restauration de la sauvegarde a échoué : {{error}}",
-      "secretRequirePassword": "Cette sauvegarde est protégée par un secret et nécessite un mot de passe"
+      "secretRequirePassword": "Cette sauvegarde est protégée par un secret et nécessite un mot de passe",
+      "encryptRequirePassword": "Le chiffrement nécessite un mot de passe zip d’au moins 4 caractères"
     },
     "backend": {
       "nameEmpty": "Nom du dépôt distant ne peut pas être vide",
@@ -3221,7 +3243,8 @@
       "startFailed": "Impossible de démarrer le moteur d’automatisation : {{error}}",
       "stopFailed": "Échec de l'arrêt du moteur d'automatisation : {{error}}",
       "invalidCron": "Expression cron invalide : {{error}}",
-      "automationNotFound": "Automatisation non trouvée"
+      "automationNotFound": "Automatisation non trouvée",
+      "unsupportedType": "Ce type d'automatisation ({{type}}) ne peut pas être planifié"
     },
     "system": {
       "unlockFailed": "Échec du déblocage : {{error}}"

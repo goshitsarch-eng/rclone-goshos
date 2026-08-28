@@ -2045,7 +2045,7 @@ checksum = "f8dcc9c7d52a811697d2151c701e0d08956f92b0e24136cf4cf27b57a6a0d9bf"
 
 [[package]]
 name = "rclone-manager-gtk"
-version = "0.3.2"
+version = "0.3.3"
 dependencies = [
  "base64",
  "chrono",
@@ -2680,6 +2680,7 @@ dependencies = [
  "base64",
  "flate2",
  "log",
+ "native-tls",
  "once_cell",
  "rustls",
  "rustls-pki-types",

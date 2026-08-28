@@ -307,7 +307,7 @@ impl FlowView {
             return;
         }
         if filtered.is_empty() && remote_filter.is_none() {
-            self.sidebar.append(&adw::ActionRow::new());
+            self.sidebar.append(&crate::ui::rows::action_row());
             self.fill_overview(&[]);
             self.restore_content_scroll(scroll_y);
             return;
@@ -330,7 +330,7 @@ impl FlowView {
     }
 
     fn append_sidebar_quick_run(&self, qr: &QuickRun) {
-        let row = adw::ActionRow::new();
+        let row = crate::ui::rows::action_row();
         row.set_title(&qr.name);
         let mut badges = vec![qr.operation_type.as_str().to_string()];
         let running = qr.status == "running"
@@ -498,7 +498,7 @@ impl FlowView {
                     if runs.is_empty() {
                         let list = gtk::ListBox::new();
                         list.add_css_class("boxed-list");
-                        let row = adw::ActionRow::new();
+                        let row = crate::ui::rows::action_row();
                         row.set_title(&self.ctx.t_or("dashboard.quickRuns.empty", "No quick runs"));
                         row.set_subtitle(&self.ctx.t_or(
                             "flow.empty.description",
@@ -553,7 +553,7 @@ impl FlowView {
                         .cloned()
                         .collect();
                     if filtered.is_empty() {
-                        let row = adw::ActionRow::new();
+                        let row = crate::ui::rows::action_row();
                         row.set_title(
                             &self
                                 .ctx
@@ -588,7 +588,7 @@ impl FlowView {
                         .collect();
                     let host = gtk::Box::new(gtk::Orientation::Vertical, 8);
                     if records.is_empty() {
-                        let row = adw::ActionRow::new();
+                        let row = crate::ui::rows::action_row();
                         row.set_title(
                             &self
                                 .ctx
@@ -630,7 +630,7 @@ impl FlowView {
     fn append_bandwidth_panel(&self) {
         let group = gtk::Box::new(gtk::Orientation::Vertical, 8);
         let limit = self.ctx.settings.borrow().core.bandwidth_limit.clone();
-        let current = adw::ActionRow::new();
+        let current = crate::ui::rows::action_row();
         current.set_title(
             &self
                 .ctx
@@ -650,7 +650,7 @@ impl FlowView {
             .map(|c| c.bwlimit(None).map(|v| crate::jobs::parse_bwlimit(&v)))
         {
             Some(Ok(live)) => {
-                let live_row = adw::ActionRow::new();
+                let live_row = crate::ui::rows::action_row();
                 live_row.set_title(&self.ctx.t_or("dashboard.bandwidth.liveLimit", "Live limit"));
                 live_row.set_subtitle(&crate::jobs::bandwidth_rate_display(
                     &live.rate,
@@ -661,7 +661,7 @@ impl FlowView {
                 list.append(&live_row);
                 if crate::jobs::bandwidth_shows_details(&live) {
                     for (key, fallback, bytes) in crate::jobs::bandwidth_details(&live) {
-                        let row = adw::ActionRow::new();
+                        let row = crate::ui::rows::action_row();
                         row.set_title(&self.ctx.t_or(key, fallback));
                         row.set_subtitle(&crate::jobs::format_bandwidth_rate(bytes));
                         list.append(&row);
@@ -669,7 +669,7 @@ impl FlowView {
                 }
             }
             Some(Err(_)) => {
-                let row = adw::ActionRow::new();
+                let row = crate::ui::rows::action_row();
                 row.set_title(&self.ctx.t_or(
                     "generalOverview.bandwidth.error",
                     "Error loading bandwidth info",
@@ -710,7 +710,7 @@ impl FlowView {
             presets.append(&btn);
         }
         group.append(&presets);
-        let custom = adw::EntryRow::new();
+        let custom = crate::ui::rows::entry_row();
         custom.set_title(&self.ctx.t_or(
             "dashboard.bandwidth.customLimit",
             "Custom limit (e.g. 2M or 1M:10M)",
@@ -775,13 +775,13 @@ impl FlowView {
             .filter(|s| !s.is_empty())
             .or_else(|| self.ctx.client().and_then(|c| c.version().ok()))
             .unwrap_or_else(|| self.ctx.t_or("generalOverview.system.unknown", "unknown"));
-        let ver_row = adw::ActionRow::new();
+        let ver_row = crate::ui::rows::action_row();
         ver_row.set_title(&self.ctx.t_or("generalOverview.system.version", "rclone"));
         ver_row.set_subtitle(&version);
         sys.append(&ver_row);
         if let Some(client) = self.ctx.client() {
             if let Ok(pid) = client.pid() {
-                let row = adw::ActionRow::new();
+                let row = crate::ui::rows::action_row();
                 row.set_title(&self.ctx.t_or("dashboard.system.pid", "rclone PID"));
                 row.set_subtitle(&pid.to_string());
                 sys.append(&row);
@@ -789,7 +789,7 @@ impl FlowView {
             if let Ok(mem) = client.memstats() {
                 let alloc = mem.get("Alloc").and_then(|x| x.as_i64()).unwrap_or(0);
                 let sys_bytes = mem.get("Sys").and_then(|x| x.as_i64()).unwrap_or(0);
-                let row = adw::ActionRow::new();
+                let row = crate::ui::rows::action_row();
                 row.set_title(&self.ctx.t_or("dashboard.system.memory", "Memory"));
                 row.set_subtitle(&format!(
                     "{} alloc · {} sys",
@@ -799,7 +799,7 @@ impl FlowView {
                 sys.append(&row);
             }
         }
-        let activity = adw::ActionRow::new();
+        let activity = crate::ui::rows::action_row();
         activity.set_title(&self.ctx.t_or("dashboard.system.activity", "Activity"));
         activity.set_subtitle(&format!(
             "{} running jobs · {} mounts · {} serves",
@@ -997,7 +997,7 @@ impl FlowView {
 
     fn append_disk_usage(&self, name: &str) {
         let box_ = gtk::Box::new(gtk::Orientation::Vertical, 6);
-        let usage = adw::ActionRow::new();
+        let usage = crate::ui::rows::action_row();
         usage.set_title(&self.ctx.t_or("remote.diskUsage", "Disk usage"));
         let retry = gtk::Button::from_icon_name("view-refresh-symbolic");
         retry.set_valign(gtk::Align::Center);
@@ -1345,7 +1345,7 @@ impl FlowView {
     }
 
     fn activity_load_more_row(&self, remaining: usize) -> adw::ActionRow {
-        let row = adw::ActionRow::new();
+        let row = crate::ui::rows::action_row();
         row.set_title(&self.ctx.tf_or(
             "nautilus.loadMore",
             "Show {{count}} more",
@@ -1515,7 +1515,7 @@ impl FlowView {
         if qrs.is_empty() {
             let qlist = gtk::ListBox::new();
             qlist.add_css_class("boxed-list");
-            let row = adw::ActionRow::new();
+            let row = crate::ui::rows::action_row();
             row.set_title(&self.ctx.tf(
                 "flow.quickRun.overview.noRunsForRemote",
                 &[("remote", name)],
@@ -1726,7 +1726,7 @@ impl FlowView {
         }
 
         if qr.config.app.cron_enabled && !qr.config.app.cron_expression.is_empty() {
-            let row = adw::ActionRow::new();
+            let row = crate::ui::rows::action_row();
             row.set_title(&self.ctx.t_or("flow.quickRun.badges.scheduled", "Scheduled"));
             row.set_subtitle(&crate::rclone::describe_cron_i18n(
                 &qr.config.app.cron_expression,
@@ -1735,7 +1735,7 @@ impl FlowView {
             monitoring.append(&row);
         }
         if qr.config.app.watch_enabled {
-            let row = adw::ActionRow::new();
+            let row = crate::ui::rows::action_row();
             row.set_title(&self.ctx.t_or(
                 "automation.monitoring.realtimeSchedule",
                 "Real-time File Watcher",
@@ -1811,7 +1811,7 @@ impl FlowView {
             ));
         }
 
-        let tray = adw::SwitchRow::new();
+        let tray = crate::ui::rows::switch_row();
         tray.set_title(&self.ctx.t_or("flow.quickRun.showInTray", "Show in tray"));
         tray.set_active(qr.show_on_tray);
         {

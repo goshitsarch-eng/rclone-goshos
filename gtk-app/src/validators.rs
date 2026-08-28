@@ -51,7 +51,11 @@ fn is_duration(value: &str) -> bool {
         rest = &rest[digits_end..];
         let unit = if rest.starts_with("ns") {
             2
-        } else if rest.starts_with("us") || rest.starts_with("µs") || rest.starts_with("ms") {
+        } else if rest.starts_with("µs") {
+            // 'µ' is two bytes in UTF-8, so this suffix is three bytes long.
+            // Advancing by two left a stray "s" and rejected valid values.
+            "µs".len()
+        } else if rest.starts_with("us") || rest.starts_with("ms") {
             2
         } else if rest.starts_with('s')
             || rest.starts_with('m')
@@ -448,6 +452,15 @@ mod tests {
     fn duration_size_and_time() {
         assert!(validate_duration("1h30m", None).is_ok());
         assert!(validate_duration("5x", None).is_err());
+        // Every unit the parser claims to accept must actually be accepted.
+        for value in ["10ns", "10us", "10µs", "10ms", "10s", "10m", "10h", "10d"] {
+            assert!(
+                validate_duration(value, None).is_ok(),
+                "{value} should be a valid duration"
+            );
+        }
+        assert!(validate_duration("1h30m500µs", None).is_ok());
+        assert!(validate_duration("10µ", None).is_err());
         assert!(validate_size_suffix("16Mi", None).is_ok());
         assert!(validate_size_suffix("off", None).is_ok());
         assert!(validate_size_suffix("nope", None).is_err());

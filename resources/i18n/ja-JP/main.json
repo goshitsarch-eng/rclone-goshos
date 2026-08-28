@@ -17,6 +17,7 @@
     "refresh": "更新",
     "browse": "参照",
     "delete": "削除",
+    "remove": "削除",
     "edit": "編集",
     "copy": "コピー",
     "retry": "再試行",
@@ -1677,7 +1678,10 @@
         "requiresPassword": "このバックアップの復号化にはパスワードが必要です。",
         "decryptFailed": "バックアップの復号化に失敗しました。パスワードを確認してください。",
         "generic": "復元中にエラーが発生しました: {{error}}"
-      }
+      },
+      "confirmTitle": "このバックアップを復元しますか？",
+      "confirmMessage": "現在の設定・リモート・プロファイル・履歴は、このバックアップの内容で置き換えられます。元に戻せません。",
+      "confirmAction": "復元"
     },
     "launchRestoreFailed": "復元フローの起動に失敗しました",
     "backupSuccess": "バックアップを正常に作成しました",
@@ -1839,6 +1843,7 @@
       "cancel": "キャンセル",
       "saveSuccess": "ファイルを正常に保存しました",
       "saveError": "ファイルの保存に失敗しました",
+      "truncatedReadOnly": "先頭 {{size}} のみ表示しています — このファイルは大きすぎてここでは編集できません",
       "archiveContents": "圧縮ファイルの内容",
       "shortcutTargets": "ショートカットの参照先",
       "extract": "展開",
@@ -2155,6 +2160,17 @@
       "devTeam": "開発チーム",
       "leadDeveloper": "リードデベロッパー",
       "acknowledgments": "謝辞",
+      "poweredBy": "実行エンジン",
+      "poweredByDescription": "転送・マウント・配信・リモートはすべて rclone が実行します。本アプリは rclone の Remote Control API を呼び出しているだけで、何も再実装していません。",
+      "sponsorRclone": "rclone を支援する",
+      "sponsorRcloneSubtitle": "本アプリが依存しているプロジェクトを支援します",
+      "builtOn": "基盤となる技術",
+      "contributors": "コントリビューター",
+      "contributorsSubtitle": "RClone Manager の開発に貢献したすべての方々",
+      "translators": "翻訳者",
+      "translatorsSubtitle": "Crowdin で本アプリを翻訳しているボランティアの皆さん",
+      "fullCredits": "謝辞の全文",
+      "fullCreditsSubtitle": "すべての依存関係とそのライセンス",
       "ackText": "本アプリケーションはモダンなWeb技術で構築されており、クラウドストレージ管理のために優れた Rclone プロジェクトを利用しています。",
       "noReleaseNotes": "リリースノートはありません。",
       "killSuccess": "Rcloneプロセスを正常に終了しました",
@@ -2241,7 +2257,9 @@
       "logContext": "ログコンテキスト",
       "logLevel": "ログレベル",
       "allLevels": "全てのレベル",
-      "searchPlaceholder": "ログを検索..."
+      "searchPlaceholder": "ログを検索...",
+      "clearEngineMessage": "すべてのリモートのログ履歴を消去し、ディスク上の rclone.log を空にしますか？元に戻せません。",
+      "clearRemoteMessage": "このリモートのログ履歴を消去しますか？元に戻せません。"
     },
     "preferences": {
       "title": "環境設定",
@@ -2467,7 +2485,9 @@
         "passwordRemoved": "キーチェーンからパスワードを削除しました",
         "passwordsMismatch": "パスワードが一致しません"
       },
-      "addTitle": "Remote RC backend"
+      "addTitle": "Remote RC backend",
+      "removeBackend": "バックエンドを削除",
+      "removeBackendMessage": "「{{name}}」を削除しますか？ホスト・ポート・保存された認証情報が削除されます。"
     },
     "quickAdd": {
       "title": "リモートのクイック追加",
@@ -2735,6 +2755,7 @@
     "empty": {
       "noStarred": "スター付きファイルはありません",
       "folderEmpty": "フォルダは空です",
+      "folderHint": "ここにファイルをドロップするか、ツールバーからアップロードまたはフォルダーを作成してください。",
       "noFiles": "Archive is empty"
     },
     "selection": {
@@ -3191,7 +3212,8 @@
       "unsupportedArchive": "サポートされていないファイル形式です。.rcman ファイルである必要があります",
       "invalidArchive": "無効なバックアップファイル形式です",
       "restoreFailed": "バックアップの復元に失敗しました: {{error}}",
-      "secretRequirePassword": "このバックアップはシークレットで保護されているためパスワードが必要です"
+      "secretRequirePassword": "このバックアップはシークレットで保護されているためパスワードが必要です",
+      "encryptRequirePassword": "暗号化には 4 文字以上の ZIP パスワードが必要です"
     },
     "backend": {
       "nameEmpty": "バックエンド名を空欄にすることはできません",
@@ -3221,7 +3243,8 @@
       "startFailed": "自動化エンジンの開始に失敗しました: {{error}}",
       "stopFailed": "自動化エンジンの停止に失敗しました: {{error}}",
       "invalidCron": "無効なCron式です: {{error}}",
-      "automationNotFound": "自動化が見つかりません"
+      "automationNotFound": "自動化が見つかりません",
+      "unsupportedType": "この自動化の種類 ({{type}}) はスケジュールできません"
     },
     "system": {
       "unlockFailed": "ロック解除に失敗しました: {{error}}"

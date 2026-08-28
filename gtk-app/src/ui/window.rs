@@ -398,42 +398,48 @@ fn present_main_with(app: &adw::Application, ctx: AppCtx, hidden: bool) {
         let toast = toast.clone();
         let banner_kind = banner_kind.clone();
         let banner_ref = banner.clone();
-        banner.connect_button_clicked(move |_| match *banner_kind.borrow() {
-            BannerKind::Repair => {
-                let version = ctx.client().and_then(|c| c.version().ok());
-                let issues = crate::repair::diagnose(
-                    &ctx.settings.borrow(),
-                    ctx.engine_ready(),
-                    ctx.client().as_ref(),
-                    version.as_deref(),
-                );
-                if crate::repair::banner_opens_password(&issues) {
-                    dialogs::password_prompt(&window, ctx.clone(), toast.clone());
-                } else {
-                    dialogs::repair(&window, ctx.clone(), toast.clone());
+        banner.connect_button_clicked(move |_| {
+            // Read the kind out before matching: the scrutinee's `Ref` would
+            // otherwise be held for the whole `match`, and the Flatpak arm
+            // calls `update_banner`, which takes `borrow_mut()` on it.
+            let kind = *banner_kind.borrow();
+            match kind {
+                BannerKind::Repair => {
+                    let version = ctx.client().and_then(|c| c.version().ok());
+                    let issues = crate::repair::diagnose(
+                        &ctx.settings.borrow(),
+                        ctx.engine_ready(),
+                        ctx.client().as_ref(),
+                        version.as_deref(),
+                    );
+                    if crate::repair::banner_opens_password(&issues) {
+                        dialogs::password_prompt(&window, ctx.clone(), toast.clone());
+                    } else {
+                        dialogs::repair(&window, ctx.clone(), toast.clone());
+                    }
                 }
-            }
-            BannerKind::Flatpak => {
-                ctx.settings.borrow_mut().runtime.flatpak_warn = false;
-                ctx.persist();
-                update_banner(&ctx, &banner_ref, &banner_kind);
-            }
-            BannerKind::Update => ctx.request_nav(NavTarget::Updates),
-            BannerKind::RcloneRestart => {
-                ctx.settings.borrow_mut().runtime.rclone_restart_required = false;
-                ctx.persist();
-                ctx.restart_engine();
-            }
-            BannerKind::AppRestart => {
-                ctx.settings.borrow_mut().runtime.app_restart_required = false;
-                ctx.persist();
-                if let Err(e) = crate::platform::relaunch() {
-                    ctx.toast_error(&toast, &e);
-                } else if let Some(app) = window.application() {
-                    app.quit();
+                BannerKind::Flatpak => {
+                    ctx.settings.borrow_mut().runtime.flatpak_warn = false;
+                    ctx.persist();
+                    update_banner(&ctx, &banner_ref, &banner_kind);
                 }
+                BannerKind::Update => ctx.request_nav(NavTarget::Updates),
+                BannerKind::RcloneRestart => {
+                    ctx.settings.borrow_mut().runtime.rclone_restart_required = false;
+                    ctx.persist();
+                    ctx.restart_engine();
+                }
+                BannerKind::AppRestart => {
+                    ctx.settings.borrow_mut().runtime.app_restart_required = false;
+                    ctx.persist();
+                    if let Err(e) = crate::platform::relaunch() {
+                        ctx.toast_error(&toast, &e);
+                    } else if let Some(app) = window.application() {
+                        app.quit();
+                    }
+                }
+                BannerKind::Metered | BannerKind::Development | BannerKind::None => {}
             }
-            BannerKind::Metered | BannerKind::Development | BannerKind::None => {}
         });
     }
     update_banner(&ctx, &banner, &banner_kind);
@@ -1748,12 +1754,26 @@ fn present_overlay_window(
     if let Some(files) = files {
         let window_poll = window.clone();
         let ctx_poll = ctx.clone();
+        // Gate this the same way the main window does. Ungated, a detached
+        // Files window drove `refresh_runtime` — and the RC engine behind it —
+        // every 400 ms for as long as it stayed open, even with nothing
+        // running, on top of the main window's own (throttled) poll.
+        let poll_tick = Cell::new(0u32);
         glib::timeout_add_local(crate::refresh::BUSY_POLL, move || {
             if !window_poll.is_visible() {
                 return glib::ControlFlow::Break;
             }
-            ctx_poll.refresh_runtime();
-            files.poll_refresh();
+            let busy = ctx_poll.runtime_busy();
+            let tick = poll_tick.get();
+            poll_tick.set(tick.wrapping_add(1));
+            if crate::refresh::should_refresh(
+                tick,
+                busy,
+                crate::refresh::idle_ticks_for(crate::refresh::poll_interval_for(busy, true)),
+            ) {
+                ctx_poll.refresh_runtime();
+                files.poll_refresh();
+            }
             glib::ControlFlow::Continue
         });
     }
@@ -2872,7 +2892,7 @@ fn apply_startup_css() {
            background-color: @destructive_bg_color;\n\
          }\n\
          levelbar.disk-usage-high trough block.filled {\n\
-           background-color: #e66100;\n\
+           background-color: mix(@warning_bg_color, @destructive_bg_color, 0.5);\n\
          }\n\
          levelbar.disk-usage-warning trough block.filled {\n\
            background-color: @warning_bg_color;\n\

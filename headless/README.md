@@ -42,6 +42,8 @@ docker run -d \
   --name rclone-manager \
   --restart=unless-stopped \
   -p 8080:8080 \
+  -e RCLONE_MANAGER_USER=admin \
+  -e RCLONE_MANAGER_PASS=pick-your-own \
   -v rclone-config:/config \
   -v rclone-manager-data:/data \
   ghcr.io/zarestia-dev/rclone-manager:latest
@@ -51,8 +53,20 @@ docker run -d \
 - **Volumes:** `/data` (app data & binaries) and `/config` (`rclone.conf`).
 - **OAuth / Cloud Auth:** Use `--net=host` or SSH port forwarding (`ssh -L 53682:127.0.0.1:53682 user@host`) for Google Drive/OneDrive 1-click OAuth.
 
-> 🔐 **Need Authentication, Secret Keys, or HTTPS?**
-> Check the **[Configuration Guide](https://hakanismail.info/zarestia/rclone-manager/docs/configuration-headless)** for enabling password protection, encrypted secrets, and TLS.
+### 🔐 Authentication is required to bind a non-loopback address
+
+The API is not a read-only dashboard: `/api/invoke` reaches the command bridge, `/api/stream` reads files, and `/api/upload` writes them. Anyone who can reach the port can use all of it, so the server refuses to start on a non-loopback address without credentials:
+
+| What you want                     | How                                                                     |
+| :-------------------------------- | :---------------------------------------------------------------------- |
+| Password-protect it (recommended) | `RCLONE_MANAGER_USER` + `RCLONE_MANAGER_PASS`                           |
+| Reach it only from this host      | `-p 127.0.0.1:8080:8080` and `RCLONE_MANAGER_HOST=127.0.0.1`            |
+| Terminate auth at a reverse proxy | Publish to loopback as above, or `RCLONE_MANAGER_INSECURE_NO_AUTH=true` |
+| Serve HTTPS directly              | `RCLONE_MANAGER_TLS_CERT` + `RCLONE_MANAGER_TLS_KEY`                    |
+
+`RCLONE_MANAGER_INSECURE_NO_AUTH=true` restores the old behaviour and leaves the API open — only use it when something in front of it is doing the authenticating.
+
+> 🔑 **Secret keys and TLS details:** see the **[Configuration Guide](https://hakanismail.info/zarestia/rclone-manager/docs/configuration-headless)**.
 
 ---
 

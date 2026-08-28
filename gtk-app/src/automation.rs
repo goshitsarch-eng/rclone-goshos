@@ -397,12 +397,37 @@ fn record_from_quick(qr: &QuickRun, last_run: Option<DateTime<Utc>>) -> Automati
     )
 }
 
+thread_local! {
+    /// Parsed cron expressions, keyed by the expression text.
+    ///
+    /// `tick_automations` asks every automation whether it is due on every poll
+    /// tick, and each question re-parsed the expression from scratch. The set of
+    /// distinct expressions is tiny and changes only when the user edits a
+    /// schedule, so parse each one once.
+    static CRON_CACHE: std::cell::RefCell<std::collections::HashMap<String, Option<Cron>>> =
+        std::cell::RefCell::new(std::collections::HashMap::new());
+}
+
+/// Guards against unbounded growth if expressions are generated dynamically.
+const CRON_CACHE_LIMIT: usize = 256;
+
 pub fn next_cron_run(expr: &str, from: DateTime<Utc>) -> Option<DateTime<Utc>> {
-    let cron = Cron::new(expr).parse().ok()?;
     let local = from.with_timezone(&chrono::Local);
-    cron.find_next_occurrence(&local, false)
-        .ok()
-        .map(|dt| dt.with_timezone(&Utc))
+    CRON_CACHE.with(|cache| {
+        let mut cache = cache.borrow_mut();
+        if !cache.contains_key(expr) {
+            if cache.len() >= CRON_CACHE_LIMIT {
+                cache.clear();
+            }
+            cache.insert(expr.to_string(), Cron::new(expr).parse().ok());
+        }
+        cache
+            .get(expr)?
+            .as_ref()?
+            .find_next_occurrence(&local, false)
+            .ok()
+            .map(|dt| dt.with_timezone(&Utc))
+    })
 }
 
 pub fn cron_is_due(expr: &str, last_run: Option<DateTime<Utc>>, now: DateTime<Utc>) -> bool {
@@ -649,6 +674,48 @@ pub fn fire(
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn cron_expressions_are_parsed_once_per_expression() {
+        // `tick_automations` asks this for every automation on every tick.
+        let now = chrono::Utc::now();
+        let exprs = ["0 7 * * *", "*/15 * * * *", "0 0 1 * *", "30 3 * * 1-5"];
+
+        // Warm the cache, then time repeated lookups.
+        for e in exprs {
+            assert!(next_cron_run(e, now).is_some(), "{e} must parse");
+        }
+        let started = std::time::Instant::now();
+        for _ in 0..2_000 {
+            for e in exprs {
+                let _ = next_cron_run(e, now);
+            }
+        }
+        let cached = started.elapsed();
+
+        // Same work without the cache, for comparison.
+        let started = std::time::Instant::now();
+        for _ in 0..2_000 {
+            for e in exprs {
+                let local = now.with_timezone(&chrono::Local);
+                let _ = Cron::new(e)
+                    .parse()
+                    .ok()
+                    .and_then(|c| c.find_next_occurrence(&local, false).ok());
+            }
+        }
+        let uncached = started.elapsed();
+
+        println!("cached {cached:?} vs uncached {uncached:?}");
+        assert!(
+            cached < uncached,
+            "cached lookups ({cached:?}) should beat re-parsing ({uncached:?})"
+        );
+
+        // An invalid expression is remembered as invalid rather than re-parsed.
+        assert!(next_cron_run("not a cron", now).is_none());
+        assert!(next_cron_run("not a cron", now).is_none());
+    }
+
     use super::*;
     use crate::store::{AppConfig, RemoteMeta};
     use chrono::TimeZone;

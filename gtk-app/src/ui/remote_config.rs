@@ -766,7 +766,7 @@ fn step_icon(step: EditorStep) -> &'static str {
 }
 
 fn nav_row(title: &str, icon: &str, name: &str, subtitle: Option<&str>) -> adw::ActionRow {
-    let row = adw::ActionRow::new();
+    let row = crate::ui::rows::action_row();
     row.set_title(title);
     row.set_activatable(true);
     row.set_widget_name(name);
@@ -778,7 +778,7 @@ fn nav_row(title: &str, icon: &str, name: &str, subtitle: Option<&str>) -> adw::
 }
 
 fn header_row(title: &str, name: &str) -> adw::ActionRow {
-    let row = adw::ActionRow::new();
+    let row = crate::ui::rows::action_row();
     row.set_title(title);
     row.set_sensitive(false);
     row.set_activatable(false);
@@ -909,7 +909,10 @@ fn handle_sidebar_nav(
         return;
     }
     if name == "nav-back" {
-        if let Some(prev) = return_from_shared(&mut edit_stack.borrow_mut()) {
+        // The `RefMut` would live for the whole `if let`, and `rebuild()` reads
+        // `edit_stack` — end the mutable borrow at this statement instead.
+        let previous = return_from_shared(&mut edit_stack.borrow_mut());
+        if let Some(prev) = previous {
             *current.borrow_mut() = prev;
             preferred_profile.borrow_mut().take();
             rebuild();
@@ -1008,15 +1011,15 @@ fn remote_page(
         .get(remote)
         .cloned()
         .unwrap_or_default();
-    let tray = adw::SwitchRow::new();
+    let tray = crate::ui::rows::switch_row();
     tray.set_title(&ctx.t_or("remoteConfig.showOnTray", "Show on tray"));
     tray.set_active(meta.show_on_tray);
-    let hidden = adw::SwitchRow::new();
+    let hidden = crate::ui::rows::switch_row();
     hidden.set_title(&ctx.t_or("remoteConfig.hideFromSidebar", "Hide from sidebar"));
     hidden.set_active(meta.hidden);
     let primary_ids = Rc::new(RefCell::new(meta.primary_actions.clone()));
     let sync_ids = Rc::new(RefCell::new(meta.sync_actions.clone()));
-    let primary_row = adw::ActionRow::new();
+    let primary_row = crate::ui::rows::action_row();
     primary_row.set_title(&ctx.t_or("remoteConfig.primaryActions", "Primary actions"));
     primary_row.set_subtitle(&action_summary(&ctx, &primary_ids.borrow()));
     let edit_primary = gtk::Button::with_label(&ctx.t_or("common.edit", "Edit"));
@@ -1049,7 +1052,7 @@ fn remote_page(
         });
     }
     primary_row.add_suffix(&edit_primary);
-    let sync_row = adw::ActionRow::new();
+    let sync_row = crate::ui::rows::action_row();
     sync_row.set_title(&ctx.t_or("remoteConfig.syncActions", "Sync actions"));
     sync_row.set_subtitle(&action_summary(&ctx, &sync_ids.borrow()));
     let edit_sync = gtk::Button::with_label(&ctx.t_or("common.edit", "Edit"));
@@ -1109,18 +1112,22 @@ fn remote_page(
 
     let group = adw::PreferencesGroup::new();
     group.set_widget_name("section-general");
-    group.set_title(&ctx.t_or("remoteConfig.metadata", "Remote metadata"));
+    group.set_title(&crate::ui::rows::escape(
+        ctx.t_or("remoteConfig.metadata", "Remote metadata"),
+    ));
     group.add(&tray);
     group.add(&hidden);
     group.add(&primary_row);
     group.add(&sync_row);
     let actions = adw::PreferencesGroup::new();
     actions.set_widget_name("section-auth");
-    actions.set_title(&ctx.t_or("remoteConfig.provider", "Provider"));
-    let helper_row = adw::ActionRow::new();
+    actions.set_title(&crate::ui::rows::escape(
+        ctx.t_or("remoteConfig.provider", "Provider"),
+    ));
+    let helper_row = crate::ui::rows::action_row();
     helper_row.set_title(&ctx.t_or("remoteConfig.namedHelpers", "Named helper profiles"));
     helper_row.add_suffix(&helpers);
-    let auth_row = adw::ActionRow::new();
+    let auth_row = crate::ui::rows::action_row();
     auth_row.set_title(&ctx.t_or(
         "banners.engine.auth.title",
         "Rclone Authentication Required",
@@ -1239,7 +1246,7 @@ fn operation_page(
 
     let switcher = profile_switcher(&ctx, &names, &initial.name);
     let rclone = flatten_rclone(&initial.rclone);
-    let src = adw::EntryRow::new();
+    let src = crate::ui::rows::entry_row();
     let src_title = if op == OperationType::Copyurl {
         ctx.t_or("remoteConfig.url", "URL")
     } else {
@@ -1273,7 +1280,7 @@ fn operation_page(
                 .collect()
         })
         .unwrap_or_default();
-    let url_filename = adw::EntryRow::new();
+    let url_filename = crate::ui::rows::entry_row();
     url_filename.set_title(&ctx.t_or(
         "wizards.appOperation.copyUrlFilename",
         "Filename (optional)",
@@ -1291,7 +1298,7 @@ fn operation_page(
             extra_filenames.borrow_mut().push(filename_row(&ctx, ""));
         }
     }
-    let dst = adw::EntryRow::new();
+    let dst = crate::ui::rows::entry_row();
     let dst_title = match op {
         OperationType::Mount => ctx.t_or("remoteConfig.mountPoint", "Mount point"),
         OperationType::Serve => ctx.t_or("remoteConfig.listenAddress", "Listen address"),
@@ -1302,7 +1309,7 @@ fn operation_page(
     dst.set_title(&dst_title);
     dst.set_text(&default_dest(remote, &rclone, op));
     dst.set_visible(op != OperationType::Delete);
-    let mount_usage = adw::ActionRow::new();
+    let mount_usage = crate::ui::rows::action_row();
     mount_usage.set_title(&ctx.t_or("dashboard.appDetail.mountDiskUsage", "Mount point usage"));
     mount_usage.set_visible(op == OperationType::Mount);
     if op == OperationType::Mount {
@@ -1318,7 +1325,7 @@ fn operation_page(
             crate::picker::FilePickerConfig::folders().with_remote(remote),
         );
     }
-    let dest_status = adw::ActionRow::new();
+    let dest_status = crate::ui::rows::action_row();
     dest_status.set_title(&ctx.t_or("remoteConfig.pathStatusTitle", "Path status"));
     dest_status.set_visible(crate::path_inspection::shows_dest_status(op));
     {
@@ -1350,7 +1357,7 @@ fn operation_page(
 
     let serve_types = Rc::new(ctx.serve_types());
     let mount_types = Rc::new(ctx.mount_types());
-    let serve = adw::ComboRow::new();
+    let serve = crate::ui::rows::combo_row();
     serve.set_title(&ctx.t_or("remoteConfig.serveType", "Serve type"));
     serve.set_model(Some(&gtk::StringList::new(
         &crate::operations::combo_names(&serve_types),
@@ -1365,7 +1372,7 @@ fn operation_page(
             serve.set_selected(idx as u32);
         }
     }
-    let mount_type = adw::ComboRow::new();
+    let mount_type = crate::ui::rows::combo_row();
     mount_type.set_title(&ctx.t_or("remoteConfig.mountType", "Mount type"));
     mount_type.set_model(Some(&gtk::StringList::new(
         &crate::operations::combo_names(&mount_types),
@@ -1377,7 +1384,7 @@ fn operation_page(
         }
     }
 
-    let auto_start = adw::SwitchRow::new();
+    let auto_start = crate::ui::rows::switch_row();
     let op_label = ctx.t_or(
         &format!("modals.remoteConfig.steps.{}", op.as_str()),
         op.api_label(),
@@ -1388,7 +1395,7 @@ fn operation_page(
         &[("type", &op_label)],
     ));
     auto_start.set_active(initial.app.auto_start);
-    let cron_enabled = adw::SwitchRow::new();
+    let cron_enabled = crate::ui::rows::switch_row();
     cron_enabled.set_title(&ctx.tf_or(
         "wizards.appOperation.enableScheduled",
         "Enable Scheduled {type}",
@@ -1396,7 +1403,7 @@ fn operation_page(
     ));
     cron_enabled.set_active(initial.app.cron_enabled);
     cron_enabled.set_visible(op.is_automatable());
-    let cron = adw::EntryRow::new();
+    let cron = crate::ui::rows::entry_row();
     cron.set_title(&ctx.t_or("remoteConfig.cronExpression", "Cron expression"));
     cron.set_text(&initial.app.cron_expression);
     cron.set_visible(op.is_automatable());
@@ -1412,7 +1419,7 @@ fn operation_page(
         cron.connect_changed(move |row| update_cron_hint(&ctx, row, &cron_hint));
     }
     let watch_supported = op.is_automatable() && ctx.is_local_backend();
-    let watch_enabled = adw::SwitchRow::new();
+    let watch_enabled = crate::ui::rows::switch_row();
     watch_enabled.set_title(&ctx.t_or("wizards.appOperation.enableWatch", "Watch local sources"));
     watch_enabled.set_subtitle(&ctx.t_or(
         "wizards.appOperation.watchDescription",
@@ -1420,7 +1427,7 @@ fn operation_page(
     ));
     watch_enabled.set_active(initial.app.watch_enabled && watch_supported);
     watch_enabled.set_visible(watch_supported);
-    let watch_delay = adw::EntryRow::new();
+    let watch_delay = crate::ui::rows::entry_row();
     watch_delay.set_title(&ctx.t_or("wizards.appOperation.watchDelay", "Watch delay (seconds)"));
     watch_delay.set_tooltip_text(Some(&ctx.t_or(
         "wizards.appOperation.watchDelayHint",
@@ -1453,7 +1460,7 @@ fn operation_page(
         let refresh_watch_zero = refresh_watch_zero.clone();
         watch_delay.connect_changed(move |row| refresh_watch_zero(&row.text()));
     }
-    let watch_changed = adw::SwitchRow::new();
+    let watch_changed = crate::ui::rows::switch_row();
     watch_changed.set_title(&ctx.t_or(
         "wizards.appOperation.watchChangedOnly",
         "Changed files only",
@@ -1512,12 +1519,14 @@ fn operation_page(
     };
 
     let identity = adw::PreferencesGroup::new();
-    identity.set_title(&ctx.t_or("wizards.appOperation.sourcePaths", "Paths"));
+    identity.set_title(&crate::ui::rows::escape(
+        ctx.t_or("wizards.appOperation.sourcePaths", "Paths"),
+    ));
     if let Some(kind) = &src_kind {
         identity.add(kind);
     }
     identity.add(&src);
-    let src_status = adw::ActionRow::new();
+    let src_status = crate::ui::rows::action_row();
     src_status.set_title(&ctx.t_or("remoteConfig.pathStatusTitle", "Path status"));
     src_status.set_visible(false);
     if crate::path_inspection::shows_source_status(op) {
@@ -1577,7 +1586,7 @@ fn operation_page(
             }
             refresh_guidance();
         });
-        let add_row = adw::ActionRow::new();
+        let add_row = crate::ui::rows::action_row();
         add_row.set_title(&ctx.t_or("remoteConfig.multipleSources", "Multiple sources"));
         add_row.add_suffix(&add_src);
         identity.add(&add_row);
@@ -1636,7 +1645,9 @@ fn operation_page(
     identity.add(&mount_type);
 
     let automation = adw::PreferencesGroup::new();
-    automation.set_title(&ctx.t_or("remoteConfig.automation", "Automation"));
+    automation.set_title(&crate::ui::rows::escape(
+        ctx.t_or("remoteConfig.automation", "Automation"),
+    ));
     automation.add(&auto_start);
     automation.add(&cron_enabled);
     automation.add(&cron);
@@ -1651,15 +1662,19 @@ fn operation_page(
     automation.add(&watch_changed);
 
     let helpers = adw::PreferencesGroup::new();
-    helpers.set_title(&ctx.t_or("remoteConfig.linkedHelpers", "Linked helper profiles"));
+    helpers.set_title(&crate::ui::rows::escape(
+        ctx.t_or("remoteConfig.linkedHelpers", "Linked helper profiles"),
+    ));
     helpers.add(&vfs_row);
     helpers.add(&filter_row);
     helpers.add(&backend_row);
     helpers.add(&runtime_row);
 
     let flags_group = adw::PreferencesGroup::new();
-    flags_group.set_title(&ctx.t_or("remoteConfig.flags", "Flags"));
-    let search = adw::EntryRow::new();
+    flags_group.set_title(&crate::ui::rows::escape(
+        ctx.t_or("remoteConfig.flags", "Flags"),
+    ));
+    let search = crate::ui::rows::entry_row();
     search.set_title(&ctx.t_or("remoteConfig.filterFlags", "Filter flags"));
     flags_group.add(&search);
     let flag_rows: Rc<RefCell<Vec<FlagRow>>> = Rc::new(RefCell::new(Vec::new()));
@@ -1728,7 +1743,7 @@ fn operation_page(
             });
         }
     }
-    let json_toggle = adw::SwitchRow::new();
+    let json_toggle = crate::ui::rows::switch_row();
     json_toggle.set_title(&ctx.t_or("remoteConfig.jsonMode", "JSON mode"));
     json_toggle.set_subtitle(&ctx.t_or(
         "remoteConfig.jsonPayloadHelp",
@@ -1846,7 +1861,7 @@ fn operation_page(
         });
     }
 
-    let cli_row = adw::ActionRow::new();
+    let cli_row = crate::ui::rows::action_row();
     cli_row.set_title(&ctx.t_or("remoteConfig.cliImport", "CLI import"));
     cli_row.set_subtitle(&ctx.t_or(
         "wizards.cliImport.description",
@@ -1895,7 +1910,7 @@ fn operation_page(
     cli_row.add_suffix(&preview);
     flags_group.add(&cli_row);
     flags_group.add(&json_toggle);
-    let json_holder = adw::ActionRow::new();
+    let json_holder = crate::ui::rows::action_row();
     json_holder.set_title(&ctx.t_or("remoteConfig.jsonDocument", "JSON document"));
     json_holder.set_activatable(false);
     json_holder.set_child(Some(&editor.root));
@@ -2182,8 +2197,10 @@ fn helper_page(
         .unwrap_or_else(|| json!({}));
     let switcher = profile_switcher(&ctx, &names, &selected_name);
     let flags_group = adw::PreferencesGroup::new();
-    flags_group.set_title(&ctx.t_or("remoteConfig.options", "Options"));
-    let search = adw::EntryRow::new();
+    flags_group.set_title(&crate::ui::rows::escape(
+        ctx.t_or("remoteConfig.options", "Options"),
+    ));
+    let search = crate::ui::rows::entry_row();
     search.set_title(&ctx.t_or("remoteConfig.filterFlags", "Filter flags"));
     flags_group.add(&search);
     let category = match kind {
@@ -2220,7 +2237,7 @@ fn helper_page(
             .borrow_mut()
             .push((option.field_name.clone(), row, option.type_name.clone()));
     }
-    let json_toggle = adw::SwitchRow::new();
+    let json_toggle = crate::ui::rows::switch_row();
     json_toggle.set_title(&ctx.t_or("remoteConfig.jsonMode", "JSON mode"));
     json_toggle.set_active(flag_rows.borrow().is_empty());
     let helper_defs: Vec<crate::json_editor::JsonFieldDef> = options
@@ -2282,7 +2299,7 @@ fn helper_page(
         });
     }
 
-    let json_holder = adw::ActionRow::new();
+    let json_holder = crate::ui::rows::action_row();
     json_holder.set_title(&ctx.t_or("remoteConfig.jsonDocument", "JSON document"));
     json_holder.set_activatable(false);
     json_holder.set_child(Some(&editor.root));
@@ -2416,7 +2433,7 @@ struct ProfileSwitcher {
 
 fn profile_switcher(ctx: &AppCtx, names: &[String], selected: &str) -> ProfileSwitcher {
     let names = Rc::new(RefCell::new(names.to_vec()));
-    let combo = adw::ComboRow::new();
+    let combo = crate::ui::rows::combo_row();
     combo.set_title(&ctx.t_or("modals.remoteConfig.profile.label", "Profile"));
     refresh_combo(&combo, &names.borrow());
     if let Some(idx) = names.borrow().iter().position(|n| n == selected) {
@@ -2447,7 +2464,9 @@ fn profile_switcher(ctx: &AppCtx, names: &[String], selected: &str) -> ProfileSw
     combo.add_suffix(&rename);
     combo.add_suffix(&delete);
     let group = adw::PreferencesGroup::new();
-    group.set_title(&ctx.t_or("modals.remoteConfig.profiles", "Profiles"));
+    group.set_title(&crate::ui::rows::escape(
+        ctx.t_or("modals.remoteConfig.profiles", "Profiles"),
+    ));
     group.add(&combo);
     ProfileSwitcher {
         group,
@@ -2802,7 +2821,7 @@ fn refresh_combo(combo: &adw::ComboRow, names: &[String]) {
 }
 
 fn extra_source_row(ctx: &AppCtx, value: &str, pick_folders: bool, remote: &str) -> adw::EntryRow {
-    let row = adw::EntryRow::new();
+    let row = crate::ui::rows::entry_row();
     row.set_title(&ctx.t_or("remoteConfig.additionalSource", "Additional source"));
     row.set_text(value);
     if pick_folders {
@@ -2816,7 +2835,7 @@ fn extra_source_row(ctx: &AppCtx, value: &str, pick_folders: bool, remote: &str)
 }
 
 fn filename_row(ctx: &AppCtx, value: &str) -> adw::EntryRow {
-    let row = adw::EntryRow::new();
+    let row = crate::ui::rows::entry_row();
     row.set_title(&ctx.t_or(
         "wizards.appOperation.copyUrlFilename",
         "Filename (optional)",

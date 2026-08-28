@@ -78,6 +78,9 @@ fn main() {
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).init();
     let args: Vec<String> = std::env::args().collect();
     cli::apply(&cli::parse_cli_args(&args));
+    if let Err(err) = platform::install_user_icons() {
+        log::debug!("app icons not installed: {err}");
+    }
     if let Err(err) = platform::install_user_desktop_entry() {
         log::debug!("desktop entry not installed: {err}");
     }

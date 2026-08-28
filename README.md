@@ -148,6 +148,20 @@ We welcome contributions of all forms!
 
 ---
 
+## Acknowledgements
+
+RClone Manager is a front end. The hard parts were solved by other people first.
+
+- **[rclone](https://rclone.org)** — © Nick Craig-Wood and the rclone contributors (MIT). Every transfer, mount, serve, and remote in this app is performed by rclone; we drive its Remote Control API and reimplement none of it. Please consider [sponsoring rclone](https://rclone.org/sponsor/).
+- **[RClone Manager](https://github.com/Zarestia-Dev/rclone-manager)** — © Hakan İSMAİL ([@Hakanbaban53](https://github.com/Hakanbaban53)) and the Zarestia Dev team (GPL-3.0-or-later). This project is a derivative of theirs; the application design, backend, and most of the codebase originate upstream.
+- **[GTK 4](https://www.gtk.org) & [libadwaita](https://gnome.pages.gitlab.gnome.org/libadwaita/)** — © The GNOME Project (LGPL-2.1-or-later), via the [gtk-rs](https://gtk-rs.org) bindings (MIT). The built-in file browser is named in tribute to [GNOME Files](https://apps.gnome.org/Nautilus/).
+- **[Tauri](https://tauri.app)** — © Tauri Programme within The Commons Conservancy (MIT / Apache-2.0), hosting the Windows, macOS, Android, and headless builds.
+- **[Rust](https://www.rust-lang.org)** and the crate ecosystem it comes with.
+
+The full list, with licenses, is in **[ACKNOWLEDGEMENTS.md](ACKNOWLEDGEMENTS.md)**.
+
+---
+
 ## License & Support
 
 - **License:** Licensed under the [GNU GPLv3](LICENSE) – free to use, modify, and distribute.

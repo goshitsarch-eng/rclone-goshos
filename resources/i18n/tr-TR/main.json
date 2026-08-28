@@ -17,6 +17,7 @@
     "refresh": "Yenile",
     "browse": "Gözat",
     "delete": "Sil",
+    "remove": "Kaldır",
     "edit": "Düzenle",
     "copy": "Kopyala",
     "retry": "Yeniden Dene",
@@ -1677,7 +1678,10 @@
         "requiresPassword": "Bu yedeğin şifresini çözmek için parola gerekiyor.",
         "decryptFailed": "Yedek şifresi çözülemedi. Şifrenizi kontrol edin.",
         "generic": "Geri yükleme sırasında bir hata oluştu: {{error}}"
-      }
+      },
+      "confirmTitle": "Bu yedek geri yüklensin mi?",
+      "confirmMessage": "Mevcut ayarlarınız, uzak birimleriniz, profilleriniz ve geçmişiniz bu yedeğin içeriğiyle değiştirilecek. Bu işlem geri alınamaz.",
+      "confirmAction": "Geri Yükle"
     },
     "launchRestoreFailed": "Geri yükleme akışı başlatılamadı",
     "backupSuccess": "Yedekleme başarıyla oluşturuldu",
@@ -1839,6 +1843,7 @@
       "cancel": "İptal",
       "saveSuccess": "Dosya başarıyla kaydedildi",
       "saveError": "Dosya kaydedilemedi",
+      "truncatedReadOnly": "İlk {{size}} gösteriliyor — bu dosya burada düzenlenemeyecek kadar büyük",
       "archiveContents": "Arşiv İçeriği",
       "shortcutTargets": "Kısayol Hedefleri",
       "extract": "Çıkart",
@@ -2155,6 +2160,17 @@
       "devTeam": "Geliştirme Ekibi",
       "leadDeveloper": "Baş Geliştirici",
       "acknowledgments": "Teşekkürler",
+      "poweredBy": "Güç aldığı proje",
+      "poweredByDescription": "Her aktarım, bağlama, sunma ve uzak birim rclone tarafından gerçekleştirilir. Bu uygulama yalnızca rclone’un Remote Control API’sini kullanır, hiçbirini yeniden yazmaz.",
+      "sponsorRclone": "rclone’a destek ol",
+      "sponsorRcloneSubtitle": "Bu uygulamanın dayandığı projeye destek olun",
+      "builtOn": "Üzerine kurulduğu projeler",
+      "contributors": "Katkıda bulunanlar",
+      "contributorsSubtitle": "RClone Manager’ı geliştirmeye yardım eden herkes",
+      "translators": "Çevirmenler",
+      "translatorsSubtitle": "Bu uygulamayı Crowdin üzerinde çeviren gönüllüler",
+      "fullCredits": "Tüm teşekkürler",
+      "fullCreditsSubtitle": "Her bağımlılık ve lisansı",
       "ackText": "Bu uygulama modern web teknolojileri ile geliştirilmiştir ve bulut depolama yönetimi için mükemmel Rclone projesini temel alır.",
       "noReleaseNotes": "Sürüm notu bulunamadı.",
       "killSuccess": "Rclone işlemi başarıyla sonlandırıldı",
@@ -2241,7 +2257,9 @@
       "logContext": "Günlük Bağlamı",
       "logLevel": "Günlük Seviyesi",
       "allLevels": "Tüm Seviyeler",
-      "searchPlaceholder": "Günlüklerde ara..."
+      "searchPlaceholder": "Günlüklerde ara...",
+      "clearEngineMessage": "Tüm uzak birimlerin günlük geçmişi silinsin ve diskteki rclone.log boşaltılsın mı? Bu işlem geri alınamaz.",
+      "clearRemoteMessage": "Bu uzak birimin günlük geçmişi silinsin mi? Bu işlem geri alınamaz."
     },
     "preferences": {
       "title": "Tercihler",
@@ -2467,7 +2485,9 @@
         "passwordRemoved": "Parola anahtarlıktan kaldırıldı",
         "passwordsMismatch": "Parolalar eşleşmiyor"
       },
-      "addTitle": "Remote RC backend"
+      "addTitle": "Remote RC backend",
+      "removeBackend": "Arka ucu kaldır",
+      "removeBackendMessage": "“{{name}}” kaldırılsın mı? Sunucusu, bağlantı noktası ve kayıtlı kimlik bilgileri silinir."
     },
     "quickAdd": {
       "title": "Hızlı Uzak Sunucu Ekle",
@@ -2735,6 +2755,7 @@
     "empty": {
       "noStarred": "Yıldızlı Dosya Yok",
       "folderEmpty": "Klasör Boş",
+      "folderHint": "Dosyaları buraya bırakın veya araç çubuğundan yükleyin ya da klasör oluşturun.",
       "noFiles": "Archive is empty"
     },
     "selection": {
@@ -3191,7 +3212,8 @@
       "unsupportedArchive": "Desteklenmeyen arşiv türü. .rcman dosyası olmalıdır",
       "invalidArchive": "Geçersiz yedekleme arşivi biçimi",
       "restoreFailed": "Yedekleme geri yükleme başarısız oldu: {{error}}",
-      "secretRequirePassword": "Bu yedekleme gizli bir anahtarla korunuyor ve şifre gerektiriyor"
+      "secretRequirePassword": "Bu yedekleme gizli bir anahtarla korunuyor ve şifre gerektiriyor",
+      "encryptRequirePassword": "Şifreleme için en az 4 karakterlik bir zip parolası gerekir"
     },
     "backend": {
       "nameEmpty": "Arka uç adı boş olamaz",
@@ -3221,7 +3243,8 @@
       "startFailed": "Otomasyon motoru çalıştırılamadı: {{error}}",
       "stopFailed": "Otomasyon motoru durdurulamadı: {{error}}",
       "invalidCron": "Geçersiz cron ifadesi: {{error}}",
-      "automationNotFound": "Otomasyon bulunamadı"
+      "automationNotFound": "Otomasyon bulunamadı",
+      "unsupportedType": "Bu otomasyon türü ({{type}}) zamanlanamaz"
     },
     "system": {
       "unlockFailed": "Kilit açma başarısız: {{error}}"

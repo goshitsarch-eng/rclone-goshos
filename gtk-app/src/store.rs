@@ -692,6 +692,28 @@ pub fn webhook_preset_body(preset: &str) -> String {
     }
 }
 
+/// Agent for a webhook action, or `None` to use the default verifying client.
+///
+/// Only built when the action opted out of certificate verification; a webhook
+/// pointed at an internal host with a self-signed certificate is the case the
+/// "Verify TLS" switch exists for.
+fn webhook_agent(verify_tls: bool) -> Option<ureq::Agent> {
+    if verify_tls {
+        return None;
+    }
+    let connector = native_tls::TlsConnector::builder()
+        .danger_accept_invalid_certs(true)
+        .danger_accept_invalid_hostnames(true)
+        .build()
+        .map_err(|e| log::warn!("webhook: could not build a non-verifying TLS connector: {e}"))
+        .ok()?;
+    Some(
+        ureq::AgentBuilder::new()
+            .tls_connector(std::sync::Arc::new(connector))
+            .build(),
+    )
+}
+
 pub fn webhook_http_method(method: &str) -> &'static str {
     match method.trim().to_ascii_uppercase().as_str() {
         "GET" => "GET",
@@ -1184,10 +1206,7 @@ impl AppStore {
 
     pub fn save(&self) -> std::io::Result<()> {
         std::fs::create_dir_all(crate::settings::AppSettings::config_dir())?;
-        std::fs::write(
-            Self::path(),
-            serde_json::to_string_pretty(self).unwrap_or_default(),
-        )
+        crate::settings::write_config_atomic(&Self::path(), self)
     }
 
     pub fn ensure_remote_order(&mut self, names: &[String]) {
@@ -1756,7 +1775,18 @@ fn dispatch_action_once(action: &AlertAction, event: &AlertEvent) -> bool {
                 .and_then(|x| x.as_u64())
                 .unwrap_or(8)
                 .max(1);
-            let mut req = ureq::request(method, url);
+            // The action editor exposes a "Verify TLS" switch and persists it;
+            // honour it here rather than always verifying, so a webhook on an
+            // internal host with a self-signed certificate can be reached.
+            let verify_tls = action
+                .config
+                .get("tls_verify")
+                .and_then(|x| x.as_bool())
+                .unwrap_or(true);
+            let mut req = match webhook_agent(verify_tls) {
+                Some(agent) => agent.request(method, url),
+                None => ureq::request(method, url),
+            };
             req = req.timeout(std::time::Duration::from_secs(timeout));
             if let Some(headers) = action.config.get("headers").and_then(|x| x.as_object()) {
                 for (key, value) in headers {
@@ -2389,6 +2419,25 @@ mod tests {
         assert!(!rule.matches(&event));
         event.profile = "nightly".into();
         assert!(rule.matches(&event));
+    }
+
+    #[test]
+    fn move_remote_before_needs_a_seeded_order() {
+        // Drag-to-reorder used to call this straight off a default store, where
+        // `remote_order` is empty, so the drop silently did nothing until the
+        // user had pressed the up/down arrows once (those seed it).
+        let mut store = AppStore::default();
+        assert!(store.remote_order.is_empty());
+        assert!(!store.move_remote_before("b", "a"));
+
+        let live = ["a".to_string(), "b".to_string(), "c".to_string()];
+        store.ensure_remote_order(&live);
+        assert!(store.move_remote_before("c", "a"));
+        assert_eq!(store.remote_order, ["c", "a", "b"]);
+
+        // Unknown names are still refused.
+        assert!(!store.move_remote_before("zz", "a"));
+        assert!(!store.move_remote_before("a", "zz"));
     }
 
     #[test]
@@ -3137,6 +3186,34 @@ mod tests {
             script_args("  --once   --quiet "),
             vec!["--once", "--quiet"]
         );
+    }
+
+    #[test]
+    fn webhook_agent_only_built_when_verification_is_disabled() {
+        // Verification on: use the default client, so no custom agent.
+        assert!(webhook_agent(true).is_none());
+        // Verification off: a non-verifying agent must actually be produced,
+        // otherwise the persisted "Verify TLS" switch would do nothing.
+        assert!(webhook_agent(false).is_some());
+    }
+
+    #[test]
+    fn webhook_dispatch_reads_tls_verify_from_the_action_config() {
+        let draft = AlertActionDraft {
+            url: "https://alerts.lan/hook".into(),
+            tls_verify: false,
+            ..Default::default()
+        };
+        let config = alert_action_config("webhook", &draft);
+        // The editor writes this key...
+        assert_eq!(config["tls_verify"], false);
+        // ...and dispatch reads the same one, defaulting to verifying.
+        let verify = config
+            .get("tls_verify")
+            .and_then(|x| x.as_bool())
+            .unwrap_or(true);
+        assert!(!verify);
+        assert!(webhook_agent(verify).is_some());
     }
 
     #[test]

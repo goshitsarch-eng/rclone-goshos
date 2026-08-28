@@ -76,7 +76,7 @@ pub fn operation_control(
     spec: &OperationControlSpec,
     handlers: OperationControlHandlers,
 ) -> adw::ExpanderRow {
-    let row = adw::ExpanderRow::new();
+    let row = crate::ui::rows::expander_row();
     row.set_widget_name("operation-control");
     row.set_title(&if spec.title.is_empty() {
         "default".to_string()
@@ -135,7 +135,7 @@ pub fn operation_control(
         spec.destination.as_deref().unwrap_or(""),
     ) {
         for view in &spec.mount_usage {
-            let usage = adw::ActionRow::new();
+            let usage = crate::ui::rows::action_row();
             usage.set_title(&view.title);
             usage.set_subtitle(&view.subtitle);
             row.add_row(&usage);
@@ -178,7 +178,7 @@ pub fn operation_control(
     }
 
     if operation_shows_session_flags(spec.operation) {
-        let dry = adw::SwitchRow::new();
+        let dry = crate::ui::rows::switch_row();
         dry.set_title(&dry_label);
         if spec.dry_run {
             dry.set_subtitle(&ctx.t_or(
@@ -193,7 +193,7 @@ pub fn operation_control(
         }
         row.add_row(&dry);
         if spec.operation == OperationType::Bisync {
-            let resync = adw::SwitchRow::new();
+            let resync = crate::ui::rows::switch_row();
             resync.set_title(&ctx.t_or("dashboard.appDetail.resync", "Resync"));
             if spec.resync {
                 resync.set_subtitle(&ctx.t_or(
@@ -297,7 +297,7 @@ fn path_rows(ctx: &AppCtx, spec: &OperationControlSpec) -> Vec<adw::ActionRow> {
         } else {
             path.clone()
         };
-        let row = adw::ActionRow::new();
+        let row = crate::ui::rows::action_row();
         row.set_title(&ctx.t_or(title_key, fallback));
         row.set_subtitle(&display);
         let open_paths: Vec<String> = if path.is_empty() {

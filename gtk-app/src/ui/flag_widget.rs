@@ -40,7 +40,7 @@ impl FlagWidget {
         let kind = control_kind(&flag.type_name, flag.exclusive, flag.examples.len());
         let inner = match kind {
             ControlKind::Bool => {
-                let row = adw::SwitchRow::new();
+                let row = crate::ui::rows::switch_row();
                 row.set_title(&title);
                 if !help.is_empty() {
                     row.set_subtitle(&help);
@@ -54,7 +54,7 @@ impl FlagWidget {
                     "true".to_string(),
                     "false".to_string(),
                 ]);
-                let row = adw::ComboRow::new();
+                let row = crate::ui::rows::combo_row();
                 row.set_title(&title);
                 if !help.is_empty() {
                     row.set_subtitle(&help);
@@ -77,7 +77,7 @@ impl FlagWidget {
                         .map(|(value, _)| value.clone())
                         .collect::<Vec<_>>(),
                 );
-                let row = adw::ComboRow::new();
+                let row = crate::ui::rows::combo_row();
                 row.set_title(&title);
                 if !help.is_empty() {
                     row.set_subtitle(&help);
@@ -94,7 +94,7 @@ impl FlagWidget {
                     &flag.name,
                     flag.examples.len(),
                 ) {
-                    let search = adw::EntryRow::new();
+                    let search = crate::ui::rows::entry_row();
                     search.set_title(&title);
                     if !help.is_empty() {
                         search.set_tooltip_text(Some(&help));
@@ -110,7 +110,7 @@ impl FlagWidget {
                 }
             }
             ControlKind::MultiSelect => {
-                let row = adw::ExpanderRow::new();
+                let row = crate::ui::rows::expander_row();
                 row.set_title(&title);
                 if !help.is_empty() {
                     row.set_subtitle(&help);
@@ -128,7 +128,7 @@ impl FlagWidget {
                         check.set_tooltip_text(Some(hint));
                     }
                     check.set_active(selected.iter().any(|s| s == &value.to_ascii_lowercase()));
-                    let wrap = adw::ActionRow::new();
+                    let wrap = crate::ui::rows::action_row();
                     wrap.set_title(value);
                     if !hint.is_empty() {
                         wrap.set_subtitle(hint);
@@ -145,7 +145,8 @@ impl FlagWidget {
                 FlagInner::Multi(row, Rc::new(items))
             }
             ControlKind::Numeric => {
-                let row = adw::SpinRow::with_range(-1_000_000_000.0, 1_000_000_000.0, 1.0);
+                let row =
+                    crate::ui::rows::spin_row_with_range(-1_000_000_000.0, 1_000_000_000.0, 1.0);
                 row.set_title(&title);
                 if !help.is_empty() {
                     row.set_subtitle(&help);
@@ -161,7 +162,7 @@ impl FlagWidget {
                 FlagInner::Spin(row)
             }
             ControlKind::Input => {
-                let row = adw::EntryRow::new();
+                let row = crate::ui::rows::entry_row();
                 let titled = if flag.type_name == "Duration" {
                     format!("{title} (1h / 30s / 500ms)")
                 } else if flag.type_name == "SizeSuffix" {
@@ -181,7 +182,7 @@ impl FlagWidget {
     }
 
     pub fn plain_entry(field: &str, text: &str) -> Self {
-        let row = adw::EntryRow::new();
+        let row = crate::ui::rows::entry_row();
         row.set_title(field);
         row.set_text(text);
         Self {

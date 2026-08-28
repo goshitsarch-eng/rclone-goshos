@@ -4,6 +4,45 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [v0.3.3] - 2026-08-28
+
+### Security
+
+- **Headless API Requires Authentication to Bind a Public Address**: The headless web server defaulted to `0.0.0.0:8080` and its auth middleware passed every request through when no credentials were configured, so the shipped `docker-compose.yml` published an entirely unauthenticated API — including `/api/invoke` (the command bridge, which can save and execute script alert actions), `/api/stream` (reads any file the process can read) and `/api/upload`. Startup now refuses a non-loopback bind without `--user`/`--pass`, and points at the loopback and reverse-proxy alternatives. `--insecure-no-auth` / `RCLONE_MANAGER_INSECURE_NO_AUTH=true` restores the previous behaviour for deployments that authenticate in front of the app. A warning is logged whenever the server runs without authentication.
+- **Send-to Menu Entries No Longer Execute Remote Path Names**: The generated Nautilus script, KDE service menu and Nemo action interpolated the remote name and path into a double-quoted shell word, where `$(…)` and backticks still expand. A remote folder named e.g. `Photos$(…)` ran as code the next time the file-manager menu entry was used. The same values are also escaped for the Automator workflow on macOS, where XML escaping alone did not stop the shell.
+- **Path Traversal in Headless Batch Upload**: `/api/upload` joined the multipart `filename` onto the staging directory unsanitized. `Path::join` with an absolute path replaces the base, so a crafted `Content-Disposition` could write anywhere the process could — over the rclone binary, for instance. Filenames are now reduced to plain relative components; folder uploads keep their interior directories.
+- **Config Files Are Owner-Readable Only**: `settings.json` and `store.json` hold the rclone config password, extra-backend passwords, SMTP credentials and bot tokens, and were written 0644 under the usual umask. They are now written 0600.
+- **Session Tokens Expire Server-Side**: Headless session cookies carried a `Max-Age`, but the server never forgot the token, so a captured session stayed valid until the process restarted. Sessions are now stamped and expired on use, capped in number, and marked `Secure` when serving TLS. Basic credentials are compared in constant time.
+
+### Fixed
+
+- **Split View Operated on the Wrong Pane**: Delete, Rename, multi-Rename, "New folder with selection" and Archive resolved the selected names against the primary pane even when the selection belonged to the secondary one. With both panes showing files of the same name — the usual reason to open split view — deleting a file on the right deleted its namesake on the left. Dragging from the primary pane also no longer picks up the secondary pane's selection.
+- **Nautilus File-Manager Extension Never Loaded**: The generated `nautilus-python` `MenuProvider` was not valid Python — the already-quoted executable path produced `exec_path = ""/opt/app""` — so GNOME Files silently skipped it and the advertised Files context-menu entry never appeared.
+- **Multi-Rename Crashed on Non-ASCII File Names**: Case-insensitive find/replace indexed the original name with an offset taken from its lowercased copy. `to_lowercase()` is not length-preserving, so renaming files such as `İstanbul` aborted the application.
+- **Crash When Picking a Config File in Repair**: Selecting a config file through Repair → "restore or pick config" panicked on a re-entrant `RefCell` borrow.
+- **Check Results Panel Was Always Empty**: Check and cryptcheck results read `core/stats.checks`, which is rclone's counter of completed checks rather than a list of rows, and the result list was silently discarded.
+- **Local Folders Containing `:` Were Unreachable**: Path parsing split on the first colon before recognising an absolute path, so browsing to `/home/you/2024:notes` navigated to a nonexistent remote.
+- **Config Could Be Lost on a Crash or Serialization Error**: `settings.json` and `store.json` were written non-atomically, and a serialization failure wrote an empty file. A truncated file is silently replaced by defaults on the next launch, losing every remote, quick run and alert rule. Both are now serialized first, written to a temp file, fsynced and renamed into place.
+- **Webhook "Verify TLS" Switch Did Nothing**: The alert action editor stored `tls_verify` but the dispatcher never read it, so a webhook on an internal host with a self-signed certificate could not be reached.
+- **Headless Single-File Uploads Leaked Their Temporary Copy**: Cleanup called `remove_dir_all` on a regular file, which fails with `ENOTDIR`, so every upload left a full copy in the temp directory.
+- **Labels Containing `&` or `<` Rendered Blank**: Row and group titles are parsed as Pango markup, and a title that fails to parse draws nothing at all — so a file named `Tom & Jerry.mp4` silently vanished from the file browser, and shipped labels such as "Alerts & Notifications", "Jobs & File Operations", "Warnings & Errors" and "Save & Restart" rendered as empty text.
+- **Two Broken Icons**: "Copy to…" and the Logs empty state referenced icon names that do not exist in the Adwaita theme and drew the broken-image placeholder.
+- **Empty Folders Showed a Blank Pane**: The file browser now shows a proper empty state, with a separate one for an empty Starred view.
+- **Cut Files and Column Headers Were Dimmed Twice**: Cut rows landed at 25% opacity instead of 50%, and list-view column headers were barely legible.
+- **Split-View Delete and Rename Acted on the Wrong Pane**: See above; also affected "New folder with selection", Archive, and dragging out of the primary pane.
+- **Crashes on Tab Switch, Unstar, Banner Dismiss and Config Navigation**: Six `RefCell` borrows were held across calls that re-borrow the same cell. Switching file-browser tabs panicked every time.
+- **`serve` Automations Panicked the Scheduler**: A firing serve automation took down the automation task, and with it every other automation.
+- **Multi-Rename and the Log Parser Crashed on Non-ASCII Text**; a crafted or corrupt media file could overflow the stack.
+- **Durations in `µs` Were Rejected**: The validator advanced two bytes past a three-byte character.
+
+### Changed
+
+- **Faster Polling and Fewer Round Trips**: Every rclone RC call built a fresh HTTP agent, so no TCP connection was ever reused; job polling issued a blocking `core/stats` per job inside each tick; a detached Files window ran an ungated 400 ms poll; cron expressions were re-parsed on every tick; and the Logs dialog read the whole of the never-rotated `rclone.log` every two seconds. `df` calls are now bounded, so a hung FUSE mount no longer freezes the app.
+- **Correct Minimum Rust Version**: `gtk-app` declared 1.80 but uses `Option::is_none_or`, stable since 1.82. CI now lints all targets rather than only the library, which holds under half of the client.
+- **Backend Test Suite Builds and Runs on Every Target**: `cargo test --features web-server --no-default-features` did not compile, and 35 doctests failed on every target because rclone's help text — copied verbatim into doc comments by `npm run sync:endpoints` — contains indented shell and JSON samples that rustdoc compiles as Rust. The generator now emits them as `text` blocks.
+- **Attribution**: Added [ACKNOWLEDGEMENTS.md](ACKNOWLEDGEMENTS.md) and an Acknowledgements section in every README crediting rclone (Nick Craig-Wood and contributors), upstream RClone Manager (Hakan İSMAİL and the Zarestia Dev team), the GNOME Project's GTK 4 and libadwaita, Tauri, and every direct dependency with its license. About → Credits in the app was rebuilt into linked, grouped acknowledgements.
+- **Documentation**: Added `LINTING.md` and `ISSUES.md`, which every README and `CONTRIBUTING.md` already linked to but which did not exist.
+
 ## [v0.3.2] - 2026-08-24
 
 ### Added

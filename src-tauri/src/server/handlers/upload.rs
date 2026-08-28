@@ -90,21 +90,56 @@ fn build_batch_meta(
     }
 }
 
+/// Reduce a multipart `filename` to a relative path that cannot escape the
+/// batch directory.
+///
+/// Folder uploads legitimately carry a relative path (`photos/2024/a.jpg`), so
+/// interior directories are kept — but the value comes straight from an
+/// attacker-controllable `Content-Disposition` header, and `Path::join` with an
+/// absolute path *replaces* the base entirely. Anything that is not a plain
+/// name component (root, `..`, a Windows drive prefix) is dropped, and the
+/// whole value is rejected if nothing usable is left.
+fn safe_relative_path(filename: &str) -> Option<PathBuf> {
+    use std::path::Component;
+
+    let mut out = PathBuf::new();
+    for component in Path::new(filename).components() {
+        match component {
+            Component::Normal(part) => {
+                if part.is_empty() {
+                    continue;
+                }
+                out.push(part);
+            }
+            // RootDir / Prefix would reset the join; ParentDir would walk out.
+            Component::RootDir | Component::Prefix(_) | Component::ParentDir => continue,
+            Component::CurDir => continue,
+        }
+    }
+    (!out.as_os_str().is_empty()).then_some(out)
+}
+
 async fn resolve_temp_path(
     temp_dir: &Path,
     filename: &str,
     batch: &Option<BatchMeta>,
 ) -> (Option<PathBuf>, PathBuf) {
     if let Some(b) = batch {
-        let dir = temp_dir.join(format!("rclone_batch_{}", b.id));
+        // The batch id also reaches the filesystem, so give it the same
+        // treatment and fall back to a generated name if it is unusable.
+        let batch_id = safe_relative_path(&b.id)
+            .and_then(|p| p.file_name().map(|n| n.to_string_lossy().into_owned()))
+            .unwrap_or_else(|| uuid::Uuid::new_v4().simple().to_string());
+        let dir = temp_dir.join(format!("rclone_batch_{batch_id}"));
         tokio::fs::create_dir_all(&dir).await.ok();
-        if let Some(p) = Path::new(filename)
-            .parent()
-            .filter(|p| !p.as_os_str().is_empty())
-        {
-            tokio::fs::create_dir_all(dir.join(p)).await.ok();
+
+        let relative = safe_relative_path(filename)
+            .unwrap_or_else(|| PathBuf::from(format!("upload_{}", uuid::Uuid::new_v4().simple())));
+        if let Some(parent) = relative.parent().filter(|p| !p.as_os_str().is_empty()) {
+            tokio::fs::create_dir_all(dir.join(parent)).await.ok();
         }
-        (Some(dir.clone()), dir.join(filename))
+        let target = dir.join(&relative);
+        (Some(dir.clone()), target)
     } else {
         (
             None,
@@ -150,6 +185,14 @@ async fn finalize_batch_upload(
     origin: Option<Origin>,
     job_id: Option<u64>,
 ) -> Result<Json<ApiResponse<String>>, AppError> {
+    // `total_files` comes from the request. At 0, `total_files - 1` underflows
+    // to usize::MAX in release builds, so the batch is never finalized and its
+    // staging directory is left behind (and panics in debug).
+    if batch.total_files == 0 {
+        return Err(AppError::BadRequest(anyhow::Error::msg(
+            "totalFiles must be at least 1",
+        )));
+    }
     if batch.file_index < batch.total_files - 1 {
         return Ok(Json(ApiResponse::success("File buffered".into())));
     }
@@ -191,4 +234,61 @@ async fn run_upload(state: &WebServerState, params: UploadBatchParams) -> Result
     execute_upload_batch(state.app_handle.clone(), params)
         .await
         .map_err(|e| AppError::InternalServerError(anyhow::Error::msg(e)))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::safe_relative_path;
+    use std::path::{Path, PathBuf};
+
+    #[test]
+    fn keeps_legitimate_folder_upload_paths() {
+        assert_eq!(
+            safe_relative_path("photos/2024/a.jpg"),
+            Some(PathBuf::from("photos/2024/a.jpg"))
+        );
+        assert_eq!(
+            safe_relative_path("report.pdf"),
+            Some(PathBuf::from("report.pdf"))
+        );
+        assert_eq!(
+            safe_relative_path("./trip/./b.png"),
+            Some(PathBuf::from("trip/b.png"))
+        );
+    }
+
+    #[test]
+    fn strips_absolute_paths_so_join_cannot_be_reset() {
+        // `Path::join` with an absolute path discards the base entirely, so an
+        // absolute Content-Disposition filename would write anywhere on disk.
+        let base = Path::new("/tmp/rclone_batch_x");
+        assert_eq!(
+            base.join("/data/rclone-bin/rclone"),
+            Path::new("/data/rclone-bin/rclone")
+        );
+
+        let safe = safe_relative_path("/data/rclone-bin/rclone").unwrap();
+        assert_eq!(safe, PathBuf::from("data/rclone-bin/rclone"));
+        assert!(base.join(&safe).starts_with(base));
+    }
+
+    #[test]
+    fn strips_parent_traversal() {
+        let base = Path::new("/tmp/rclone_batch_x");
+        let safe = safe_relative_path("../../../etc/cron.d/pwn").unwrap();
+        assert_eq!(safe, PathBuf::from("etc/cron.d/pwn"));
+        assert!(base.join(&safe).starts_with(base));
+
+        let mixed = safe_relative_path("ok/../../escape.txt").unwrap();
+        assert_eq!(mixed, PathBuf::from("ok/escape.txt"));
+        assert!(base.join(&mixed).starts_with(base));
+    }
+
+    #[test]
+    fn rejects_names_with_nothing_usable_left() {
+        assert_eq!(safe_relative_path(""), None);
+        assert_eq!(safe_relative_path("/"), None);
+        assert_eq!(safe_relative_path("../.."), None);
+        assert_eq!(safe_relative_path("."), None);
+    }
 }
