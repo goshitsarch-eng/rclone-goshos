@@ -1,4 +1,4 @@
-use crate::utils::app::send_to::common::{apply_template, get_home_dir};
+use crate::utils::app::send_to::common::{apply_template, escape_double_quoted, get_home_dir};
 use std::path::Path;
 
 fn escape_xml(s: &str) -> String {
@@ -36,6 +36,10 @@ pub fn register(
 
     // 2. document.wflow
     let current_exe_str = current_exe.to_string_lossy();
+    // XML-escaping alone does not stop the shell: `$(…)` and backticks survive
+    // it untouched, so escape for the double-quoted shell word first.
+    let remote = escape_double_quoted(remote);
+    let path_val = escape_double_quoted(path_val);
     let cmd_string = format!(
         "exec \"{current_exe_str}\" --send-to-remote \"{remote}\" --send-to-path \"{path_val}\" \"$@\""
     );

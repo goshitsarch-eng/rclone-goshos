@@ -136,6 +136,20 @@
 
 ---
 
+## Благодарности
+
+RClone Manager — это лишь интерфейс. Сложные части задач решили до нас другие люди.
+
+- **[rclone](https://rclone.org)** — © Ник Крейг-Вуд и участники проекта rclone (MIT). Каждая передача, монтирование, раздача и удалённое хранилище в этом приложении выполняются самим rclone; мы обращаемся к его Remote Control API и ничего не переписываем заново. Пожалуйста, рассмотрите возможность [поддержать rclone](https://rclone.org/sponsor/).
+- **[RClone Manager](https://github.com/Zarestia-Dev/rclone-manager)** — © Hakan İSMAİL ([@Hakanbaban53](https://github.com/Hakanbaban53)) и команда Zarestia Dev (GPL-3.0-or-later). Этот проект является производным от их работы; архитектура приложения, бэкенд и большая часть кода происходят из основного проекта.
+- **[GTK 4](https://www.gtk.org) и [libadwaita](https://gnome.pages.gitlab.gnome.org/libadwaita/)** — © Проект GNOME (LGPL-2.1-or-later), через привязки [gtk-rs](https://gtk-rs.org) (MIT). Встроенный файловый менеджер назван в честь [GNOME Files](https://apps.gnome.org/Nautilus/).
+- **[Tauri](https://tauri.app)** — © Tauri Programme в составе The Commons Conservancy (MIT / Apache-2.0); на нём работают сборки для Windows, macOS, Android и headless.
+- **[Rust](https://www.rust-lang.org)** и его экосистема крейтов.
+
+Полный список с лицензиями — в **[ACKNOWLEDGEMENTS.md](ACKNOWLEDGEMENTS.md)**.
+
+---
+
 ## Лицензия и поддержка
 
 - **Лицензия:** проект распространяется по лицензии [GNU GPLv3](LICENSE) и может свободно использоваться, изменяться и распространяться.

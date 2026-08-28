@@ -1,4 +1,6 @@
-use crate::utils::app::send_to::common::{apply_template, get_home_dir};
+use crate::utils::app::send_to::common::{
+    apply_template, escape_double_quoted, escape_python_string, get_home_dir,
+};
 use std::path::{Path, PathBuf};
 
 struct LinuxPaths {
@@ -69,6 +71,11 @@ pub fn register(
         format!("\"{}\"", current_exe.to_string_lossy())
     };
 
+    // `remote` / `path_val` land inside double-quoted shell words and inside
+    // Python string literals, so they have to be escaped for each target.
+    let remote_arg = escape_double_quoted(remote);
+    let path_arg = escape_double_quoted(path_val);
+
     // 1. Nautilus script
     install_template(
         &paths.nautilus,
@@ -76,8 +83,8 @@ pub fn register(
         include_str!("../../../../resources/send_to/nautilus_script.sh"),
         &[
             ("exec_path", &exec_path),
-            ("remote", remote),
-            ("path", path_val),
+            ("remote", &remote_arg),
+            ("path", &path_arg),
         ],
         true,
     );
@@ -91,11 +98,11 @@ pub fn register(
         include_str!("../../../../resources/send_to/nautilus_extension.py"),
         &[
             ("class_name", &class_name),
-            ("exec_path", &exec_path),
-            ("remote", remote),
-            ("path", path_val),
+            ("exec_path", &escape_python_string(&exec_path)),
+            ("remote", &escape_python_string(remote)),
+            ("path", &escape_python_string(path_val)),
             ("uuid", &uuid),
-            ("name", name),
+            ("name", &escape_python_string(name)),
         ],
         false,
     );
@@ -108,8 +115,8 @@ pub fn register(
         &[
             ("name", name),
             ("exec_path", &exec_path),
-            ("remote", remote),
-            ("path", path_val),
+            ("remote", &remote_arg),
+            ("path", &path_arg),
         ],
         true,
     );
@@ -122,8 +129,8 @@ pub fn register(
         &[
             ("name", name),
             ("exec_path", &exec_path),
-            ("remote", remote),
-            ("path", path_val),
+            ("remote", &remote_arg),
+            ("path", &path_arg),
         ],
         true,
     );

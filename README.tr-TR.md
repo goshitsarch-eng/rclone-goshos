@@ -136,6 +136,20 @@ Her türlü katkıyı memnuniyetle karşılıyoruz!
 
 ---
 
+## Teşekkürler
+
+RClone Manager bir arayüzdür. Zor kısımlar önce başkaları tarafından çözüldü.
+
+- **[rclone](https://rclone.org)** — © Nick Craig-Wood ve rclone katkıcıları (MIT). Bu uygulamadaki her aktarım, bağlama, sunma ve uzak birim rclone tarafından gerçekleştirilir; biz yalnızca Remote Control API'sini kullanırız. Lütfen [rclone'a destek olmayı](https://rclone.org/sponsor/) düşünün.
+- **[RClone Manager](https://github.com/Zarestia-Dev/rclone-manager)** — © Hakan İSMAİL ([@Hakanbaban53](https://github.com/Hakanbaban53)) ve Zarestia Dev ekibi (GPL-3.0-or-later). Bu proje onların türevidir; uygulama tasarımı, arka uç ve kod tabanının büyük bölümü yukarı akıştan gelir.
+- **[GTK 4](https://www.gtk.org) & [libadwaita](https://gnome.pages.gitlab.gnome.org/libadwaita/)** — © GNOME Projesi (LGPL-2.1-or-later), [gtk-rs](https://gtk-rs.org) bağlayıcıları aracılığıyla (MIT). Yerleşik dosya yöneticisinin adı [GNOME Files](https://apps.gnome.org/Nautilus/) anısına verilmiştir.
+- **[Tauri](https://tauri.app)** — © The Commons Conservancy bünyesindeki Tauri Programme (MIT / Apache-2.0); Windows, macOS, Android ve başsız derlemeleri barındırır.
+- **[Rust](https://www.rust-lang.org)** ve beraberindeki crate ekosistemi.
+
+Lisanslarıyla birlikte tam liste: **[ACKNOWLEDGEMENTS.md](ACKNOWLEDGEMENTS.md)**.
+
+---
+
 ## Lisans ve Destek
 
 - **Lisans:** [GNU GPLv3](LICENSE) altında lisanslanmıştır – kullanmak, değiştirmek ve dağıtmak serbesttir.

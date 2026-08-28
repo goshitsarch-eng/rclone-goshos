@@ -41,6 +41,45 @@ pub fn send_to_path_param(path: Option<&str>) -> String {
         .unwrap_or_default()
 }
 
+/// Escape a value that gets interpolated inside a double-quoted shell word —
+/// the `"{remote}"` / `"{path}"` slots in the Send-to script and in `Exec=`
+/// lines. Inside double quotes the shell still expands `$(…)`, `` `…` `` and
+/// `\`, so a remote path such as `Photos$(id)` would otherwise run as code the
+/// next time the menu entry is used.
+pub fn escape_double_quoted(value: &str) -> String {
+    let mut out = String::with_capacity(value.len());
+    for ch in value.chars() {
+        match ch {
+            '\\' | '"' | '$' | '`' => {
+                out.push('\\');
+                out.push(ch);
+            }
+            '\n' | '\r' => out.push(' '),
+            _ => out.push(ch),
+        }
+    }
+    out
+}
+
+/// Escape a value that gets interpolated into a double-quoted Python string
+/// literal in the generated Nautilus `MenuProvider` extension. `exec_path`
+/// already carries its own quotes, so without this the emitted module is not
+/// valid Python and GNOME Files silently skips it.
+pub fn escape_python_string(value: &str) -> String {
+    let mut out = String::with_capacity(value.len());
+    for ch in value.chars() {
+        match ch {
+            '\\' => out.push_str("\\\\"),
+            '"' => out.push_str("\\\""),
+            '\n' => out.push_str("\\n"),
+            '\r' => out.push_str("\\r"),
+            '\t' => out.push_str("\\t"),
+            _ => out.push(ch),
+        }
+    }
+    out
+}
+
 fn apply_template(template: &str, replacements: &[(&str, &str)]) -> String {
     let mut content = template.to_string();
     for &(key, value) in replacements {
@@ -1067,11 +1106,11 @@ pub fn nautilus_python_extension(
         NAUTILUS_EXTENSION,
         &[
             ("class_name", class_name),
-            ("exec_path", exec_path),
-            ("remote", remote),
-            ("path", path),
+            ("exec_path", &escape_python_string(exec_path)),
+            ("remote", &escape_python_string(remote)),
+            ("path", &escape_python_string(path)),
             ("uuid", uuid),
-            ("name", name),
+            ("name", &escape_python_string(name)),
         ],
     )
 }
@@ -1081,10 +1120,12 @@ fn register_linux_send_to(remote: &str, path: Option<&str>) -> Result<(), String
     let exec = current_exe_quoted();
     let path_val = path.unwrap_or("");
     let home = home_dir();
+    let remote_arg = escape_double_quoted(remote);
+    let path_arg = escape_double_quoted(path_val);
     let replacements = [
         ("exec_path", exec.as_str()),
-        ("remote", remote),
-        ("path", path_val),
+        ("remote", remote_arg.as_str()),
+        ("path", path_arg.as_str()),
         ("name", name.as_str()),
     ];
 
@@ -1216,6 +1257,7 @@ pub fn windows_registry_ps1(
     )
 }
 
+#[cfg_attr(not(target_os = "windows"), allow(dead_code))]
 fn windows_upload_label(remote: &str, path: &str) -> String {
     if path.is_empty() {
         format!("Upload to {remote}")
@@ -1311,6 +1353,8 @@ pub fn macos_info_plist(name: &str, uuid: &str) -> String {
 }
 
 pub fn macos_document_wflow(exe: &str, remote: &str, path: &str) -> String {
+    let remote = escape_double_quoted(remote);
+    let path = escape_double_quoted(path);
     let cmd = escape_xml(&format!(
         "exec \"{exe}\" --send-to-remote \"{remote}\" --send-to-path \"{path}\" \"$@\""
     ));
@@ -1955,6 +1999,63 @@ mod tests {
         assert!(nautilus_python_dir()
             .to_string_lossy()
             .contains("nautilus-python/extensions"));
+    }
+
+    #[test]
+    fn nautilus_python_extension_emits_parseable_python() {
+        // `exec_path` arrives already double-quoted, so it has to be escaped for
+        // the Python string literal it lands in — otherwise the module is a
+        // SyntaxError and GNOME Files silently drops the menu entry.
+        let py = nautilus_python_extension(
+            "testdrive (RClone Manager)",
+            "\"/opt/rclone-manager-gtk\"",
+            "testdrive",
+            "Photos",
+            "RCloneManagerExtension_abc123",
+            "abc123",
+        );
+        assert!(py.contains(r#"exec_path = "\"/opt/rclone-manager-gtk\"".strip('"')"#));
+        assert!(!py.contains(r#"= ""/opt"#));
+    }
+
+    #[test]
+    fn send_to_templates_neutralize_shell_metacharacters() {
+        let hostile = "Photos$(touch /tmp/pwned)`id`\"x";
+        let py = nautilus_python_extension(
+            "n",
+            "\"/opt/app\"",
+            "drive",
+            hostile,
+            "RCloneManagerExtension_x",
+            "x",
+        );
+        // The quote is escaped, so it cannot close the Python string literal
+        // that `{path}` is interpolated into.
+        assert!(py.contains(r#""--send-to-path", "Photos$(touch /tmp/pwned)`id`\"x""#));
+        assert!(!py.contains(r#"`id`"x"#));
+
+        let shell = escape_double_quoted(hostile);
+        // Every metacharacter is backslash-escaped, so the shell sees literals.
+        assert_eq!(shell, "Photos\\$(touch /tmp/pwned)\\`id\\`\\\"x");
+        assert!(!shell.contains("s$("));
+        assert!(!shell.contains(")`i"));
+    }
+
+    #[test]
+    fn escape_double_quoted_leaves_ordinary_paths_alone() {
+        assert_eq!(escape_double_quoted("Photos/2024 Trip"), "Photos/2024 Trip");
+        assert_eq!(escape_double_quoted(""), "");
+        assert_eq!(escape_double_quoted("a\nb"), "a b");
+        assert_eq!(escape_double_quoted("a\\b"), "a\\\\b");
+    }
+
+    #[test]
+    fn escape_python_string_handles_quotes_and_newlines() {
+        assert_eq!(escape_python_string("plain"), "plain");
+        assert_eq!(escape_python_string("a\"b"), "a\\\"b");
+        assert_eq!(escape_python_string("a\\b"), "a\\\\b");
+        assert_eq!(escape_python_string("a\nb"), "a\\nb");
+        assert_eq!(escape_python_string("a\tb"), "a\\tb");
     }
 
     #[test]

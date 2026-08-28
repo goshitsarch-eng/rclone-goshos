@@ -136,6 +136,20 @@
 
 ---
 
+## 謝辞
+
+RClone Manager はフロントエンドにすぎません。難しい部分は、先に他の人たちが解決してくれました。
+
+- **[rclone](https://rclone.org)** — © Nick Craig-Wood および rclone コントリビューター（MIT）。本アプリの転送・マウント・配信・リモートはすべて rclone が実行しています。私たちは Remote Control API を呼び出しているだけで、何も再実装していません。ぜひ [rclone への支援](https://rclone.org/sponsor/)をご検討ください。
+- **[RClone Manager](https://github.com/Zarestia-Dev/rclone-manager)** — © Hakan İSMAİL（[@Hakanbaban53](https://github.com/Hakanbaban53)）および Zarestia Dev チーム（GPL-3.0-or-later）。本プロジェクトはその派生物であり、アプリ設計・バックエンド・コードの大半は上流に由来します。
+- **[GTK 4](https://www.gtk.org) と [libadwaita](https://gnome.pages.gitlab.gnome.org/libadwaita/)** — © GNOME プロジェクト（LGPL-2.1-or-later）、[gtk-rs](https://gtk-rs.org) バインディング（MIT）経由。内蔵ファイルブラウザーの名称は [GNOME Files](https://apps.gnome.org/Nautilus/) へのオマージュです。
+- **[Tauri](https://tauri.app)** — © The Commons Conservancy 内の Tauri Programme（MIT / Apache-2.0）。Windows・macOS・Android・ヘッドレス版の基盤です。
+- **[Rust](https://www.rust-lang.org)** とその crate エコシステム。
+
+ライセンスを含む完全な一覧は **[ACKNOWLEDGEMENTS.md](ACKNOWLEDGEMENTS.md)** にあります。
+
+---
+
 ## ライセンス & サポート
 
 - **ライセンス:** [GNU GPLv3](LICENSE) の下でライセンスされています – 使用、変更、配布が自由に行えます。

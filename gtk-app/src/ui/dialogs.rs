@@ -1390,6 +1390,26 @@ fn about_nav_row(
     row
 }
 
+/// One acknowledgement entry: who, under what terms, and a link out to them.
+fn credit_row(title: &str, subtitle: &str, url: &str) -> adw::ActionRow {
+    let row = adw::ActionRow::new();
+    row.set_title(title);
+    row.set_subtitle(subtitle);
+    row.set_subtitle_lines(3);
+    row.set_activatable(true);
+    row.set_tooltip_text(Some(url));
+    let open = gtk::Image::from_icon_name("adw-external-link-symbolic");
+    open.add_css_class("dim-label");
+    row.add_suffix(&open);
+    {
+        let url = url.to_string();
+        row.connect_activated(move |_| {
+            let _ = open::that(&url);
+        });
+    }
+    row
+}
+
 fn about_home_page(ctx: &AppCtx, nav: &adw::NavigationView, version: &str) -> gtk::Widget {
     let page = gtk::Box::new(gtk::Orientation::Vertical, 16);
     page.set_margin_top(20);
@@ -1598,16 +1618,81 @@ pub fn about_open(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, page: &str) {
         &about_rclone_page(parent, &ctx, &dialog, &toast),
     ));
 
-    let credits = gtk::Box::new(gtk::Orientation::Vertical, 8);
+    let credits = gtk::Box::new(gtk::Orientation::Vertical, 18);
     credits.set_margin_top(16);
     credits.set_margin_start(16);
     credits.set_margin_end(16);
+    credits.set_margin_bottom(16);
+
+    let engine = adw::PreferencesGroup::new();
+    engine.set_title(&ctx.t_or("modals.about.poweredBy", "Powered by"));
+    engine.set_description(Some(&ctx.t_or(
+        "modals.about.poweredByDescription",
+        "Every transfer, mount, serve and remote is performed by rclone. This app drives its Remote Control API and reimplements none of it.",
+    )));
+    engine.add(&credit_row(
+        "rclone",
+        "\u{a9} Nick Craig-Wood and the rclone contributors \u{b7} MIT",
+        "https://rclone.org",
+    ));
+    engine.add(&credit_row(
+        &ctx.t_or("modals.about.sponsorRclone", "Sponsor rclone"),
+        &ctx.t_or(
+            "modals.about.sponsorRcloneSubtitle",
+            "Support the project this one depends on",
+        ),
+        "https://rclone.org/sponsor/",
+    ));
+    credits.append(&engine);
+
+    let upstream = adw::PreferencesGroup::new();
+    upstream.set_title(&ctx.t_or("modals.about.builtOn", "Built on"));
+    upstream.add(&credit_row(
+        "RClone Manager",
+        "\u{a9} Hakan \u{130}SMA\u{130}L (@Hakanbaban53) and the Zarestia Dev team \u{b7} GPL-3.0-or-later",
+        "https://github.com/Zarestia-Dev/rclone-manager",
+    ));
+    upstream.add(&credit_row(
+        "GTK 4 + libadwaita",
+        "\u{a9} The GNOME Project \u{b7} LGPL-2.1-or-later \u{b7} bindings via gtk-rs (MIT)",
+        "https://www.gtk.org",
+    ));
+    upstream.add(&credit_row(
+        "Tauri",
+        "\u{a9} Tauri Programme within The Commons Conservancy \u{b7} MIT / Apache-2.0",
+        "https://tauri.app",
+    ));
+    upstream.add(&credit_row(
+        "Rust",
+        "\u{a9} The Rust Project Developers \u{b7} MIT / Apache-2.0",
+        "https://www.rust-lang.org",
+    ));
+    credits.append(&upstream);
+
     let team = adw::PreferencesGroup::new();
     team.set_title(&ctx.t_or("modals.about.devTeam", "Development Team"));
     let lead = adw::ActionRow::new();
     lead.set_title(&ctx.t_or("modals.about.leadDeveloper", "Lead Developer"));
     lead.set_subtitle(&ctx.t_or("modals.about.leadName", "Zarestia Dev"));
     team.add(&lead);
+    team.add(&credit_row(
+        &ctx.t_or("modals.about.contributors", "Contributors"),
+        &ctx.t_or(
+            "modals.about.contributorsSubtitle",
+            "Everyone who has helped build RClone Manager",
+        ),
+        "https://github.com/Zarestia-Dev/rclone-manager/blob/master/CONTRIBUTORS.md",
+    ));
+    team.add(&credit_row(
+        &ctx.t_or("modals.about.translators", "Translators"),
+        &ctx.t_or(
+            "modals.about.translatorsSubtitle",
+            "The volunteers translating this app on Crowdin",
+        ),
+        "https://crowdin.com/project/rclone-manger",
+    ));
+    credits.append(&team);
+
     let ack = adw::PreferencesGroup::new();
     ack.set_title(&ctx.t_or("modals.about.acknowledgments", "Acknowledgments"));
     let ack_row = adw::ActionRow::new();
@@ -1615,14 +1700,27 @@ pub fn about_open(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, page: &str) {
         "modals.about.ackTextGtk",
         "This application is built with GTK 4 + libadwaita and relies on the excellent Rclone project for cloud storage management.",
     ));
+    ack_row.set_title_lines(6);
     ack_row.set_subtitle_lines(4);
     ack.add(&ack_row);
-    credits.append(&team);
+    ack.add(&credit_row(
+        &ctx.t_or("modals.about.fullCredits", "Full acknowledgements"),
+        &ctx.t_or(
+            "modals.about.fullCreditsSubtitle",
+            "Every dependency, with its license",
+        ),
+        "https://github.com/Zarestia-Dev/rclone-manager/blob/master/ACKNOWLEDGEMENTS.md",
+    ));
     credits.append(&ack);
+
+    let credits_scroll = gtk::ScrolledWindow::new();
+    credits_scroll.set_hscrollbar_policy(gtk::PolicyType::Never);
+    credits_scroll.set_vexpand(true);
+    credits_scroll.set_child(Some(&credits));
     nav.add(&about_nav_page(
         "credits",
         &ctx.t_or("modals.about.credits", "Credits"),
-        &credits,
+        &credits_scroll,
     ));
 
     let legal = gtk::Box::new(gtk::Orientation::Vertical, 8);
@@ -18806,9 +18904,12 @@ fn restore_or_pick_config(parent: &impl IsA<gtk::Widget>, ctx: AppCtx) {
             if let Ok(file) = result {
                 if let Some(path) = file.path() {
                     let flag = format!("--config={}", path.display());
-                    let flags = &mut ctx.settings.borrow_mut().core.rclone_additional_flags;
-                    flags.retain(|f| !f.starts_with("--config"));
-                    flags.push(flag);
+                    {
+                        let mut settings = ctx.settings.borrow_mut();
+                        let flags = &mut settings.core.rclone_additional_flags;
+                        flags.retain(|f| !f.starts_with("--config"));
+                        flags.push(flag);
+                    }
                     ctx.persist();
                     ctx.restart_engine();
                 }

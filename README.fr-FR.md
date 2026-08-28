@@ -137,6 +137,20 @@ Les contributions sous toutes leurs formes sont les bienvenues !
 
 ---
 
+## Remerciements
+
+RClone Manager est une interface. Les parties difficiles ont d'abord été résolues par d'autres.
+
+- **[rclone](https://rclone.org)** — © Nick Craig-Wood et les contributeurs de rclone (MIT). Chaque transfert, montage, service et distant de cette application est effectué par rclone ; nous pilotons son API Remote Control et n'en réimplémentons rien. Pensez à [soutenir rclone](https://rclone.org/sponsor/).
+- **[RClone Manager](https://github.com/Zarestia-Dev/rclone-manager)** — © Hakan İSMAİL ([@Hakanbaban53](https://github.com/Hakanbaban53)) et l'équipe Zarestia Dev (GPL-3.0-or-later). Ce projet en est un dérivé ; la conception de l'application, le back-end et l'essentiel du code viennent de l'amont.
+- **[GTK 4](https://www.gtk.org) & [libadwaita](https://gnome.pages.gitlab.gnome.org/libadwaita/)** — © Le projet GNOME (LGPL-2.1-or-later), via les liaisons [gtk-rs](https://gtk-rs.org) (MIT). Le navigateur de fichiers intégré est nommé en hommage à [GNOME Files](https://apps.gnome.org/Nautilus/).
+- **[Tauri](https://tauri.app)** — © Tauri Programme au sein de The Commons Conservancy (MIT / Apache-2.0), qui héberge les builds Windows, macOS, Android et sans interface.
+- **[Rust](https://www.rust-lang.org)** et son écosystème de crates.
+
+La liste complète, avec les licences, se trouve dans **[ACKNOWLEDGEMENTS.md](ACKNOWLEDGEMENTS.md)**.
+
+---
+
 ## Licence & Support
 
 - **Licence:** Publié sous licence [GNU GPLv3](LICENSE) – libre d'utilisation, de modification et de distribution.

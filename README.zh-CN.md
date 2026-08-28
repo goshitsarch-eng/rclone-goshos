@@ -136,6 +136,20 @@
 
 ---
 
+## 致谢
+
+RClone Manager 只是一个前端，真正困难的部分是别人先解决的。
+
+- **[rclone](https://rclone.org)** — © Nick Craig-Wood 与 rclone 贡献者（MIT）。本应用中的每一次传输、挂载、服务和远程存储都由 rclone 完成；我们只是调用它的 Remote Control API，没有重新实现任何部分。欢迎[赞助 rclone](https://rclone.org/sponsor/)。
+- **[RClone Manager](https://github.com/Zarestia-Dev/rclone-manager)** — © Hakan İSMAİL（[@Hakanbaban53](https://github.com/Hakanbaban53)）与 Zarestia Dev 团队（GPL-3.0-or-later）。本项目是其衍生版本；应用设计、后端以及绝大部分代码均源自上游。
+- **[GTK 4](https://www.gtk.org) 与 [libadwaita](https://gnome.pages.gitlab.gnome.org/libadwaita/)** — © GNOME 项目（LGPL-2.1-or-later），通过 [gtk-rs](https://gtk-rs.org) 绑定（MIT）使用。内置文件浏览器的命名是向 [GNOME Files](https://apps.gnome.org/Nautilus/) 致敬。
+- **[Tauri](https://tauri.app)** — © The Commons Conservancy 旗下的 Tauri Programme（MIT / Apache-2.0），承载 Windows、macOS、Android 与无头构建。
+- **[Rust](https://www.rust-lang.org)** 及其 crate 生态。
+
+完整清单及许可证见 **[ACKNOWLEDGEMENTS.md](ACKNOWLEDGEMENTS.md)**。
+
+---
+
 ## 许可证与支持
 
 - **许可证:** 采用 [GNU GPLv3](LICENSE) 授权 – 免费使用、修改和分发。
