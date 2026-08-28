@@ -1387,19 +1387,27 @@ fn collect_jobs(client: &crate::rclone::RcClient, known: &[u64]) -> Vec<crate::s
         .batch(&inputs)
         .ok()
         .map(|v| crate::rclone::parse_batch_results(&v));
-    let mut jobs = Vec::new();
-    for (idx, jobid) in ids.into_iter().enumerate() {
-        let status = batched
-            .as_ref()
-            .and_then(|rows| rows.get(idx))
-            .and_then(|row| {
-                row.get("output")
-                    .cloned()
-                    .or_else(|| row.get("result").cloned())
-                    .or_else(|| Some(row.clone()))
-            })
-            .or_else(|| client.job_status(jobid).ok());
-        let Some(status) = status else {
+    // A batch row that carries an `error` is not a result — report it as
+    // missing so the caller falls back to a direct call for that one entry.
+    let batch_row =
+        |rows: &Option<Vec<serde_json::Value>>, idx: usize| -> Option<serde_json::Value> {
+            let row = rows.as_ref()?.get(idx)?;
+            if row.get("error").is_some_and(|e| !e.is_null()) {
+                return None;
+            }
+            row.get("output")
+                .cloned()
+                .or_else(|| row.get("result").cloned())
+                .or_else(|| Some(row.clone()))
+        };
+
+    // Resolve every status first, so the follow-up stats can go out as one
+    // batch too. Doing them one job at a time meant a blocking round trip per
+    // job on the GTK thread, every poll tick.
+    let mut resolved = Vec::with_capacity(ids.len());
+    for (idx, jobid) in ids.iter().copied().enumerate() {
+        let Some(status) = batch_row(&batched, idx).or_else(|| client.job_status(jobid).ok())
+        else {
             continue;
         };
         let group = status
@@ -1407,13 +1415,59 @@ fn collect_jobs(client: &crate::rclone::RcClient, known: &[u64]) -> Vec<crate::s
             .and_then(|x| x.as_str())
             .map(|s| s.to_string())
             .unwrap_or_else(|| format!("job/{jobid}"));
-        let mut stats = client.stats(Some(&group)).unwrap_or(serde_json::json!({}));
         let finished = status
             .get("finished")
             .and_then(|x| x.as_bool())
             .unwrap_or(false);
+        resolved.push((jobid, status, group, finished));
+    }
+
+    let stats_inputs: Vec<serde_json::Value> = resolved
+        .iter()
+        .map(|(_, _, group, _)| {
+            crate::rclone::batch_input("core/stats", serde_json::json!({ "group": group }))
+        })
+        .collect();
+    let stats_batched = if stats_inputs.is_empty() {
+        None
+    } else {
+        client
+            .batch(&stats_inputs)
+            .ok()
+            .map(|v| crate::rclone::parse_batch_results(&v))
+    };
+
+    let finished_groups: Vec<&String> = resolved
+        .iter()
+        .filter(|(_, _, _, finished)| *finished)
+        .map(|(_, _, group, _)| group)
+        .collect();
+    let transferred_inputs: Vec<serde_json::Value> = finished_groups
+        .iter()
+        .map(|group| {
+            crate::rclone::batch_input("core/transferred", serde_json::json!({ "group": group }))
+        })
+        .collect();
+    let transferred_batched = if transferred_inputs.is_empty() {
+        None
+    } else {
+        client
+            .batch(&transferred_inputs)
+            .ok()
+            .map(|v| crate::rclone::parse_batch_results(&v))
+    };
+
+    let mut jobs = Vec::new();
+    let mut finished_idx = 0usize;
+    for (idx, (jobid, status, group, finished)) in resolved.into_iter().enumerate() {
+        let mut stats = batch_row(&stats_batched, idx)
+            .or_else(|| client.stats(Some(&group)).ok())
+            .unwrap_or_else(|| serde_json::json!({}));
         if finished {
-            if let Ok(transferred) = client.transferred(Some(&group)) {
+            let transferred = batch_row(&transferred_batched, finished_idx)
+                .or_else(|| client.transferred(Some(&group)).ok());
+            finished_idx += 1;
+            if let Some(transferred) = transferred {
                 crate::jobs::merge_completed_transfers(&mut stats, &transferred);
             }
         }

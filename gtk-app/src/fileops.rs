@@ -1308,19 +1308,54 @@ pub fn local_path_disk_usage(path: &str) -> Option<(u64, u64)> {
     if probe.as_os_str().is_empty() {
         return None;
     }
-    let output = std::process::Command::new("df")
-        .args(["-B1", "--output=size,avail,target"])
-        .arg(&probe)
-        .output()
-        .ok()?;
-    if !output.status.success() {
-        return None;
-    }
-    let text = String::from_utf8(output.stdout).ok()?;
+    // `df` blocks indefinitely on a hung FUSE mount or an unreachable network
+    // share, and this runs on the GTK thread — without a deadline one stale
+    // mount freezes the whole application.
+    let text = run_df_with_timeout(&probe, std::time::Duration::from_secs(3))?;
     parse_df_output(&text)
         .into_values()
         .next()
         .map(|(total, avail)| (avail, total))
+}
+
+/// Run `df` against `probe`, giving up after `timeout` and killing the child.
+///
+/// `Command::output()` has no deadline, so a hung mount would block forever.
+fn run_df_with_timeout(probe: &std::path::Path, timeout: std::time::Duration) -> Option<String> {
+    let mut child = std::process::Command::new("df")
+        .args(["-B1", "--output=size,avail,target"])
+        .arg(probe)
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .ok()?;
+
+    let deadline = std::time::Instant::now() + timeout;
+    loop {
+        match child.try_wait() {
+            Ok(Some(status)) => {
+                if !status.success() {
+                    return None;
+                }
+                break;
+            }
+            Ok(None) => {
+                if std::time::Instant::now() >= deadline {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    log::warn!("df timed out for {}", probe.display());
+                    return None;
+                }
+                std::thread::sleep(std::time::Duration::from_millis(20));
+            }
+            Err(_) => return None,
+        }
+    }
+
+    let mut text = String::new();
+    let mut stdout = child.stdout.take()?;
+    std::io::Read::read_to_string(&mut stdout, &mut text).ok()?;
+    Some(text)
 }
 
 /// Parse `df -B1 --output=size,avail,target` (header + rows).
@@ -2378,6 +2413,28 @@ mod tests {
             }),
             "File System"
         );
+    }
+
+    #[test]
+    fn df_gives_up_instead_of_blocking_forever() {
+        // A hung FUSE mount makes `df` block indefinitely; on the GTK thread
+        // that froze the whole application, so the call now has a deadline.
+        let started = std::time::Instant::now();
+        let usage = local_path_disk_usage("/tmp");
+        assert!(usage.is_some(), "/tmp should report usage");
+        assert!(
+            started.elapsed() < std::time::Duration::from_secs(5),
+            "a healthy df must return promptly"
+        );
+
+        // A path `df` cannot resolve returns None rather than hanging.
+        let started = std::time::Instant::now();
+        assert!(run_df_with_timeout(
+            std::path::Path::new("/definitely/not/a/mount/point"),
+            std::time::Duration::from_secs(3),
+        )
+        .is_none());
+        assert!(started.elapsed() < std::time::Duration::from_secs(5));
     }
 
     #[test]

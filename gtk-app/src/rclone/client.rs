@@ -52,6 +52,23 @@ pub struct RcClient {
     timeout: Duration,
 }
 
+/// One shared HTTP agent for every RC call.
+///
+/// `ureq::post(..)` is `AgentBuilder::new().build().post(..)` — a brand-new
+/// agent with an empty connection pool per call — so the client opened a fresh
+/// TCP connection for every request and never reused one. With a 400 ms poll
+/// making several calls per tick that is a lot of churn; an `Agent` is
+/// `Send + Sync` and pools per host, so a single process-wide one is enough.
+fn agent() -> &'static ureq::Agent {
+    static AGENT: std::sync::OnceLock<ureq::Agent> = std::sync::OnceLock::new();
+    AGENT.get_or_init(|| {
+        ureq::AgentBuilder::new()
+            .max_idle_connections(32)
+            .max_idle_connections_per_host(8)
+            .build()
+    })
+}
+
 impl RcClient {
     pub fn new(host: &str, port: u16) -> Self {
         Self {
@@ -85,7 +102,8 @@ impl RcClient {
         if url.is_empty() {
             return false;
         }
-        let mut request = ureq::get(url)
+        let mut request = agent()
+            .get(url)
             .timeout(Duration::from_secs(5))
             .set("Range", "bytes=0-1");
         if let (Some(user), Some(pass)) = (&self.user, &self.pass) {
@@ -115,7 +133,8 @@ impl RcClient {
             )));
         }
         let url = format!("{}/{}", self.base_url.trim_end_matches('/'), endpoint);
-        let mut request = ureq::post(&url)
+        let mut request = agent()
+            .post(&url)
             .timeout(timeout)
             .set("Content-Type", "application/json");
         if let (Some(user), Some(pass)) = (&self.user, &self.pass) {
@@ -426,7 +445,7 @@ impl RcClient {
             urlencoding::encode(fs),
             urlencoding::encode(remote)
         );
-        let mut request = ureq::post(&url).timeout(self.timeout).set(
+        let mut request = agent().post(&url).timeout(self.timeout).set(
             "Content-Type",
             &format!("multipart/form-data; boundary={boundary}"),
         );
@@ -639,7 +658,7 @@ impl RcClient {
         if url.is_empty() {
             return Err(RcError::message("no rc-serve url"));
         }
-        let mut request = ureq::get(&url).timeout(Duration::from_secs(8));
+        let mut request = agent().get(&url).timeout(Duration::from_secs(8));
         if let (Some(user), Some(pass)) = (&self.user, &self.pass) {
             request = request.set("Authorization", &basic_auth_header(user, pass));
         }
@@ -2246,6 +2265,93 @@ pub fn backend_identity(info: &Value) -> BackendIdentity {
 
 #[cfg(test)]
 mod tests {
+    /// The RC client used to build a fresh `ureq::Agent` — and therefore a
+    /// fresh, empty connection pool — for every call, so no TCP connection was
+    /// ever reused. This serves several requests from a tiny HTTP/1.1 listener
+    /// and asserts they all arrive on one connection.
+    #[test]
+    fn rc_calls_reuse_one_tcp_connection() {
+        use std::io::{BufRead, BufReader, Read, Write};
+        use std::net::TcpListener;
+        use std::sync::mpsc;
+
+        const CALLS: usize = 6;
+
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind");
+        let port = listener.local_addr().expect("addr").port();
+        let (tx, rx) = mpsc::channel();
+
+        let server = std::thread::spawn(move || {
+            let mut connections = 0usize;
+            let mut served = 0usize;
+            for stream in listener.incoming() {
+                let Ok(mut stream) = stream else { break };
+                connections += 1;
+                let mut reader = BufReader::new(stream.try_clone().expect("clone"));
+                // Keep serving on this connection until the client stops.
+                loop {
+                    let mut request_line = String::new();
+                    if reader.read_line(&mut request_line).unwrap_or(0) == 0 {
+                        break;
+                    }
+                    let mut length = 0usize;
+                    loop {
+                        let mut header = String::new();
+                        if reader.read_line(&mut header).unwrap_or(0) == 0 {
+                            break;
+                        }
+                        if header == "\r\n" || header == "\n" {
+                            break;
+                        }
+                        if let Some(value) =
+                            header.to_ascii_lowercase().strip_prefix("content-length:")
+                        {
+                            length = value.trim().parse().unwrap_or(0);
+                        }
+                    }
+                    if length > 0 {
+                        let mut body = vec![0u8; length];
+                        if reader.read_exact(&mut body).is_err() {
+                            break;
+                        }
+                    }
+                    let body = b"{\"ok\":true}";
+                    let response = format!(
+                        "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: keep-alive\r\n\r\n",
+                        body.len()
+                    );
+                    if stream.write_all(response.as_bytes()).is_err()
+                        || stream.write_all(body).is_err()
+                    {
+                        break;
+                    }
+                    let _ = stream.flush();
+                    served += 1;
+                    if served >= CALLS {
+                        let _ = tx.send(connections);
+                        return connections;
+                    }
+                }
+            }
+            let _ = tx.send(connections);
+            connections
+        });
+
+        let client = RcClient::new("127.0.0.1", port);
+        for _ in 0..CALLS {
+            client.call("core/version", json!({})).expect("rc call");
+        }
+
+        let connections = rx
+            .recv_timeout(Duration::from_secs(10))
+            .expect("server reported");
+        let _ = server.join();
+        assert_eq!(
+            connections, 1,
+            "{CALLS} RC calls should share one pooled connection, saw {connections}"
+        );
+    }
+
     use super::*;
 
     #[test]
