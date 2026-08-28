@@ -2485,19 +2485,37 @@ pub fn find_active_job<'a>(
     op: OperationType,
     profile: &str,
 ) -> Option<&'a JobInfo> {
+    find_active_jobs(jobs, remote, op, profile)
+        .into_iter()
+        .next()
+}
+
+/// Every running job belonging to one profile.
+///
+/// `start_profile_ex` issues one rclone call per source/destination pair, so a
+/// profile with several sources is several concurrent jobs. Stopping only the
+/// first left the rest transferring while the UI reported the profile stopped.
+pub fn find_active_jobs<'a>(
+    jobs: &'a [JobInfo],
+    remote: &str,
+    op: OperationType,
+    profile: &str,
+) -> Vec<&'a JobInfo> {
     let wanted = if profile.is_empty() {
         "default"
     } else {
         profile
     };
-    jobs.iter().find(|job| {
-        job_is_running(job)
-            && job_belongs_to_remote(job, remote)
-            && job_operation_matches(&job.operation, op)
-            && (job.profile.is_empty()
-                || job.profile == wanted
-                || (job.profile == "default" && wanted == "default"))
-    })
+    jobs.iter()
+        .filter(|job| {
+            job_is_running(job)
+                && job_belongs_to_remote(job, remote)
+                && job_operation_matches(&job.operation, op)
+                && (job.profile.is_empty()
+                    || job.profile == wanted
+                    || (job.profile == "default" && wanted == "default"))
+        })
+        .collect()
 }
 
 pub fn find_active_mount<'a>(
@@ -2812,21 +2830,29 @@ pub fn stop_profile_ex(
                 })
         }
         _ => {
-            let job = find_active_job(jobs, remote, op, profile).ok_or_else(|| {
-                crate::i18n::localized_message(
+            let active = find_active_jobs(jobs, remote, op, profile);
+            if active.is_empty() {
+                return Err(crate::i18n::localized_message(
                     job_stop_failed_toast_key(),
                     &[("error", &format!("No running {op} for {remote}/{profile}"))],
-                )
-            })?;
-            client
-                .job_stop(job.id)
-                .map(|_| crate::i18n::localized_message(job_stopped_toast_key(), &[]))
-                .map_err(|e| {
-                    crate::i18n::localized_message(
-                        job_stop_failed_toast_key(),
-                        &[("error", &e.to_string())],
-                    )
-                })
+                ));
+            }
+            // Stop every job the profile started, and only claim success if
+            // they all stopped.
+            let mut failures = Vec::new();
+            for job in &active {
+                if let Err(e) = client.job_stop(job.id) {
+                    failures.push(format!("#{}: {e}", job.id));
+                }
+            }
+            if failures.is_empty() {
+                Ok(crate::i18n::localized_message(job_stopped_toast_key(), &[]))
+            } else {
+                Err(crate::i18n::localized_message(
+                    job_stop_failed_toast_key(),
+                    &[("error", &failures.join("; "))],
+                ))
+            }
         }
     }
 }
@@ -2963,17 +2989,34 @@ pub fn find_quick_run_job(live: &[JobInfo], history: &[JobInfo], qr: &QuickRun) 
 }
 
 pub fn find_active_quick_run<'a>(jobs: &'a [JobInfo], qr: &QuickRun) -> Option<&'a JobInfo> {
+    find_active_quick_run_jobs(jobs, qr).into_iter().next()
+}
+
+/// Every running job belonging to one quick run.
+///
+/// A quick run over several sources is several rclone jobs, but only the first
+/// id is kept in `last_job_id`, so stopping by that id alone left the rest
+/// running while the card reported the run stopped.
+pub fn find_active_quick_run_jobs<'a>(jobs: &'a [JobInfo], qr: &QuickRun) -> Vec<&'a JobInfo> {
+    let mut out: Vec<&JobInfo> = jobs
+        .iter()
+        .filter(|job| {
+            job_is_running(job)
+                // `quickrun` and `flow` are the same thing under different
+                // labels; matching only `quick-run` hid runs started from Flow.
+                && matches!(job.origin.as_str(), "quick-run" | "quickrun" | "flow")
+                && job_belongs_to_remote(job, &qr.remote_name)
+                && job_operation_matches(&job.operation, qr.operation_type)
+        })
+        .collect();
     if let Some(id) = qr.last_job_id {
         if let Some(job) = jobs.iter().find(|j| j.id == id && job_is_running(j)) {
-            return Some(job);
+            if !out.iter().any(|existing| existing.id == job.id) {
+                out.insert(0, job);
+            }
         }
     }
-    jobs.iter().find(|job| {
-        job_is_running(job)
-            && job.origin == "quick-run"
-            && job_belongs_to_remote(job, &qr.remote_name)
-            && job_operation_matches(&job.operation, qr.operation_type)
-    })
+    out
 }
 
 /// Paths shown in Angular `app-operation-control` (live job wins, delete hides dest).
@@ -3276,9 +3319,15 @@ pub fn select_job_ids(listed: &[u64], known: &[u64], max: usize) -> Vec<u64> {
     if listed.len() <= max {
         return listed.to_vec();
     }
+    // `known` is ordered newest-history-first, so a long history of finished
+    // jobs used to consume the whole budget and the jobs actually running went
+    // unpolled — they stalled at their last known progress. Take the ids rclone
+    // still reports first, then the rest of `known` (a job that just finished
+    // can already be gone from `listed`, and its final status is still wanted).
+    let live: HashSet<u64> = listed.iter().copied().collect();
     let mut selected = Vec::new();
     let mut seen = HashSet::new();
-    for id in known {
+    for id in known.iter().filter(|id| live.contains(id)).chain(known) {
         if selected.len() >= max {
             break;
         }
@@ -4375,14 +4424,25 @@ mod tests {
         );
         assert_eq!(
             select_job_ids(&huge, &[3143, 7], 48),
-            vec![3143, 7],
-            "leftover listed ids must not crowd out jobs we started"
+            vec![7, 3143],
+            "leftover listed ids must not crowd out jobs we started; the one \
+             rclone still reports as live is polled first"
         );
         let many_known: Vec<u64> = (1..=60).collect();
         let capped = select_job_ids(&huge, &many_known, 48);
         assert_eq!(capped.len(), 48);
         assert_eq!(capped[0], 1);
         assert_eq!(capped[47], 48);
+        // A long history must never push the running job out of the budget.
+        let mut history_heavy: Vec<u64> = (1000..1100).collect();
+        history_heavy.push(42);
+        let picked = select_job_ids(&huge, &history_heavy, 48);
+        assert_eq!(picked.len(), 48);
+        assert_eq!(
+            picked[0], 42,
+            "the only id rclone still lists must be polled first, not dropped \
+             behind 100 finished jobs"
+        );
         let mut meta = HashMap::new();
         meta.insert(400, JobMeta::default());
         meta.insert(9, JobMeta::default());
@@ -4801,11 +4861,53 @@ mod tests {
             &mounts,
             &[]
         ));
+        // Same for a profile: start_profile_ex issues one rclone call per
+        // source pair, so one profile can be several concurrent jobs.
+        let profile_jobs: Vec<JobInfo> = (10..=12u64)
+            .map(|id| running_job(id, "drive", "sync", "nightly"))
+            .collect();
+        assert_eq!(
+            find_active_jobs(&profile_jobs, "drive", OperationType::Sync, "nightly").len(),
+            3,
+            "stopping a profile must reach every job it started"
+        );
+        assert_eq!(
+            find_active_job(&profile_jobs, "drive", OperationType::Sync, "nightly").map(|j| j.id),
+            Some(10),
+            "the singular lookup still returns the first match"
+        );
+
         let mut qr = QuickRun::new("Nightly".into(), OperationType::Sync, "drive".into());
         qr.last_job_id = Some(1);
         let mut job = running_job(1, "drive", "sync", "default");
         job.origin = "quick-run".into();
         assert!(find_active_quick_run(&[job], &qr).is_some());
+
+        // A multi-source quick run is several jobs but records only the first
+        // id, so stopping by `last_job_id` alone left the rest transferring.
+        let mut multi = Vec::new();
+        for id in 1..=3u64 {
+            let mut j = running_job(id, "drive", "sync", "default");
+            j.origin = "quick-run".into();
+            multi.push(j);
+        }
+        let found = find_active_quick_run_jobs(&multi, &qr);
+        assert_eq!(found.len(), 3, "every job of the run must be stoppable");
+        let mut ids: Vec<u64> = found.iter().map(|j| j.id).collect();
+        ids.sort_unstable();
+        assert_eq!(ids, vec![1, 2, 3]);
+
+        // Runs started from Flow carry a different origin label.
+        for origin in ["quickrun", "flow"] {
+            let mut j = running_job(9, "drive", "sync", "default");
+            j.origin = origin.into();
+            let mut qr2 = QuickRun::new("FromFlow".into(), OperationType::Sync, "drive".into());
+            qr2.last_job_id = None;
+            assert!(
+                find_active_quick_run(&[j], &qr2).is_some(),
+                "origin {origin} must count as a quick run"
+            );
+        }
         let usage = profile_usage(
             &jobs,
             &mounts,

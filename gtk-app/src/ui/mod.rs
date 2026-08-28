@@ -967,10 +967,20 @@ impl AppCtx {
             let store = self.store.borrow();
             crate::jobs::known_job_ids(&store.job_history, &store.job_meta)
         };
-        let mut jobs = crate::jobs::merge_preparing_jobs(
-            collect_jobs(&client, &known),
-            &self.store.borrow().job_history,
-        );
+        // A failed job/list says nothing about what is running, so carry the
+        // previous jobs forward. Everything else in this tick was fetched fine
+        // and still gets published.
+        let jobs_are_stale;
+        let mut jobs = match collect_jobs(&client, &known) {
+            Some(live) => {
+                jobs_are_stale = false;
+                crate::jobs::merge_preparing_jobs(live, &self.store.borrow().job_history)
+            }
+            None => {
+                jobs_are_stale = true;
+                self.snapshot.borrow().jobs.clone()
+            }
+        };
         {
             let registry = self.store.borrow().job_meta.clone();
             for job in &mut jobs {
@@ -982,7 +992,9 @@ impl AppCtx {
         let previous = self.snapshot.borrow().jobs.clone();
         let previous_serves = self.snapshot.borrow().serves.clone();
         let was_online = self.snapshot.borrow().engine_online;
-        notify_job_changes(self, &previous, &jobs);
+        if !jobs_are_stale {
+            notify_job_changes(self, &previous, &jobs);
+        }
         emit_runtime_alerts(self, &previous_mounts, &mounts, &previous_serves, &serves);
         if !was_online {
             self.store
@@ -1365,9 +1377,20 @@ impl Drop for FolderOpenGuard {
     }
 }
 
-fn collect_jobs(client: &crate::rclone::RcClient, known: &[u64]) -> Vec<crate::store::JobInfo> {
-    let Ok(list) = client.job_list() else {
-        return Vec::new();
+/// `None` when the RC call itself failed, which is not the same as "no jobs are
+/// running" — reporting the latter made every running job blink out of the UI
+/// for a tick, re-announced each one as freshly started on the next poll, and
+/// swallowed the completion notification for anything that finished meanwhile.
+fn collect_jobs(
+    client: &crate::rclone::RcClient,
+    known: &[u64],
+) -> Option<Vec<crate::store::JobInfo>> {
+    let list = match client.job_list() {
+        Ok(list) => list,
+        Err(err) => {
+            log::warn!("job/list failed, keeping the previous job snapshot: {err}");
+            return None;
+        }
     };
     let listed: Vec<u64> = list
         .get("jobids")
@@ -1475,7 +1498,7 @@ fn collect_jobs(client: &crate::rclone::RcClient, known: &[u64]) -> Vec<crate::s
         jobs.push(crate::jobs::job_from_status(jobid, &status, Some(&stats)));
     }
     jobs.retain(|job| crate::jobs::keep_collected_job(job, known));
-    jobs
+    Some(jobs)
 }
 
 fn find_toast_overlay(widget: &gtk::Widget) -> Option<adw::ToastOverlay> {

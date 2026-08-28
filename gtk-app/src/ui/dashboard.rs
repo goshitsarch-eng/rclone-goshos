@@ -4169,9 +4169,25 @@ impl Dashboard {
                             let dash = dash.clone();
                             let run = run.clone();
                             move || {
-                                if let (Some(client), Some(jobid)) = (ctx.client(), run.last_job_id)
-                                {
-                                    ctx.toast_job_stop_result(&toast, client.job_stop(jobid));
+                                if let Some(client) = ctx.client() {
+                                    // A quick run can be several jobs; stopping
+                                    // `last_job_id` alone left the others going.
+                                    let live = ctx.snapshot.borrow().jobs.clone();
+                                    let ids: Vec<u64> =
+                                        crate::jobs::find_active_quick_run_jobs(&live, &run)
+                                            .iter()
+                                            .map(|job| job.id)
+                                            .chain(run.last_job_id)
+                                            .collect();
+                                    let mut unique = Vec::new();
+                                    for id in ids {
+                                        if !unique.contains(&id) {
+                                            unique.push(id);
+                                        }
+                                    }
+                                    for id in unique {
+                                        ctx.toast_job_stop_result(&toast, client.job_stop(id));
+                                    }
                                 }
                                 if let Some(item) = ctx
                                     .store
