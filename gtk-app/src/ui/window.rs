@@ -39,7 +39,8 @@ pub fn activate(app: &adw::Application) {
 
     let args = crate::cli::launch_args();
     if let Some(req) = crate::platform::parse_dialog_args(&args) {
-        dialogs::present_standalone(app, ctx, req);
+        // This process was launched for the dialog and nothing else.
+        dialogs::present_standalone(app, ctx, req, true);
         return;
     }
 
@@ -55,7 +56,8 @@ pub fn activate(app: &adw::Application) {
 fn handle_reentry(app: &adw::Application, ctx: &AppCtx) {
     let args = crate::cli::launch_args();
     if let Some(req) = crate::platform::parse_dialog_args(&args) {
-        dialogs::present_standalone(app, ctx.clone(), req);
+        // The app is already running; this dialog is a guest in it.
+        dialogs::present_standalone(app, ctx.clone(), req, false);
         return;
     }
     apply_launch(app, ctx, &args, false);

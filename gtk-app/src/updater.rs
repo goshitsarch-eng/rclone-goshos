@@ -286,6 +286,86 @@ pub fn rclone_zip_url_for(os: &str, arch: &str) -> &'static str {
     }
 }
 
+/// Name of the release asset that `rclone_zip_url_for` resolves to, as it
+/// appears in rclone's `SHA256SUMS`.
+pub fn rclone_zip_asset_name(version: &str, os: &str, arch: &str) -> String {
+    let version = version.trim();
+    let version = version
+        .rsplit(char::is_whitespace)
+        .next()
+        .unwrap_or(version);
+    let platform = match (os, arch) {
+        ("windows", "arm64") => "windows-arm64",
+        ("windows", _) => "windows-amd64",
+        ("macos", "arm64") => "osx-arm64",
+        ("macos", _) => "osx-amd64",
+        (_, "arm64") => "linux-arm64",
+        _ => "linux-amd64",
+    };
+    format!("rclone-{version}-{platform}.zip")
+}
+
+/// URL of the checksum manifest rclone publishes alongside each release.
+pub fn rclone_checksums_url(version: &str) -> String {
+    let version = version.trim();
+    let version = version
+        .rsplit(char::is_whitespace)
+        .next()
+        .unwrap_or(version);
+    format!("https://downloads.rclone.org/{version}/SHA256SUMS")
+}
+
+/// Pull one asset's expected digest out of a `SHA256SUMS` body.
+pub fn expected_sha256(manifest: &str, asset: &str) -> Option<String> {
+    manifest.lines().find_map(|line| {
+        let mut parts = line.split_whitespace();
+        let digest = parts.next()?;
+        let name = parts.next()?.trim_start_matches('*');
+        (name == asset && digest.len() == 64 && digest.chars().all(|c| c.is_ascii_hexdigit()))
+            .then(|| digest.to_ascii_lowercase())
+    })
+}
+
+pub fn sha256_hex(bytes: &[u8]) -> String {
+    use sha2::{Digest, Sha256};
+    let mut hasher = Sha256::new();
+    hasher.update(bytes);
+    format!("{:x}", hasher.finalize())
+}
+
+/// Check a downloaded rclone archive against rclone's published checksum.
+///
+/// The download is plain HTTPS with no signature, and the extracted binary is
+/// then marked executable and run, so an unverified archive is a straight path
+/// from a compromised mirror or proxy to code execution.
+fn verify_rclone_download(bytes: &[u8]) -> Result<(), String> {
+    let version = ureq::get("https://downloads.rclone.org/version.txt")
+        .set("User-Agent", "rclone-manager-gtk")
+        .timeout(Duration::from_secs(15))
+        .call()
+        .map_err(|e| e.to_string())?
+        .into_string()
+        .map_err(|e| e.to_string())?;
+    let asset = rclone_zip_asset_name(&version, std::env::consts::OS, arch_slug());
+    let manifest = ureq::get(&rclone_checksums_url(&version))
+        .set("User-Agent", "rclone-manager-gtk")
+        .timeout(Duration::from_secs(15))
+        .call()
+        .map_err(|e| e.to_string())?
+        .into_string()
+        .map_err(|e| e.to_string())?;
+    let expected = expected_sha256(&manifest, &asset)
+        .ok_or_else(|| format!("no published checksum for {asset}"))?;
+    let actual = sha256_hex(bytes);
+    if actual == expected {
+        Ok(())
+    } else {
+        Err(format!(
+            "checksum mismatch for {asset}: expected {expected}, got {actual}"
+        ))
+    }
+}
+
 fn arch_slug() -> &'static str {
     if cfg!(target_arch = "aarch64") {
         "arm64"
@@ -514,6 +594,7 @@ pub fn install_rclone_binary_ex(
     download_file(rclone_zip_url(), &zip_path, cancel, progress)?;
     let bytes = std::fs::read(&zip_path).map_err(|e| e.to_string())?;
     let _ = std::fs::remove_file(&zip_path);
+    verify_rclone_download(&bytes)?;
     let cursor = std::io::Cursor::new(bytes);
     let mut archive = zip::ZipArchive::new(cursor).map_err(|e| e.to_string())?;
     for i in 0..archive.len() {
@@ -918,6 +999,49 @@ mod tests {
         });
         let url = linux_asset_url(&json).expect("the tarball is a candidate asset");
         assert!(!app_install_is_automatic(app_install_kind(&url)));
+    }
+
+    #[test]
+    fn checksum_lookup_matches_rclones_published_manifest() {
+        // Verbatim lines from https://downloads.rclone.org/v1.75.0/SHA256SUMS
+        let manifest = "\
+aa2804e08f48250e71009c727124b6341cd0288465804a9a09d14663cabafbaa  rclone-v1.75.0-linux-amd64.zip\n\
+d0ad88ba4c8e285b7c9efa591e0ab643280a91741e13c27f3a9c0957ccfa5203  rclone-v1.75.0-linux-arm64.zip\n";
+
+        assert_eq!(
+            rclone_zip_asset_name("rclone v1.75.0", "linux", "amd64"),
+            "rclone-v1.75.0-linux-amd64.zip",
+            "version.txt reads `rclone v1.75.0`, the asset name uses just the version"
+        );
+        assert_eq!(
+            rclone_zip_asset_name("v1.75.0", "macos", "arm64"),
+            "rclone-v1.75.0-osx-arm64.zip"
+        );
+        assert_eq!(
+            rclone_checksums_url("rclone v1.75.0"),
+            "https://downloads.rclone.org/v1.75.0/SHA256SUMS"
+        );
+
+        let asset = rclone_zip_asset_name("rclone v1.75.0", "linux", "amd64");
+        assert_eq!(
+            expected_sha256(manifest, &asset).as_deref(),
+            Some("aa2804e08f48250e71009c727124b6341cd0288465804a9a09d14663cabafbaa")
+        );
+        assert_eq!(
+            expected_sha256(manifest, "rclone-v1.75.0-linux-arm64.zip").as_deref(),
+            Some("d0ad88ba4c8e285b7c9efa591e0ab643280a91741e13c27f3a9c0957ccfa5203")
+        );
+        // An asset with no published digest must not silently pass.
+        assert!(expected_sha256(manifest, "rclone-v1.75.0-windows-amd64.zip").is_none());
+    }
+
+    #[test]
+    fn sha256_hex_matches_sha256sum() {
+        // `printf 'rclone' | sha256sum`
+        assert_eq!(
+            sha256_hex(b"rclone"),
+            "d20d4b5e7f2ab15d675ecaa9df391bc6d8a43d352ffb9fd0916c1a3e5fce8361"
+        );
     }
 
     #[test]

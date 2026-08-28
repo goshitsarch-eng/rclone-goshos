@@ -123,26 +123,63 @@ fn try_spawn_standalone(ctx: &AppCtx, kind: &str, data: serde_json::Value) -> bo
     if !ctx.settings.borrow().general.standalone_dialogs {
         return false;
     }
-    let Ok((_child, path)) = crate::platform::spawn_standalone_dialog(kind, &data) else {
+    let Ok((child, path)) = crate::platform::spawn_standalone_dialog(kind, &data) else {
         return false;
     };
     let ctx = ctx.clone();
     let mut ticks = 0u32;
+    // Hold the handle so the finished dialog can be reaped; dropping it left a
+    // zombie per dialog for the lifetime of the app.
+    let mut child = Some(child);
     glib::timeout_add_local(std::time::Duration::from_millis(400), move || {
         ticks += 1;
+        let exited = child
+            .as_mut()
+            .is_some_and(|c| matches!(c.try_wait(), Ok(Some(_)) | Err(_)));
+        if exited {
+            child = None;
+        }
         if path.exists() {
             if crate::platform::read_dialog_result(&path).is_some() {
                 ctx.refresh_runtime();
                 ctx.persist();
             }
+            // The result file can hold whatever the dialog was editing; it does
+            // not belong in a world-readable temp dir any longer than needed.
+            let _ = std::fs::remove_file(&path);
+            drain_child(child.take());
+            return glib::ControlFlow::Break;
+        }
+        // The dialog exited without writing a result (cancelled, or crashed).
+        if child.is_none() {
+            let _ = std::fs::remove_file(&path);
             return glib::ControlFlow::Break;
         }
         if ticks > 300 {
+            // Still open after two minutes. Stop polling, but never kill it —
+            // the user may simply be taking their time — and keep reaping.
+            drain_child(child.take());
             return glib::ControlFlow::Break;
         }
         glib::ControlFlow::Continue
     });
     true
+}
+
+/// Reap a dialog process once it exits, without ever killing it.
+///
+/// The handle used to be dropped straight after spawning, so every standalone
+/// dialog left a zombie behind for the lifetime of the app.
+fn drain_child(child: Option<std::process::Child>) {
+    let Some(mut child) = child else {
+        return;
+    };
+    glib::timeout_add_local(std::time::Duration::from_millis(500), move || {
+        match child.try_wait() {
+            Ok(None) => glib::ControlFlow::Continue,
+            _ => glib::ControlFlow::Break,
+        }
+    });
 }
 
 pub(super) fn settings_list(
@@ -348,12 +385,22 @@ pub(super) fn attach_id_drag_drop_on(
     target.add_controller(drop);
 }
 
+/// `owns_process` marks a process that exists *only* to show this dialog, so
+/// closing the dialog should end it.
+///
+/// It must stay false when the running app is merely asked to show a dialog
+/// (single-instance re-entry): the flag is process-global and latching it in
+/// the primary process made a later "restore backup" close the main window, and
+/// stopped every subsequent dialog from opening standalone.
 pub fn present_standalone(
     app: &adw::Application,
     ctx: AppCtx,
     req: crate::platform::DialogRequest,
+    owns_process: bool,
 ) {
-    crate::platform::set_standalone_dialog(true);
+    if owns_process {
+        crate::platform::set_standalone_dialog(true);
+    }
     let title = standalone_window_title(&ctx, &req.kind);
     let window = adw::ApplicationWindow::builder()
         .application(app)
