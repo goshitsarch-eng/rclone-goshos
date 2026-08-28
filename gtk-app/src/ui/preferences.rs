@@ -529,7 +529,7 @@ pub fn present_page(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, page: Option<&s
         "settings.core.rclone_flags.label",
         "Additional rclone flags",
         "core.rclone_additional_flags",
-        None,
+        Some(crate::rclone::engine::validate_extra_flag),
     ));
     core.add(&build_list_editor_group(
         &session,
@@ -1377,13 +1377,21 @@ fn build_list_editor_group(
                             row.remove_css_class("error");
                             apply_help_tooltip(&session, row, &label_key);
                         }
-                        Err(_) => {
+                        Err(code) => {
                             if !text.trim().is_empty() {
                                 row.add_css_class("error");
-                                row.set_tooltip_text(Some(&session.ctx.t_or(
-                                    "modals.preferences.validation.urlArray",
-                                    "All items must be valid URLs (e.g., https://...).",
-                                )));
+                                let tooltip = if code == "reserved" {
+                                    session.ctx.tf(
+                                        "modals.preferences.validation.reserved",
+                                        &[("value", text.trim())],
+                                    )
+                                } else {
+                                    session.ctx.t_or(
+                                        "modals.preferences.validation.urlArray",
+                                        "All items must be valid URLs (e.g., https://...).",
+                                    )
+                                };
+                                row.set_tooltip_text(Some(&tooltip));
                                 ok = false;
                             }
                         }

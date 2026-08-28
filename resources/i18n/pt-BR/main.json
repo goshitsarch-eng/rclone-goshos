@@ -50,7 +50,9 @@
     "other": "Other",
     "ready": "Ready",
     "configure": "Configure",
-    "engineOffline": "Mecanismo offline"
+    "engineOffline": "Mecanismo offline",
+    "options": "Opções",
+    "dragToReorder": "Arraste para reordenar"
   },
   "cron": {
     "everyMinute": "A cada minuto",
@@ -174,6 +176,7 @@
     "dryRun": "Dry run",
     "flags": "Operation flags",
     "startFailed": "Start failed",
+    "defaultActionOrder": "Todas as ações (ordem padrão)",
     "addSource": "Add source",
     "multipleSources": "Multiple sources",
     "pathStatusTitle": "Path check",
@@ -1852,7 +1855,9 @@
       "remotePreview": "Pré-visualização remota via operations/cat",
       "largeRemotePreview": "Este arquivo remoto tem {{size}}. Baixar o arquivo inteiro para pré-visualizar pode demorar.",
       "downloadPreview": "Baixar pré-visualização",
-      "downloadedPreview": "Pré-visualização baixada em {{path}}"
+      "downloadedPreview": "Pré-visualização baixada em {{path}}",
+      "wrapLines": "Quebrar linhas",
+      "remotePdfPreview": "Pré-visualização PDF remota"
     },
     "pathKind": {
       "title": "Path type",
@@ -2167,6 +2172,7 @@
       "loadInfoFailed": "Falha ao carregar informações do Rclone.",
       "license": "Licença",
       "toolkit": "GTK 4 + libadwaita",
+      "engine": "Infraestrutura do backend",
       "copyVersion": "Rclone Manager {version} · rclone {rclone}",
       "licenseId": "GPL-3.0-or-later",
       "gnuGpl": "GNU GPL v3",
@@ -2948,7 +2954,8 @@
       "cloneNoSettings": "Nenhuma configuração salva foi encontrada para este remoto.",
       "exportConfig": "Exportar Configuração",
       "resetSettings": "Redefinir Configurações",
-      "deleteRemote": "Excluir Remoto"
+      "deleteRemote": "Excluir Remoto",
+      "aboutRemote": "Sobre o remoto"
     },
     "deleteRemote": {
       "title": "Excluir Remoto",
@@ -3736,6 +3743,7 @@
       "title": {
         "add": "Remote Configuration"
       },
+      "saveProfile": "Salvar perfil",
       "advancedProfiles": {
         "title": "Helper profiles"
       },

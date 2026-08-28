@@ -76,11 +76,6 @@ jobs:
         if: matrix.os == 'ubuntu-22.04'
         run: npm ci
 
-      - name: Test GTK 4 client
-        if: matrix.os == 'ubuntu-22.04'
-        run: cargo test --lib -- --test-threads=1
-        working-directory: gtk-app
-
       - name: Run Clippy (Desktop)
         run: cargo clippy --features desktop --no-default-features -- -D warnings
         working-directory: src-tauri
@@ -88,6 +83,7 @@ jobs:
       - name: Run Clippy (Web Server)
         shell: bash
         run: |
+          mkdir -p empty
           TAURI_CONFIG=$(cat ./tauri.conf.headless.json) cargo clippy --features web-server --no-default-features -- -D warnings
         working-directory: src-tauri
 
@@ -102,3 +98,35 @@ jobs:
           cargo fmt -- --check
           (cd ../gtk-app && cargo fmt -- --check)
         working-directory: src-tauri
+
+  gtk:
+    name: GTK 4 client
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v7
+
+      - name: Setup Rust Stable
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Rust Cache
+        uses: swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            ./gtk-app -> target
+
+      - name: Install GTK 4 + libadwaita
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential pkg-config \
+            libgtk-4-dev libadwaita-1-dev \
+            libssl-dev libdbus-1-dev
+
+      - name: Test GTK 4 client
+        run: cargo test --lib -- --test-threads=1
+        working-directory: gtk-app
+
+      - name: Run Clippy (GTK)
+        run: cargo clippy --lib
+        working-directory: gtk-app

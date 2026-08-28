@@ -986,7 +986,21 @@ pub fn collect_local_upload_items(
     dest_fs: &str,
     dest_dir: &str,
 ) -> Result<Vec<TransferItem>, String> {
+    Ok(collect_local_upload(paths, dest_fs, dest_dir)?.0)
+}
+
+/// Files plus destination directories that must exist (including empty folders).
+#[allow(clippy::type_complexity)]
+pub fn collect_local_upload(
+    paths: &[std::path::PathBuf],
+    dest_fs: &str,
+    dest_dir: &str,
+) -> Result<(Vec<TransferItem>, Vec<(String, String)>), String> {
     let mut items = Vec::new();
+    let mut dirs = std::collections::BTreeSet::new();
+    if !dest_dir.is_empty() {
+        dirs.insert((dest_fs.to_string(), dest_dir.trim_matches('/').to_string()));
+    }
     for path in paths {
         let name = path
             .file_name()
@@ -995,7 +1009,8 @@ pub fn collect_local_upload_items(
             .to_string();
         let dest = dest_child(dest_dir, &name);
         if path.is_dir() {
-            collect_local_dir(path, dest_fs, &dest, &mut items)?;
+            dirs.insert((dest_fs.to_string(), dest.clone()));
+            collect_local_dir(path, dest_fs, &dest, &mut items, &mut dirs)?;
         } else if path.is_file() {
             items.push(TransferItem {
                 src_fs: "/".into(),
@@ -1007,7 +1022,7 @@ pub fn collect_local_upload_items(
             });
         }
     }
-    Ok(items)
+    Ok((items, dirs.into_iter().collect()))
 }
 
 fn collect_local_dir(
@@ -1015,7 +1030,9 @@ fn collect_local_dir(
     dest_fs: &str,
     dest_dir: &str,
     items: &mut Vec<TransferItem>,
+    dirs: &mut std::collections::BTreeSet<(String, String)>,
 ) -> Result<(), String> {
+    dirs.insert((dest_fs.to_string(), dest_dir.to_string()));
     let entries = std::fs::read_dir(local).map_err(|e| e.to_string())?;
     for entry in entries.flatten() {
         let path = entry.path();
@@ -1026,7 +1043,7 @@ fn collect_local_dir(
             .to_string();
         let dest = dest_child(dest_dir, &name);
         if path.is_dir() {
-            collect_local_dir(&path, dest_fs, &dest, items)?;
+            collect_local_dir(&path, dest_fs, &dest, items, dirs)?;
         } else if path.is_file() {
             items.push(TransferItem {
                 src_fs: "/".into(),
@@ -2195,6 +2212,18 @@ mod tests {
         assert!(dirs
             .iter()
             .any(|(fs, path)| fs == "testdrive:" && path == "Inbox/folder"));
+        let empty = dir.path().join("empty");
+        std::fs::create_dir(&empty).unwrap();
+        let nested_empty = empty.join("nested");
+        std::fs::create_dir(&nested_empty).unwrap();
+        let (items, dirs) = collect_local_upload(&[empty.clone()], "testdrive:", "Inbox").unwrap();
+        assert!(items.is_empty());
+        assert!(dirs
+            .iter()
+            .any(|(fs, path)| fs == "testdrive:" && path == "Inbox/empty"));
+        assert!(dirs
+            .iter()
+            .any(|(fs, path)| fs == "testdrive:" && path == "Inbox/empty/nested"));
     }
 
     #[test]

@@ -87,6 +87,9 @@ pub fn is_truly_local_path(path: &str, os: &str) -> bool {
 /// Angular `splitLocalForStat`.
 pub fn split_local_for_stat(path: &str, os: &str) -> (String, String) {
     if is_windows_os(os) {
+        if is_unc_path(path) {
+            return split_unc_for_stat(path);
+        }
         let bytes = path.as_bytes();
         if bytes.len() >= 2 && bytes[0].is_ascii_alphabetic() && bytes[1] == b':' {
             let root = format!("{}:/", bytes[0] as char);
@@ -103,10 +106,29 @@ pub fn split_local_for_stat(path: &str, os: &str) -> (String, String) {
     }
 }
 
+fn split_unc_for_stat(path: &str) -> (String, String) {
+    let normalized = path.replace('\\', "/");
+    let trimmed = normalized.trim_start_matches('/');
+    let mut parts = trimmed.splitn(3, '/');
+    let server = parts.next().unwrap_or("");
+    let share = parts.next().unwrap_or("");
+    let rest = parts.next().unwrap_or("").to_string();
+    if server.is_empty() || share.is_empty() {
+        return ("C:/".into(), normalized);
+    }
+    (format!("//{server}/{share}"), rest)
+}
+
 pub fn expand_user_for_os(path: &str, os: &str) -> String {
     if is_windows_os(os) {
-        if path == "~" || path.starts_with("~/") || path.starts_with("~\\") {
+        if path == "~" || path == "~/" || path == "~\\" {
             return default_local_root(os);
+        }
+        let rest = path.strip_prefix("~/").or_else(|| path.strip_prefix("~\\"));
+        if let Some(rest) = rest {
+            let root = default_local_root(os);
+            let joined = format!("{root}{rest}");
+            return normalize_for_os(&joined, os);
         }
         return normalize_for_os(path, os);
     }
@@ -461,6 +483,22 @@ mod tests {
             r"C:\"
         );
         assert_eq!(expand_user_for_os("~", "windows"), r"C:\");
+        assert_eq!(
+            expand_user_for_os(r"~\Downloads\backup", "windows"),
+            r"C:\Downloads\backup"
+        );
+        assert_eq!(
+            expand_user_for_os("~/Downloads/backup", "windows"),
+            r"C:\Downloads\backup"
+        );
+        assert_eq!(
+            split_local_for_stat(r"\\nas\share\folder", "windows"),
+            ("//nas/share".into(), "folder".into())
+        );
+        assert_eq!(
+            split_local_for_stat("//nas/share", "windows"),
+            ("//nas/share".into(), "".into())
+        );
         assert_eq!(format_location("local", "", "linux"), "/");
         assert_eq!(format_location("local", "", "windows"), r"C:\");
         assert_eq!(

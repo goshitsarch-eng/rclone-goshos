@@ -96,7 +96,7 @@ pub fn operation_control(
     start.set_valign(gtk::Align::Center);
     start.set_tooltip_text(Some(&ctx.t_or("actions.start", "Start")));
     let stop = gtk::Button::with_label(&if spec.operation == OperationType::Mount {
-        ctx.t_or("actions.unmount", "Unmount")
+        ctx.t_or("tray.unmount", "Unmount")
     } else {
         ctx.t_or("actions.stop", "Stop")
     });

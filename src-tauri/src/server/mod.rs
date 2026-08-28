@@ -31,10 +31,6 @@ pub async fn start_web_server(
 
     #[cfg(debug_assertions)]
     {
-        let dev_port = std::env::var("TAURI_DEV_PORT")
-            .ok()
-            .and_then(|p| p.parse::<u16>().ok())
-            .unwrap_or(1420);
         info!("🔧 Development mode detected!");
         info!("   → Static UI: web/ (GTK is the desktop client)");
         info!("   → API server: http://localhost:{port}/api");

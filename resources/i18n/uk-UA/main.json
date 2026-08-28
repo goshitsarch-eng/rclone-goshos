@@ -50,7 +50,9 @@
     "other": "Other",
     "ready": "Ready",
     "configure": "Configure",
-    "engineOffline": "Рушій офлайн"
+    "engineOffline": "Рушій офлайн",
+    "options": "Параметри",
+    "dragToReorder": "Перетягніть, щоб змінити порядок"
   },
   "cron": {
     "everyMinute": "Щохвилини",
@@ -174,6 +176,7 @@
     "dryRun": "Dry run",
     "flags": "Operation flags",
     "startFailed": "Start failed",
+    "defaultActionOrder": "Усі дії (типовий порядок)",
     "addSource": "Add source",
     "multipleSources": "Multiple sources",
     "pathStatusTitle": "Path check",
@@ -1852,7 +1855,9 @@
       "remotePreview": "Віддалений попередній перегляд через operations/cat",
       "largeRemotePreview": "Цей віддалений файл має розмір {{size}}. Завантаження всього файлу для перегляду може зайняти час.",
       "downloadPreview": "Завантажити попередній перегляд",
-      "downloadedPreview": "Попередній перегляд збережено в {{path}}"
+      "downloadedPreview": "Попередній перегляд збережено в {{path}}",
+      "wrapLines": "Переносити рядки",
+      "remotePdfPreview": "Віддалений попередній перегляд PDF"
     },
     "pathKind": {
       "title": "Path type",
@@ -2167,6 +2172,7 @@
       "loadInfoFailed": "Не вдалося завантажити інформацію про rclone.",
       "license": "Ліцензія",
       "toolkit": "GTK 4 + libadwaita",
+      "engine": "Інфраструктура бекенду",
       "copyVersion": "Rclone Manager {version} · rclone {rclone}",
       "licenseId": "GPL-3.0-or-later",
       "gnuGpl": "GNU GPL v3",
@@ -2948,7 +2954,8 @@
       "cloneNoSettings": "Для цього віддаленого сховища не знайдено збережених налаштувань.",
       "exportConfig": "Експортувати конфігурацію",
       "resetSettings": "Скинути налаштування",
-      "deleteRemote": "Видалити сховище"
+      "deleteRemote": "Видалити сховище",
+      "aboutRemote": "Про віддалене сховище"
     },
     "deleteRemote": {
       "title": "Видалити сховище",
@@ -3736,6 +3743,7 @@
       "title": {
         "add": "Remote Configuration"
       },
+      "saveProfile": "Зберегти профіль",
       "advancedProfiles": {
         "title": "Helper profiles"
       },

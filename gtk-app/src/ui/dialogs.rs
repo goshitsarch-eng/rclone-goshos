@@ -260,13 +260,13 @@ pub(super) fn settings_panel(
 
 fn standalone_window_title(ctx: &AppCtx, kind: &str) -> String {
     match kind {
-        "preferences" => ctx.t_or("settings.title", "Preferences"),
+        "preferences" => ctx.t_or("modals.preferences.title", "Preferences"),
         "about" => ctx.t_or("modals.about.title", "About"),
-        "logs" => ctx.t_or("modals.logs.title", "Logs"),
+        "logs" => ctx.t_or("home.options.viewLogs", "Logs"),
         "export" => ctx.t_or("modals.export.title", "Export backup"),
         "backend" => ctx.t_or("modals.backend.title", "Backends"),
-        "rclone-flags" => ctx.t_or("settings.rcloneFlags.title", "Rclone Flags"),
-        "job-detail" => ctx.t_or("jobManager.jobDetail", "Job Detail"),
+        "rclone-flags" => ctx.t_or("modals.rcloneFlags.pageTitle.home", "Rclone Flags"),
+        "job-detail" => ctx.t_or("detailShared.jobInfo.title", "Job Detail"),
         "properties" => ctx.t_or("nautilus.contextMenu.properties", "Properties"),
         "remote-about" => ctx.t_or("home.options.aboutRemote", "About Remote"),
         "keyboard-shortcuts" => ctx.t_or("shortcuts.title", "Keyboard Shortcuts"),
@@ -2157,7 +2157,7 @@ fn start_rclone_update_to(
     toast: adw::ToastOverlay,
     dest: std::path::PathBuf,
 ) {
-    let installing = ctx.t_or("repair.progress.installingRclone", "Installing rclone");
+    let installing = ctx.t_or("repairSheet.progress.installingRclone", "Installing rclone");
     run_download_job(
         parent,
         ctx,
@@ -2903,7 +2903,7 @@ pub fn logs(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, remote: Option<String>)
     let remote_label_refs: Vec<&str> = remote_labels.iter().map(String::as_str).collect();
     let remotes_model = gtk::StringList::new(&remote_label_refs);
     let remote_drop = gtk::DropDown::new(Some(remotes_model), gtk::Expression::NONE);
-    remote_drop.set_tooltip_text(Some(&ctx.t_or("alerts.remoteFilter", "Remote Filter")));
+    remote_drop.set_tooltip_text(Some(&ctx.t_or("alerts.rule.remoteFilter", "Remote Filter")));
     if let Some(locked_name) = locked.as_deref() {
         if let Some(idx) = remote_names.iter().position(|n| n == locked_name) {
             remote_drop.set_selected((idx + 1) as u32);
@@ -4040,11 +4040,11 @@ pub fn backend_switch_button(ctx: &AppCtx) -> gtk::Button {
     let name = ctx.backend_display_name();
     let label = format!(
         "{} · {name}",
-        ctx.t_or("overviewHeader.manageBackends", "Manage Backends")
+        ctx.t_or("shared.overviewHeader.manageBackends", "Manage Backends")
     );
     let btn = gtk::Button::with_label(&label);
     btn.set_tooltip_text(Some(&ctx.tf_or(
-        "overviewHeader.backendSwitchAria",
+        "shared.overviewHeader.backendSwitchAria",
         "Current mode: {title} - Click to switch backend",
         &[("title", &name)],
     )));
@@ -8170,7 +8170,22 @@ pub fn export_backup(
                             } else {
                                 None
                             };
-                            match backup::create_backup(
+                            if include_secrets && pw.is_none() {
+                                ctx.toast_error(
+                                    &toast,
+                                    &ctx.t_or(
+                                        "backendErrors.backup.secretRequirePassword",
+                                        "Including secrets requires a zip password of 4+ characters",
+                                    ),
+                                );
+                                return;
+                            }
+                            let backend_opts = if export_type == "FullBackup" {
+                                Some(crate::backend_options::load_all())
+                            } else {
+                                None
+                            };
+                            match backup::create_backup_with(
                                 &path,
                                 &ctx.settings.borrow(),
                                 &store,
@@ -8178,6 +8193,7 @@ pub fn export_backup(
                                 &export_type,
                                 &note_text,
                                 pw,
+                                backend_opts.as_ref(),
                             ) {
                                 Ok(_) => {
                                     toast.add_toast(adw::Toast::new(&ctx.t_or(
@@ -9387,7 +9403,7 @@ pub fn job_detail(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, job_id: u64) {
     transfer_stack.add_titled(
         &transfers,
         Some("active"),
-        &ctx.t_or("modals.jobDetail.tabs.active", "Active"),
+        &ctx.t_or("modals.backend.active", "Active"),
     );
     transfer_stack.add_titled(
         &completed,
@@ -14961,7 +14977,7 @@ fn resolve_check_item(
     kind: &str,
 ) -> Result<(), String> {
     let Some(client) = ctx.client() else {
-        return Err(ctx.t_or("errors.engineOffline", "rclone engine is offline"));
+        return Err(ctx.t_or("common.engineOffline", "rclone engine is offline"));
     };
     let (src_fs, dst_fs) = if kind == "copy_dst_to_src" {
         (item.dst_fs.as_str(), item.src_fs.as_str())
@@ -15454,7 +15470,10 @@ fn build_capture_page(
     let description = adw::EntryRow::new();
     description.set_title(&ctx.t_or("templates.templateDesc", "Description (optional)"));
     let remotes = ctx.store.borrow().remote_names();
-    let mut remote_labels = vec![ctx.t_or("settings.rcloneFlags.title", "Current rclone options")];
+    let mut remote_labels = vec![ctx.t_or(
+        "modals.rcloneFlags.pageTitle.home",
+        "Current rclone options",
+    )];
     remote_labels.extend(remotes.iter().cloned());
     let remote_refs: Vec<&str> = remote_labels.iter().map(|s| s.as_str()).collect();
     let remote = adw::ComboRow::new();

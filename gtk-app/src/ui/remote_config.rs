@@ -72,9 +72,7 @@ pub fn present_with(
     side_scroll.set_child(Some(&sidebar));
     let side_col = gtk::Box::new(gtk::Orientation::Vertical, 8);
     let search = gtk::SearchEntry::new();
-    search.set_placeholder_text(Some(
-        &ctx.t_or("modals.remoteConfig.search", "Search pages"),
-    ));
+    search.set_placeholder_text(Some(&ctx.t_or("shared.search.placeholder", "Search pages")));
     side_col.append(&search);
     side_col.append(&side_scroll);
     let slide = Rc::new(Cell::new(SlidePanel::Hidden));
@@ -868,7 +866,7 @@ fn fill_edit_sidebar(
         }
     }
     sidebar.append(&header_row(
-        &ctx.t_or("modals.remoteConfig.search", "All pages"),
+        &ctx.t_or("common.all", "All pages"),
         "header-all",
     ));
     for step in editor_steps() {
