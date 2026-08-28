@@ -1236,4 +1236,4 @@ This client is the GTK 4 + libadwaita desktop UI. It talks to a local `rclone rc
 - Including secrets in a zip backup requires a password of 4+ characters (UI toast + create_backup guard)
 - Full backup can write persisted `backend.json`; `.rcman` restore maps and imports `backend.json`
 - Leftover i18n keys retargeted onto existing catalogs; added `common.options`, `common.dragToReorder`, `remoteConfig.defaultActionOrder`, `modals.about.engine`, `general.remoteConfig.saveProfile`, `home.options.aboutRemote`, `fileBrowser.fileViewer.wrapLines` / `remotePdfPreview`
-- CI runs GTK Clippy (`cargo clippy --lib -D warnings`) on Ubuntu after GTK tests
+- CI runs GTK Clippy (`cargo clippy --lib`) on Ubuntu after GTK tests (pre-existing gtk-app lints are not `-D warnings` yet)

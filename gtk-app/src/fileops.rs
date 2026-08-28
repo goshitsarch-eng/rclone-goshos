@@ -990,6 +990,7 @@ pub fn collect_local_upload_items(
 }
 
 /// Files plus destination directories that must exist (including empty folders).
+#[allow(clippy::type_complexity)]
 pub fn collect_local_upload(
     paths: &[std::path::PathBuf],
     dest_fs: &str,

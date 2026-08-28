@@ -772,19 +772,15 @@ fn extract_rcman_layout(
     Ok(mapped)
 }
 
-fn load_rcman_from_zip(
-    path: &Path,
-    password: Option<&str>,
-) -> Result<
-    (
-        AppSettings,
-        AppStore,
-        Option<Value>,
-        Option<Value>,
-        Vec<String>,
-    ),
-    String,
-> {
+struct RcmanLoaded {
+    settings: AppSettings,
+    store: AppStore,
+    rclone: Option<Value>,
+    backend: Option<Value>,
+    mapped: Vec<String>,
+}
+
+fn load_rcman_from_zip(path: &Path, password: Option<&str>) -> Result<RcmanLoaded, String> {
     let dir = std::env::temp_dir().join(format!(
         "rclone-manager-rcman-{}-{}",
         std::process::id(),
@@ -805,7 +801,13 @@ fn load_rcman_from_zip(
         let backend = std::fs::read_to_string(dir.join("backend.json"))
             .ok()
             .and_then(|text| serde_json::from_str(&text).ok());
-        Ok((settings, store, rclone, backend, mapped))
+        Ok(RcmanLoaded {
+            settings,
+            store,
+            rclone,
+            backend,
+            mapped,
+        })
     })();
     let _ = std::fs::remove_dir_all(&dir);
     result
@@ -816,11 +818,11 @@ fn analyze_rcman_backup(
     password: Option<&str>,
     names: Vec<String>,
 ) -> Result<BackupAnalysis, String> {
-    let (settings, store, rclone, backend, mapped) = load_rcman_from_zip(path, password)?;
+    let loaded = load_rcman_from_zip(path, password)?;
     let remotes = {
-        let mut names = store_remote_names(&store);
+        let mut names = store_remote_names(&loaded.store);
         if names.is_empty() {
-            if let Some(dump) = &rclone {
+            if let Some(dump) = &loaded.rclone {
                 if let Some(obj) = dump.as_object() {
                     names = obj.keys().cloned().collect();
                     names.sort();
@@ -830,14 +832,14 @@ fn analyze_rcman_backup(
         names
     };
     Ok(BackupAnalysis {
-        valid: !mapped.is_empty(),
-        has_settings: !settings.core.extra_backends.is_empty(),
-        has_store: !store.remotes.is_empty()
-            || !store.quick_runs.is_empty()
-            || !store.alert_rules.is_empty()
-            || !store.templates.is_empty(),
-        has_rclone_config: rclone.is_some(),
-        has_backend: backend.is_some(),
+        valid: !loaded.mapped.is_empty(),
+        has_settings: !loaded.settings.core.extra_backends.is_empty(),
+        has_store: !loaded.store.remotes.is_empty()
+            || !loaded.store.quick_runs.is_empty()
+            || !loaded.store.alert_rules.is_empty()
+            || !loaded.store.templates.is_empty(),
+        has_rclone_config: loaded.rclone.is_some(),
+        has_backend: loaded.backend.is_some(),
         categories: names,
         manifest: BackupManifest {
             version: "rcman".into(),
@@ -856,13 +858,13 @@ fn restore_rcman_contents(
     profile: Option<&str>,
     restore_as: Option<&str>,
 ) -> Result<RestoredBackup, String> {
-    let (settings, store, rclone, backend, _) = load_rcman_from_zip(path, password)?;
-    let has_settings = !settings.core.extra_backends.is_empty();
+    let loaded = load_rcman_from_zip(path, password)?;
+    let has_settings = !loaded.settings.core.extra_backends.is_empty();
     Ok(RestoredBackup {
-        settings: has_settings.then_some(settings),
-        store: Some(scoped_store(store, profile, restore_as)),
-        rclone: rclone.map(|d| scoped_rclone(d, profile, restore_as)),
-        backend,
+        settings: has_settings.then_some(loaded.settings),
+        store: Some(scoped_store(loaded.store, profile, restore_as)),
+        rclone: loaded.rclone.map(|d| scoped_rclone(d, profile, restore_as)),
+        backend: loaded.backend,
     })
 }
 

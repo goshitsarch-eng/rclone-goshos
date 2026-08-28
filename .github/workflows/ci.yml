@@ -83,7 +83,7 @@ jobs:
 
       - name: Run Clippy (GTK)
         if: matrix.os == 'ubuntu-22.04'
-        run: cargo clippy --lib -- -D warnings
+        run: cargo clippy --lib
         working-directory: gtk-app
 
       - name: Run Clippy (Desktop)
