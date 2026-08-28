@@ -4,6 +4,10 @@ All code must pass linting, formatting, and the unit-test suite before it is mer
 The same commands run in [CI](.github/workflows/ci.yml), so running them locally is
 the fastest way to get a green pull request.
 
+> The GTK client currently carries pre-existing Clippy warnings, so its lint step
+> does **not** use `-D warnings` — it must still compile cleanly for every target.
+> The backend does use `-D warnings` and must stay at zero.
+
 ---
 
 ## Quick reference

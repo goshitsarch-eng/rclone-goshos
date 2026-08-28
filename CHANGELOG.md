@@ -25,9 +25,20 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - **Config Could Be Lost on a Crash or Serialization Error**: `settings.json` and `store.json` were written non-atomically, and a serialization failure wrote an empty file. A truncated file is silently replaced by defaults on the next launch, losing every remote, quick run and alert rule. Both are now serialized first, written to a temp file, fsynced and renamed into place.
 - **Webhook "Verify TLS" Switch Did Nothing**: The alert action editor stored `tls_verify` but the dispatcher never read it, so a webhook on an internal host with a self-signed certificate could not be reached.
 - **Headless Single-File Uploads Leaked Their Temporary Copy**: Cleanup called `remove_dir_all` on a regular file, which fails with `ENOTDIR`, so every upload left a full copy in the temp directory.
+- **Labels Containing `&` or `<` Rendered Blank**: Row and group titles are parsed as Pango markup, and a title that fails to parse draws nothing at all — so a file named `Tom & Jerry.mp4` silently vanished from the file browser, and shipped labels such as "Alerts & Notifications", "Jobs & File Operations", "Warnings & Errors" and "Save & Restart" rendered as empty text.
+- **Two Broken Icons**: "Copy to…" and the Logs empty state referenced icon names that do not exist in the Adwaita theme and drew the broken-image placeholder.
+- **Empty Folders Showed a Blank Pane**: The file browser now shows a proper empty state, with a separate one for an empty Starred view.
+- **Cut Files and Column Headers Were Dimmed Twice**: Cut rows landed at 25% opacity instead of 50%, and list-view column headers were barely legible.
+- **Split-View Delete and Rename Acted on the Wrong Pane**: See above; also affected "New folder with selection", Archive, and dragging out of the primary pane.
+- **Crashes on Tab Switch, Unstar, Banner Dismiss and Config Navigation**: Six `RefCell` borrows were held across calls that re-borrow the same cell. Switching file-browser tabs panicked every time.
+- **`serve` Automations Panicked the Scheduler**: A firing serve automation took down the automation task, and with it every other automation.
+- **Multi-Rename and the Log Parser Crashed on Non-ASCII Text**; a crafted or corrupt media file could overflow the stack.
+- **Durations in `µs` Were Rejected**: The validator advanced two bytes past a three-byte character.
 
 ### Changed
 
+- **Faster Polling and Fewer Round Trips**: Every rclone RC call built a fresh HTTP agent, so no TCP connection was ever reused; job polling issued a blocking `core/stats` per job inside each tick; a detached Files window ran an ungated 400 ms poll; cron expressions were re-parsed on every tick; and the Logs dialog read the whole of the never-rotated `rclone.log` every two seconds. `df` calls are now bounded, so a hung FUSE mount no longer freezes the app.
+- **Correct Minimum Rust Version**: `gtk-app` declared 1.80 but uses `Option::is_none_or`, stable since 1.82. CI now lints all targets rather than only the library, which holds under half of the client.
 - **Backend Test Suite Builds and Runs on Every Target**: `cargo test --features web-server --no-default-features` did not compile, and 35 doctests failed on every target because rclone's help text — copied verbatim into doc comments by `npm run sync:endpoints` — contains indented shell and JSON samples that rustdoc compiles as Rust. The generator now emits them as `text` blocks.
 - **Attribution**: Added [ACKNOWLEDGEMENTS.md](ACKNOWLEDGEMENTS.md) and an Acknowledgements section in every README crediting rclone (Nick Craig-Wood and contributors), upstream RClone Manager (Hakan İSMAİL and the Zarestia Dev team), the GNOME Project's GTK 4 and libadwaita, Tauri, and every direct dependency with its license. About → Credits in the app was rebuilt into linked, grouped acknowledgements.
 - **Documentation**: Added `LINTING.md` and `ISSUES.md`, which every README and `CONTRIBUTING.md` already linked to but which did not exist.

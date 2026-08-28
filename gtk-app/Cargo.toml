@@ -6,7 +6,8 @@ authors = ["Hakan İSMAİL"]
 edition = "2021"
 license = "GPL-3.0-or-later"
 default-run = "rclone-manager-gtk"
-rust-version = "1.80"
+# `Option::is_none_or` (used in 16 places) is stable since 1.82.
+rust-version = "1.82"
 
 [[bin]]
 name = "rclone-manager-gtk"

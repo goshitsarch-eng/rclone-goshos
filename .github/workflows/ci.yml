@@ -128,5 +128,5 @@ jobs:
         working-directory: gtk-app
 
       - name: Run Clippy (GTK)
-        run: cargo clippy --lib
+        run: cargo clippy --all-targets
         working-directory: gtk-app
