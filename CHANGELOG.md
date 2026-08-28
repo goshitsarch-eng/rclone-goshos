@@ -34,6 +34,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - **`serve` Automations Panicked the Scheduler**: A firing serve automation took down the automation task, and with it every other automation.
 - **Multi-Rename and the Log Parser Crashed on Non-ASCII Text**; a crafted or corrupt media file could overflow the stack.
 - **Durations in `µs` Were Rejected**: The validator advanced two bytes past a three-byte character.
+- **The Local rclone API Was Unauthenticated**: The managed `rclone rcd` ran with `--rc-no-auth`, and the flags that would enable authentication were rejected as reserved, so any other process on the machine could read every remote's credentials in cleartext through `config/dump`, or copy files with `operations/copyfile`. The daemon now gets a random login on every launch, passed through the environment so it stays out of the world-readable process arguments.
+- **"Include Secrets" Off Still Exported Secrets**: The redaction list held six key names; rclone marks 97 options sensitive. `secret_access_key`, `access_key_id`, `session_token`, `refresh_token`, `service_account_credentials` and 86 more were written out in full — including `password2`, which the app already recognised as a secret everywhere else.
+- **Settings Backups Skipped the Encryption Check**: `settings.json` holds every extra backend's password and the rclone config master password, but only the rclone dump was inspected, so a "settings" or "backend" export wrote them to a plaintext zip without asking.
+- **The Config Master Password Was Passed on the Command Line**: Visible in `/proc/<pid>/cmdline` to every user on the machine; it now travels in the environment.
+- **Updating Could Replace the App With a `.tar.gz`**: When a release had no AppImage, the updater renamed the compressed archive over the running binary, chmod +x, and offered to restart it. Archives and `.deb`/`.rpm` packages are now recognised for what they are.
+- **The rclone Download Was Never Verified**: It is now checked against rclone's published SHA-256 before being extracted and run.
+- **Stopping an Operation Left Jobs Running**: A profile or quick run over several sources is several rclone jobs, but only the first was stopped — and the UI reported the whole thing stopped.
+- **Saving One Remote Could Delete Another's Automations**: Scoping matched on a name prefix, so `photos` also matched `photos-backup`.
+- **A Job Monitor Could Spin Forever**, and monitors kept writing into the job list after a backend switch.
+- **Edited Watch Automations Kept Watching the Old Folder** until the app was restarted.
 
 ### Changed
 

@@ -212,9 +212,10 @@ pub fn resolve_path_bar(
         return ("local".into(), normalized);
     }
     let path = if current_path.is_empty() || current_path == "/" {
-        if current_remote == "local" && !normalized.starts_with('/') {
-            format!("/{normalized}")
-        } else if current_path == "/" && current_remote == "local" {
+        // `normalized` had its slashes trimmed above, so it can never start
+        // with one — the second `current_remote == "local"` arm this used to
+        // carry was unreachable.
+        if current_remote == "local" {
             format!("/{normalized}")
         } else {
             normalized

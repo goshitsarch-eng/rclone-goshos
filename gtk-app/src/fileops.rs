@@ -512,6 +512,14 @@ pub const FILE_ITEM_MENU_HIT_PX: i32 = 48;
 /// than the window and GTK presents nothing.
 pub const FILE_CONTEXT_MENU_MIN_WIDTH_PX: i32 = 260;
 pub const FILE_CONTEXT_MENU_MAX_HEIGHT_PX: i32 = 420;
+
+// These are compile-time invariants; asserting them inside a #[test] only
+// looked like coverage, since a violation would never reach the test runner.
+// 44px is the GNOME HIG minimum touch target.
+const _: () = assert!(FILE_ITEM_MENU_HIT_PX >= 44);
+const _: () = assert!(FILE_CONTEXT_MENU_MAX_HEIGHT_PX >= 300);
+const _: () = assert!(FILE_CONTEXT_MENU_MAX_HEIGHT_PX < 800);
+const _: () = assert!(FILE_CONTEXT_MENU_MIN_WIDTH_PX >= 200);
 /// Angular Nautilus view-pane first paint (`GRID_RENDER_BATCH`).
 pub const LISTING_RENDER_BATCH: usize = 200;
 
@@ -1680,16 +1688,12 @@ mod tests {
 
     #[test]
     fn file_item_menu_hit_target_is_large_enough() {
-        assert!(FILE_ITEM_MENU_HIT_PX >= 44);
         assert_eq!(file_item_menu_widget_name("Photos"), "file-menu-Photos");
         assert!(is_file_item_menu_widget("file-menu-Photos"));
         assert!(!is_file_item_menu_widget("Photos"));
         assert!(!is_file_item_menu_widget("file-menu"));
         assert_eq!(pointing_in_parent(24.0, 16.0, 400.0, 300.0), (424, 316));
         assert_eq!(pointing_in_parent(0.4, 0.6, 10.0, 20.0), (10, 21));
-        assert!(FILE_CONTEXT_MENU_MAX_HEIGHT_PX >= 300);
-        assert!(FILE_CONTEXT_MENU_MAX_HEIGHT_PX < 800);
-        assert!(FILE_CONTEXT_MENU_MIN_WIDTH_PX >= 200);
     }
 
     #[test]
