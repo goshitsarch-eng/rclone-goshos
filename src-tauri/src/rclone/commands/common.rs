@@ -55,7 +55,11 @@ pub async fn resolve_profile_settings(
         .get(config_key)
         .and_then(|v| v.get(profile_name))
         .ok_or_else(|| {
-            format!("{config_key} profile '{profile_name}' for '{remote_name}' not found")
+            crate::localized_error!(
+                "backendErrors.remote.profileNotFound",
+                "profile" => profile_name,
+                "remote" => remote_name
+            )
         })?;
 
     Ok((config.clone(), settings_val))

@@ -443,6 +443,19 @@ pub async fn monitor_job(
     }
 
     loop {
+        // The job belongs to the backend that was active when it started.
+        // Switching backends swaps the shared JobCache's contents, so a monitor
+        // that kept running wrote this job's status and stats into the *new*
+        // backend's jobs, against a jobid that means nothing there.
+        if backend_manager.get_active().await.name != backend_name {
+            info!("Backend is no longer {backend_name}; stopping monitoring for job {jobid}");
+            return Ok(json!({
+                "jobid": jobid,
+                "finished": false,
+                "backendSwitched": true
+            }));
+        }
+
         if !metadata.no_cache {
             let should_exit = job_cache
                 .get_job(jobid)

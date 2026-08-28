@@ -184,20 +184,23 @@ pub async fn start_profile_batch(
         config_key,
     )
     .await
-    .map_err(|e| format!("Profile error: {e}"))?;
+    // `resolve_profile_settings` already returns a localized message; wrapping
+    // it in an English prefix made half the sentence untranslatable.
+    ?;
 
     let common = parse_common_config(&config, &settings).ok_or_else(|| {
-        format!(
-            "Profile {} configuration is incomplete",
-            params.profile_name
+        crate::localized_error!(
+            "backendErrors.remote.profileIncomplete",
+            "profile" => &params.profile_name
         )
     })?;
 
     if (transfer_type == OperationType::Bisync || transfer_type == OperationType::Archivecreate)
         && common.source.len() != 1
     {
-        return Err(format!(
-            "{transfer_type:?} only supports a single source path"
+        return Err(crate::localized_error!(
+            "backendErrors.remote.singleSourceOnly",
+            "operation" => &format!("{transfer_type:?}")
         ));
     }
 

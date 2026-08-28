@@ -3255,7 +3255,10 @@
       "authExpired": "Uzak bağlantı kimlik doğrulaması geçersiz veya süresi dolmuş. Lütfen bağlantıyı yeniden yetkilendirin.",
       "quotaExceeded": "Uzak depolama API hız sınırı veya depolama kotası aşıldı. Lütfen daha sonra tekrar deneyin.",
       "networkError": "Uzak sunucuya ulaşılamadı. Lütfen ağ bağlantınızı ve uzak bağlantı adresini kontrol edin.",
-      "notFound": "Hedef dizin veya dosya uzak sunucuda bulunamadı."
+      "notFound": "Hedef dizin veya dosya uzak sunucuda bulunamadı.",
+      "profileNotFound": "'{{remote}}' için '{{profile}}' profili bulunamadı.",
+      "profileIncomplete": "'{{profile}}' profilinde gerekli yapılandırma eksik.",
+      "singleSourceOnly": "{{operation}} yalnızca tek bir kaynak yolunu destekler."
     },
     "updater": {
       "noPending": "Bekleyen güncelleme yok",

@@ -3255,7 +3255,10 @@
       "authExpired": "A autenticação do remoto expirou ou é inválida. Reautentique o remoto nas configurações.",
       "quotaExceeded": "Limite de requisições de API ou cota de armazenamento remoto excedida. Tente novamente mais tarde.",
       "networkError": "Não foi possível conectar ao servidor remoto. Verifique sua conexão e o endereço remoto.",
-      "notFound": "Diretório ou arquivo de destino não encontrado no remoto."
+      "notFound": "Diretório ou arquivo de destino não encontrado no remoto.",
+      "profileNotFound": "O perfil “{{profile}}” de “{{remote}}” não foi encontrado.",
+      "profileIncomplete": "O perfil “{{profile}}” está sem configuração obrigatória.",
+      "singleSourceOnly": "{{operation}} aceita apenas um único caminho de origem."
     },
     "updater": {
       "noPending": "Não há atualizações pendentes",

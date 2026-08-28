@@ -3255,7 +3255,10 @@
       "authExpired": "L'authentification du distant a expiré ou est invalide. Veuillez ré-authentifier le distant.",
       "quotaExceeded": "Limite de débit d'API ou quota de stockage distant dépassé. Veuillez réessayer ultérieurement.",
       "networkError": "Impossible de joindre le serveur distant. Veuillez vérifier votre connexion et l'adresse distante.",
-      "notFound": "Le répertoire ou fichier cible est introuvable sur le distant."
+      "notFound": "Le répertoire ou fichier cible est introuvable sur le distant.",
+      "profileNotFound": "Le profil « {{profile}} » de « {{remote}} » est introuvable.",
+      "profileIncomplete": "Il manque une configuration obligatoire au profil « {{profile}} ».",
+      "singleSourceOnly": "{{operation}} ne prend en charge qu’un seul chemin source."
     },
     "updater": {
       "noPending": "Aucune mise à jour en attente",

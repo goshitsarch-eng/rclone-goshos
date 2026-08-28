@@ -3255,7 +3255,10 @@
       "authExpired": "Remote authentication expired or invalid. Please re-authenticate the remote.",
       "quotaExceeded": "Remote storage API rate limit or storage quota exceeded. Please try again later.",
       "networkError": "Unable to reach the remote server. Please check your network connection and remote address.",
-      "notFound": "Target directory or file was not found on the remote."
+      "notFound": "Target directory or file was not found on the remote.",
+      "profileNotFound": "Profile '{{profile}}' for '{{remote}}' was not found.",
+      "profileIncomplete": "Profile '{{profile}}' is missing required configuration.",
+      "singleSourceOnly": "{{operation}} supports only a single source path."
     },
     "updater": {
       "noPending": "There is no pending update",

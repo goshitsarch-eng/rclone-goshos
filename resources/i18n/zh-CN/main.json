@@ -3255,7 +3255,10 @@
       "authExpired": "远程认证已过期或无效。请在设置中重新授权。",
       "quotaExceeded": "远程存储 API 速率限制或配额已超限。请稍后重试。",
       "networkError": "无法连接到远程服务器。请检查网络连接及远程地址。",
-      "notFound": "在远程上未找到目标目录或文件。"
+      "notFound": "在远程上未找到目标目录或文件。",
+      "profileNotFound": "未找到“{{remote}}”的配置文件“{{profile}}”。",
+      "profileIncomplete": "配置文件“{{profile}}”缺少必需的配置。",
+      "singleSourceOnly": "{{operation}} 仅支持单个源路径。"
     },
     "updater": {
       "noPending": "暂无待处理更新",
