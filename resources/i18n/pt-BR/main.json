@@ -1839,6 +1839,7 @@
       "cancel": "Cancelar",
       "saveSuccess": "Arquivo salvo com sucesso",
       "saveError": "Falha ao salvar arquivo",
+      "truncatedReadOnly": "Mostrando os primeiros {{size}} — este arquivo é grande demais para editar aqui",
       "archiveContents": "Conteúdo do Arquivo",
       "shortcutTargets": "Alvos de Atalho",
       "extract": "Extrair",

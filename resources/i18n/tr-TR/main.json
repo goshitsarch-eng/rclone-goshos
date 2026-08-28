@@ -1839,6 +1839,7 @@
       "cancel": "İptal",
       "saveSuccess": "Dosya başarıyla kaydedildi",
       "saveError": "Dosya kaydedilemedi",
+      "truncatedReadOnly": "İlk {{size}} gösteriliyor — bu dosya burada düzenlenemeyecek kadar büyük",
       "archiveContents": "Arşiv İçeriği",
       "shortcutTargets": "Kısayol Hedefleri",
       "extract": "Çıkart",

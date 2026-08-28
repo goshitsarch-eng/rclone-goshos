@@ -1839,6 +1839,7 @@
       "cancel": "取消",
       "saveSuccess": "文件保存成功",
       "saveError": "文件保存失败",
+      "truncatedReadOnly": "仅显示前 {{size}} — 此文件过大，无法在此编辑",
       "archiveContents": "归档内容",
       "shortcutTargets": "快捷方式目标",
       "extract": "解压",

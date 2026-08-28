@@ -67,7 +67,7 @@ There is no Angular (or other web-framework) application in this repository.
 
 ```bash
 cd gtk-app
-cargo test --lib -- --test-threads=1
+cargo test -- --test-threads=1  # --lib alone skips the ui/ modules
 cargo build
 cargo fmt -- --check
 ```

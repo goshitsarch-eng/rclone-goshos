@@ -524,10 +524,14 @@ impl Dashboard {
             append_status_badges(&box_, &self.ctx, &activity);
             row.set_child(Some(&box_));
             row.set_widget_name(&remote.name);
-            if self.ctx.selected_remote.borrow().as_deref() == Some(remote.name.as_str()) {
-                row.activate();
-            }
+            let selected =
+                self.ctx.selected_remote.borrow().as_deref() == Some(remote.name.as_str());
             self.sidebar_list.append(&row);
+            if selected {
+                // Must come after `append`: an unparented row cannot be
+                // selected, and `activate()` does not highlight one anyway.
+                self.sidebar_list.select_row(Some(&row));
+            }
         }
         if snap.remotes.is_empty() {
             let empty = adw::ActionRow::new();
@@ -1362,7 +1366,24 @@ impl Dashboard {
                     &row,
                     remote.name.clone(),
                     Rc::new(move |from, to| {
-                        if dash.ctx.store.borrow_mut().move_remote_before(&from, &to) {
+                        // `remote_order` starts empty, and `move_remote_before`
+                        // refuses names it does not already hold — so without
+                        // seeding it first, dragging silently did nothing until
+                        // the user had used the up/down arrows at least once.
+                        let names: Vec<String> = dash
+                            .ctx
+                            .snapshot
+                            .borrow()
+                            .remotes
+                            .iter()
+                            .map(|r| r.name.clone())
+                            .collect();
+                        let moved = {
+                            let mut store = dash.ctx.store.borrow_mut();
+                            store.ensure_remote_order(&names);
+                            store.move_remote_before(&from, &to)
+                        };
+                        if moved {
                             dash.ctx.persist();
                             dash.refresh();
                         }
@@ -1524,12 +1545,28 @@ impl Dashboard {
                     card.append(&empty);
                 }
                 let wrap = gtk::ListBoxRow::new();
-                wrap.set_activatable(false);
+                // The AdwActionRow's own `activated` signal only fires when the
+                // row is a direct child of a GtkListBox. Here it sits inside a
+                // card Box, so clicking a detailed card did nothing — route the
+                // click through the wrapper row instead.
+                wrap.set_activatable(true);
+                wrap.set_widget_name(&remote.name);
                 wrap.set_child(Some(&card));
                 list.append(&wrap);
             } else {
                 list.append(&row);
             }
+        }
+        if detailed {
+            let ctx = self.ctx.clone();
+            let dash = self.clone();
+            list.connect_row_activated(move |_, row| {
+                let name = row.widget_name().to_string();
+                if !name.is_empty() && name != "GtkListBoxRow" {
+                    *ctx.selected_remote.borrow_mut() = Some(name);
+                    dash.refresh();
+                }
+            });
         }
         self.host().append(&list);
     }

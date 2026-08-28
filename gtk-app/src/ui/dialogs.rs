@@ -11256,6 +11256,26 @@ fn sync_line_gutter(view: &gtk::TextView, gutter: &gtk::TextView) {
     ));
 }
 
+/// Preview limit for the text viewer. Anything past this is not loaded into the
+/// buffer, so the file becomes read-only (see `attach_text_preview`).
+const TEXT_PREVIEW_LIMIT: usize = 200_000;
+
+/// The text to show, and whether it was cut short.
+///
+/// Slicing at a fixed byte offset panics when that offset lands inside a
+/// multi-byte character, which any file with non-ASCII text can do — so back up
+/// to the nearest character boundary.
+fn preview_text(text: &str) -> (String, bool) {
+    if text.len() <= TEXT_PREVIEW_LIMIT {
+        return (text.to_string(), false);
+    }
+    let mut cut = TEXT_PREVIEW_LIMIT;
+    while cut > 0 && !text.is_char_boundary(cut) {
+        cut -= 1;
+    }
+    (format!("{}\n\n… truncated …", &text[..cut]), true)
+}
+
 fn attach_text_preview(
     parent: &gtk::Box,
     ctx: &AppCtx,
@@ -11268,11 +11288,10 @@ fn attach_text_preview(
     toolbar: Option<&gtk::Box>,
     toast: Option<&adw::ToastOverlay>,
 ) {
-    let shown = if text.len() > 200_000 {
-        format!("{}\n\n… truncated …", &text[..200_000])
-    } else {
-        text.to_string()
-    };
+    let (shown, truncated) = preview_text(text);
+    // A truncated buffer holds only the head of the file, so saving it would
+    // write that head — plus the truncation marker — over the whole file.
+    let editable = editable && !truncated;
     let view = gtk::TextView::new();
     view.set_monospace(true);
     view.set_editable(editable);
@@ -11365,6 +11384,23 @@ fn attach_text_preview(
         parent.append(&stack);
     } else {
         parent.append(&source_scroll);
+    }
+    if truncated {
+        // Say why Edit is missing rather than silently dropping it.
+        let note = gtk::Label::new(Some(&ctx.tf_or(
+            "fileBrowser.fileViewer.truncatedReadOnly",
+            "Showing the first {size} — this file is too large to edit here",
+            &[(
+                "size",
+                &crate::value_mapper::bytes_to_size(TEXT_PREVIEW_LIMIT as i64, ""),
+            )],
+        )));
+        note.add_css_class("dim-label");
+        note.set_wrap(true);
+        note.set_xalign(0.0);
+        note.set_margin_start(8);
+        note.set_margin_end(8);
+        chrome.append(&note);
     }
     if editable && (save_path.is_some() || remote_save.is_some()) {
         view.set_editable(false);
@@ -15930,14 +15966,21 @@ pub(crate) fn present_window_or_dialog(
         if height > 0 {
             win.set_default_height(height);
         }
-        if let Some(child) = dialog.child() {
-            dialog.set_child(gtk::Widget::NONE);
-            win.set_content(Some(&child));
-        }
         if let Some(p) = parent.root().and_downcast::<gtk::Window>() {
             win.set_transient_for(Some(&p));
         }
+        // Present the dialog *into* the standalone window rather than moving
+        // its child out. Callers rely on `dialog.close()` and the `closed`
+        // signal to dismiss themselves and to refresh their parent view, and
+        // both are inert on a dialog that was never presented — the window
+        // would simply stay open with a dead Save button.
+        win.set_content(Some(&adw::ToolbarView::new()));
         win.present();
+        {
+            let win = win.clone();
+            dialog.connect_closed(move |_| win.close());
+        }
+        dialog.present(Some(&win));
     } else {
         dialog.present(Some(parent));
     }
@@ -19350,4 +19393,65 @@ pub fn multi_rename(
     box_.append(&apply);
     dialog.set_child(Some(&box_));
     present_window_or_dialog(parent, &ctx, &dialog);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn preview_text_passes_small_files_through_untouched() {
+        let (shown, truncated) = preview_text("hello world");
+        assert_eq!(shown, "hello world");
+        assert!(!truncated);
+
+        let exact = "a".repeat(TEXT_PREVIEW_LIMIT);
+        let (shown, truncated) = preview_text(&exact);
+        assert_eq!(shown, exact);
+        assert!(!truncated);
+    }
+
+    #[test]
+    fn preview_text_cuts_on_a_character_boundary() {
+        // `&text[..200_000]` panicked whenever byte 200_000 landed inside a
+        // multi-byte character, which any non-ASCII text file can do.
+        for pad in 0..4 {
+            let text = format!(
+                "{}{}",
+                "a".repeat(TEXT_PREVIEW_LIMIT - 2 + pad),
+                "é".repeat(64)
+            );
+            let (shown, truncated) = preview_text(&text);
+            assert!(truncated, "pad {pad}");
+            assert!(shown.ends_with("… truncated …"), "pad {pad}");
+            // The head must be a prefix of the original, cut cleanly.
+            let head = shown.trim_end_matches("… truncated …").trim_end();
+            assert!(text.starts_with(head), "pad {pad}");
+        }
+
+        // Multi-byte characters throughout, so almost no offset is a boundary.
+        let wide = "日".repeat(TEXT_PREVIEW_LIMIT);
+        let (shown, truncated) = preview_text(&wide);
+        assert!(truncated);
+        let head = shown.trim_end_matches("… truncated …").trim_end();
+        assert!(wide.starts_with(head));
+        assert!(head.len() <= TEXT_PREVIEW_LIMIT);
+        assert!(head.len() > TEXT_PREVIEW_LIMIT - 4);
+    }
+
+    #[test]
+    fn preview_text_flags_truncation_so_the_editor_stays_read_only() {
+        // The flag is what stops Save from writing the truncated buffer — plus
+        // the truncation marker — back over the whole file. Note the buffer can
+        // be *longer* than a just-over-limit file once the marker is appended,
+        // which is precisely why length is not a safe thing to check against.
+        let text = "x".repeat(TEXT_PREVIEW_LIMIT + 1);
+        let (shown, truncated) = preview_text(&text);
+        assert!(truncated);
+        assert_ne!(shown, text, "the buffer is not the file's contents");
+        assert!(shown.ends_with("… truncated …"));
+        let head = shown.trim_end_matches("… truncated …").trim_end();
+        assert_eq!(head.len(), TEXT_PREVIEW_LIMIT);
+        assert!(text.starts_with(head));
+    }
 }

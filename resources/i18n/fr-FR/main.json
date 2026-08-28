@@ -1839,6 +1839,7 @@
       "cancel": "Annuler",
       "saveSuccess": "Fichier enregistré avec succès",
       "saveError": "Échec d'enregistrement du fichier",
+      "truncatedReadOnly": "Affichage des {{size}} premiers — ce fichier est trop volumineux pour être modifié ici",
       "archiveContents": "Contenu des archives",
       "shortcutTargets": "Cibles des raccourcis",
       "extract": "Extraire",

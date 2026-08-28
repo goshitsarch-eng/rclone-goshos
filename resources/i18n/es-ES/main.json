@@ -1839,6 +1839,7 @@
       "cancel": "Cancelar",
       "saveSuccess": "Archivo guardado correctamente",
       "saveError": "Error al guardar el archivo",
+      "truncatedReadOnly": "Mostrando los primeros {{size}} — este archivo es demasiado grande para editarlo aquí",
       "archiveContents": "Contenido del archivo",
       "shortcutTargets": "Objetivos del acceso directo",
       "extract": "Extraer",

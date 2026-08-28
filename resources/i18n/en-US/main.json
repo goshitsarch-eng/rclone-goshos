@@ -1839,6 +1839,7 @@
       "cancel": "Cancel",
       "saveSuccess": "File saved successfully",
       "saveError": "Failed to save file",
+      "truncatedReadOnly": "Showing the first {{size}} — this file is too large to edit here",
       "archiveContents": "Archive Contents",
       "shortcutTargets": "Shortcut Targets",
       "extract": "Extract",

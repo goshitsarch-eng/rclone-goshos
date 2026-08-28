@@ -10,7 +10,7 @@ the fastest way to get a green pull request.
 
 | Target                          | Format                      | Lint                                                                                   | Test                                                                  |
 | :------------------------------ | :-------------------------- | :------------------------------------------------------------------------------------- | :-------------------------------------------------------------------- |
-| GTK desktop client (`gtk-app/`) | `cd gtk-app && cargo fmt`   | `cd gtk-app && cargo clippy --all-targets`                                             | `cd gtk-app && cargo test --lib -- --test-threads=1`                  |
+| GTK desktop client (`gtk-app/`) | `cd gtk-app && cargo fmt`   | `cd gtk-app && cargo clippy --all-targets`                                             | `cd gtk-app && cargo test -- --test-threads=1`                        |
 | Backend (`src-tauri/`)          | `cd src-tauri && cargo fmt` | `cd src-tauri && cargo clippy --features desktop --no-default-features -- -D warnings` | `cd src-tauri && cargo test --features desktop --no-default-features` |
 | Translations                    | —                           | `npm run audit:i18n`                                                                   | —                                                                     |
 | Markdown / JSON / YAML          | `npx prettier --write .`    | `npx prettier --check .`                                                               | —                                                                     |
@@ -18,7 +18,7 @@ the fastest way to get a green pull request.
 Run everything before pushing:
 
 ```bash
-cd gtk-app   && cargo fmt -- --check && cargo clippy --all-targets && cargo test --lib -- --test-threads=1
+cd gtk-app   && cargo fmt -- --check && cargo clippy --all-targets && cargo test -- --test-threads=1
 cd ../src-tauri && cargo fmt -- --check
 cd ..        && npm run audit:i18n
 ```

@@ -1839,6 +1839,7 @@
       "cancel": "キャンセル",
       "saveSuccess": "ファイルを正常に保存しました",
       "saveError": "ファイルの保存に失敗しました",
+      "truncatedReadOnly": "先頭 {{size}} のみ表示しています — このファイルは大きすぎてここでは編集できません",
       "archiveContents": "圧縮ファイルの内容",
       "shortcutTargets": "ショートカットの参照先",
       "extract": "展開",

@@ -184,7 +184,21 @@ fn build_card(
         bind_run(ctx, toast, record, &run);
         header.add_suffix(&run);
         if let Some(on_activate) = on_activate {
-            header.connect_activated(move |_| on_activate());
+            // `AdwActionRow::activated` only fires for a row that is a direct
+            // child of a GtkListBox; this one lives inside a card Box, so the
+            // signal never reached the caller and clicking the card did
+            // nothing. Drive it from a click gesture instead.
+            header.set_activatable(true);
+            let click = gtk::GestureClick::new();
+            click.set_button(gtk::gdk::BUTTON_PRIMARY);
+            click.connect_released(move |gesture, n_press, _, _| {
+                if n_press != 1 {
+                    return;
+                }
+                gesture.set_state(gtk::EventSequenceState::Claimed);
+                on_activate();
+            });
+            header.add_controller(click);
         }
     }
 

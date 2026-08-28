@@ -2422,6 +2422,25 @@ mod tests {
     }
 
     #[test]
+    fn move_remote_before_needs_a_seeded_order() {
+        // Drag-to-reorder used to call this straight off a default store, where
+        // `remote_order` is empty, so the drop silently did nothing until the
+        // user had pressed the up/down arrows once (those seed it).
+        let mut store = AppStore::default();
+        assert!(store.remote_order.is_empty());
+        assert!(!store.move_remote_before("b", "a"));
+
+        let live = ["a".to_string(), "b".to_string(), "c".to_string()];
+        store.ensure_remote_order(&live);
+        assert!(store.move_remote_before("c", "a"));
+        assert_eq!(store.remote_order, ["c", "a", "b"]);
+
+        // Unknown names are still refused.
+        assert!(!store.move_remote_before("zz", "a"));
+        assert!(!store.move_remote_before("a", "zz"));
+    }
+
+    #[test]
     fn remote_order_and_visibility() {
         let mut store = AppStore::default();
         store.ensure_remote_order(&["b".into(), "a".into(), "c".into()]);
