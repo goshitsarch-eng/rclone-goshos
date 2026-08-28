@@ -1229,5 +1229,14 @@ This client is the GTK 4 + libadwaita desktop UI. It talks to a local `rclone rc
 - Live GUI: `--repair` **Configuration Password / Unlock** opens the password prompt; **Cancel** leaves `config_password` unset
 
 - Linux-only rewrite scope: no Windows / macOS / Android surfaces to implement or live-verify
-- After onboarding, blocking engine problems auto-open Repair or the password prompt once per session (`MissingBinary`, `PasswordRequired`, `AuthFailed`); version-too-old and missing FUSE stay banner-only
-
+- After onboarding, Repair auto-opens once per session for missing binary, config password, or RC auth failure (version-too-old and FUSE stay banner-only)
+- Full-backup remote subset: empty selection exports no remotes; logs / job history / job meta are filtered with the store
+- Preparing jobs from a previous session complete only when transfer snapshots actually finished (percentage 100 or bytes >= size); start snapshots stay failed
+- UNC `\\server\share\path` and Windows `~\…` home paths keep the path suffix
+- Folder upload creates empty directories (mkdir) even when there are no files
+- Serve listen addresses re-bracket IPv6 hosts after binding an ephemeral port (`[::1]:<port>`)
+- Extra rclone flags in Preferences reject reserved engine flags (`--rc-addr`, `--config`, …) with `modals.preferences.validation.reserved`
+- Including secrets in a zip backup requires a password of 4+ characters (UI toast + create_backup guard)
+- Full backup can write persisted `backend.json`; `.rcman` restore maps and imports `backend.json`
+- Leftover i18n keys retargeted onto existing catalogs; added `common.options`, `common.dragToReorder`, `remoteConfig.defaultActionOrder`, `modals.about.engine`, `general.remoteConfig.saveProfile`, `home.options.aboutRemote`, `fileBrowser.fileViewer.wrapLines` / `remotePdfPreview`
+- CI runs GTK tests and Clippy on Ubuntu 24.04 (GTK 4.14); web-server Clippy creates `src-tauri/empty` for `frontendDist`

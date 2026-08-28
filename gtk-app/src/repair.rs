@@ -292,7 +292,7 @@ pub fn banner_opens_password(issues: &[RepairIssue]) -> bool {
 
 /// Blocking engine problems that Angular's `SystemHealthService` auto-opens after
 /// onboarding. Version-too-old and missing FUSE stay banner-only: the engine still
-/// runs on Linux, and auto-opening Repair on every outdated-rclone launch is noise.
+/// runs, and auto-opening Repair on every outdated-rclone launch is noise.
 pub fn auto_prompt_kind(onboarding_completed: bool, issues: &[RepairIssue]) -> Option<RepairKind> {
     if !onboarding_completed {
         return None;

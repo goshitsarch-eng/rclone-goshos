@@ -50,7 +50,9 @@
     "other": "Other",
     "ready": "Ready",
     "configure": "Configure",
-    "engineOffline": "Motor sin conexión"
+    "engineOffline": "Motor sin conexión",
+    "options": "Opciones",
+    "dragToReorder": "Arrastrar para reordenar"
   },
   "cron": {
     "everyMinute": "Cada minuto",
@@ -174,6 +176,7 @@
     "dryRun": "Dry run",
     "flags": "Operation flags",
     "startFailed": "Start failed",
+    "defaultActionOrder": "Todas las acciones (orden predeterminado)",
     "addSource": "Add source",
     "multipleSources": "Multiple sources",
     "pathStatusTitle": "Path check",
@@ -1852,7 +1855,9 @@
       "remotePreview": "Vista previa remota mediante operations/cat",
       "largeRemotePreview": "Este archivo remoto ocupa {{size}}. Descargar el archivo completo para previsualizarlo puede tardar.",
       "downloadPreview": "Descargar vista previa",
-      "downloadedPreview": "Vista previa descargada en {{path}}"
+      "downloadedPreview": "Vista previa descargada en {{path}}",
+      "wrapLines": "Ajustar líneas",
+      "remotePdfPreview": "Vista previa PDF remota"
     },
     "pathKind": {
       "title": "Path type",
@@ -2167,6 +2172,7 @@
       "loadInfoFailed": "Error al cargar la información de rclone.",
       "license": "Licencia",
       "toolkit": "GTK 4 + libadwaita",
+      "engine": "Infraestructura del backend",
       "copyVersion": "Rclone Manager {version} · rclone {rclone}",
       "licenseId": "GPL-3.0-or-later",
       "gnuGpl": "GNU GPL v3",
@@ -2948,7 +2954,8 @@
       "cloneNoSettings": "No se encontraron ajustes guardados para este remoto.",
       "exportConfig": "Exportar configuración",
       "resetSettings": "Restablecer configuraciones",
-      "deleteRemote": "Eliminar remoto"
+      "deleteRemote": "Eliminar remoto",
+      "aboutRemote": "Acerca del remoto"
     },
     "deleteRemote": {
       "title": "Eliminar remoto",
@@ -3736,6 +3743,7 @@
       "title": {
         "add": "Remote Configuration"
       },
+      "saveProfile": "Guardar perfil",
       "advancedProfiles": {
         "title": "Helper profiles"
       },

@@ -118,19 +118,22 @@ fn upload_send_to(ctx: &AppCtx, send: &crate::platform::SendToArgs) {
         return;
     };
     let dest_fs = crate::rclone::remote_fs(&send.remote, &send.path);
-    let items = match crate::fileops::collect_local_upload_items(&send.files, &dest_fs, &send.path)
-    {
-        Ok(items) => items,
-        Err(e) => {
-            log::error!("Send-to collect failed: {e}");
-            return;
-        }
-    };
-    if items.is_empty() {
+    let (items, dirs) =
+        match crate::fileops::collect_local_upload(&send.files, &dest_fs, &send.path) {
+            Ok(plan) => plan,
+            Err(e) => {
+                log::error!("Send-to collect failed: {e}");
+                return;
+            }
+        };
+    if items.is_empty() && dirs.is_empty() {
         return;
     }
-    for (fs, path) in crate::fileops::upload_dest_dirs(&items) {
+    for (fs, path) in dirs {
         let _ = client.mkdir(&fs, &path);
+    }
+    if items.is_empty() {
+        return;
     }
     match crate::fileops::start_grouped_transfers(&client, &items, "send-to") {
         Ok((group, ids)) => {
@@ -435,6 +438,7 @@ fn present_main_with(app: &adw::Application, ctx: AppCtx, hidden: bool) {
     }
     update_banner(&ctx, &banner, &banner_kind);
     let auto_prompted = Rc::new(RefCell::new(HashSet::<crate::repair::RepairKind>::new()));
+    maybe_auto_prompt_repair(&ctx, &window, &toast, &auto_prompted);
 
     toolbar.add_top_bar(&header);
     toolbar.add_top_bar(&banner);

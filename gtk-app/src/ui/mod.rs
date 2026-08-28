@@ -1008,7 +1008,7 @@ impl AppCtx {
     pub fn force_check_mounts(&self) -> Result<usize, String> {
         let client = self
             .client()
-            .ok_or_else(|| self.t_or("errors.engineOffline", "rclone engine is offline"))?;
+            .ok_or_else(|| self.t_or("common.engineOffline", "rclone engine is offline"))?;
         let previous_mounts = self.snapshot.borrow().mounts.clone();
         let mounts = crate::rclone::merge_mount_context(
             client.list_mounts().map_err(|e| e.to_string())?,
@@ -1032,7 +1032,7 @@ impl AppCtx {
     pub fn force_check_serves(&self) -> Result<usize, String> {
         let client = self
             .client()
-            .ok_or_else(|| self.t_or("errors.engineOffline", "rclone engine is offline"))?;
+            .ok_or_else(|| self.t_or("common.engineOffline", "rclone engine is offline"))?;
         let serves = client.serve_list().map_err(|e| e.to_string())?;
         let dump = self.cached_dump(&client);
         let mounts = self.snapshot.borrow().mounts.clone();

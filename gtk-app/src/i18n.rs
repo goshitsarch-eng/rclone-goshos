@@ -411,6 +411,31 @@ mod tests {
     }
 
     #[test]
+    fn gtk_parity_keys_exist_in_all_catalogs() {
+        if i18n_dir().is_none() {
+            return;
+        }
+        const KEYS: &[&str] = &[
+            "common.options",
+            "common.dragToReorder",
+            "remoteConfig.defaultActionOrder",
+            "modals.about.engine",
+            "general.remoteConfig.saveProfile",
+            "home.options.aboutRemote",
+            "fileBrowser.fileViewer.wrapLines",
+            "fileBrowser.fileViewer.remotePdfPreview",
+            "backendErrors.backup.secretRequirePassword",
+            "modals.preferences.validation.reserved",
+        ];
+        for lang in SUPPORTED_LANGUAGES {
+            let i18n = I18n::load(lang);
+            for key in KEYS {
+                assert!(i18n.has(key), "{key} missing in {lang}");
+            }
+        }
+    }
+
+    #[test]
     fn template_alert_and_pdf_keys_exist_in_all_catalogs() {
         if i18n_dir().is_none() {
             return;

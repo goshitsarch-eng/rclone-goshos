@@ -1863,9 +1863,7 @@ impl NautilusView {
             crate::fileops::FILE_ITEM_MENU_HIT_PX,
             crate::fileops::FILE_ITEM_MENU_HIT_PX,
         );
-        more.set_tooltip_text(Some(
-            &self.ctx.t_or("nautilus.contextMenu.moreActions", "Actions"),
-        ));
+        more.set_tooltip_text(Some(&self.ctx.t_or("common.moreActions", "Actions")));
         more.set_widget_name(&crate::fileops::file_item_menu_widget_name(name));
         {
             let view = self.clone();
@@ -4481,8 +4479,8 @@ impl NautilusView {
             return;
         };
         let (dest_fs, dest_dir) = fs_remote(remote, path);
-        let items = match crate::fileops::collect_local_upload_items(paths, &dest_fs, &dest_dir) {
-            Ok(items) => items,
+        let (items, dirs) = match crate::fileops::collect_local_upload(paths, &dest_fs, &dest_dir) {
+            Ok(plan) => plan,
             Err(e) => {
                 self.toast_error(
                     "nautilus.errors.externalDropFailed",
@@ -4492,11 +4490,15 @@ impl NautilusView {
                 return;
             }
         };
-        if items.is_empty() {
+        if items.is_empty() && dirs.is_empty() {
             return;
         }
-        for (fs, path) in crate::fileops::upload_dest_dirs(&items) {
+        for (fs, path) in dirs {
             let _ = client.mkdir(&fs, &path);
+        }
+        if items.is_empty() {
+            self.reload();
+            return;
         }
         match crate::fileops::start_grouped_transfers(&client, &items, "filemanager-upload") {
             Ok((group, ids)) => {
@@ -4990,7 +4992,7 @@ impl NautilusView {
     fn show_listing_error(&self, message: &str, primary: bool) {
         let title = self
             .ctx
-            .t_or("fileBrowser.errors.loadFailed", "Failed to load directory");
+            .t_or("nautilus.errors.loadFailed", "Failed to load directory");
         let retry_label = self.ctx.t_or("common.retry", "Retry");
         let retry = gtk::Button::with_label(&retry_label);
         retry.add_css_class("suggested-action");
