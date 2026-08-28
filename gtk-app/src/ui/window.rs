@@ -1754,12 +1754,26 @@ fn present_overlay_window(
     if let Some(files) = files {
         let window_poll = window.clone();
         let ctx_poll = ctx.clone();
+        // Gate this the same way the main window does. Ungated, a detached
+        // Files window drove `refresh_runtime` — and the RC engine behind it —
+        // every 400 ms for as long as it stayed open, even with nothing
+        // running, on top of the main window's own (throttled) poll.
+        let poll_tick = Cell::new(0u32);
         glib::timeout_add_local(crate::refresh::BUSY_POLL, move || {
             if !window_poll.is_visible() {
                 return glib::ControlFlow::Break;
             }
-            ctx_poll.refresh_runtime();
-            files.poll_refresh();
+            let busy = ctx_poll.runtime_busy();
+            let tick = poll_tick.get();
+            poll_tick.set(tick.wrapping_add(1));
+            if crate::refresh::should_refresh(
+                tick,
+                busy,
+                crate::refresh::idle_ticks_for(crate::refresh::poll_interval_for(busy, true)),
+            ) {
+                ctx_poll.refresh_runtime();
+                files.poll_refresh();
+            }
             glib::ControlFlow::Continue
         });
     }

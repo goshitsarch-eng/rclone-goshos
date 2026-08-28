@@ -522,13 +522,50 @@ pub fn export_text(entries: &[&LogEntry]) -> String {
         .join("\n\n")
 }
 
+/// Most bytes read back when tailing the log. Generous next to any plausible
+/// `max_lines`, but a hard bound on the work done per refresh.
+const LOG_TAIL_WINDOW: u64 = 512 * 1024;
+
 pub fn read_log_file_tail(max_lines: usize) -> String {
-    let Ok(file) = std::fs::read_to_string(crate::settings::AppSettings::log_path()) else {
+    read_log_tail_from(&crate::settings::AppSettings::log_path(), max_lines)
+}
+
+/// Read the last `max_lines` lines without loading the whole file.
+///
+/// rclone.log is never rotated and the Logs dialog refreshes every couple of
+/// seconds, so reading it end to end each time grew unboundedly on the UI
+/// thread. Seek to the tail instead and only look at the last window.
+pub fn read_log_tail_from(path: &std::path::Path, max_lines: usize) -> String {
+    use std::io::{Read, Seek, SeekFrom};
+
+    if max_lines == 0 {
+        return String::new();
+    }
+    let Ok(mut file) = std::fs::File::open(path) else {
         return String::new();
     };
-    let mut tail: Vec<&str> = file.lines().rev().take(max_lines).collect();
-    tail.reverse();
-    tail.join("\n")
+    let Ok(len) = file.metadata().map(|m| m.len()) else {
+        return String::new();
+    };
+
+    let window = len.min(LOG_TAIL_WINDOW);
+    let start = len - window;
+    if file.seek(SeekFrom::Start(start)).is_err() {
+        return String::new();
+    }
+    let mut buf = Vec::with_capacity(window as usize);
+    if file.take(window).read_to_end(&mut buf).is_err() {
+        return String::new();
+    }
+
+    let text = String::from_utf8_lossy(&buf);
+    let mut lines: Vec<&str> = text.lines().collect();
+    // The window may have started mid-line; that fragment is not a whole entry.
+    if start > 0 && !lines.is_empty() {
+        lines.remove(0);
+    }
+    let skip = lines.len().saturating_sub(max_lines);
+    lines[skip..].join("\n")
 }
 
 pub fn truncate_log_path(path: &std::path::Path) -> std::io::Result<()> {
@@ -546,6 +583,47 @@ pub fn clear_log_file() {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn log_tail_reads_only_the_end_of_a_large_file() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("rclone.log");
+
+        // Comfortably larger than the read window, so the whole-file read this
+        // replaces would have to touch every byte.
+        let mut content = String::new();
+        for i in 0..60_000 {
+            content.push_str(&format!("2026/08/28 03:14:15 INFO  : line {i}\n"));
+        }
+        assert!(content.len() as u64 > super::LOG_TAIL_WINDOW);
+        std::fs::write(&path, &content).expect("write");
+
+        let tail = read_log_tail_from(&path, 5);
+        let lines: Vec<&str> = tail.lines().collect();
+        assert_eq!(lines.len(), 5);
+        assert!(lines[4].ends_with("line 59999"), "got {:?}", lines[4]);
+        assert!(lines[0].ends_with("line 59995"), "got {:?}", lines[0]);
+        // Every returned line is whole — no fragment from the window boundary.
+        assert!(lines.iter().all(|l| l.starts_with("2026/08/28")));
+    }
+
+    #[test]
+    fn log_tail_handles_small_and_missing_files() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("rclone.log");
+
+        assert_eq!(read_log_tail_from(&path, 10), "");
+
+        std::fs::write(&path, "").expect("write");
+        assert_eq!(read_log_tail_from(&path, 10), "");
+
+        std::fs::write(&path, "one\ntwo\nthree\n").expect("write");
+        // Fewer lines than requested: the first line must not be dropped, since
+        // the window covers the whole file.
+        assert_eq!(read_log_tail_from(&path, 10), "one\ntwo\nthree");
+        assert_eq!(read_log_tail_from(&path, 2), "two\nthree");
+        assert_eq!(read_log_tail_from(&path, 0), "");
+    }
+
     #[test]
     fn timestamp_split_survives_multibyte_lines() {
         // `&line[..10]` used to panic here: byte 10 lands inside 'é'.
