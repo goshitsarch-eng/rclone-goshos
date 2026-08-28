@@ -2892,7 +2892,7 @@ fn apply_startup_css() {
            background-color: @destructive_bg_color;\n\
          }\n\
          levelbar.disk-usage-high trough block.filled {\n\
-           background-color: #e66100;\n\
+           background-color: mix(@warning_bg_color, @destructive_bg_color, 0.5);\n\
          }\n\
          levelbar.disk-usage-warning trough block.filled {\n\
            background-color: @warning_bg_color;\n\

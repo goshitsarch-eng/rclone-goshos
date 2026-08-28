@@ -2755,6 +2755,7 @@
     "empty": {
       "noStarred": "Aucun fichier favori",
       "folderEmpty": "Le dossier est vide",
+      "folderHint": "Déposez des fichiers ici, ou utilisez la barre d’outils pour en téléverser ou créer un dossier.",
       "noFiles": "Archive is empty"
     },
     "selection": {

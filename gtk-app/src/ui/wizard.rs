@@ -254,7 +254,7 @@ fn present_ex(
     });
     let existing_meta = seed_remote.and_then(|name| ctx.store.borrow().remotes.get(name).cloned());
 
-    let name = adw::EntryRow::new();
+    let name = crate::ui::rows::entry_row();
     name.set_title(&ctx.t_or("wizards.remoteConfig.remoteName", "Remote name"));
     if let Some(existing) = &existing {
         name.set_text(existing);
@@ -281,7 +281,7 @@ fn present_ex(
         });
     }
 
-    let type_row = adw::ComboRow::new();
+    let type_row = crate::ui::rows::combo_row();
     type_row.set_title(&ctx.t_or("wizards.remoteConfig.remoteType", "Provider"));
     let labels: Vec<String> = if providers.is_empty() {
         [
@@ -298,7 +298,7 @@ fn present_ex(
     };
     let label_refs: Vec<&str> = labels.iter().map(|s| s.as_str()).collect();
     type_row.set_model(Some(&gtk::StringList::new(&label_refs)));
-    let type_search = adw::EntryRow::new();
+    let type_search = crate::ui::rows::entry_row();
     type_search.set_title(&ctx.t_or("wizards.remoteConfig.remoteType", "Provider"));
     if let Some(label) = labels.first() {
         type_search.set_text(label);
@@ -307,9 +307,13 @@ fn present_ex(
     type_row.set_visible(false);
 
     let fields_group = adw::PreferencesGroup::new();
-    fields_group.set_title(&ctx.t_or("wizards.remoteConfig.fields", "Provider options"));
+    fields_group.set_title(&crate::ui::rows::escape(
+        ctx.t_or("wizards.remoteConfig.fields", "Provider options"),
+    ));
     let advanced_group = adw::PreferencesGroup::new();
-    advanced_group.set_title(&ctx.t_or("wizards.remoteConfig.advancedOptions", "Advanced options"));
+    advanced_group.set_title(&crate::ui::rows::escape(
+        ctx.t_or("wizards.remoteConfig.advancedOptions", "Advanced options"),
+    ));
     let field_query = Rc::new(RefCell::new(String::new()));
     let state = Rc::new(RefCell::new(WizardState {
         providers: providers.clone(),
@@ -455,39 +459,39 @@ fn present_ex(
         });
     }
 
-    let mount = adw::EntryRow::new();
+    let mount = crate::ui::rows::entry_row();
     mount.set_title(&ctx.t_or("wizards.cliImport.mountPoint", "Mount point"));
     super::dialogs::attach_path_picker(
         &ctx,
         &mount,
         crate::picker::FilePickerConfig::local_mount_folders(),
     );
-    let src = adw::EntryRow::new();
+    let src = crate::ui::rows::entry_row();
     src.set_title(&ctx.t_or("remoteConfig.source", "Default source path"));
     super::dialogs::attach_path_picker(&ctx, &src, crate::picker::FilePickerConfig::folders());
-    let dst = adw::EntryRow::new();
+    let dst = crate::ui::rows::entry_row();
     dst.set_title(&ctx.t_or("remoteConfig.dest", "Default destination path"));
     super::dialogs::attach_path_picker(&ctx, &dst, crate::picker::FilePickerConfig::folders());
     let serve_types = ctx.serve_types();
     let mount_types = ctx.mount_types();
-    let serve = adw::ComboRow::new();
+    let serve = crate::ui::rows::combo_row();
     serve.set_title(&ctx.t_or("wizards.cliImport.serveType", "Default serve type"));
     serve.set_model(Some(&gtk::StringList::new(
         &crate::operations::combo_names(&serve_types),
     )));
-    let mount_type = adw::ComboRow::new();
+    let mount_type = crate::ui::rows::combo_row();
     mount_type.set_title(&ctx.t_or("remoteConfig.mountType", "Default mount type"));
     mount_type.set_model(Some(&gtk::StringList::new(
         &crate::operations::combo_names(&mount_types),
     )));
-    let cron = adw::EntryRow::new();
+    let cron = crate::ui::rows::entry_row();
     cron.set_title(&ctx.t_or("remoteConfig.cron", "Default cron"));
-    let tray = adw::SwitchRow::new();
+    let tray = crate::ui::rows::switch_row();
     tray.set_title(&ctx.t_or("remoteConfig.showOnTray", "Show in tray"));
     tray.set_active(true);
-    let autostart = adw::SwitchRow::new();
+    let autostart = crate::ui::rows::switch_row();
     autostart.set_title(&ctx.t_or("remoteConfig.autoStart", "Auto-start mount / jobs"));
-    let cli = adw::EntryRow::new();
+    let cli = crate::ui::rows::entry_row();
     cli.set_title(&ctx.t_or(
         "wizards.cliImport.placeholder",
         "Import CLI flags (--transfers 8 --vfs-cache-mode full)",
@@ -653,7 +657,7 @@ fn present_ex(
             ),
             _ => ("", "", op.api_label(), ""),
         };
-        let enable = adw::SwitchRow::new();
+        let enable = crate::ui::rows::switch_row();
         if oauth_only && !label_key.is_empty() {
             enable.set_title(&ctx.t_or(label_key, fallback_label));
             enable.set_subtitle(&ctx.t_or(desc_key, fallback_desc));
@@ -668,7 +672,7 @@ fn present_ex(
             op,
             OperationType::Mount | OperationType::Sync | OperationType::Serve
         ));
-        let osrc = adw::EntryRow::new();
+        let osrc = crate::ui::rows::entry_row();
         osrc.set_title(&format!(
             "{} {}",
             op.as_str(),
@@ -681,7 +685,7 @@ fn present_ex(
                 crate::picker::FilePickerConfig::folders(),
             );
         }
-        let odst = adw::EntryRow::new();
+        let odst = crate::ui::rows::entry_row();
         odst.set_title(&format!(
             "{} {}",
             op.as_str(),
@@ -757,25 +761,29 @@ fn present_ex(
     question_error.add_css_class("error");
     question_error.set_wrap(true);
     question_error.set_xalign(0.0);
-    let answer_row = adw::EntryRow::new();
+    let answer_row = crate::ui::rows::entry_row();
     answer_row.set_title(&ctx.t_or("wizards.remoteConfig.enterValue", "Answer"));
-    let answer_switch = adw::SwitchRow::new();
+    let answer_switch = crate::ui::rows::switch_row();
     answer_switch.set_title(&ctx.t_or("wizards.remoteConfig.yes", "Yes / enabled"));
-    let example_row = adw::ComboRow::new();
+    let example_row = crate::ui::rows::combo_row();
     example_row.set_title(&ctx.t_or("wizards.remoteConfig.chooseOption", "Choose an option"));
     let oauth = super::interactive::OAuthHelper::new(&ctx);
 
     let nav = adw::ViewStack::new();
     let setup = adw::PreferencesPage::new();
     let identity = adw::PreferencesGroup::new();
-    identity.set_title(&ctx.t_or("wizards.remoteConfig.remoteName", "Identity"));
+    identity.set_title(&crate::ui::rows::escape(
+        ctx.t_or("wizards.remoteConfig.remoteName", "Identity"),
+    ));
     identity.add(&name);
     identity.add(&type_search);
     identity.add(&type_row);
     setup.add(&identity);
 
     let mode_group = adw::PreferencesGroup::new();
-    mode_group.set_title(&ctx.t_or("wizards.remoteConfig.fields", "Fields"));
+    mode_group.set_title(&crate::ui::rows::escape(
+        ctx.t_or("wizards.remoteConfig.fields", "Fields"),
+    ));
     let field_search = gtk::SearchEntry::new();
     field_search.set_placeholder_text(Some(
         &ctx.t_or("shared.search.placeholder", "Search fields"),
@@ -789,11 +797,11 @@ fn present_ex(
             apply_field_search(&state, &field_query.borrow());
         });
     }
-    let field_search_row = adw::ActionRow::new();
+    let field_search_row = crate::ui::rows::action_row();
     field_search_row.set_title(&ctx.t_or("shared.search.placeholder", "Search fields"));
     field_search_row.add_suffix(&field_search);
     mode_group.add(&field_search_row);
-    let adv_switch = adw::SwitchRow::new();
+    let adv_switch = crate::ui::rows::switch_row();
     let adv_on = ctx.t_or("wizards.remoteConfig.hideAdvanced", "Hide Advanced Options");
     let adv_off = ctx.t_or("wizards.remoteConfig.showAdvanced", "Show Advanced Options");
     adv_switch.set_title(if show_advanced.get() {
@@ -802,12 +810,12 @@ fn present_ex(
         &adv_off
     });
     adv_switch.set_active(show_advanced.get());
-    let json_switch = adw::SwitchRow::new();
+    let json_switch = crate::ui::rows::switch_row();
     let json_on = ctx.t_or("wizards.remoteConfig.switchToForm", "Switch to Form Mode");
     let json_off = ctx.t_or("wizards.remoteConfig.switchToJson", "Switch to JSON Mode");
     json_switch.set_title(if json_mode.get() { &json_on } else { &json_off });
     json_switch.set_active(json_mode.get());
-    let cmd_switch = adw::SwitchRow::new();
+    let cmd_switch = crate::ui::rows::switch_row();
     let cmd_on = ctx.t_or(
         "wizards.remoteConfig.hideCommandOptions",
         "Hide Command Options",
@@ -824,10 +832,12 @@ fn present_ex(
     setup.add(&mode_group);
 
     let cmd_group = adw::PreferencesGroup::new();
-    cmd_group.set_title(&ctx.t_or("wizards.remoteConfig.showCommandOptions", "Command options"));
+    cmd_group.set_title(&crate::ui::rows::escape(
+        ctx.t_or("wizards.remoteConfig.showCommandOptions", "Command options"),
+    ));
     cmd_group.set_visible(show_cmd.get());
     for def in crate::command_options::PREDEFINED_OPTIONS {
-        let row = adw::SwitchRow::new();
+        let row = crate::ui::rows::switch_row();
         row.set_title(&ctx.t_or(def.label_key, def.key));
         row.set_subtitle(&ctx.t_or(def.description_key, ""));
         row.set_active(crate::command_options::option_enabled(
@@ -862,7 +872,7 @@ fn present_ex(
             for (idx, option) in items.iter().enumerate() {
                 let row = match option.kind {
                     crate::command_options::CustomValueKind::Bool => {
-                        let switch = adw::SwitchRow::new();
+                        let switch = crate::ui::rows::switch_row();
                         switch.set_title(&option.key);
                         switch.set_subtitle(option.kind.as_str());
                         switch.set_active(option.bool_value);
@@ -875,7 +885,11 @@ fn present_ex(
                         switch.upcast::<gtk::Widget>()
                     }
                     crate::command_options::CustomValueKind::Number => {
-                        let spin = adw::SpinRow::with_range(-1_000_000_000.0, 1_000_000_000.0, 1.0);
+                        let spin = crate::ui::rows::spin_row_with_range(
+                            -1_000_000_000.0,
+                            1_000_000_000.0,
+                            1.0,
+                        );
                         spin.set_title(&option.key);
                         spin.set_subtitle(option.kind.as_str());
                         spin.set_value(option.number_value);
@@ -888,7 +902,7 @@ fn present_ex(
                         spin.upcast::<gtk::Widget>()
                     }
                     crate::command_options::CustomValueKind::Array => {
-                        let entry = adw::EntryRow::new();
+                        let entry = crate::ui::rows::entry_row();
                         entry.set_title(&format!("{} ({})", option.key, option.kind.as_str()));
                         entry.set_text(&option.array_value.join(", "));
                         let custom_options = custom_options.clone();
@@ -901,7 +915,7 @@ fn present_ex(
                         entry.upcast::<gtk::Widget>()
                     }
                     crate::command_options::CustomValueKind::Text => {
-                        let entry = adw::EntryRow::new();
+                        let entry = crate::ui::rows::entry_row();
                         entry.set_title(&format!("{} ({})", option.key, option.kind.as_str()));
                         entry.set_text(&option.text_value);
                         let custom_options = custom_options.clone();
@@ -943,23 +957,23 @@ fn present_ex(
     *rebuild_custom.borrow_mut() = refresh_custom.clone();
     refresh_custom();
     cmd_group.add(&{
-        let row = adw::ActionRow::new();
+        let row = crate::ui::rows::action_row();
         row.set_title(&ctx.t_or("wizards.remoteConfig.addOption", "Custom options"));
         row.set_activatable(false);
         row
     });
     cmd_group.add(&{
-        let holder = adw::ActionRow::new();
+        let holder = crate::ui::rows::action_row();
         holder.set_activatable(false);
         holder.add_suffix(&custom_box);
         holder
     });
-    let custom_key = adw::EntryRow::new();
+    let custom_key = crate::ui::rows::entry_row();
     custom_key.set_title(&ctx.t_or("wizards.remoteConfig.optionKey", "Option Key"));
     custom_key.set_tooltip_text(Some(
         &ctx.t_or("wizards.remoteConfig.optionKeyPlaceholder", "e.g., myFlag"),
     ));
-    let custom_type = adw::ComboRow::new();
+    let custom_type = crate::ui::rows::combo_row();
     custom_type.set_title(&ctx.t_or("wizards.remoteConfig.optionType", "Option Type"));
     custom_type.set_model(Some(&gtk::StringList::new(&[
         "boolean", "string", "number", "array",
@@ -996,7 +1010,7 @@ fn present_ex(
     cmd_group.add(&custom_key);
     cmd_group.add(&custom_type);
     cmd_group.add(&{
-        let row = adw::ActionRow::new();
+        let row = crate::ui::rows::action_row();
         row.set_title(&ctx.t_or("wizards.remoteConfig.addOption", "Add Option"));
         row.add_suffix(&add_custom);
         row
@@ -1008,7 +1022,9 @@ fn present_ex(
     fields_group.set_visible(!json_mode.get());
 
     let json_group = adw::PreferencesGroup::new();
-    json_group.set_title(&ctx.t_or("wizards.remoteConfig.switchToJson", "Parameters JSON"));
+    json_group.set_title(&crate::ui::rows::escape(
+        ctx.t_or("wizards.remoteConfig.switchToJson", "Parameters JSON"),
+    ));
     json_group.set_description(Some(&ctx.t_or(
         "wizards.remoteConfig.jsonEditorInfo.runtimeRemote",
         "Edit the remote parameters as JSON. Switch back to form to apply.",
@@ -1090,7 +1106,9 @@ fn present_ex(
         });
     }
     let defaults = adw::PreferencesGroup::new();
-    defaults.set_title(&ctx.t_or("modals.remoteConfig.steps.profiles", "Default profiles"));
+    defaults.set_title(&crate::ui::rows::escape(
+        ctx.t_or("modals.remoteConfig.steps.profiles", "Default profiles"),
+    ));
     defaults.add(&mount);
     defaults.add(&src);
     defaults.add(&dst);
@@ -1192,7 +1210,7 @@ fn present_ex(
         }
     }
 
-    let runtime_name = adw::EntryRow::new();
+    let runtime_name = crate::ui::rows::entry_row();
     runtime_name.set_title(&ctx.t_or("remoteConfig.runtimeProfile", "Runtime profile"));
     let runtime_view = gtk::TextView::new();
     runtime_view.set_wrap_mode(gtk::WrapMode::WordChar);
@@ -1225,14 +1243,18 @@ fn present_ex(
     }
     let runtime_page = adw::PreferencesPage::new();
     let runtime_group = adw::PreferencesGroup::new();
-    runtime_group.set_title(&ctx.t_or("modals.remoteConfig.steps.runtimeRemote", "Runtime remote"));
+    runtime_group.set_title(&crate::ui::rows::escape(
+        ctx.t_or("modals.remoteConfig.steps.runtimeRemote", "Runtime remote"),
+    ));
     runtime_group.set_description(Some(&ctx.t_or(
         "wizards.remoteConfig.runtimeRemoteWarning.description",
         "These options are applied to jobs at runtime and are not written into rclone.conf.",
     )));
     runtime_group.add(&runtime_name);
     let runtime_typed = adw::PreferencesGroup::new();
-    runtime_typed.set_title(&ctx.t_or("remoteConfig.options", "Provider options"));
+    runtime_typed.set_title(&crate::ui::rows::escape(
+        ctx.t_or("remoteConfig.options", "Provider options"),
+    ));
     let runtime_flag_rows: Rc<RefCell<Vec<super::flag_widget::FlagRow>>> =
         Rc::new(RefCell::new(Vec::new()));
     let initial_runtime_json = parse_runtime_json(&textview_text(&runtime_view));
@@ -1297,7 +1319,7 @@ fn present_ex(
     sidebar.add_css_class("navigation-sidebar");
     sidebar.set_selection_mode(gtk::SelectionMode::Single);
     for step in &steps {
-        let row = adw::ActionRow::new();
+        let row = crate::ui::rows::action_row();
         row.set_title(&ctx.t_or(&step.i18n_key(), step.fallback_label()));
         row.set_activatable(true);
         row.add_prefix(&gtk::Image::from_icon_name(step.icon_name()));
@@ -2044,7 +2066,7 @@ fn option_row(
     };
     match kind {
         ControlKind::Bool => {
-            let row = adw::SwitchRow::new();
+            let row = crate::ui::rows::switch_row();
             row.set_title(&title);
             row.set_subtitle(&option.help);
             row.set_active(initial.eq_ignore_ascii_case("true"));
@@ -2056,7 +2078,7 @@ fn option_row(
                 "true".to_string(),
                 "false".to_string(),
             ]);
-            let row = adw::ComboRow::new();
+            let row = crate::ui::rows::combo_row();
             row.set_title(&title);
             row.set_subtitle(&option.help);
             row.set_model(Some(&gtk::StringList::new(&["unset", "true", "false"])));
@@ -2071,7 +2093,7 @@ fn option_row(
                 .map(|(v, h)| crate::config_search::example_choice_label(v, h))
                 .collect();
             let values = Rc::new(examples.iter().map(|(v, _)| v.clone()).collect::<Vec<_>>());
-            let row = adw::ComboRow::new();
+            let row = crate::ui::rows::combo_row();
             row.set_title(&title);
             row.set_subtitle(&option.help);
             let refs: Vec<&str> = labels.iter().map(|s| s.as_str()).collect();
@@ -2080,7 +2102,7 @@ fn option_row(
                 row.set_selected(idx as u32);
             }
             if crate::config_search::should_search_examples(&option.name, examples.len()) {
-                let search = adw::EntryRow::new();
+                let search = crate::ui::rows::entry_row();
                 search.set_title(&title);
                 if !option.help.is_empty() {
                     search.set_tooltip_text(Some(&option.help));
@@ -2096,7 +2118,7 @@ fn option_row(
             }
         }
         ControlKind::MultiSelect => {
-            let row = adw::ExpanderRow::new();
+            let row = crate::ui::rows::expander_row();
             row.set_title(&title);
             row.set_subtitle(&option.help);
             let selected: Vec<String> = initial
@@ -2112,7 +2134,7 @@ fn option_row(
                     check.set_tooltip_text(Some(help));
                 }
                 check.set_active(selected.iter().any(|s| s == &value.to_ascii_lowercase()));
-                let wrap = adw::ActionRow::new();
+                let wrap = crate::ui::rows::action_row();
                 wrap.set_title(value);
                 if !help.is_empty() {
                     wrap.set_subtitle(help);
@@ -2129,7 +2151,7 @@ fn option_row(
             FieldWidget::Multi(row, Rc::new(items))
         }
         ControlKind::Numeric => {
-            let row = adw::SpinRow::with_range(-1_000_000_000.0, 1_000_000_000.0, 1.0);
+            let row = crate::ui::rows::spin_row_with_range(-1_000_000_000.0, 1_000_000_000.0, 1.0);
             row.set_title(&title);
             row.set_subtitle(&option.help);
             if let Ok(v) = initial.parse::<f64>() {
@@ -2143,7 +2165,7 @@ fn option_row(
             FieldWidget::Spin(row)
         }
         ControlKind::Input => {
-            let row = adw::EntryRow::new();
+            let row = crate::ui::rows::entry_row();
             row.set_title(&title);
             if !option.help.is_empty() {
                 row.set_tooltip_text(Some(&option.help));
@@ -2625,7 +2647,9 @@ fn helper_json_page(
     fill_json_view(&view, &value, restrict);
     let page = adw::PreferencesPage::new();
     let group = adw::PreferencesGroup::new();
-    group.set_title(&ctx.t_or(&format!("modals.remoteConfig.steps.{kind}"), fallback));
+    group.set_title(&crate::ui::rows::escape(
+        ctx.t_or(&format!("modals.remoteConfig.steps.{kind}"), fallback),
+    ));
     group.set_description(Some(&ctx.t_or(
         "wizards.remoteConfig.runtimeRemoteWarning.description",
         "These options are stored on the remote profile and are not written into rclone.conf.",
@@ -2750,13 +2774,13 @@ fn attach_provider_typeahead(
             let hits =
                 crate::config_search::filter_providers(&search.text(), &names, &descriptions);
             if hits.is_empty() {
-                let empty = adw::ActionRow::new();
+                let empty = crate::ui::rows::action_row();
                 empty.set_activatable(false);
                 empty.set_title(&empty_label);
                 list.append(&empty);
             }
             for hit in hits.into_iter().take(40) {
-                let item = adw::ActionRow::new();
+                let item = crate::ui::rows::action_row();
                 let title = labels.get(hit.index).cloned().unwrap_or(hit.name.clone());
                 item.set_title(&title);
                 if !hit.description.is_empty() {
@@ -2834,8 +2858,10 @@ pub(super) fn inline_provider_editor(
 
     let identity = adw::PreferencesGroup::new();
     identity.set_widget_name("section-general");
-    identity.set_title(&ctx.t_or("remoteConfig.provider", "Provider"));
-    let type_row = adw::ActionRow::new();
+    identity.set_title(&crate::ui::rows::escape(
+        ctx.t_or("remoteConfig.provider", "Provider"),
+    ));
+    let type_row = crate::ui::rows::action_row();
     type_row.set_title(&ctx.t_or("wizards.remoteConfig.remoteType", "Remote Type"));
     let type_label = provider
         .as_ref()
@@ -2859,7 +2885,9 @@ pub(super) fn inline_provider_editor(
     ));
     let advanced_group = adw::PreferencesGroup::new();
     advanced_group.set_widget_name("section-advanced");
-    advanced_group.set_title(&ctx.t_or("wizards.remoteConfig.advancedOptions", "Advanced options"));
+    advanced_group.set_title(&crate::ui::rows::escape(
+        ctx.t_or("wizards.remoteConfig.advancedOptions", "Advanced options"),
+    ));
     let field_query = Rc::new(RefCell::new(String::new()));
     let state = Rc::new(RefCell::new(WizardState {
         providers: providers.clone(),
@@ -2907,7 +2935,9 @@ pub(super) fn inline_provider_editor(
     );
 
     let mode_group = adw::PreferencesGroup::new();
-    mode_group.set_title(&ctx.t_or("wizards.remoteConfig.fields", "Fields"));
+    mode_group.set_title(&crate::ui::rows::escape(
+        ctx.t_or("wizards.remoteConfig.fields", "Fields"),
+    ));
     let field_search = gtk::SearchEntry::new();
     field_search.set_placeholder_text(Some(
         &ctx.t_or("shared.search.placeholder", "Search fields"),
@@ -2921,19 +2951,19 @@ pub(super) fn inline_provider_editor(
             apply_field_search(&state, &field_query.borrow());
         });
     }
-    let field_search_row = adw::ActionRow::new();
+    let field_search_row = crate::ui::rows::action_row();
     field_search_row.set_title(&ctx.t_or("shared.search.placeholder", "Search fields"));
     field_search_row.add_suffix(&field_search);
     mode_group.add(&field_search_row);
-    let adv_switch = adw::SwitchRow::new();
+    let adv_switch = crate::ui::rows::switch_row();
     let adv_on = ctx.t_or("wizards.remoteConfig.hideAdvanced", "Hide Advanced Options");
     let adv_off = ctx.t_or("wizards.remoteConfig.showAdvanced", "Show Advanced Options");
     adv_switch.set_title(&adv_off);
-    let json_switch = adw::SwitchRow::new();
+    let json_switch = crate::ui::rows::switch_row();
     let json_on = ctx.t_or("wizards.remoteConfig.switchToForm", "Switch to Form Mode");
     let json_off = ctx.t_or("wizards.remoteConfig.switchToJson", "Switch to JSON Mode");
     json_switch.set_title(&json_off);
-    let cmd_switch = adw::SwitchRow::new();
+    let cmd_switch = crate::ui::rows::switch_row();
     cmd_switch.set_title(&ctx.t_or(
         "wizards.remoteConfig.showCommandOptions",
         "Show Command Options",
@@ -2943,10 +2973,12 @@ pub(super) fn inline_provider_editor(
     mode_group.add(&cmd_switch);
 
     let cmd_group = adw::PreferencesGroup::new();
-    cmd_group.set_title(&ctx.t_or("wizards.remoteConfig.showCommandOptions", "Command options"));
+    cmd_group.set_title(&crate::ui::rows::escape(
+        ctx.t_or("wizards.remoteConfig.showCommandOptions", "Command options"),
+    ));
     cmd_group.set_visible(false);
     for def in crate::command_options::PREDEFINED_OPTIONS {
-        let row = adw::SwitchRow::new();
+        let row = crate::ui::rows::switch_row();
         row.set_title(&ctx.t_or(def.label_key, def.key));
         row.set_subtitle(&ctx.t_or(def.description_key, ""));
         row.set_active(crate::command_options::option_enabled(
@@ -2975,7 +3007,9 @@ pub(super) fn inline_provider_editor(
 
     advanced_group.set_visible(false);
     let json_group = adw::PreferencesGroup::new();
-    json_group.set_title(&ctx.t_or("wizards.remoteConfig.switchToJson", "Parameters JSON"));
+    json_group.set_title(&crate::ui::rows::escape(
+        ctx.t_or("wizards.remoteConfig.switchToJson", "Parameters JSON"),
+    ));
     json_group.add(&json_editor.root);
     json_group.set_visible(false);
     {

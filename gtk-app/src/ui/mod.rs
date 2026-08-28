@@ -13,6 +13,7 @@ mod operation_control;
 mod preferences;
 mod quick_run_card;
 mod remote_config;
+pub mod rows;
 mod tray;
 mod vfs_panel;
 mod window;

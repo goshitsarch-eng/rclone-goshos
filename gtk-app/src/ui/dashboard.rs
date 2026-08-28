@@ -534,7 +534,7 @@ impl Dashboard {
             }
         }
         if snap.remotes.is_empty() {
-            let empty = adw::ActionRow::new();
+            let empty = crate::ui::rows::action_row();
             empty.set_title(
                 &self
                     .ctx
@@ -546,7 +546,7 @@ impl Dashboard {
             ));
             self.sidebar_list.append(&empty);
         } else if shown == 0 && !query.is_empty() {
-            let empty = adw::ActionRow::new();
+            let empty = crate::ui::rows::action_row();
             empty.set_activatable(false);
             empty.set_title(&self.ctx.tf_or(
                 "sidebar.noRemotesFound",
@@ -995,7 +995,7 @@ impl Dashboard {
         });
         let total = remotes.len();
         if total > 0 {
-            let summary = adw::ActionRow::new();
+            let summary = crate::ui::rows::action_row();
             summary.set_title(
                 &self
                     .ctx
@@ -1048,7 +1048,7 @@ impl Dashboard {
         let list = gtk::ListBox::new();
         list.add_css_class("boxed-list");
         for remote in remotes {
-            let row = adw::ActionRow::new();
+            let row = crate::ui::rows::action_row();
             row.set_title(&remote.name);
             row.set_subtitle(&format!(
                 "{} · {}{}",
@@ -1602,7 +1602,7 @@ impl Dashboard {
             .cloned()
             .collect();
         if filtered.is_empty() {
-            let row = adw::ActionRow::new();
+            let row = crate::ui::rows::action_row();
             row.set_title(
                 &self
                     .ctx
@@ -1631,7 +1631,7 @@ impl Dashboard {
             .unwrap_or(0.0);
         let bw_group = gtk::ListBox::new();
         bw_group.add_css_class("boxed-list");
-        let current = adw::ActionRow::new();
+        let current = crate::ui::rows::action_row();
         current.set_title(
             &self
                 .ctx
@@ -1644,7 +1644,7 @@ impl Dashboard {
         ));
         bw_group.append(&current);
         let limit = ctx_settings_bandwidth(&self.ctx);
-        let limit_row = adw::ActionRow::new();
+        let limit_row = crate::ui::rows::action_row();
         limit_row.set_title(
             &self
                 .ctx
@@ -1658,7 +1658,7 @@ impl Dashboard {
             .map(|c| c.bwlimit(None).map(|v| crate::jobs::parse_bwlimit(&v)));
         let (live_row, upload_row, download_row, total_row) = match fetched {
             Some(Ok(live)) => {
-                let live_row = adw::ActionRow::new();
+                let live_row = crate::ui::rows::action_row();
                 live_row.set_title(&self.ctx.t_or("dashboard.bandwidth.liveLimit", "Live limit"));
                 live_row.set_subtitle(&bandwidth_live_subtitle(&self.ctx, &live));
                 bw_group.append(&live_row);
@@ -1711,7 +1711,7 @@ impl Dashboard {
             presets.append(&btn);
         }
         self.host().append(&presets);
-        let custom = adw::EntryRow::new();
+        let custom = crate::ui::rows::entry_row();
         custom.set_title(&self.ctx.t_or(
             "dashboard.bandwidth.customLimit",
             "Custom limit (e.g. 2M or 1M:10M)",
@@ -1761,7 +1761,7 @@ impl Dashboard {
         let sys = gtk::ListBox::new();
         sys.add_css_class("boxed-list");
         let ready = self.ctx.engine_ready();
-        let status = adw::ActionRow::new();
+        let status = crate::ui::rows::action_row();
         status.set_title(
             &self
                 .ctx
@@ -1791,7 +1791,7 @@ impl Dashboard {
                     .filter(|s| !s.is_empty())
             })
             .unwrap_or_else(|| self.ctx.t_or("generalOverview.system.unknown", "unknown"));
-        let ver_row = adw::ActionRow::new();
+        let ver_row = crate::ui::rows::action_row();
         ver_row.set_title(
             &self
                 .ctx
@@ -1801,7 +1801,7 @@ impl Dashboard {
         sys.append(&ver_row);
         if let Some(id) = &identity {
             if !id.os.is_empty() && id.os != "unknown" {
-                let row = adw::ActionRow::new();
+                let row = crate::ui::rows::action_row();
                 row.set_title(
                     &self
                         .ctx
@@ -1811,7 +1811,7 @@ impl Dashboard {
                 sys.append(&row);
             }
             if !id.go.is_empty() {
-                let row = adw::ActionRow::new();
+                let row = crate::ui::rows::action_row();
                 row.set_title(
                     &self
                         .ctx
@@ -1821,7 +1821,7 @@ impl Dashboard {
                 sys.append(&row);
             }
         }
-        let remotes_row = adw::ActionRow::new();
+        let remotes_row = crate::ui::rows::action_row();
         remotes_row.set_title(
             &self
                 .ctx
@@ -1831,12 +1831,12 @@ impl Dashboard {
         sys.append(&remotes_row);
         if let Some(client) = self.ctx.client() {
             if let Ok(pid) = client.pid() {
-                let row = adw::ActionRow::new();
+                let row = crate::ui::rows::action_row();
                 row.set_title(&self.ctx.t_or("generalOverview.system.pid", "Process ID:"));
                 row.set_subtitle(&pid.to_string());
                 sys.append(&row);
                 if let Some(secs) = crate::rclone::process_uptime_secs(pid) {
-                    let row = adw::ActionRow::new();
+                    let row = crate::ui::rows::action_row();
                     row.set_title(
                         &self
                             .ctx
@@ -1854,7 +1854,7 @@ impl Dashboard {
                     .map(|arr| arr.len())
                     .unwrap_or(0);
                 if count > 0 {
-                    let row = adw::ActionRow::new();
+                    let row = crate::ui::rows::action_row();
                     row.set_title(&self.ctx.t_or("dashboard.system.groups", "Job groups"));
                     row.set_subtitle(&count.to_string());
                     sys.append(&row);
@@ -1864,7 +1864,7 @@ impl Dashboard {
         if let Some(mem) = self.ctx.client().and_then(|c| c.memstats().ok()) {
             let alloc = mem.get("Alloc").and_then(|x| x.as_i64()).unwrap_or(0);
             let sys_bytes = mem.get("Sys").and_then(|x| x.as_i64()).unwrap_or(0);
-            let row = adw::ActionRow::new();
+            let row = crate::ui::rows::action_row();
             row.set_title(
                 &self
                     .ctx
@@ -1877,7 +1877,7 @@ impl Dashboard {
             ));
             sys.append(&row);
         }
-        let jobs_row = adw::ActionRow::new();
+        let jobs_row = crate::ui::rows::action_row();
         jobs_row.set_title(&self.ctx.t_or("dashboard.system.activity", "Activity"));
         jobs_row.set_subtitle(
             &self.ctx.tf(
@@ -1910,7 +1910,7 @@ impl Dashboard {
         if records.is_empty() {
             let autos = gtk::ListBox::new();
             autos.add_css_class("boxed-list");
-            let row = adw::ActionRow::new();
+            let row = crate::ui::rows::action_row();
             row.set_title(
                 &self
                     .ctx
@@ -2193,7 +2193,7 @@ impl Dashboard {
                         continue;
                     }
                     for (pname, profile) in profiles {
-                        let row = adw::ActionRow::new();
+                        let row = crate::ui::rows::action_row();
                         row.set_activatable(true);
                         row.set_title(&format!("{op} / {pname}"));
                         row.set_subtitle(&crate::jobs::profile_summary(op_ty, profile));
@@ -2284,7 +2284,7 @@ impl Dashboard {
                 }
             }
             if plist.first_child().is_none() {
-                let row = adw::ActionRow::new();
+                let row = crate::ui::rows::action_row();
                 row.set_title(&self.ctx.t_or(
                     "remote.noProfiles",
                     "No saved profiles — configure the remote to add them",
@@ -3308,7 +3308,7 @@ impl Dashboard {
             return;
         };
         if cfg.app.cron_enabled && !cfg.app.cron_expression.is_empty() {
-            let row = adw::ActionRow::new();
+            let row = crate::ui::rows::action_row();
             row.set_title(&self.ctx.t_or("flow.quickRun.badges.scheduled", "Scheduled"));
             row.set_subtitle(&crate::rclone::describe_cron_i18n(
                 &cfg.app.cron_expression,
@@ -3317,7 +3317,7 @@ impl Dashboard {
             self.detail_box().append(&row);
         }
         if cfg.app.watch_enabled {
-            let row = adw::ActionRow::new();
+            let row = crate::ui::rows::action_row();
             row.set_title(&self.ctx.t_or(
                 "automation.monitoring.realtimeSchedule",
                 "Real-time File Watcher",
@@ -3590,7 +3590,7 @@ impl Dashboard {
             let Ok(usage) = client.du(Some(&mount.mount_point)) else {
                 continue;
             };
-            let row = adw::ActionRow::new();
+            let row = crate::ui::rows::action_row();
             let title = if mount.profile.is_empty() {
                 self.ctx
                     .t_or("dashboard.appDetail.mountDiskUsage", "Mount point usage")
@@ -3626,7 +3626,7 @@ impl Dashboard {
 
     fn append_disk_usage(&self, name: &str) {
         let box_ = gtk::Box::new(gtk::Orientation::Vertical, 6);
-        let usage = adw::ActionRow::new();
+        let usage = crate::ui::rows::action_row();
         usage.set_title(&self.ctx.t_or("detailShared.diskUsage.title", "Disk Usage"));
         let spinner = gtk::Spinner::new();
         spinner.set_valign(gtk::Align::Center);
@@ -4086,7 +4086,7 @@ impl Dashboard {
     }
 
     fn activity_load_more_row(&self, remaining: usize) -> adw::ActionRow {
-        let row = adw::ActionRow::new();
+        let row = crate::ui::rows::action_row();
         row.set_title(&self.ctx.tf_or(
             "nautilus.loadMore",
             "Show {{count}} more",
@@ -4129,7 +4129,7 @@ impl Dashboard {
         };
         self.detail_box().append(&section_label(&heading));
         if qrs.is_empty() {
-            let row = adw::ActionRow::new();
+            let row = crate::ui::rows::action_row();
             row.set_title(&self.ctx.t_or("dashboard.quickRuns.empty", "No quick runs"));
             let empty = gtk::ListBox::new();
             empty.add_css_class("boxed-list");
@@ -4903,7 +4903,7 @@ pub(super) fn serve_card_row(
     serve: &crate::rclone::ServeItem,
     on_changed: impl Fn() + 'static,
 ) -> adw::ActionRow {
-    let row = adw::ActionRow::new();
+    let row = crate::ui::rows::action_row();
     row.set_title(&format!("{} · {}", serve.serve_type, serve.fs));
     let mut subtitle = serve.addr.clone();
     if !serve.profile.is_empty() {
@@ -5030,7 +5030,7 @@ fn append_bandwidth_detail_rows(
     live: &crate::jobs::BwLimitStatus,
 ) -> [adw::ActionRow; 3] {
     crate::jobs::bandwidth_details(live).map(|(key, fallback, bytes)| {
-        let row = adw::ActionRow::new();
+        let row = crate::ui::rows::action_row();
         row.set_title(&ctx.t_or(key, fallback));
         row.set_subtitle(&crate::jobs::format_bandwidth_rate(bytes));
         list.append(&row);
@@ -5039,7 +5039,7 @@ fn append_bandwidth_detail_rows(
 }
 
 fn append_bandwidth_error_row(ctx: &AppCtx, list: &gtk::ListBox, on_retry: Rc<dyn Fn()>) {
-    let row = adw::ActionRow::new();
+    let row = crate::ui::rows::action_row();
     row.set_title(&ctx.t_or(
         "generalOverview.bandwidth.error",
         "Error loading bandwidth info",

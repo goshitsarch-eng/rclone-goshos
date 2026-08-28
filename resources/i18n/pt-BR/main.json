@@ -2755,6 +2755,7 @@
     "empty": {
       "noStarred": "Arquivos Sem Estrela",
       "folderEmpty": "O diretório está vazio",
+      "folderHint": "Solte arquivos aqui ou use a barra de ferramentas para enviar ou criar uma pasta.",
       "noFiles": "Archive is empty"
     },
     "selection": {

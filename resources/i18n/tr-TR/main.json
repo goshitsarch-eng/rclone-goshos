@@ -2755,6 +2755,7 @@
     "empty": {
       "noStarred": "Yıldızlı Dosya Yok",
       "folderEmpty": "Klasör Boş",
+      "folderHint": "Dosyaları buraya bırakın veya araç çubuğundan yükleyin ya da klasör oluşturun.",
       "noFiles": "Archive is empty"
     },
     "selection": {

@@ -287,7 +287,8 @@ impl NautilusView {
         ));
         let copy_btn = gtk::Button::from_icon_name("edit-copy-symbolic");
         copy_btn.set_tooltip_text(Some(&ctx.t_or("nautilus.contextMenu.copy", "Copy")));
-        let copy_to_btn = gtk::Button::from_icon_name("folder-copy-symbolic");
+        // `folder-copy-symbolic` does not exist in the Adwaita icon theme.
+        let copy_to_btn = gtk::Button::from_icon_name("folder-download-symbolic");
         copy_to_btn.set_tooltip_text(Some(&ctx.t_or("nautilus.contextMenu.copyTo", "Copy to…")));
         let move_to_btn = gtk::Button::from_icon_name("send-to-symbolic");
         move_to_btn.set_tooltip_text(Some(&ctx.t_or("nautilus.contextMenu.moveTo", "Move to…")));
@@ -2902,7 +2903,7 @@ impl NautilusView {
             .nautilus
             .sidebar_drive_order
             .clone();
-        let configure = adw::ActionRow::new();
+        let configure = crate::ui::rows::action_row();
         configure.set_title(
             &self
                 .ctx
@@ -2924,7 +2925,7 @@ impl NautilusView {
             });
         }
         self.sidebar.append(&configure);
-        let shortcuts = adw::ActionRow::new();
+        let shortcuts = crate::ui::rows::action_row();
         shortcuts.set_title(&self.ctx.t_or("shortcuts.title", "Keyboard Shortcuts"));
         shortcuts.set_activatable(true);
         shortcuts.add_prefix(&gtk::Image::from_icon_name("input-keyboard-symbolic"));
@@ -2937,7 +2938,7 @@ impl NautilusView {
             });
         }
         self.sidebar.append(&shortcuts);
-        let starred_row = adw::ActionRow::new();
+        let starred_row = crate::ui::rows::action_row();
         starred_row.set_title(&self.ctx.t_or("nautilus.titles.starred", "Starred"));
         starred_row.set_activatable(true);
         starred_row.add_prefix(&gtk::Image::from_icon_name("starred-symbolic"));
@@ -2966,7 +2967,7 @@ impl NautilusView {
         );
         let bookmarks = self.ctx.settings.borrow().nautilus.bookmarks.clone();
         if bookmarks.is_empty() {
-            let hint = adw::ActionRow::new();
+            let hint = crate::ui::rows::action_row();
             hint.set_title(
                 &self
                     .ctx
@@ -3050,7 +3051,7 @@ impl NautilusView {
     }
 
     fn add_side_header_drop(&self, title: &str, dest: Option<InternalDrop>) {
-        let row = adw::ActionRow::new();
+        let row = crate::ui::rows::action_row();
         row.set_title(title);
         if dest.is_some() {
             row.set_activatable(false);
@@ -3076,7 +3077,7 @@ impl NautilusView {
         subtitle: Option<&str>,
         tooltip: Option<&str>,
     ) {
-        let row = adw::ActionRow::new();
+        let row = crate::ui::rows::action_row();
         row.set_title(title);
         if let Some(subtitle) = subtitle {
             row.set_subtitle(subtitle);
@@ -3774,6 +3775,12 @@ impl NautilusView {
             *self.last_listing_right.borrow_mut() = entries.to_vec();
             self.listing_shown_right.set(0);
         }
+        if entries.is_empty() {
+            // Without this an empty folder was just a blank pane — the only
+            // hint was a count in the status bar.
+            self.append_empty_state(primary);
+            return;
+        }
         if !self.is_grid() {
             let list = if primary {
                 &self.list
@@ -3783,6 +3790,58 @@ impl NautilusView {
             list.append(&self.column_header_row());
         }
         self.append_listing_batch(primary);
+    }
+
+    /// `AdwStatusPage` shown in place of the listing when a folder has nothing
+    /// in it.
+    fn append_empty_state(&self, primary: bool) {
+        let starred = if primary {
+            self.current.borrow().starred
+        } else {
+            self.secondary.borrow().starred
+        };
+        let page = adw::StatusPage::new();
+        page.set_icon_name(Some(if starred {
+            "starred-symbolic"
+        } else {
+            "folder-symbolic"
+        }));
+        page.set_title(&if starred {
+            self.ctx
+                .t_or("nautilus.empty.noStarred", "No Starred Files")
+        } else {
+            self.ctx
+                .t_or("nautilus.empty.folderEmpty", "Folder is Empty")
+        });
+        if !starred {
+            page.set_description(Some(&self.ctx.t_or(
+                "nautilus.empty.folderHint",
+                "Drop files here, or use the toolbar to upload or create a folder.",
+            )));
+        }
+        page.set_vexpand(true);
+        if self.is_grid() {
+            let grid = if primary {
+                &self.grid
+            } else {
+                &self.grid_right
+            };
+            let child = gtk::FlowBoxChild::new();
+            child.set_child(Some(&page));
+            child.set_can_focus(false);
+            grid.append(&child);
+        } else {
+            let list = if primary {
+                &self.list
+            } else {
+                &self.list_right
+            };
+            let row = gtk::ListBoxRow::new();
+            row.set_activatable(false);
+            row.set_selectable(false);
+            row.set_child(Some(&page));
+            list.append(&row);
+        }
     }
 
     fn append_listing_batch(&self, primary: bool) {
@@ -3846,7 +3905,7 @@ impl NautilusView {
     }
 
     fn load_more_row(&self, remaining: usize, primary: bool) -> adw::ActionRow {
-        let row = adw::ActionRow::new();
+        let row = crate::ui::rows::action_row();
         row.set_title(&self.load_more_label(remaining));
         row.set_activatable(true);
         row.set_widget_name("load-more");
@@ -3871,19 +3930,19 @@ impl NautilusView {
     }
 
     fn column_header_row(&self) -> adw::ActionRow {
-        let row = adw::ActionRow::new();
+        let row = crate::ui::rows::action_row();
         row.set_title(&self.ctx.t_or("nautilus.columns.name", "Name"));
         row.set_activatable(false);
         row.set_sensitive(false);
         row.set_widget_name("column-header");
+        // No `.dim-label` here: `set_sensitive(false)` above already dims the
+        // whole row, and the two together left the headers barely legible.
         let size = gtk::Label::new(Some(&self.ctx.t_or("nautilus.columns.size", "Size")));
-        size.add_css_class("dim-label");
         size.set_width_chars(10);
         size.set_xalign(1.0);
         let modified = gtk::Label::new(Some(
             &self.ctx.t_or("nautilus.columns.modified", "Modified"),
         ));
-        modified.add_css_class("dim-label");
         modified.set_width_chars(18);
         modified.set_xalign(1.0);
         row.add_suffix(&size);
@@ -3892,7 +3951,7 @@ impl NautilusView {
     }
 
     fn entry_row(&self, entry: DirEntry, tab: &TabState, primary: bool) -> adw::ActionRow {
-        let row = adw::ActionRow::new();
+        let row = crate::ui::rows::action_row();
         row.set_title(&entry.name);
         row.set_widget_name(&entry.name);
         row.set_subtitle(&if entry.is_dir {
@@ -3910,8 +3969,9 @@ impl NautilusView {
             row.add_prefix(&self.starred_unstar_button(&entry.path, &entry.name));
         }
         if self.entry_is_cut(tab, &entry.name) {
+            // `.cut-item` already sets opacity: 0.5; setting it on the widget
+            // as well multiplied to 0.25 and made cut rows nearly invisible.
             row.add_css_class("cut-item");
-            row.set_opacity(0.5);
         }
         let size = gtk::Label::new(Some(&if entry.is_dir {
             String::new()
@@ -5041,7 +5101,7 @@ impl NautilusView {
             };
             grid.insert(&box_, -1);
         } else {
-            let row = adw::ActionRow::new();
+            let row = crate::ui::rows::action_row();
             row.set_title(&title);
             row.set_subtitle(message);
             row.add_suffix(&retry);
@@ -6943,7 +7003,7 @@ impl NautilusView {
                 .collect()
         };
         if jobs.is_empty() && history.is_empty() {
-            let row = adw::ActionRow::new();
+            let row = crate::ui::rows::action_row();
             row.set_title(
                 &self
                     .ctx
@@ -6988,7 +7048,7 @@ impl NautilusView {
         } else {
             (job.progress * 100.0).round() as i32
         };
-        let row = adw::ActionRow::new();
+        let row = crate::ui::rows::action_row();
         row.set_activatable(true);
         row.set_title(&crate::fileops::ops_job_title(
             &job.operation,
@@ -7098,20 +7158,20 @@ impl NautilusView {
         let (speed, eta) = crate::jobs::job_speed_eta(job);
         let transfers = crate::jobs::stats_i64(&job.stats, &["transfers"]);
         let total_transfers = crate::jobs::stats_i64(&job.stats, &["totalTransfers"]);
-        let files_row = adw::ActionRow::new();
+        let files_row = crate::ui::rows::action_row();
         files_row.set_title(&self.ctx.t_or("fileBrowser.operations.files", "Files"));
         files_row.set_subtitle(&format!("{transfers} / {total_transfers}"));
         list.append(&files_row);
-        let speed_row = adw::ActionRow::new();
+        let speed_row = crate::ui::rows::action_row();
         speed_row.set_title(&self.ctx.t_or("fileBrowser.operations.speed", "Speed"));
         speed_row.set_subtitle(&speed);
         list.append(&speed_row);
-        let eta_row = adw::ActionRow::new();
+        let eta_row = crate::ui::rows::action_row();
         eta_row.set_title(&self.ctx.t_or("fileBrowser.operations.eta", "ETA"));
         eta_row.set_subtitle(&eta);
         list.append(&eta_row);
         if !job.src.is_empty() {
-            let source = adw::ActionRow::new();
+            let source = crate::ui::rows::action_row();
             source.set_title(
                 &self
                     .ctx
@@ -7121,7 +7181,7 @@ impl NautilusView {
             list.append(&source);
         }
         if !job.dst.is_empty() {
-            let dest = adw::ActionRow::new();
+            let dest = crate::ui::rows::action_row();
             dest.set_title(
                 &self
                     .ctx
@@ -7131,7 +7191,7 @@ impl NautilusView {
             list.append(&dest);
         }
         if crate::jobs::has_known_start_time(job) {
-            let started = adw::ActionRow::new();
+            let started = crate::ui::rows::action_row();
             started.set_title(
                 &self
                     .ctx
@@ -7150,7 +7210,7 @@ impl NautilusView {
             "failed" | "running" | "Failed" | "Running"
         ) {
             if let Some(error) = crate::jobs::job_error_text(job) {
-                let err_row = adw::ActionRow::new();
+                let err_row = crate::ui::rows::action_row();
                 err_row.set_title(&self.ctx.t_or("fileBrowser.operations.failed", "Failed"));
                 err_row.set_subtitle(&error);
                 err_row.add_css_class("error");
@@ -7169,7 +7229,7 @@ impl NautilusView {
         }
         let previews = crate::jobs::job_transfer_previews(job, 6);
         if !previews.is_empty() {
-            let header = adw::ActionRow::new();
+            let header = crate::ui::rows::action_row();
             header.set_title(&self.ctx.t_or(
                 if previews.len() == 1 {
                     "fileBrowser.operations.currentFile"
@@ -7180,7 +7240,7 @@ impl NautilusView {
             ));
             list.append(&header);
             for (name, detail) in &previews {
-                let child = adw::ActionRow::new();
+                let child = crate::ui::rows::action_row();
                 child.set_title(name);
                 child.set_subtitle(detail);
                 list.append(&child);
@@ -7188,14 +7248,14 @@ impl NautilusView {
         }
         let completed = crate::jobs::job_completed_previews(job, 12);
         if !completed.is_empty() {
-            let header = adw::ActionRow::new();
+            let header = crate::ui::rows::action_row();
             header.set_title(&self.ctx.t_or(
                 crate::jobs::job_transferred_label_key(&job.operation),
                 "Processed files",
             ));
             list.append(&header);
             for item in completed {
-                let child = adw::ActionRow::new();
+                let child = crate::ui::rows::action_row();
                 child.set_title(&item.name);
                 if !item.detail.is_empty() {
                     child.set_subtitle(&item.detail);
@@ -7207,14 +7267,14 @@ impl NautilusView {
                 list.append(&child);
             }
         } else if previews.is_empty() && live {
-            let empty = adw::ActionRow::new();
+            let empty = crate::ui::rows::action_row();
             empty.set_title(&self.ctx.t_or(
                 "shared.transferActivity.empty.noActive",
                 "No active transfers",
             ));
             list.append(&empty);
         }
-        let details = adw::ActionRow::new();
+        let details = crate::ui::rows::action_row();
         details.set_title(
             &self
                 .ctx

@@ -338,7 +338,7 @@ impl JsonEditor {
         }
         let cursor = cursor_at(&text, byte);
         for hit in hits {
-            let row = adw::ActionRow::new();
+            let row = crate::ui::rows::action_row();
             row.set_title(&hit.label);
             if !hit.detail.is_empty() {
                 row.set_subtitle(&hit.detail);

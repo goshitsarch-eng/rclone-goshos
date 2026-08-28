@@ -38,7 +38,7 @@ impl PrefsSession {
             "These rclone engine settings are not applied until you save and restart.",
         )));
         banner.set_visible(false);
-        let banner_row = adw::ActionRow::new();
+        let banner_row = crate::ui::rows::action_row();
         banner_row.set_title(&glib::markup_escape_text(
             &ctx.t_or("modals.preferences.saveAndRestart", "Save & Restart Engine"),
         ));
@@ -217,7 +217,9 @@ pub fn present_page(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, page: Option<&s
     general.set_title(&ctx.t_or("modals.preferences.tabs.general", "General"));
     general.set_icon_name(Some("preferences-system-symbolic"));
     let g1 = adw::PreferencesGroup::new();
-    g1.set_title(&ctx.t_or("settings.general.language.label", "Appearance & language"));
+    g1.set_title(&crate::ui::rows::escape(
+        ctx.t_or("settings.general.language.label", "Appearance & language"),
+    ));
 
     add_language_row(&session, &g1);
     add_combo(
@@ -435,7 +437,9 @@ pub fn present_page(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, page: Option<&s
     core.set_title(&ctx.t_or("modals.preferences.tabs.core", "Core"));
     core.set_icon_name(Some("application-x-executable-symbolic"));
     let c1 = adw::PreferencesGroup::new();
-    c1.set_title(&ctx.t_or("titlebar.menu.installRclone", "Rclone"));
+    c1.set_title(&crate::ui::rows::escape(
+        ctx.t_or("titlebar.menu.installRclone", "Rclone"),
+    ));
     core.add(&session.banner);
     let restart = gtk::Button::with_label(&ctx.t_or(
         "modals.preferences.aria.saveAndRestart",
@@ -450,7 +454,7 @@ pub fn present_page(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, page: Option<&s
         restart.connect_clicked(move |_| session.save_and_restart());
     }
     c1.add(&{
-        let row = adw::ActionRow::new();
+        let row = crate::ui::rows::action_row();
         row.set_title(&ctx.t_or(
             "modals.preferences.aria.saveAndRestart",
             "Restart rclone engine",
@@ -579,11 +583,11 @@ fn search_page(
     page.set_name(Some("search"));
     page.set_title(&ctx.t_or("modals.preferences.searchResults", "Search Results"));
     page.set_icon_name(Some("edit-find-symbolic"));
-    let query = adw::EntryRow::new();
+    let query = crate::ui::rows::entry_row();
     query.set_title(&ctx.t_or("modals.preferences.searchPlaceholder", "Search settings..."));
     let query_group = adw::PreferencesGroup::new();
     query_group.add(&query);
-    let chips_row = adw::ActionRow::new();
+    let chips_row = crate::ui::rows::action_row();
     chips_row.set_title(&ctx.t_or("modals.preferences.trySearching", "Try searching for:"));
     for (id, key, fallback) in crate::pref_search::SUGGESTIONS {
         let label = ctx.t_or(key, fallback);
@@ -604,8 +608,10 @@ fn search_page(
         chips_row.add_suffix(&btn);
     }
     let results = adw::PreferencesGroup::new();
-    results.set_title(&ctx.t_or("modals.preferences.searchResults", "Search Results"));
-    let empty = adw::ActionRow::new();
+    results.set_title(&crate::ui::rows::escape(
+        ctx.t_or("modals.preferences.searchResults", "Search Results"),
+    ));
+    let empty = crate::ui::rows::action_row();
     empty.set_title(&ctx.t_or(
         "modals.preferences.noSettingsFound",
         "No settings found matching",
@@ -927,7 +933,7 @@ fn add_search_hit(
             |_, _| {},
         ),
         _ => {
-            let row = adw::ActionRow::new();
+            let row = crate::ui::rows::action_row();
             row.set_title(&session.ctx.t_or(item.title_key, item.title_fallback));
             row.set_subtitle(&format!(
                 "{} · {}",
@@ -990,7 +996,7 @@ fn add_language_row(session: &PrefsSession, group: &adw::PreferencesGroup) -> gt
         "Português (Brasil)",
         "日本語 (日本)",
     ];
-    let row = adw::ComboRow::new();
+    let row = crate::ui::rows::combo_row();
     row.set_title(
         &session
             .ctx
@@ -1066,7 +1072,7 @@ fn add_switch(
         .get_by_path(path)
         .and_then(|v| v.as_bool())
         .unwrap_or(false);
-    let row = adw::SwitchRow::new();
+    let row = crate::ui::rows::switch_row();
     row.set_title(&session.ctx.t_or(key, fallback));
     apply_help_subtitle(session, &row, key);
     row.set_active(active);
@@ -1128,7 +1134,7 @@ fn add_combo(
         .get_by_path(path)
         .and_then(|v| v.as_str().map(|s| s.to_string()))
         .unwrap_or_default();
-    let row = adw::ComboRow::new();
+    let row = crate::ui::rows::combo_row();
     row.set_title(&session.ctx.t_or(key, fallback));
     apply_help_subtitle(session, &row, key);
     if let Some((sub_key, sub_fallback)) = subtitle {
@@ -1207,7 +1213,7 @@ fn add_int_combo(
         .get_by_path(path)
         .and_then(|v| v.as_i64())
         .unwrap_or(options.first().copied().unwrap_or(0));
-    let row = adw::ComboRow::new();
+    let row = crate::ui::rows::combo_row();
     row.set_title(&session.ctx.t_or(key, fallback));
     apply_help_subtitle(session, &row, key);
     row.set_model(Some(&gtk::StringList::new(&refs)));
@@ -1269,7 +1275,7 @@ fn add_entry(
         .get_by_path(path)
         .map(|v| display_setting(&v, display_sep))
         .unwrap_or_default();
-    let row = adw::EntryRow::new();
+    let row = crate::ui::rows::entry_row();
     row.set_title(&session.ctx.t_or(key, fallback));
     apply_help_tooltip(session, &row, key);
     row.set_text(&current);
@@ -1339,9 +1345,9 @@ fn build_list_editor_group(
     validate_item: Option<fn(&str) -> Result<(), String>>,
 ) -> adw::PreferencesGroup {
     let list_group = adw::PreferencesGroup::new();
-    list_group.set_title(&session.ctx.t_or(key, fallback));
+    list_group.set_title(&crate::ui::rows::escape(session.ctx.t_or(key, fallback)));
     if let Some(help) = help_text(session, key) {
-        list_group.set_description(Some(&help));
+        list_group.set_description(Some(&crate::ui::rows::escape(&help)));
     }
 
     let current = session
@@ -1353,7 +1359,7 @@ fn build_list_editor_group(
         .unwrap_or_default();
     let label_key = key.to_string();
     let rows: Rc<RefCell<Vec<adw::EntryRow>>> = Rc::new(RefCell::new(Vec::new()));
-    let add_row = adw::ActionRow::new();
+    let add_row = crate::ui::rows::action_row();
     add_row.set_title(&session.ctx.t_or("modals.preferences.addItem", "Add Item"));
     add_row.set_activatable(true);
     add_row.add_prefix(&gtk::Image::from_icon_name("list-add-symbolic"));
@@ -1425,7 +1431,7 @@ fn build_list_editor_group(
                 list_group.remove(&add_row);
             }
             for (idx, value) in values.into_iter().enumerate() {
-                let row = adw::EntryRow::new();
+                let row = crate::ui::rows::entry_row();
                 let index = (idx + 1).to_string();
                 row.set_title(
                     &session
@@ -1534,7 +1540,7 @@ fn add_spin(
         .get_by_path(path)
         .and_then(|v| v.as_u64())
         .unwrap_or(0);
-    let row = adw::SpinRow::with_range(min, max, step);
+    let row = crate::ui::rows::spin_row_with_range(min, max, step);
     row.set_title(&session.ctx.t_or(key, fallback));
     apply_help_tooltip(session, &row, key);
     row.set_value(current as f64);
@@ -1631,7 +1637,7 @@ fn add_reset_all(
             alert.present(Some(&parent));
         });
     }
-    let row = adw::ActionRow::new();
+    let row = crate::ui::rows::action_row();
     row.set_title(
         &session
             .ctx
@@ -1677,7 +1683,7 @@ fn add_skip_updates(session: &PrefsSession, group: &adw::PreferencesGroup) {
             *ctx.updates.borrow_mut() = crate::updater::PendingUpdates::default();
         });
     }
-    let row = adw::ActionRow::new();
+    let row = crate::ui::rows::action_row();
     row.set_title(
         &session
             .ctx
@@ -1700,7 +1706,9 @@ pub fn rclone_conf_security_group(
     parent: &impl IsA<gtk::Widget>,
 ) -> adw::PreferencesGroup {
     let outer = adw::PreferencesGroup::new();
-    outer.set_title(&ctx.t_or("modals.backend.securityTab", "Security"));
+    outer.set_title(&crate::ui::rows::escape(
+        ctx.t_or("modals.backend.securityTab", "Security"),
+    ));
     let holder = gtk::Box::new(gtk::Orientation::Vertical, 0);
     outer.add(&holder);
     let show_keychain_input = Rc::new(Cell::new(false));
@@ -1747,7 +1755,7 @@ fn build_security_inner(
         crate::security::probe_config_encrypted(ctx.client().as_ref(), config_path.as_deref())
             .unwrap_or(false);
 
-    let status = adw::ActionRow::new();
+    let status = crate::ui::rows::action_row();
     if encrypted {
         status.set_title(&ctx.t_or("modals.backend.security.encrypted", "Encrypted"));
         status.set_subtitle(&ctx.t_or(
@@ -1798,7 +1806,7 @@ fn append_encrypted_security(
     show_keychain_input: Rc<Cell<bool>>,
     on_changed: Rc<dyn Fn()>,
 ) {
-    let keychain = adw::SwitchRow::new();
+    let keychain = crate::ui::rows::switch_row();
     keychain.set_title(&ctx.t_or("modals.backend.security.systemKeychain", "System Keychain"));
     keychain.set_subtitle(&ctx.t_or(
         "modals.backend.security.autoUnlock",
@@ -1839,7 +1847,7 @@ fn append_encrypted_security(
     list.append(&keychain);
 
     if show_keychain_input.get() && !has_stored {
-        let key_pass = adw::PasswordEntryRow::new();
+        let key_pass = crate::ui::rows::password_entry_row();
         key_pass.set_title(&ctx.t_or("modals.backend.security.configPassword", "Config Password"));
         let save = gtk::Button::with_label(
             &ctx.t_or("modals.backend.security.saveToKeychain", "Save to Keychain"),
@@ -1904,7 +1912,7 @@ fn append_encrypted_security(
                 on_changed();
             });
         }
-        let actions = adw::ActionRow::new();
+        let actions = crate::ui::rows::action_row();
         actions.set_title(&ctx.t_or("modals.backend.security.saveToKeychain", "Save to Keychain"));
         actions.add_suffix(&cancel);
         actions.add_suffix(&save);
@@ -1912,20 +1920,20 @@ fn append_encrypted_security(
         list.append(&actions);
     }
 
-    let change = adw::ExpanderRow::new();
+    let change = crate::ui::rows::expander_row();
     change.set_title(&ctx.t_or("modals.backend.security.changePassword", "Change Password"));
     change.set_subtitle(&ctx.t_or(
         "modals.backend.security.updatePasswordDesc",
         "Update your encryption password",
     ));
-    let current = adw::PasswordEntryRow::new();
+    let current = crate::ui::rows::password_entry_row();
     current.set_title(&ctx.t_or(
         "modals.backend.security.currentPassword",
         "Current Password",
     ));
-    let new_pass = adw::PasswordEntryRow::new();
+    let new_pass = crate::ui::rows::password_entry_row();
     new_pass.set_title(&ctx.t_or("modals.backend.security.newPassword", "New Password"));
-    let confirm = adw::PasswordEntryRow::new();
+    let confirm = crate::ui::rows::password_entry_row();
     confirm.set_title(&ctx.t_or(
         "modals.backend.security.confirmNewPassword",
         "Confirm New Password",
@@ -2035,14 +2043,14 @@ fn append_encrypted_security(
     change.add_row(&current);
     change.add_row(&new_pass);
     change.add_row(&confirm);
-    let update_row = adw::ActionRow::new();
+    let update_row = crate::ui::rows::action_row();
     update_row.set_title(&ctx.t_or("modals.backend.security.updatePassword", "Update Password"));
     update_row.add_suffix(&update);
     change.add_row(&update_row);
     list.append(&change);
     list.append(&error);
 
-    let remove = adw::ExpanderRow::new();
+    let remove = crate::ui::rows::expander_row();
     remove.set_title(&ctx.t_or(
         "modals.backend.security.removeEncryption",
         "Remove Encryption",
@@ -2051,13 +2059,13 @@ fn append_encrypted_security(
         "modals.backend.security.storePlainText",
         "Store credentials in plain text",
     ));
-    let warn = adw::ActionRow::new();
+    let warn = crate::ui::rows::action_row();
     warn.set_title(&ctx.t_or(
         "modals.backend.security.decryptWarning",
         "This will decrypt your rclone configuration. Your credentials will be visible to anyone with access to your files.",
     ));
     warn.add_prefix(&gtk::Image::from_icon_name("dialog-warning-symbolic"));
-    let decrypt_pass = adw::PasswordEntryRow::new();
+    let decrypt_pass = crate::ui::rows::password_entry_row();
     decrypt_pass.set_title(&ctx.t_or(
         "modals.backend.security.currentPassword",
         "Current Password",
@@ -2122,7 +2130,7 @@ fn append_encrypted_security(
             }
         });
     }
-    let decrypt_row = adw::ActionRow::new();
+    let decrypt_row = crate::ui::rows::action_row();
     decrypt_row.add_suffix(&decrypt);
     remove.add_row(&warn);
     remove.add_row(&decrypt_pass);
@@ -2136,7 +2144,7 @@ fn append_encrypt_form(
     parent: &impl IsA<gtk::Widget>,
     on_changed: Rc<dyn Fn()>,
 ) {
-    let heading = adw::ActionRow::new();
+    let heading = crate::ui::rows::action_row();
     heading.set_title(&ctx.t_or(
         "modals.backend.security.enableEncryption",
         "Enable Encryption",
@@ -2146,9 +2154,9 @@ fn append_encrypt_form(
         "Protect your credentials with a password",
     ));
     heading.add_prefix(&gtk::Image::from_icon_name("dialog-password-symbolic"));
-    let password = adw::PasswordEntryRow::new();
+    let password = crate::ui::rows::password_entry_row();
     password.set_title(&ctx.t_or("modals.backend.security.password", "Password"));
-    let confirm = adw::PasswordEntryRow::new();
+    let confirm = crate::ui::rows::password_entry_row();
     confirm.set_title(&ctx.t_or(
         "modals.backend.security.confirmPassword",
         "Confirm Password",
@@ -2251,7 +2259,7 @@ fn append_encrypt_form(
             }
         });
     }
-    let enable_row = adw::ActionRow::new();
+    let enable_row = crate::ui::rows::action_row();
     enable_row.add_suffix(&enable);
     list.append(&heading);
     list.append(&password);
@@ -2314,7 +2322,7 @@ fn add_developer_page(
         let path = crate::settings::AppSettings::log_path();
         let _ = open::that(path);
     });
-    let cfg_row = adw::ActionRow::new();
+    let cfg_row = crate::ui::rows::action_row();
     cfg_row.set_title(&session.ctx.t_or("developerTools.folders", "Folders"));
     cfg_row.add_suffix(&open_cfg);
     cfg_row.add_suffix(&open_cache);
@@ -2371,7 +2379,7 @@ fn add_developer_page(
             alert.present(Some(&parent));
         });
     }
-    let maint = adw::ActionRow::new();
+    let maint = crate::ui::rows::action_row();
     maint.set_title(
         &session
             .ctx

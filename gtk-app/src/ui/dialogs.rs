@@ -42,7 +42,9 @@ pub(super) fn attach_operation_guidance(
     current_op: Rc<dyn Fn() -> OperationType>,
 ) -> (adw::PreferencesGroup, Rc<dyn Fn()>) {
     let group = adw::PreferencesGroup::new();
-    group.set_title(&ctx.t_or("remoteConfig.guidance", "Guidance"));
+    group.set_title(&crate::ui::rows::escape(
+        ctx.t_or("remoteConfig.guidance", "Guidance"),
+    ));
     let banner_rows: Rc<RefCell<Vec<adw::ActionRow>>> = Rc::new(RefCell::new(Vec::new()));
     let refresh = {
         let ctx = ctx.clone();
@@ -73,7 +75,7 @@ pub(super) fn attach_operation_guidance(
             }
             banner_rows.borrow_mut().clear();
             for banner in &banners {
-                let row = adw::ActionRow::new();
+                let row = crate::ui::rows::action_row();
                 row.set_title(&ctx.t_or(banner.key, banner.key));
                 row.set_subtitle(&ctx.t_or(
                     match banner.kind {
@@ -153,7 +155,7 @@ pub(super) fn settings_list(
     let list = gtk::ListBox::new();
     list.add_css_class("boxed-list");
     if entries.is_empty() {
-        let row = adw::ActionRow::new();
+        let row = crate::ui::rows::action_row();
         row.set_title(&ctx.t_or(
             "detailShared.settings.noData",
             "No configuration data available",
@@ -162,14 +164,14 @@ pub(super) fn settings_list(
         list.append(&row);
         return list;
     }
-    let count = adw::ActionRow::new();
+    let count = crate::ui::rows::action_row();
     count.set_title(&ctx.tf(
         "detailShared.settings.metrics",
         &[("count", &entries.len().to_string())],
     ));
     list.append(&count);
     for (key, value) in entries.into_iter().take(limit) {
-        let row = adw::ActionRow::new();
+        let row = crate::ui::rows::action_row();
         row.set_title(&key);
         row.set_subtitle(&value);
         list.append(&row);
@@ -188,7 +190,7 @@ pub(super) fn settings_panel(
     let groups = crate::restrict::grouped_settings(settings, restrict);
     let count: usize = groups.iter().map(|group| group.entries.len()).sum();
 
-    let expander = adw::ExpanderRow::new();
+    let expander = crate::ui::rows::expander_row();
     expander.set_title(title);
     if count == 0 {
         expander.set_subtitle(&ctx.t_or("detailShared.settings.notConfigured", "Not configured"));
@@ -209,7 +211,7 @@ pub(super) fn settings_panel(
         expander.add_suffix(&edit);
     }
     if count == 0 {
-        let row = adw::ActionRow::new();
+        let row = crate::ui::rows::action_row();
         row.set_title(&ctx.t_or(
             "detailShared.settings.noData",
             "No configuration data available",
@@ -218,7 +220,7 @@ pub(super) fn settings_panel(
     } else {
         for group in groups {
             if !group.category.is_empty() {
-                let head = adw::ActionRow::new();
+                let head = crate::ui::rows::action_row();
                 let fallback = group
                     .category
                     .rsplit('.')
@@ -229,7 +231,7 @@ pub(super) fn settings_panel(
                 expander.add_row(&head);
             }
             for entry in group.entries {
-                let row = adw::ActionRow::new();
+                let row = crate::ui::rows::action_row();
                 row.set_title(&entry.key);
                 row.set_subtitle(&entry.display);
                 if entry.sensitive {
@@ -544,7 +546,7 @@ pub fn pick_destination(
     let dialog = adw::Dialog::new();
     dialog.set_title(title);
     dialog.set_content_width(480);
-    let dest = adw::EntryRow::new();
+    let dest = crate::ui::rows::entry_row();
     dest.set_title(&ctx.t_or(
         "fileBrowser.operations.details.destination",
         "Destination path",
@@ -797,7 +799,7 @@ fn relaunch_application(widget: &impl IsA<gtk::Widget>, ctx: &AppCtx, toast: &ad
 }
 
 fn about_channel_row(ctx: &AppCtx, title: &str, current: &str, app: bool) -> adw::ComboRow {
-    let row = adw::ComboRow::new();
+    let row = crate::ui::rows::combo_row();
     row.set_title(title);
     let stable = ctx.t_or("modals.about.channelStable", "Stable");
     let beta = ctx.t_or("modals.about.channelBeta", "Beta");
@@ -823,7 +825,7 @@ fn about_channel_row(ctx: &AppCtx, title: &str, current: &str, app: bool) -> adw
 }
 
 fn about_auto_check_row(ctx: &AppCtx, current: bool, app: bool) -> adw::SwitchRow {
-    let row = adw::SwitchRow::new();
+    let row = crate::ui::rows::switch_row();
     row.set_title(&ctx.t_or("modals.about.autoCheck", "Auto-Check Updates"));
     row.set_active(current);
     {
@@ -853,16 +855,18 @@ fn about_app_page(
     page.set_margin_bottom(16);
     let debug = crate::platform::debug_info();
     let identity = adw::PreferencesGroup::new();
-    identity.set_title(&ctx.t_or("modals.about.aboutApp", "About App"));
-    let name = adw::ActionRow::new();
+    identity.set_title(&crate::ui::rows::escape(
+        ctx.t_or("modals.about.aboutApp", "About App"),
+    ));
+    let name = crate::ui::rows::action_row();
     name.set_title(&ctx.t_or("modals.about.appName", "Rclone Manager"));
     name.set_subtitle(env!("CARGO_PKG_VERSION"));
     identity.add(&name);
-    let os_row = adw::ActionRow::new();
+    let os_row = crate::ui::rows::action_row();
     os_row.set_title(&ctx.t_or("modals.about.os", "OS"));
     os_row.set_subtitle(&format!("{} ({})", debug.platform, debug.arch));
     identity.add(&os_row);
-    let mode_row = adw::ActionRow::new();
+    let mode_row = crate::ui::rows::action_row();
     mode_row.set_title(&ctx.t_or("modals.about.mode", "Mode"));
     mode_row.set_subtitle(&debug.mode);
     identity.add(&mode_row);
@@ -873,7 +877,7 @@ fn about_app_page(
             gtk::Button::with_label(&ctx.t_or("modals.about.debugTools", "Debug tools"));
         debug_btn.set_valign(gtk::Align::Center);
         debug_btn.connect_clicked(move |_| debug_info(&parent, ctx_click.clone()));
-        let debug_row = adw::ActionRow::new();
+        let debug_row = crate::ui::rows::action_row();
         debug_row.set_title(&ctx.t_or("modals.about.debugTools", "Debug tools"));
         debug_row.add_suffix(&debug_btn);
         identity.add(&debug_row);
@@ -886,13 +890,15 @@ fn about_app_page(
     let updates = adw::PreferencesGroup::new();
     match card {
         crate::updater::AboutUpdateCard::RestartRequired => {
-            updates.set_title(&ctx.t_or("modals.about.readyToRestart", "Restart Required"));
+            updates.set_title(&crate::ui::rows::escape(
+                ctx.t_or("modals.about.readyToRestart", "Restart Required"),
+            ));
             updates.set_description(Some(&ctx.t_or(
                 "modals.about.restartDescription",
                 "An update has been installed. Please restart the application to apply the changes.",
             )));
             if let Some(info) = &pending_app {
-                let row = adw::ActionRow::new();
+                let row = crate::ui::rows::action_row();
                 row.set_title(&ctx.t_or("modals.about.version", "Version"));
                 row.set_subtitle(&info.latest);
                 updates.add(&row);
@@ -914,8 +920,10 @@ fn about_app_page(
         }
         crate::updater::AboutUpdateCard::Available => {
             let info = pending_app.expect("available card requires pending app update");
-            updates.set_title(&ctx.t_or("modals.about.updateAvailable", "Update Available"));
-            let ver = adw::ActionRow::new();
+            updates.set_title(&crate::ui::rows::escape(
+                ctx.t_or("modals.about.updateAvailable", "Update Available"),
+            ));
+            let ver = crate::ui::rows::action_row();
             ver.set_title(&ctx.t_or("modals.about.version", "Version"));
             let channel = ctx.settings.borrow().runtime.app_update_channel.clone();
             let channel_label = ctx.t_or(
@@ -960,7 +968,7 @@ fn about_app_page(
                 buttons.append(&install);
             } else {
                 if let Some(command) = crate::platform::update_command(managed) {
-                    let cmd_row = adw::ActionRow::new();
+                    let cmd_row = crate::ui::rows::action_row();
                     cmd_row.set_title(&ctx.t_or(
                         "modals.about.managedBuildNotice",
                         "This build cannot be updated by the app updater.",
@@ -1000,7 +1008,9 @@ fn about_app_page(
             page.append(&buttons);
         }
         crate::updater::AboutUpdateCard::UpToDate => {
-            updates.set_title(&ctx.t_or("modals.about.upToDate", "Up to Date"));
+            updates.set_title(&crate::ui::rows::escape(
+                ctx.t_or("modals.about.upToDate", "Up to Date"),
+            ));
             updates.set_description(Some(&ctx.t_or(
                 "modals.about.latestVersionMsg",
                 "You're running the latest version",
@@ -1027,7 +1037,9 @@ fn about_app_page(
     }
 
     let settings = adw::PreferencesGroup::new();
-    settings.set_title(&ctx.t_or("modals.about.updateSettings", "Update Settings"));
+    settings.set_title(&crate::ui::rows::escape(
+        ctx.t_or("modals.about.updateSettings", "Update Settings"),
+    ));
     let auto = about_auto_check_row(
         ctx,
         ctx.settings.borrow().runtime.app_auto_check_updates,
@@ -1067,14 +1079,16 @@ fn about_rclone_page(
     page.set_margin_end(16);
     page.set_margin_bottom(16);
     let identity = adw::PreferencesGroup::new();
-    identity.set_title(&ctx.t_or("modals.about.aboutRclone", "About Rclone"));
+    identity.set_title(&crate::ui::rows::escape(
+        ctx.t_or("modals.about.aboutRclone", "About Rclone"),
+    ));
     match ctx
         .client()
         .and_then(|c| c.version_info().ok())
         .map(|v| crate::rclone::backend_identity(&v))
     {
         Some(info) => {
-            let ver = adw::ActionRow::new();
+            let ver = crate::ui::rows::action_row();
             ver.set_title(&ctx.t_or("modals.about.version", "Version"));
             let subtitle = match info.channel_badge() {
                 Some("beta") => format!(
@@ -1087,17 +1101,17 @@ fn about_rclone_page(
             };
             ver.set_subtitle(&subtitle);
             identity.add(&ver);
-            let os_row = adw::ActionRow::new();
+            let os_row = crate::ui::rows::action_row();
             os_row.set_title(&ctx.t_or("modals.about.os", "OS"));
             os_row.set_subtitle(&format!("{} ({})", info.os, info.arch));
             identity.add(&os_row);
-            let go_row = adw::ActionRow::new();
+            let go_row = crate::ui::rows::action_row();
             go_row.set_title(&ctx.t_or("modals.about.goVersion", "Go Version"));
             go_row.set_subtitle(&info.go);
             identity.add(&go_row);
         }
         None => {
-            let err = adw::ActionRow::new();
+            let err = crate::ui::rows::action_row();
             err.set_title(&ctx.t_or("modals.about.loadInfoFailed", "Failed to load rclone info."));
             identity.add(&err);
         }
@@ -1107,7 +1121,7 @@ fn about_rclone_page(
         .and_then(|c| c.pid().ok())
         .map(|n| n.to_string());
     if let Some(pid) = pid {
-        let pid_row = adw::ActionRow::new();
+        let pid_row = crate::ui::rows::action_row();
         pid_row.set_title(&ctx.t_or("modals.about.pid", "Process ID"));
         pid_row.set_subtitle(&pid);
         let kill = gtk::Button::with_label(&ctx.t_or("modals.about.killProcess", "Kill Process"));
@@ -1121,7 +1135,7 @@ fn about_rclone_page(
         pid_row.add_suffix(&kill);
         identity.add(&pid_row);
     }
-    let mem_row = adw::ActionRow::new();
+    let mem_row = crate::ui::rows::action_row();
     mem_row.set_title(&ctx.t_or("modals.about.memory", "Memory"));
     let alloc = ctx
         .client()
@@ -1141,7 +1155,7 @@ fn about_rclone_page(
         mem_row.add_suffix(&view);
     }
     identity.add(&mem_row);
-    let cache_row = adw::ActionRow::new();
+    let cache_row = crate::ui::rows::action_row();
     cache_row.set_title(&ctx.t_or("modals.about.backendCache", "Backend Cache"));
     let cache_count = ctx
         .client()
@@ -1200,7 +1214,7 @@ fn about_rclone_page(
                 "An Rclone update has been installed. Please restart the engine to apply the changes.",
             )));
             if let Some(info) = &pending_rclone {
-                let row = adw::ActionRow::new();
+                let row = crate::ui::rows::action_row();
                 row.set_title(&ctx.t_or("modals.about.version", "Version"));
                 row.set_subtitle(&info.latest);
                 updates.add(&row);
@@ -1226,7 +1240,7 @@ fn about_rclone_page(
                 "modals.about.rcloneUpdateAvailable",
                 "Rclone Update Available",
             ));
-            let ver = adw::ActionRow::new();
+            let ver = crate::ui::rows::action_row();
             ver.set_title(&ctx.t_or("modals.about.version", "Version"));
             let channel = ctx.settings.borrow().runtime.rclone_update_channel.clone();
             let channel_label = ctx.t_or(
@@ -1288,7 +1302,9 @@ fn about_rclone_page(
             page.append(&buttons);
         }
         crate::updater::AboutUpdateCard::UpToDate => {
-            updates.set_title(&ctx.t_or("modals.about.rcloneUpToDate", "Rclone Up to Date"));
+            updates.set_title(&crate::ui::rows::escape(
+                ctx.t_or("modals.about.rcloneUpToDate", "Rclone Up to Date"),
+            ));
             updates.set_description(Some(&ctx.t_or(
                 "modals.about.latestVersionMsg",
                 "You're running the latest version",
@@ -1373,7 +1389,7 @@ fn about_nav_row(
     item: crate::updater::AboutHomeItem,
     badge: bool,
 ) -> adw::ActionRow {
-    let row = adw::ActionRow::new();
+    let row = crate::ui::rows::action_row();
     row.set_title(&ctx.t_or(item.i18n_key, item.fallback));
     row.set_activatable(true);
     if badge {
@@ -1392,7 +1408,7 @@ fn about_nav_row(
 
 /// One acknowledgement entry: who, under what terms, and a link out to them.
 fn credit_row(title: &str, subtitle: &str, url: &str) -> adw::ActionRow {
-    let row = adw::ActionRow::new();
+    let row = crate::ui::rows::action_row();
     row.set_title(title);
     row.set_subtitle(subtitle);
     row.set_subtitle_lines(3);
@@ -1518,7 +1534,7 @@ pub fn about_open(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, page: &str) {
     comments.set_justify(gtk::Justification::Center);
     details.append(&title);
     details.append(&comments);
-    let version_row = adw::ActionRow::new();
+    let version_row = crate::ui::rows::action_row();
     version_row.set_title(&ctx.t_or("modals.about.version", "Version"));
     version_row.set_subtitle(&format!("{} · rclone {version}", env!("CARGO_PKG_VERSION")));
     let copy_version = gtk::Button::from_icon_name("edit-copy-symbolic");
@@ -1558,18 +1574,20 @@ pub fn about_open(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, page: &str) {
     details.append(&rclone_site);
     let debug = crate::platform::debug_info();
     let identity = adw::PreferencesGroup::new();
-    identity.set_title(&ctx.t_or("modals.about.details", "Details"));
-    let os_row = adw::ActionRow::new();
+    identity.set_title(&crate::ui::rows::escape(
+        ctx.t_or("modals.about.details", "Details"),
+    ));
+    let os_row = crate::ui::rows::action_row();
     os_row.set_title(&ctx.t_or("modals.about.os", "OS"));
     os_row.set_subtitle(&format!("{} ({})", debug.platform, debug.arch));
     identity.add(&os_row);
-    let mode_row = adw::ActionRow::new();
+    let mode_row = crate::ui::rows::action_row();
     mode_row.set_title(&ctx.t_or("modals.about.mode", "Mode"));
     mode_row.set_subtitle(&debug.mode);
     identity.add(&mode_row);
     let app_channel = ctx.settings.borrow().runtime.app_update_channel.clone();
     let rclone_channel = ctx.settings.borrow().runtime.rclone_update_channel.clone();
-    let channel_row = adw::ActionRow::new();
+    let channel_row = crate::ui::rows::action_row();
     channel_row.set_title(&ctx.t_or("modals.about.releaseChannel", "Release channel"));
     channel_row.set_subtitle(&format!(
         "{} · rclone {}",
@@ -1589,7 +1607,7 @@ pub fn about_open(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, page: &str) {
         let debug_btn =
             gtk::Button::with_label(&ctx.t_or("modals.about.debugTools", "Debug tools"));
         debug_btn.connect_clicked(move |_| debug_info(&parent, ctx_click.clone()));
-        let debug_row = adw::ActionRow::new();
+        let debug_row = crate::ui::rows::action_row();
         debug_row.set_title(&ctx.t_or("modals.about.debugTools", "Debug tools"));
         debug_row.add_suffix(&debug_btn);
         identity.add(&debug_row);
@@ -1625,7 +1643,9 @@ pub fn about_open(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, page: &str) {
     credits.set_margin_bottom(16);
 
     let engine = adw::PreferencesGroup::new();
-    engine.set_title(&ctx.t_or("modals.about.poweredBy", "Powered by"));
+    engine.set_title(&crate::ui::rows::escape(
+        ctx.t_or("modals.about.poweredBy", "Powered by"),
+    ));
     engine.set_description(Some(&ctx.t_or(
         "modals.about.poweredByDescription",
         "Every transfer, mount, serve and remote is performed by rclone. This app drives its Remote Control API and reimplements none of it.",
@@ -1646,7 +1666,9 @@ pub fn about_open(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, page: &str) {
     credits.append(&engine);
 
     let upstream = adw::PreferencesGroup::new();
-    upstream.set_title(&ctx.t_or("modals.about.builtOn", "Built on"));
+    upstream.set_title(&crate::ui::rows::escape(
+        ctx.t_or("modals.about.builtOn", "Built on"),
+    ));
     upstream.add(&credit_row(
         "RClone Manager",
         "\u{a9} Hakan \u{130}SMA\u{130}L (@Hakanbaban53) and the Zarestia Dev team \u{b7} GPL-3.0-or-later",
@@ -1670,8 +1692,10 @@ pub fn about_open(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, page: &str) {
     credits.append(&upstream);
 
     let team = adw::PreferencesGroup::new();
-    team.set_title(&ctx.t_or("modals.about.devTeam", "Development Team"));
-    let lead = adw::ActionRow::new();
+    team.set_title(&crate::ui::rows::escape(
+        ctx.t_or("modals.about.devTeam", "Development Team"),
+    ));
+    let lead = crate::ui::rows::action_row();
     lead.set_title(&ctx.t_or("modals.about.leadDeveloper", "Lead Developer"));
     lead.set_subtitle(&ctx.t_or("modals.about.leadName", "Zarestia Dev"));
     team.add(&lead);
@@ -1694,8 +1718,10 @@ pub fn about_open(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, page: &str) {
     credits.append(&team);
 
     let ack = adw::PreferencesGroup::new();
-    ack.set_title(&ctx.t_or("modals.about.acknowledgments", "Acknowledgments"));
-    let ack_row = adw::ActionRow::new();
+    ack.set_title(&crate::ui::rows::escape(
+        ctx.t_or("modals.about.acknowledgments", "Acknowledgments"),
+    ));
+    let ack_row = crate::ui::rows::action_row();
     ack_row.set_title(&ctx.t_or(
         "modals.about.ackTextGtk",
         "This application is built with GTK 4 + libadwaita and relies on the excellent Rclone project for cloud storage management.",
@@ -1728,8 +1754,10 @@ pub fn about_open(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, page: &str) {
     legal.set_margin_start(16);
     legal.set_margin_end(16);
     let license = adw::PreferencesGroup::new();
-    license.set_title(&ctx.t_or("modals.about.license", "License"));
-    let license_row = adw::ActionRow::new();
+    license.set_title(&crate::ui::rows::escape(
+        ctx.t_or("modals.about.license", "License"),
+    ));
+    let license_row = crate::ui::rows::action_row();
     license_row.set_title(&ctx.t_or("modals.about.licenseId", "GPL-3.0-or-later"));
     license_row.set_subtitle(&format!(
         "{} {} {} {}",
@@ -1747,8 +1775,10 @@ pub fn about_open(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, page: &str) {
     license_row.set_subtitle_lines(6);
     license.add(&license_row);
     let third = adw::PreferencesGroup::new();
-    third.set_title(&ctx.t_or("modals.about.thirdParty", "Third-Party Software"));
-    let third_row = adw::ActionRow::new();
+    third.set_title(&crate::ui::rows::escape(
+        ctx.t_or("modals.about.thirdParty", "Third-Party Software"),
+    ));
+    let third_row = crate::ui::rows::action_row();
     third_row.set_title(&ctx.t_or(
         "modals.about.thirdPartyText",
         "This application includes third-party libraries. See the project repository for a complete list.",
@@ -1773,8 +1803,10 @@ pub fn about_open(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, page: &str) {
     system.set_margin_start(16);
     system.set_margin_end(16);
     let engine_group = adw::PreferencesGroup::new();
-    engine_group.set_title(&ctx.t_or("modals.about.engine", "Backend Infrastructure"));
-    let pid_row = adw::ActionRow::new();
+    engine_group.set_title(&crate::ui::rows::escape(
+        ctx.t_or("modals.about.engine", "Backend Infrastructure"),
+    ));
+    let pid_row = crate::ui::rows::action_row();
     pid_row.set_title(&ctx.t_or("dashboard.system.pid", "rclone PID"));
     let pid = ctx
         .client()
@@ -1795,8 +1827,10 @@ pub fn about_open(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, page: &str) {
         system.append(&quit);
     }
     let cache_group = adw::PreferencesGroup::new();
-    cache_group.set_title(&ctx.t_or("modals.about.backendCache", "Backend Cache"));
-    let cache_row = adw::ActionRow::new();
+    cache_group.set_title(&crate::ui::rows::escape(
+        ctx.t_or("modals.about.backendCache", "Backend Cache"),
+    ));
+    let cache_row = crate::ui::rows::action_row();
     cache_row.set_title(&ctx.t_or("modals.about.entries", "Active Entries"));
     let cache_count = ctx
         .client()
@@ -1836,7 +1870,7 @@ pub fn about_open(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, page: &str) {
     }
     let build = crate::platform::managed_build();
     if let Some(command) = crate::platform::update_command(build) {
-        let cmd_row = adw::ActionRow::new();
+        let cmd_row = crate::ui::rows::action_row();
         cmd_row.set_title(&ctx.t_or(
             "modals.about.managedBuildNotice",
             "This build cannot be updated by the app updater.",
@@ -1952,7 +1986,7 @@ pub fn memory_stats(parent: &impl IsA<gtk::Widget>, ctx: AppCtx) {
             ("StackInuse", "modals.about.memStackInuse", "Stack"),
             ("NumGC", "modals.about.gc", "GC cycles"),
         ] {
-            let row = adw::ActionRow::new();
+            let row = crate::ui::rows::action_row();
             row.set_title(&ctx.t_or(i18n_key, fallback));
             let value = mem.get(key).cloned().unwrap_or(serde_json::json!(0));
             row.set_subtitle(&if matches!(key, "NumGC" | "Mallocs" | "Frees") {
@@ -1963,7 +1997,7 @@ pub fn memory_stats(parent: &impl IsA<gtk::Widget>, ctx: AppCtx) {
             list.append(&row);
         }
     } else {
-        let row = adw::ActionRow::new();
+        let row = crate::ui::rows::action_row();
         row.set_title(&ctx.t_or(
             "titlebar.menu.memoryUnavailable",
             "Memory stats unavailable",
@@ -1998,9 +2032,11 @@ pub fn updates(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, toast: adw::ToastOve
     dialog.set_content_height(420);
     let pending = ctx.updates.borrow().clone();
     let group = adw::PreferencesGroup::new();
-    group.set_title(&ctx.t_or("modals.updates.title", "Updates"));
+    group.set_title(&crate::ui::rows::escape(
+        ctx.t_or("modals.updates.title", "Updates"),
+    ));
 
-    let app_row = adw::ActionRow::new();
+    let app_row = crate::ui::rows::action_row();
     app_row.set_title(&ctx.t_or("titlebar.updates.app", "Application update"));
     if let Some(info) = pending.app.clone() {
         app_row.set_subtitle(&format!("{} → {}", info.current, info.latest));
@@ -2064,7 +2100,7 @@ pub fn updates(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, toast: adw::ToastOve
     }
     group.add(&app_row);
 
-    let rclone_row = adw::ActionRow::new();
+    let rclone_row = crate::ui::rows::action_row();
     rclone_row.set_title(&ctx.t_or("titlebar.updates.rclone", "Rclone update"));
     if let Some(info) = pending.rclone.clone() {
         rclone_row.set_subtitle(&format!("{} → {}", info.current, info.latest));
@@ -2167,9 +2203,9 @@ fn skipped_versions_group(
         return None;
     }
     let group = adw::PreferencesGroup::new();
-    group.set_title(title);
+    group.set_title(&crate::ui::rows::escape(&title));
     for version in versions {
-        let row = adw::ActionRow::new();
+        let row = crate::ui::rows::action_row();
         row.set_title(version);
         let restore = gtk::Button::with_label(&ctx.t_or("modals.about.restoreUpdate", "Restore"));
         restore.set_valign(gtk::Align::Center);
@@ -2555,12 +2591,12 @@ pub fn shortcuts_open(parent: &impl IsA<gtk::Widget>, ctx: &AppCtx, nautilus: bo
     )];
     let entries: &[(_, _, _, _)] = if nautilus { &nautilus_entries } else { &global };
     for (_, cat_key, cat_fallback, items) in entries {
-        let header = adw::ActionRow::new();
+        let header = crate::ui::rows::action_row();
         header.set_title(&ctx.t_or(cat_key, cat_fallback));
         header.set_sensitive(false);
         list.append(&header);
         for (keys, desc_key, desc_fallback) in items.iter() {
-            let row = adw::ActionRow::new();
+            let row = crate::ui::rows::action_row();
             row.set_title(&ctx.t_or(desc_key, desc_fallback));
             row.set_subtitle(keys);
             row.set_widget_name(&format!("{keys} {desc_fallback}"));
@@ -2671,7 +2707,7 @@ pub fn debug_info(parent: &impl IsA<gtk::Widget>, ctx: AppCtx) {
             info.logs_dir.clone(),
         ),
     ] {
-        let row = adw::ActionRow::new();
+        let row = crate::ui::rows::action_row();
         row.set_title(&title);
         row.set_subtitle(&value);
         row.set_subtitle_lines(3);
@@ -2681,7 +2717,7 @@ pub fn debug_info(parent: &impl IsA<gtk::Widget>, ctx: AppCtx) {
         if let Ok(paths) = client.config_paths() {
             for key in ["config", "cache", "temp"] {
                 if let Some(value) = paths.get(key).and_then(|v| v.as_str()) {
-                    let row = adw::ActionRow::new();
+                    let row = crate::ui::rows::action_row();
                     let title = match key {
                         "config" => ctx.t_or("developerTools.rcloneConfig", "rclone config"),
                         "cache" => ctx.t_or("developerTools.rcloneCache", "rclone cache"),
@@ -2696,7 +2732,7 @@ pub fn debug_info(parent: &impl IsA<gtk::Widget>, ctx: AppCtx) {
             }
         }
         if let Ok(encrypted) = client.config_is_encrypted() {
-            let row = adw::ActionRow::new();
+            let row = crate::ui::rows::action_row();
             row.set_title(&ctx.t_or("developerTools.configEncrypted", "rclone.conf encrypted"));
             let yes = ctx.t("common.yes");
             let no = ctx.t("common.no");
@@ -2826,7 +2862,9 @@ pub fn logs(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, remote: Option<String>)
     list.add_css_class("boxed-list");
     list.set_selection_mode(gtk::SelectionMode::None);
     let empty = adw::StatusPage::new();
-    empty.set_icon_name(Some("utilities-system-monitor-symbolic"));
+    // `utilities-system-monitor-symbolic` is not in the Adwaita icon theme,
+    // so this rendered as a broken-image placeholder.
+    empty.set_icon_name(Some("view-list-bullet-symbolic"));
     empty.set_title(&ctx.t_or("modals.logs.noLogsFound", "No logs found"));
     empty.set_description(Some(
         &ctx.t_or("modals.logs.adjustFilters", "Try adjusting your filters"),
@@ -3238,7 +3276,7 @@ fn add_flag_option_row(
     );
     match kind {
         crate::value_mapper::ControlKind::Bool => {
-            let row = adw::SwitchRow::new();
+            let row = crate::ui::rows::switch_row();
             row.set_title(&title);
             row.set_subtitle(&help);
             row.set_active(current_text.eq_ignore_ascii_case("true"));
@@ -3252,7 +3290,7 @@ fn add_flag_option_row(
         }
         crate::value_mapper::ControlKind::Tristate => {
             let values = ["unset", "true", "false"];
-            let row = adw::ComboRow::new();
+            let row = crate::ui::rows::combo_row();
             row.set_title(&title);
             row.set_subtitle(&help);
             row.set_model(Some(&gtk::StringList::new(&values)));
@@ -3287,7 +3325,7 @@ fn add_flag_option_row(
                 .map(|(value, hint)| crate::config_search::example_choice_label(value, hint))
                 .collect();
             let values: Vec<String> = option.examples.iter().map(|(v, _)| v.clone()).collect();
-            let row = adw::ComboRow::new();
+            let row = crate::ui::rows::combo_row();
             row.set_title(&title);
             row.set_subtitle(&help);
             let refs: Vec<&str> = labels.iter().map(|s| s.as_str()).collect();
@@ -3317,7 +3355,7 @@ fn add_flag_option_row(
                 &option.name,
                 option.examples.len(),
             ) {
-                let search = adw::EntryRow::new();
+                let search = crate::ui::rows::entry_row();
                 search.set_title(&title);
                 if !help.is_empty() {
                     search.set_tooltip_text(Some(&help));
@@ -3332,7 +3370,7 @@ fn add_flag_option_row(
             group.add(&row);
         }
         crate::value_mapper::ControlKind::Numeric => {
-            let row = adw::SpinRow::with_range(-1_000_000_000.0, 1_000_000_000.0, 1.0);
+            let row = crate::ui::rows::spin_row_with_range(-1_000_000_000.0, 1_000_000_000.0, 1.0);
             row.set_title(&title);
             row.set_subtitle(&help);
             if let Ok(v) = current_text.parse::<f64>() {
@@ -3363,7 +3401,7 @@ fn add_flag_option_row(
             group.add(&row);
         }
         crate::value_mapper::ControlKind::MultiSelect => {
-            let row = adw::ExpanderRow::new();
+            let row = crate::ui::rows::expander_row();
             row.set_title(&title);
             row.set_subtitle(&help);
             let selected: Vec<String> = current_text
@@ -3379,7 +3417,7 @@ fn add_flag_option_row(
                     check.set_tooltip_text(Some(hint));
                 }
                 check.set_active(selected.iter().any(|s| s == &value.to_ascii_lowercase()));
-                let wrap = adw::ActionRow::new();
+                let wrap = crate::ui::rows::action_row();
                 wrap.set_title(value);
                 if !hint.is_empty() {
                     wrap.set_subtitle(hint);
@@ -3413,7 +3451,7 @@ fn add_flag_option_row(
             group.add(&row);
         }
         crate::value_mapper::ControlKind::Input => {
-            let row = adw::EntryRow::new();
+            let row = crate::ui::rows::entry_row();
             row.set_title(&title);
             row.set_text(&current_text);
             if !help.is_empty() {
@@ -3517,7 +3555,7 @@ fn flags_category_page(
     count.set_xalign(0.0);
     count.add_css_class("dim-label");
     page_box.append(&count);
-    let json_toggle = adw::SwitchRow::new();
+    let json_toggle = crate::ui::rows::switch_row();
     json_toggle.set_title(&ctx.t_or("remoteConfig.jsonMode", "JSON mode"));
     json_toggle.set_active(ctx.settings.borrow().runtime.show_json_mode);
     let json_group = adw::PreferencesGroup::new();
@@ -3525,7 +3563,7 @@ fn flags_category_page(
     let prefs = adw::PreferencesPage::new();
     prefs.add(&json_group);
     let flags_group = adw::PreferencesGroup::new();
-    flags_group.set_title(category);
+    flags_group.set_title(&crate::ui::rows::escape(&category));
     let mut flag_rows = Vec::new();
     for option in options {
         let prev = flags_group.last_child();
@@ -3560,9 +3598,11 @@ fn flags_category_page(
     editor.root.set_visible(json_toggle.is_active());
     flags_group.set_visible(!json_toggle.is_active());
     let json_holder = adw::PreferencesGroup::new();
-    json_holder.set_title(&ctx.t_or("remoteConfig.jsonPayload", "Raw options/set payload"));
+    json_holder.set_title(&crate::ui::rows::escape(
+        ctx.t_or("remoteConfig.jsonPayload", "Raw options/set payload"),
+    ));
     json_holder.add(&{
-        let row = adw::ActionRow::new();
+        let row = crate::ui::rows::action_row();
         row.set_title(&ctx.t_or("remoteConfig.jsonMode", "JSON"));
         row.set_activatable(false);
         row.set_child(Some(&editor.root));
@@ -3574,7 +3614,7 @@ fn flags_category_page(
     apply.add_css_class("suggested-action");
     apply.set_halign(gtk::Align::End);
     let apply_group = adw::PreferencesGroup::new();
-    let apply_row = adw::ActionRow::new();
+    let apply_row = crate::ui::rows::action_row();
     apply_row.set_title(&ctx.t_or(
         "remoteConfig.flagsWriteEngine",
         "Write flags to the running engine",
@@ -3694,9 +3734,11 @@ fn fill_flags_home(
     if !q.is_empty() {
         let hits = crate::flags::search_grouped_flags(services, q);
         let group = adw::PreferencesGroup::new();
-        group.set_title(&ctx.t_or("modals.rcloneFlags.search.label", "Search Rclone flags"));
+        group.set_title(&crate::ui::rows::escape(
+            ctx.t_or("modals.rcloneFlags.search.label", "Search Rclone flags"),
+        ));
         if hits.is_empty() {
-            let row = adw::ActionRow::new();
+            let row = crate::ui::rows::action_row();
             row.set_title(&ctx.t_or(
                 "modals.rcloneFlags.search.emptyResult",
                 "No Rclone flags found",
@@ -3704,7 +3746,7 @@ fn fill_flags_home(
             group.add(&row);
         }
         for hit in hits {
-            let row = adw::ActionRow::new();
+            let row = crate::ui::rows::action_row();
             row.set_title(&ctx.option_label(&hit.option.name, "title", &hit.option.name));
             row.set_subtitle(&format!("{} › {}", hit.service, hit.category));
             row.set_activatable(true);
@@ -3762,10 +3804,10 @@ fn fill_flags_home(
             ),
         };
         let group = adw::PreferencesGroup::new();
-        group.set_title(&ctx.t_or(title_key, title_fb));
-        group.set_description(Some(&ctx.t_or(desc_key, desc_fb)));
+        group.set_title(&crate::ui::rows::escape(ctx.t_or(title_key, title_fb)));
+        group.set_description(Some(&crate::ui::rows::escape(ctx.t_or(desc_key, desc_fb))));
         for service in listed {
-            let expander = adw::ExpanderRow::new();
+            let expander = crate::ui::rows::expander_row();
             expander.set_title(&titlecase_service(&service.name));
             expander.set_subtitle(&ctx.t_or(
                 &format!(
@@ -3775,7 +3817,7 @@ fn fill_flags_home(
                 "",
             ));
             for category in &service.categories {
-                let row = adw::ActionRow::new();
+                let row = crate::ui::rows::action_row();
                 row.set_title(&category.name);
                 row.set_subtitle(&ctx.t_or(
                     &format!("modals.rcloneFlags.categories.{}", category.name),
@@ -3810,7 +3852,7 @@ fn fill_flags_home(
     }
     if !added {
         let empty = adw::PreferencesGroup::new();
-        let row = adw::ActionRow::new();
+        let row = crate::ui::rows::action_row();
         row.set_title(&ctx.t_or(
             "modals.rcloneFlags.search.emptyResult",
             "No Rclone flags found",
@@ -3872,7 +3914,7 @@ pub fn rclone_flags(parent: &impl IsA<gtk::Widget>, ctx: AppCtx) {
     dialog.set_child(Some(&toast));
     let Some(client) = ctx.client() else {
         let group = adw::PreferencesGroup::new();
-        let row = adw::ActionRow::new();
+        let row = crate::ui::rows::action_row();
         row.set_title(&ctx.t_or("common.engineOffline", "Engine offline"));
         group.add(&row);
         let page = adw::StatusPage::new();
@@ -3996,7 +4038,7 @@ pub fn action_order(
             let snapshot = items.borrow().clone();
             let can_show_more = crate::action_order::can_show_more(&snapshot, max_visible);
             for (idx, item) in snapshot.iter().enumerate() {
-                let row = adw::ActionRow::new();
+                let row = crate::ui::rows::action_row();
                 let title = OperationType::parse(&item.id)
                     .map(|op| ctx.t_or(op.action_label_key(), op.api_label()))
                     .unwrap_or_else(|| item.id.clone());
@@ -4200,7 +4242,7 @@ pub fn backends(parent: &impl IsA<gtk::Widget>, ctx: AppCtx) {
     let ready = ctx.engine_ready();
     let port = ctx.engine.borrow().as_ref().map(|e| e.port).unwrap_or(0);
     let active = ctx.settings.borrow().core.active_backend.clone();
-    let local = adw::ActionRow::new();
+    let local = crate::ui::rows::action_row();
     local.set_title(&ctx.t_or("modals.backend.local", "Local rclone RC"));
     let local_id = ctx
         .client()
@@ -4235,7 +4277,7 @@ pub fn backends(parent: &impl IsA<gtk::Widget>, ctx: AppCtx) {
     }
     local.add_suffix(&use_local);
     list.append(&local);
-    let config_path = adw::EntryRow::new();
+    let config_path = crate::ui::rows::entry_row();
     config_path.set_title(&ctx.t_or(
         "modals.backend.fields.configPath.label",
         "Local rclone.conf",
@@ -4284,7 +4326,7 @@ pub fn backends(parent: &impl IsA<gtk::Widget>, ctx: AppCtx) {
     }
     list.append(&config_path);
     for backend in ctx.settings.borrow().core.extra_backends.clone() {
-        let row = adw::ActionRow::new();
+        let row = crate::ui::rows::action_row();
         row.set_title(&backend.name);
         let marker = if active == backend.name {
             format!(" · {}", ctx.t_or("modals.backend.active", "active"))
@@ -4602,29 +4644,29 @@ fn backend_editor(
     dialog.set_content_width(520);
     dialog.set_content_height(640);
     let editing_name = existing.as_ref().map(|entry| entry.name.clone());
-    let name = adw::EntryRow::new();
+    let name = crate::ui::rows::entry_row();
     name.set_title(&ctx.t_or("modals.backend.name", "Name"));
     name.set_sensitive(existing.is_none());
-    let host = adw::EntryRow::new();
+    let host = crate::ui::rows::entry_row();
     host.set_title(&ctx.t_or("modals.backend.fields.host.label", "Host"));
     host.set_text("127.0.0.1");
-    let port = adw::EntryRow::new();
+    let port = crate::ui::rows::entry_row();
     port.set_title(&ctx.t_or("modals.backend.fields.port.label", "Port"));
     port.set_text("5573");
-    let auth = adw::SwitchRow::new();
+    let auth = crate::ui::rows::switch_row();
     auth.set_title(&ctx.t_or("modals.backend.enableAuth", "Customize Authentication"));
-    let user = adw::EntryRow::new();
+    let user = crate::ui::rows::entry_row();
     user.set_title(&ctx.t_or("modals.backend.fields.username.label", "Username"));
-    let pass = adw::PasswordEntryRow::new();
+    let pass = crate::ui::rows::password_entry_row();
     pass.set_title(&ctx.t_or("modals.backend.fields.password.label", "Password"));
-    let config_path = adw::EntryRow::new();
+    let config_path = crate::ui::rows::entry_row();
     config_path.set_title(&ctx.t_or("modals.backend.fields.configPath.label", "rclone.conf path"));
-    let config_pass = adw::PasswordEntryRow::new();
+    let config_pass = crate::ui::rows::password_entry_row();
     config_pass.set_title(&ctx.t_or(
         "modals.backend.fields.configPassword.label",
         "Config password",
     ));
-    let stored = adw::ActionRow::new();
+    let stored = crate::ui::rows::action_row();
     stored.set_title(&ctx.t_or(
         "modals.backend.remoteSecurity.noPasswordStored",
         "No Password Stored",
@@ -4676,7 +4718,7 @@ fn backend_editor(
     let copy_refs: Vec<&str> = copy_labels.iter().map(|s| s.as_str()).collect();
     let copy_options = gtk::DropDown::from_strings(&copy_refs);
     copy_options.set_selected(0);
-    let copy_options_row = adw::ActionRow::new();
+    let copy_options_row = crate::ui::rows::action_row();
     copy_options_row.set_title(&ctx.t_or(
         "modals.backend.copyOptions.backendConfig",
         "Copy Backend Settings",
@@ -4684,7 +4726,7 @@ fn backend_editor(
     copy_options_row.add_suffix(&copy_options);
     let copy_remotes = gtk::DropDown::from_strings(&copy_refs);
     copy_remotes.set_selected(0);
-    let copy_remotes_row = adw::ActionRow::new();
+    let copy_remotes_row = crate::ui::rows::action_row();
     copy_remotes_row.set_title(&ctx.t_or(
         "modals.backend.copyOptions.remotesConfig",
         "Copy Remote Settings",
@@ -4914,7 +4956,9 @@ fn backend_editor(
         });
     }
     let connection = adw::PreferencesGroup::new();
-    connection.set_title(&ctx.t_or("modals.backend.connectionTab", "Connection"));
+    connection.set_title(&crate::ui::rows::escape(
+        ctx.t_or("modals.backend.connectionTab", "Connection"),
+    ));
     connection.add(&name);
     connection.add(&host);
     connection.add(&port);
@@ -4922,7 +4966,9 @@ fn backend_editor(
     connection.add(&user);
     connection.add(&pass);
     let security = adw::PreferencesGroup::new();
-    security.set_title(&ctx.t_or("modals.backend.securityTab", "Security"));
+    security.set_title(&crate::ui::rows::escape(
+        ctx.t_or("modals.backend.securityTab", "Security"),
+    ));
     security.add(&config_path);
     security.add(&config_pass);
     stored.add_suffix(&remove_pass);
@@ -5194,7 +5240,7 @@ pub fn alerts(parent: &impl IsA<gtk::Widget>, ctx: AppCtx) {
                 history.remove(&child);
             }
             let stats = ctx.store.borrow().alert_stats();
-            let stats_row = adw::ActionRow::new();
+            let stats_row = crate::ui::rows::action_row();
             stats_row.set_title(&ctx.t_or("alerts.stats", "History stats"));
             let last = stats
                 .last_at
@@ -5259,7 +5305,7 @@ pub fn alerts(parent: &impl IsA<gtk::Widget>, ctx: AppCtx) {
                 });
             let mut shown = 0;
             for event in events.into_iter().take(80) {
-                let row = adw::ActionRow::new();
+                let row = crate::ui::rows::action_row();
                 row.set_title(&event.title);
                 row.set_subtitle(&format!(
                     "{} · {} · {}",
@@ -5286,7 +5332,7 @@ pub fn alerts(parent: &impl IsA<gtk::Widget>, ctx: AppCtx) {
                 shown += 1;
             }
             if shown == 0 {
-                let row = adw::ActionRow::new();
+                let row = crate::ui::rows::action_row();
                 row.set_title(&ctx.t_or("alerts.noHistory", "No alert history"));
                 history.append(&row);
             }
@@ -5421,7 +5467,7 @@ pub fn alerts(parent: &impl IsA<gtk::Widget>, ctx: AppCtx) {
                 if !crate::store::alert_rule_matches(&rule, &query) {
                     continue;
                 }
-                let row = adw::ActionRow::new();
+                let row = crate::ui::rows::action_row();
                 row.set_title(&rule.name);
                 row.set_activatable(true);
                 let state = if rule.enabled {
@@ -5515,7 +5561,7 @@ pub fn alerts(parent: &impl IsA<gtk::Widget>, ctx: AppCtx) {
                 shown += 1;
             }
             if shown == 0 {
-                let row = adw::ActionRow::new();
+                let row = crate::ui::rows::action_row();
                 row.set_title(&ctx.t_or("alerts.noRules", "No alert rules"));
                 rules.append(&row);
             }
@@ -5565,7 +5611,7 @@ pub fn alerts(parent: &impl IsA<gtk::Widget>, ctx: AppCtx) {
                 if !crate::store::alert_action_matches(&action, &query) {
                     continue;
                 }
-                let row = adw::ActionRow::new();
+                let row = crate::ui::rows::action_row();
                 row.set_title(&action.name);
                 row.set_activatable(true);
                 let kind_label = ctx.t_or(
@@ -5658,7 +5704,7 @@ pub fn alerts(parent: &impl IsA<gtk::Widget>, ctx: AppCtx) {
                 shown += 1;
             }
             if shown == 0 {
-                let row = adw::ActionRow::new();
+                let row = crate::ui::rows::action_row();
                 row.set_title(&ctx.t_or("alerts.noActions", "No alert actions"));
                 actions.append(&row);
             }
@@ -5814,7 +5860,7 @@ fn remote_editor(
     dialog.set_content_width(520);
     let page = adw::PreferencesPage::new();
     let group = adw::PreferencesGroup::new();
-    let name = adw::EntryRow::new();
+    let name = crate::ui::rows::entry_row();
     name.set_title(&ctx.t_or("wizards.remoteConfig.remoteName", "Remote name"));
     if let Some(existing) = &existing {
         name.set_text(existing);
@@ -5846,13 +5892,13 @@ fn remote_editor(
             .collect()
         });
     let type_labels: Vec<&str> = providers.iter().map(|s| s.as_str()).collect();
-    let type_row = adw::ComboRow::new();
+    let type_row = crate::ui::rows::combo_row();
     type_row.set_title(&ctx.t_or("wizards.remoteConfig.remoteType", "Provider type"));
     type_row.set_model(Some(&gtk::StringList::new(&type_labels)));
     if let Some(idx) = providers.iter().position(|p| p == "drive") {
         type_row.set_selected(idx as u32);
     }
-    let extra = adw::EntryRow::new();
+    let extra = crate::ui::rows::entry_row();
     extra.set_title(&ctx.t_or(
         "wizards.remoteConfig.additionalConfig",
         "Parameters (key=value;key=value)",
@@ -5956,7 +6002,7 @@ pub fn start_operation(
         names.push("default".into());
     }
     names.sort();
-    let profile_row = adw::ComboRow::new();
+    let profile_row = crate::ui::rows::combo_row();
     profile_row.set_title(&ctx.t_or("modals.jobDetail.fields.profile", "Profile"));
     let refs: Vec<&str> = names.iter().map(|s| s.as_str()).collect();
     profile_row.set_model(Some(&gtk::StringList::new(&refs)));
@@ -5966,7 +6012,7 @@ pub fn start_operation(
         .cloned()
         .unwrap_or_else(ProfileConfig::default);
     let rclone = flatten_rclone(&initial.rclone);
-    let src = adw::EntryRow::new();
+    let src = crate::ui::rows::entry_row();
     src.set_title(&if op == OperationType::Copyurl {
         ctx.t_or("wizards.appOperation.urlLabel", "URL")
     } else {
@@ -5982,7 +6028,7 @@ pub fn start_operation(
     let more_src = crate::jobs::path_list(&rclone, crate::jobs::SOURCE_KEYS);
     if more_src.len() > 1 {
         for extra in more_src.iter().skip(1) {
-            let row = adw::EntryRow::new();
+            let row = crate::ui::rows::entry_row();
             row.set_title(&ctx.t_or("wizards.appOperation.addSource", "Additional source"));
             row.set_text(extra);
             attach_path_picker(
@@ -5993,7 +6039,7 @@ pub fn start_operation(
             extra_sources.borrow_mut().push(row);
         }
     }
-    let dst = adw::EntryRow::new();
+    let dst = crate::ui::rows::entry_row();
     dst.set_title(&match op {
         OperationType::Mount => ctx.t_or("remoteConfig.mountPoint", "Mount point"),
         OperationType::Serve => ctx.t_or("remoteConfig.listenAddress", "Listen address"),
@@ -6061,7 +6107,7 @@ pub fn start_operation(
     }
     let serve_types = Rc::new(ctx.serve_types());
     let mount_types = Rc::new(ctx.mount_types());
-    let serve = adw::ComboRow::new();
+    let serve = crate::ui::rows::combo_row();
     serve.set_title(&ctx.t_or("remoteConfig.serveType", "Serve type"));
     serve.set_model(Some(&gtk::StringList::new(
         &crate::operations::combo_names(&serve_types),
@@ -6072,7 +6118,7 @@ pub fn start_operation(
             serve.set_selected(idx as u32);
         }
     }
-    let mount_type = adw::ComboRow::new();
+    let mount_type = crate::ui::rows::combo_row();
     mount_type.set_title(&ctx.t_or("remoteConfig.mountType", "Mount type"));
     mount_type.set_model(Some(&gtk::StringList::new(
         &crate::operations::combo_names(&mount_types),
@@ -6099,10 +6145,10 @@ pub fn start_operation(
     let vfs_row = helper_combo(&vfs_title, &vfs_names, &initial.app.vfs_profile);
     let filter_row = helper_combo(&filter_title, &filter_names, &initial.app.filter_profile);
     let backend_row = helper_combo(&backend_title, &backend_names, &initial.app.backend_profile);
-    let dry = adw::SwitchRow::new();
+    let dry = crate::ui::rows::switch_row();
     dry.set_title(&ctx.t_or("remoteConfig.dryRun", "Dry run"));
     dry.set_active(crate::jobs::is_dry_run(&rclone));
-    let resync = adw::SwitchRow::new();
+    let resync = crate::ui::rows::switch_row();
     resync.set_title(&ctx.t_or("dashboard.appDetail.resync", "Resync"));
     resync.set_subtitle(&ctx.t_or(
         "dashboard.appDetail.resyncActive",
@@ -6118,7 +6164,9 @@ pub fn start_operation(
     );
 
     let flags_group = adw::PreferencesGroup::new();
-    flags_group.set_title(&ctx.t_or("remoteConfig.flags", "Operation flags"));
+    flags_group.set_title(&crate::ui::rows::escape(
+        ctx.t_or("remoteConfig.flags", "Operation flags"),
+    ));
     let flag_rows: Rc<RefCell<Vec<super::flag_widget::FlagRow>>> =
         Rc::new(RefCell::new(Vec::new()));
     let live_blocks = operation_flag_blocks(&ctx);
@@ -6450,7 +6498,7 @@ pub fn start_operation(
         refresh_src(&src.text());
         src.connect_changed(move |row| refresh_src(&row.text()));
         identity.add(&{
-            let row = adw::ActionRow::new();
+            let row = crate::ui::rows::action_row();
             row.set_title(&ctx.t_or("remoteConfig.pathStatusTitle", "Path check"));
             row.add_suffix(&src_status);
             row
@@ -6467,7 +6515,7 @@ pub fn start_operation(
             let ctx = ctx.clone();
             let remote_name = remote.to_string();
             add_src.connect_clicked(move |_| {
-                let row = adw::EntryRow::new();
+                let row = crate::ui::rows::entry_row();
                 row.set_title(&ctx.t_or("wizards.appOperation.addSource", "Additional source"));
                 attach_path_picker(
                     &ctx,
@@ -6478,7 +6526,7 @@ pub fn start_operation(
                 extra_sources.borrow_mut().push(row);
             });
         }
-        let add_row = adw::ActionRow::new();
+        let add_row = crate::ui::rows::action_row();
         add_row.set_title(&ctx.t_or("remoteConfig.multipleSources", "Multiple sources"));
         add_row.add_suffix(&add_src);
         identity.add(&add_row);
@@ -6508,7 +6556,7 @@ pub fn start_operation(
                     {
                         continue;
                     }
-                    let row = adw::EntryRow::new();
+                    let row = crate::ui::rows::entry_row();
                     row.set_title(&title);
                     row.set_text(&path);
                     attach_path_picker(
@@ -6527,7 +6575,7 @@ pub fn start_operation(
     }
     identity.add(&dst);
     identity.add(&{
-        let row = adw::ActionRow::new();
+        let row = crate::ui::rows::action_row();
         row.set_title(&ctx.t_or("remoteConfig.pathStatusTitle", "Path check"));
         row.add_suffix(&dest_status);
         row
@@ -6649,7 +6697,7 @@ fn delete_remote_details(ctx: &AppCtx, plan: &crate::store::DeleteRemotePlan) ->
 }
 
 fn delete_detail_row(icon: &str, title: &str, subtitle: &str) -> adw::ActionRow {
-    let row = adw::ActionRow::new();
+    let row = crate::ui::rows::action_row();
     row.set_title(title);
     if !subtitle.is_empty() {
         row.set_subtitle(subtitle);
@@ -6770,28 +6818,28 @@ pub fn quick_run_editor(
     dialog.set_content_width(640);
     dialog.set_content_height(720);
     let group = adw::PreferencesGroup::new();
-    let name = adw::EntryRow::new();
+    let name = crate::ui::rows::entry_row();
     name.set_title(&ctx.t_or("flow.quickRun.editor.name", "Name"));
-    let description = adw::EntryRow::new();
+    let description = crate::ui::rows::entry_row();
     description.set_title(&ctx.t_or("flow.quickRun.editor.description", "Description"));
-    let remote = adw::EntryRow::new();
+    let remote = crate::ui::rows::entry_row();
     remote.set_title(&ctx.t_or("flow.quickRun.editor.remote", "Remote"));
     attach_remote_chooser(&ctx, &remote);
-    let src = adw::EntryRow::new();
+    let src = crate::ui::rows::entry_row();
     src.set_title(&ctx.t_or("fileBrowser.operations.details.source", "Source"));
     let extra_sources: Rc<RefCell<Vec<adw::EntryRow>>> = Rc::new(RefCell::new(Vec::new()));
     let extra_filenames: Rc<RefCell<Vec<adw::EntryRow>>> = Rc::new(RefCell::new(Vec::new()));
-    let url_filename = adw::EntryRow::new();
+    let url_filename = crate::ui::rows::entry_row();
     url_filename.set_title(&ctx.t_or(
         "wizards.appOperation.copyUrlFilename",
         "Filename (optional)",
     ));
-    let dst = adw::EntryRow::new();
+    let dst = crate::ui::rows::entry_row();
     dst.set_title(&ctx.t_or(
         "fileBrowser.operations.details.destination",
         "Destination / mount point",
     ));
-    let cron = adw::EntryRow::new();
+    let cron = crate::ui::rows::entry_row();
     cron.set_title(&ctx.t_or("flow.quickRun.editor.cron", "Cron expression"));
     let cron_hint = gtk::Label::new(None);
     cron_hint.add_css_class("dim-label");
@@ -6812,19 +6860,19 @@ pub fn quick_run_editor(
         });
     }
     let cron_presets = attach_cron_builder_row(&cron, &ctx);
-    let op_row = adw::ComboRow::new();
+    let op_row = crate::ui::rows::combo_row();
     op_row.set_title(&ctx.t_or("wizards.cliImport.operation", "Operation"));
     let labels: Vec<&str> = OperationType::ALL.iter().map(|o| o.as_str()).collect();
     op_row.set_model(Some(&gtk::StringList::new(&labels)));
-    let auto = adw::SwitchRow::new();
+    let auto = crate::ui::rows::switch_row();
     auto.set_title(&ctx.t_or("flow.quickRun.badges.autostart", "Auto start"));
-    let watch = adw::SwitchRow::new();
+    let watch = crate::ui::rows::switch_row();
     watch.set_title(&ctx.t_or("flow.quickRun.badges.watcher", "Watch enabled"));
     watch.set_subtitle(&ctx.t_or(
         "wizards.appOperation.watchDescription",
         "Watch local source directories for file modifications and sync changes automatically.",
     ));
-    let watch_delay = adw::EntryRow::new();
+    let watch_delay = crate::ui::rows::entry_row();
     watch_delay.set_title(&ctx.t_or("wizards.appOperation.watchDelay", "Watch delay (seconds)"));
     watch_delay.set_tooltip_text(Some(&ctx.t_or(
         "wizards.appOperation.watchDelayHint",
@@ -6853,12 +6901,12 @@ pub fn quick_run_editor(
         refresh_watch_zero(&watch_delay.text());
         watch_delay.connect_changed(move |row| refresh_watch_zero(&row.text()));
     }
-    let watch_changed = adw::SwitchRow::new();
+    let watch_changed = crate::ui::rows::switch_row();
     watch_changed.set_title(&ctx.t_or(
         "automation.monitoring.changedOnlyShort",
         "Changed files only",
     ));
-    let tray = adw::SwitchRow::new();
+    let tray = crate::ui::rows::switch_row();
     tray.set_title(&ctx.t_or("flow.quickRun.editor.showOnTray", "Show on tray"));
     let runtime_current = Rc::new(RefCell::new(
         existing
@@ -6898,7 +6946,7 @@ pub fn quick_run_editor(
             url_filename.set_text(first);
         }
         for extra in sources.iter().skip(1) {
-            let row = adw::EntryRow::new();
+            let row = crate::ui::rows::entry_row();
             row.set_title(&ctx.t_or("wizards.appOperation.addSource", "Additional source"));
             if !copyurl {
                 attach_path_picker(
@@ -6994,7 +7042,7 @@ pub fn quick_run_editor(
             helper_profiles(&parent, ctx.clone(), &remote.text());
         });
     }
-    let helpers_row = adw::ActionRow::new();
+    let helpers_row = crate::ui::rows::action_row();
     helpers_row.set_title(&ctx.t_or(
         "general.remoteConfig.advancedProfiles.title",
         "Helper profiles",
@@ -7057,7 +7105,7 @@ pub fn quick_run_editor(
     dest_status.set_xalign(0.0);
     dest_status.set_wrap(true);
     dest_status.set_visible(crate::path_inspection::shows_dest_status(initial_op));
-    let dest_status_row = adw::ActionRow::new();
+    let dest_status_row = crate::ui::rows::action_row();
     dest_status_row.set_title(&ctx.t_or("remoteConfig.pathStatusTitle", "Path check"));
     dest_status_row.add_suffix(&dest_status);
     dest_status_row.set_visible(crate::path_inspection::shows_dest_status(initial_op));
@@ -7094,7 +7142,7 @@ pub fn quick_run_editor(
     src_status.add_css_class("dim-label");
     src_status.set_xalign(0.0);
     src_status.set_wrap(true);
-    let src_status_row = adw::ActionRow::new();
+    let src_status_row = crate::ui::rows::action_row();
     src_status_row.set_title(&ctx.t_or("remoteConfig.pathStatusTitle", "Path check"));
     src_status_row.add_suffix(&src_status);
     let refresh_src_status = {
@@ -7165,7 +7213,7 @@ pub fn quick_run_editor(
         let current_op = current_op.clone();
         add_src.connect_clicked(move |_| {
             let op = current_op();
-            let row = adw::EntryRow::new();
+            let row = crate::ui::rows::entry_row();
             row.set_title(&ctx.t_or("wizards.appOperation.addSource", "Additional source"));
             if op != OperationType::Copyurl {
                 attach_path_picker(
@@ -7188,7 +7236,7 @@ pub fn quick_run_editor(
             refresh_guidance();
         });
     }
-    let add_src_row = adw::ActionRow::new();
+    let add_src_row = crate::ui::rows::action_row();
     add_src_row.set_title(&ctx.t_or("remoteConfig.multipleSources", "Multiple sources"));
     add_src_row.add_suffix(&add_src);
     add_src_row.set_visible(initial_op.supports_multi_source());
@@ -7222,7 +7270,7 @@ pub fn quick_run_editor(
                     {
                         continue;
                     }
-                    let row = adw::EntryRow::new();
+                    let row = crate::ui::rows::entry_row();
                     row.set_title(&title);
                     row.set_text(&path);
                     if op != OperationType::Copyurl {
@@ -7272,7 +7320,7 @@ pub fn quick_run_editor(
     group.add(&backend_profile);
     group.add(&runtime_profile);
     group.add(&helpers_row);
-    let dry = adw::SwitchRow::new();
+    let dry = crate::ui::rows::switch_row();
     dry.set_title(&ctx.t_or("detailShared.jobs.dryRun", "Dry run"));
     dry.set_active(
         existing
@@ -7280,7 +7328,7 @@ pub fn quick_run_editor(
             .is_some_and(|qr| crate::jobs::is_dry_run(&qr.config.rclone)),
     );
     group.add(&dry);
-    let resync = adw::SwitchRow::new();
+    let resync = crate::ui::rows::switch_row();
     resync.set_title(&ctx.t_or("dashboard.appDetail.resync", "Resync"));
     resync.set_subtitle(&ctx.t_or(
         "dashboard.appDetail.resyncActive",
@@ -7294,7 +7342,9 @@ pub fn quick_run_editor(
     resync.set_visible(initial_op == OperationType::Bisync);
     group.add(&resync);
     let flags_group = adw::PreferencesGroup::new();
-    flags_group.set_title(&ctx.t_or("flow.quickRun.editor.flags", "Operation flags"));
+    flags_group.set_title(&crate::ui::rows::escape(
+        ctx.t_or("flow.quickRun.editor.flags", "Operation flags"),
+    ));
     let flag_rows: Rc<RefCell<Vec<super::flag_widget::FlagRow>>> =
         Rc::new(RefCell::new(Vec::new()));
     let serve_flag_rows: Rc<RefCell<Vec<super::flag_widget::ServeFlagRow>>> =
@@ -7314,7 +7364,7 @@ pub fn quick_run_editor(
     );
     let serve_types = Rc::new(ctx.serve_types());
     let mount_types = Rc::new(ctx.mount_types());
-    let serve = adw::ComboRow::new();
+    let serve = crate::ui::rows::combo_row();
     serve.set_title(&ctx.t_or("operation.serve.type", "Serve type"));
     serve.set_model(Some(&gtk::StringList::new(
         &crate::operations::combo_names(&serve_types),
@@ -7325,7 +7375,7 @@ pub fn quick_run_editor(
             serve.set_selected(idx as u32);
         }
     }
-    let mount_type = adw::ComboRow::new();
+    let mount_type = crate::ui::rows::combo_row();
     mount_type.set_title(&ctx.t_or("remoteConfig.mountType", "Mount type"));
     mount_type.set_model(Some(&gtk::StringList::new(
         &crate::operations::combo_names(&mount_types),
@@ -7454,24 +7504,32 @@ pub fn quick_run_editor(
     let backend_flag_rows: Rc<RefCell<Vec<super::flag_widget::FlagRow>>> =
         Rc::new(RefCell::new(Vec::new()));
     let vfs_flags = adw::PreferencesGroup::new();
-    vfs_flags.set_title(&ctx.t_or("flow.quickRun.editor.tabVfs", "VFS"));
+    vfs_flags.set_title(&crate::ui::rows::escape(
+        ctx.t_or("flow.quickRun.editor.tabVfs", "VFS"),
+    ));
     let filter_flags = adw::PreferencesGroup::new();
-    filter_flags.set_title(&ctx.t_or("flow.quickRun.editor.tabFilter", "Filter"));
+    filter_flags.set_title(&crate::ui::rows::escape(
+        ctx.t_or("flow.quickRun.editor.tabFilter", "Filter"),
+    ));
     let backend_flags = adw::PreferencesGroup::new();
-    backend_flags.set_title(&ctx.t_or("flow.quickRun.editor.tabBackend", "Backend"));
+    backend_flags.set_title(&crate::ui::rows::escape(
+        ctx.t_or("flow.quickRun.editor.tabBackend", "Backend"),
+    ));
     let runtime_flag_rows: Rc<RefCell<Vec<super::flag_widget::FlagRow>>> =
         Rc::new(RefCell::new(Vec::new()));
     let runtime_flags = adw::PreferencesGroup::new();
-    runtime_flags.set_title(&ctx.t_or("flow.quickRun.editor.tabRuntimeRemote", "Runtime Remote"));
+    runtime_flags.set_title(&crate::ui::rows::escape(
+        ctx.t_or("flow.quickRun.editor.tabRuntimeRemote", "Runtime Remote"),
+    ));
     runtime_flags.set_description(Some(&ctx.t_or(
         "wizards.remoteConfig.runtimeRemoteWarning.description",
         "These settings dynamically override connection properties at runtime. They are not stored in rclone.conf.",
     )));
-    let runtime_json_toggle = adw::SwitchRow::new();
+    let runtime_json_toggle = crate::ui::rows::switch_row();
     runtime_json_toggle.set_title(&ctx.t_or("remoteConfig.jsonMode", "JSON mode"));
     runtime_json_toggle.set_active(ctx.settings.borrow().runtime.show_json_mode);
     runtime_flags.add(&runtime_json_toggle);
-    let runtime_empty = adw::ActionRow::new();
+    let runtime_empty = crate::ui::rows::action_row();
     runtime_empty.set_title(&ctx.t_or(
         "wizards.presets.noRemoteSelected",
         "Please select a remote first",
@@ -7482,7 +7540,7 @@ pub fn quick_run_editor(
     runtime_editor
         .root
         .set_visible(runtime_json_toggle.is_active());
-    let runtime_json_row = adw::ActionRow::new();
+    let runtime_json_row = crate::ui::rows::action_row();
     runtime_json_row.set_title(&ctx.t_or("remoteConfig.jsonPayload", "JSON"));
     runtime_json_row.set_activatable(false);
     runtime_json_row.set_child(Some(&runtime_editor.root));
@@ -8060,7 +8118,7 @@ pub fn export_backup(
         .map(|(id, _)| backup::export_category_label(id, &ctx.i18n.borrow()))
         .collect();
     let label_refs: Vec<&str> = labels.iter().map(|s| s.as_str()).collect();
-    let type_row = adw::ComboRow::new();
+    let type_row = crate::ui::rows::combo_row();
     type_row.set_title(&ctx.t_or("modals.export.selectType", "What to export"));
     type_row.set_model(Some(&gtk::StringList::new(&label_refs)));
     let remotes: Vec<String> = ctx
@@ -8070,7 +8128,7 @@ pub fn export_backup(
         .iter()
         .map(|r| r.name.clone())
         .collect();
-    let remote_row = adw::ComboRow::new();
+    let remote_row = crate::ui::rows::combo_row();
     remote_row.set_title(&ctx.t_or("modals.export.selectRemote", "Specific remote"));
     let remote_refs: Vec<&str> = remotes.iter().map(|s| s.as_str()).collect();
     if remote_refs.is_empty() {
@@ -8079,7 +8137,7 @@ pub fn export_backup(
     } else {
         remote_row.set_model(Some(&gtk::StringList::new(&remote_refs)));
     }
-    let specific = adw::SwitchRow::new();
+    let specific = crate::ui::rows::switch_row();
     specific.set_title(&ctx.t_or("modals.export.selectRemote", "Export only one remote"));
     if let Some(name) = remote {
         specific.set_active(true);
@@ -8087,21 +8145,21 @@ pub fn export_backup(
             remote_row.set_selected(idx as u32);
         }
     }
-    let note = adw::EntryRow::new();
+    let note = crate::ui::rows::entry_row();
     note.set_title(&ctx.t_or("modals.export.noteLabel", "Note"));
-    let encrypt = adw::SwitchRow::new();
+    let encrypt = crate::ui::rows::switch_row();
     encrypt.set_title(&ctx.t_or("modals.export.encryptBackup", "Encrypt backup"));
     encrypt.set_subtitle(&ctx.t_or(
         "modals.export.passwordLabel",
         "Zip password (optional, 4+ chars)",
     ));
-    let password = adw::PasswordEntryRow::new();
+    let password = crate::ui::rows::password_entry_row();
     password.set_title(&ctx.t_or(
         "modals.export.passwordLabel",
         "Zip password (optional, 4+ chars)",
     ));
     password.set_visible(false);
-    let secrets = adw::SwitchRow::new();
+    let secrets = crate::ui::rows::switch_row();
     secrets.set_title(&ctx.t_or(
         "modals.export.includeSecrets",
         "Include secrets in rclone dump",
@@ -8121,7 +8179,7 @@ pub fn export_backup(
             }
         });
     }
-    let format_row = adw::ComboRow::new();
+    let format_row = crate::ui::rows::combo_row();
     format_row.set_title(&ctx.t_or("modals.export.format", "Format"));
     format_row.set_model(Some(&gtk::StringList::new(&[
         &ctx.t_or("modals.export.formatZip", "Zip backup"),
@@ -8135,7 +8193,7 @@ pub fn export_backup(
             .map(|b| format!("{} ({}:{})", b.name, b.host, b.port)),
     );
     let backend_refs: Vec<&str> = backend_labels.iter().map(|s| s.as_str()).collect();
-    let backend_row = adw::ComboRow::new();
+    let backend_row = crate::ui::rows::combo_row();
     backend_row.set_title(&ctx.t_or("modals.export.backend", "Rclone backend"));
     backend_row.set_subtitle(&ctx.t_or(
         "modals.export.categories.backend.description",
@@ -8154,7 +8212,7 @@ pub fn export_backup(
         "Choose which remotes to include in a full backup.",
     )));
     for name in &remotes {
-        let row = adw::SwitchRow::new();
+        let row = crate::ui::rows::switch_row();
         row.set_title(name);
         row.set_active(true);
         let selected_profiles = selected_profiles.clone();
@@ -8474,18 +8532,20 @@ pub fn import_rclone_config(
         "backup.importConfig.heading",
         "Import remotes from this configuration file?",
     ));
-    let file_row = adw::ActionRow::new();
+    let file_row = crate::ui::rows::action_row();
     file_row.set_title(&ctx.t_or("backup.importConfig.file", "File"));
     file_row.set_subtitle(&path.display().to_string());
     info.add(&file_row);
     page.add(&info);
 
     let remotes_group = adw::PreferencesGroup::new();
-    remotes_group.set_title(&ctx.t_or("backup.importConfig.remotes", "Remotes"));
+    remotes_group.set_title(&crate::ui::rows::escape(
+        ctx.t_or("backup.importConfig.remotes", "Remotes"),
+    ));
     let names = match &dump {
         Ok(value) => crate::config_import::dump_remote_names(value),
         Err(err) => {
-            let row = adw::ActionRow::new();
+            let row = crate::ui::rows::action_row();
             row.set_title(&ctx.t_or("backup.importConfig.empty", "No remotes found in this file"));
             row.set_subtitle(&ctx.tf("backup.importConfig.failed", &[("error", err)]));
             remotes_group.add(&row);
@@ -8493,12 +8553,12 @@ pub fn import_rclone_config(
         }
     };
     if dump.is_ok() && names.is_empty() {
-        let row = adw::ActionRow::new();
+        let row = crate::ui::rows::action_row();
         row.set_title(&ctx.t_or("backup.importConfig.empty", "No remotes found in this file"));
         remotes_group.add(&row);
     }
     for name in &names {
-        let row = adw::ActionRow::new();
+        let row = crate::ui::rows::action_row();
         row.set_title(name);
         if let Ok(value) = &dump {
             if let Some(kind) = value
@@ -8514,7 +8574,7 @@ pub fn import_rclone_config(
     page.add(&remotes_group);
 
     let options = adw::PreferencesGroup::new();
-    let overwrite = adw::SwitchRow::new();
+    let overwrite = crate::ui::rows::switch_row();
     overwrite.set_title(&ctx.t_or(
         "backup.importConfig.overwrite",
         "Replace remotes that already exist",
@@ -8646,9 +8706,11 @@ pub fn restore_preview(
     dialog.set_content_height(720);
     let page = adw::PreferencesPage::new();
     let info = adw::PreferencesGroup::new();
-    info.set_title(&ctx.t_or("backup.restore.info", "Backup Information"));
+    info.set_title(&crate::ui::rows::escape(
+        ctx.t_or("backup.restore.info", "Backup Information"),
+    ));
     if let Some(analysis) = &analysis {
-        let created = adw::ActionRow::new();
+        let created = crate::ui::rows::action_row();
         created.set_title(&ctx.t_or("backup.restore.created", "Created"));
         let created_text = if analysis.manifest.created_at.is_empty() {
             ctx.t_or("backup.restore.unknown", "Unknown")
@@ -8656,17 +8718,19 @@ pub fn restore_preview(
             analysis.manifest.created_at.clone()
         };
         created.set_subtitle(&created_text);
-        let kind = adw::ActionRow::new();
+        let kind = crate::ui::rows::action_row();
         kind.set_title(&ctx.t_or("backup.restore.type", "Type"));
         kind.set_subtitle(&analysis.manifest.export_type);
-        let security = adw::ActionRow::new();
-        security.set_title(&ctx.t_or("backup.restore.security", "Security"));
+        let security = crate::ui::rows::action_row();
+        security.set_title(&crate::ui::rows::escape(
+            ctx.t_or("backup.restore.security", "Security"),
+        ));
         security.set_subtitle(&if analysis.manifest.encrypted {
             ctx.t_or("backup.restore.encrypted", "Encrypted")
         } else {
             ctx.t_or("backup.restore.notEncrypted", "Not Encrypted")
         });
-        let remotes = adw::ActionRow::new();
+        let remotes = crate::ui::rows::action_row();
         remotes.set_title(&ctx.t_or(
             "backup.restore.remoteConfigs.title",
             "Remote Configurations",
@@ -8681,7 +8745,7 @@ pub fn restore_preview(
         info.add(&security);
         info.add(&remotes);
     } else {
-        let missing = adw::ActionRow::new();
+        let missing = crate::ui::rows::action_row();
         missing.set_title(&ctx.t_or("backup.analyzeFailed", "Failed to analyze backup file"));
         missing.set_subtitle(&ctx.t_or(
             "backup.restore.errors.requiresPassword",
@@ -8691,8 +8755,10 @@ pub fn restore_preview(
     }
     page.add(&info);
     let options = adw::PreferencesGroup::new();
-    options.set_title(&ctx.t_or("backup.restore.options", "Restore Options"));
-    let password = adw::PasswordEntryRow::new();
+    options.set_title(&crate::ui::rows::escape(
+        ctx.t_or("backup.restore.options", "Restore Options"),
+    ));
+    let password = crate::ui::rows::password_entry_row();
     password.set_title(&ctx.t_or(
         "backup.restore.passwordPlaceholder",
         "Enter your backup password",
@@ -8702,10 +8768,10 @@ pub fn restore_preview(
         scope_labels.extend(analysis.manifest.remotes.iter().cloned());
     }
     let scope_refs: Vec<&str> = scope_labels.iter().map(|s| s.as_str()).collect();
-    let scope = adw::ComboRow::new();
+    let scope = crate::ui::rows::combo_row();
     scope.set_title(&ctx.t_or("backup.restore.scope.profile", "Restore Specific Profile"));
     scope.set_model(Some(&gtk::StringList::new(&scope_refs)));
-    let as_name = adw::EntryRow::new();
+    let as_name = crate::ui::rows::entry_row();
     as_name.set_title(&ctx.t_or("backup.restore.restoreAs", "Restore as (optional rename)"));
     options.add(&password);
     options.add(&scope);
@@ -8713,15 +8779,17 @@ pub fn restore_preview(
     page.add(&options);
     if let Some(analysis) = &analysis {
         let contents = adw::PreferencesGroup::new();
-        contents.set_title(&ctx.t_or("backup.restore.contents", "Backup Contents"));
+        contents.set_title(&crate::ui::rows::escape(
+            ctx.t_or("backup.restore.contents", "Backup Contents"),
+        ));
         for (key, fallback) in analysis.content_rows() {
-            let row = adw::ActionRow::new();
+            let row = crate::ui::rows::action_row();
             row.set_title(&ctx.t_or(key, fallback));
             row.add_suffix(&gtk::Image::from_icon_name("object-select-symbolic"));
             contents.add(&row);
         }
         if !analysis.manifest.note.is_empty() {
-            let note = adw::ActionRow::new();
+            let note = crate::ui::rows::action_row();
             note.set_title(&ctx.t_or("backup.restore.note", "Backup Note"));
             note.set_subtitle(&analysis.manifest.note);
             contents.add(&note);
@@ -9012,7 +9080,7 @@ pub fn properties(
             )
         }),
     ] {
-        let row = adw::ActionRow::new();
+        let row = crate::ui::rows::action_row();
         row.set_title(&title);
         row.set_subtitle(&value);
         if title == ctx.t_or("fileBrowser.properties.location", "Location") {
@@ -9030,7 +9098,7 @@ pub fn properties(
     if let Some(client) = ctx.client() {
         if let Ok(Some(stat)) = client.stat(&fs, path) {
             is_dir = stat.is_dir;
-            let row = adw::ActionRow::new();
+            let row = crate::ui::rows::action_row();
             row.set_title(&ctx.t_or("fileBrowser.properties.kind", "Kind"));
             row.set_subtitle(&format!(
                 "{}{}",
@@ -9051,14 +9119,14 @@ pub fn properties(
             ));
             list.append(&row);
             if !stat.mod_time.is_empty() {
-                let row = adw::ActionRow::new();
+                let row = crate::ui::rows::action_row();
                 row.set_title(&ctx.t_or("fileBrowser.properties.modified", "Modified"));
                 row.set_subtitle(&crate::rclone::format_mod_time(&stat.mod_time));
                 list.append(&row);
             }
         }
         if let Ok(about) = client.about(&fs) {
-            let storage_header = adw::ActionRow::new();
+            let storage_header = crate::ui::rows::action_row();
             storage_header.set_title(&ctx.t_or(
                 crate::fileops::properties_section_title_key("storage"),
                 "Storage",
@@ -9072,7 +9140,7 @@ pub fn properties(
                 ("total", "fileBrowser.properties.totalCapacity", "Total"),
             ] {
                 if let Some(value) = about.get(key).and_then(|x| x.as_i64()) {
-                    let row = adw::ActionRow::new();
+                    let row = crate::ui::rows::action_row();
                     row.set_title(&ctx.t_or(label, fallback));
                     row.set_subtitle(&crate::rclone::format_bytes(value));
                     list.append(&row);
@@ -9081,7 +9149,7 @@ pub fn properties(
         }
         if remote == "local" {
             if let Ok(du) = client.du(Some(path)) {
-                let row = adw::ActionRow::new();
+                let row = crate::ui::rows::action_row();
                 row.set_title(&ctx.t_or("fileBrowser.properties.localDisk", "Local disk"));
                 row.set_subtitle(&du.dir);
                 list.append(&row);
@@ -9090,7 +9158,7 @@ pub fn properties(
                     ("fileBrowser.properties.free", "Free", du.free),
                     ("fileBrowser.properties.totalCapacity", "Total", du.total),
                 ] {
-                    let row = adw::ActionRow::new();
+                    let row = crate::ui::rows::action_row();
                     row.set_title(&ctx.t_or(label, fallback));
                     row.set_subtitle(&crate::rclone::format_bytes(value));
                     list.append(&row);
@@ -9098,7 +9166,7 @@ pub fn properties(
             }
         }
         if is_dir {
-            let content_header = adw::ActionRow::new();
+            let content_header = crate::ui::rows::action_row();
             content_header.set_title(&ctx.t_or(
                 crate::fileops::properties_section_title_key("content"),
                 "Content Stats",
@@ -9110,12 +9178,12 @@ pub fn properties(
                 "fileBrowser.properties.calculating",
                 "Calculating folder size...",
             );
-            let count_row = adw::ActionRow::new();
+            let count_row = crate::ui::rows::action_row();
             count_row
                 .set_title(&ctx.t_or("fileBrowser.properties.containedFiles", "Contained files"));
             count_row.set_subtitle(&calculating);
             list.append(&count_row);
-            let size_row = adw::ActionRow::new();
+            let size_row = crate::ui::rows::action_row();
             size_row.set_title(&ctx.t_or("fileBrowser.properties.totalSize", "Total size"));
             size_row.set_subtitle(&calculating);
             list.append(&size_row);
@@ -9157,7 +9225,7 @@ pub fn properties(
             .filter(|h| !h.is_empty())
             .unwrap_or_default();
         if hashes.is_empty() {
-            let row = adw::ActionRow::new();
+            let row = crate::ui::rows::action_row();
             row.set_title(&ctx.t_or("fileBrowser.properties.checksums", "Hashes"));
             row.set_subtitle(&ctx.t_or(
                 "fileBrowser.properties.noHashTypes",
@@ -9165,7 +9233,7 @@ pub fn properties(
             ));
             list.append(&row);
         } else if is_dir {
-            let instr = adw::ActionRow::new();
+            let instr = crate::ui::rows::action_row();
             instr.set_title(&ctx.t_or("fileBrowser.properties.checksums", "Checksums"));
             instr.set_subtitle(&ctx.t_or(
                 "fileBrowser.properties.bulkHashInstruction",
@@ -9189,7 +9257,7 @@ pub fn properties(
             result_row.set_child(Some(&result_scroll));
             result_row.set_visible(false);
             list.append(&result_row);
-            let result_actions = adw::ActionRow::new();
+            let result_actions = crate::ui::rows::action_row();
             result_actions.set_title(&ctx.t_or(
                 "fileBrowser.properties.generatedChecksums",
                 "Generated Checksums",
@@ -9234,7 +9302,7 @@ pub fn properties(
             result_actions.add_suffix(&another);
             list.append(&result_actions);
             for hash_type in hashes.iter() {
-                let row = adw::ActionRow::new();
+                let row = crate::ui::rows::action_row();
                 row.set_title(&hash_type.to_ascii_uppercase());
                 row.set_subtitle(&ctx.t_or("fileBrowser.properties.calculating", "Not calculated"));
                 let calc = gtk::Button::with_label(
@@ -9336,7 +9404,7 @@ pub fn properties(
             }
         } else {
             for (idx, hash_type) in hashes.iter().enumerate() {
-                let row = adw::ActionRow::new();
+                let row = crate::ui::rows::action_row();
                 row.set_title(&hash_type.to_ascii_uppercase());
                 row.set_subtitle(&ctx.t_or("fileBrowser.properties.calculating", "Not calculated"));
                 let calc = gtk::Button::with_label(
@@ -9450,7 +9518,7 @@ pub fn properties(
             }
         }
         if remote != "local" && info.as_ref().is_none_or(|i| i.has_feature("PublicLink")) {
-            let link_row = adw::ActionRow::new();
+            let link_row = crate::ui::rows::action_row();
             link_row.set_title(&ctx.t_or("fileBrowser.properties.publicLink", "Public link"));
             link_row.set_subtitle(&ctx.t_or("fileBrowser.properties.creatingLink", "Not created"));
             list.append(&link_row);
@@ -9459,7 +9527,7 @@ pub fn properties(
             let exp_1d = ctx.t_or("fileBrowser.properties.expiry.1d", "1 Day");
             let exp_7d = ctx.t_or("fileBrowser.properties.expiry.7d", "7 Days");
             let exp_30d = ctx.t_or("fileBrowser.properties.expiry.30d", "30 Days");
-            let expire = adw::ComboRow::new();
+            let expire = crate::ui::rows::combo_row();
             expire.set_title(&ctx.t_or("fileBrowser.properties.expires", "Expires"));
             expire.set_model(Some(&gtk::StringList::new(&[
                 exp_never.as_str(),
@@ -9525,7 +9593,7 @@ pub fn properties(
             link_actions.append(&get_link);
             link_actions.append(&unlink);
             list.append(&{
-                let row = adw::ActionRow::new();
+                let row = crate::ui::rows::action_row();
                 row.set_title(&ctx.t_or("fileBrowser.properties.publicLink", "Link actions"));
                 row.add_suffix(&link_actions);
                 row
@@ -9711,7 +9779,9 @@ pub fn job_detail(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, job_id: u64) {
     box_.append(&stats_label);
     box_.append(&stats);
     let error_group = adw::PreferencesGroup::new();
-    error_group.set_title(&ctx.t_or("modals.jobDetail.sections.errors", "Error"));
+    error_group.set_title(&crate::ui::rows::escape(
+        ctx.t_or("modals.jobDetail.sections.errors", "Error"),
+    ));
     error_group.set_visible(false);
     let error_view = gtk::TextView::new();
     error_view.set_editable(false);
@@ -10012,7 +10082,7 @@ pub fn job_detail(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, job_id: u64) {
                     job.remote.clone(),
                 ),
             ] {
-                let row = adw::ActionRow::new();
+                let row = crate::ui::rows::action_row();
                 row.set_title(&title);
                 row.set_subtitle(&value);
                 row.set_subtitle_lines(2);
@@ -10139,7 +10209,7 @@ pub fn job_detail(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, job_id: u64) {
                     },
                 ),
             ] {
-                let row = adw::ActionRow::new();
+                let row = crate::ui::rows::action_row();
                 row.set_title(&title);
                 row.set_subtitle(&value);
                 row.set_subtitle_lines(2);
@@ -10248,7 +10318,7 @@ pub fn job_detail(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, job_id: u64) {
                 }
             });
             if results.is_empty() {
-                let heading = adw::ActionRow::new();
+                let heading = crate::ui::rows::action_row();
                 heading.set_title(&ctx.t_or(
                     "shared.transferActivity.empty.recentHintCheck",
                     "Checked files will appear here when the job completes",
@@ -10344,7 +10414,7 @@ fn add_copy_suffix(ctx: &AppCtx, row: &adw::ActionRow, value: &str) {
 }
 
 fn activity_more_row(ctx: &AppCtx, remaining: usize, on_more: Rc<dyn Fn()>) -> adw::ActionRow {
-    let row = adw::ActionRow::new();
+    let row = crate::ui::rows::action_row();
     row.set_title(&ctx.tf_or(
         "nautilus.loadMore",
         "Show {{count}} more",
@@ -10356,7 +10426,7 @@ fn activity_more_row(ctx: &AppCtx, remaining: usize, on_more: Rc<dyn Fn()>) -> a
 }
 
 fn job_path_row(ctx: &AppCtx, dialog: &adw::Dialog, title: &str, value: &str) -> adw::ActionRow {
-    let row = adw::ActionRow::new();
+    let row = crate::ui::rows::action_row();
     row.set_title(title);
     row.set_subtitle(if value.is_empty() { "—" } else { value });
     row.set_subtitle_lines(3);
@@ -10681,7 +10751,7 @@ fn append_transfer_rows(
         )
     };
     let Some(arr) = items else {
-        let row = adw::ActionRow::new();
+        let row = crate::ui::rows::action_row();
         row.set_title(&empty_title);
         row.set_subtitle(&empty_hint);
         list.append(&row);
@@ -10726,7 +10796,7 @@ fn append_transfer_rows(
         }
     }
     if matched.is_empty() {
-        let row = adw::ActionRow::new();
+        let row = crate::ui::rows::action_row();
         row.set_title(&empty_title);
         row.set_subtitle(&empty_hint);
         list.append(&row);
@@ -11613,7 +11683,7 @@ fn attach_lnk_preview(parent: &gtk::Box, ctx: &AppCtx, content: &str) -> bool {
     let list = gtk::ListBox::new();
     list.add_css_class("boxed-list");
     for target in targets {
-        let row = adw::ActionRow::new();
+        let row = crate::ui::rows::action_row();
         row.set_title(&target);
         list.append(&row);
     }
@@ -11647,7 +11717,7 @@ fn append_markdown_targets(
     list.add_css_class("boxed-list");
     for (label, rel) in targets {
         let resolved = crate::markdown::resolve_relative_path(file_path, &rel);
-        let row = adw::ActionRow::new();
+        let row = crate::ui::rows::action_row();
         row.set_title(&label);
         row.set_subtitle(&resolved);
         if resolved.starts_with("http://") || resolved.starts_with("https://") {
@@ -12272,7 +12342,7 @@ fn populate_file_viewer_body(
         match ctx.client().and_then(|c| c.archive_list(&src, true).ok()) {
             Some(items) if !items.is_empty() => {
                 for item in items {
-                    let row = adw::ActionRow::new();
+                    let row = crate::ui::rows::action_row();
                     row.set_title(&item.path);
                     row.set_subtitle(&item.subtitle());
                     row.add_prefix(&gtk::Image::from_icon_name(if item.is_dir {
@@ -12284,12 +12354,12 @@ fn populate_file_viewer_body(
                 }
             }
             Some(_) => {
-                let row = adw::ActionRow::new();
+                let row = crate::ui::rows::action_row();
                 row.set_title(&ctx.t_or("nautilus.empty.noFiles", "Archive is empty"));
                 archive_list.append(&row);
             }
             None => {
-                let row = adw::ActionRow::new();
+                let row = crate::ui::rows::action_row();
                 row.set_title(&ctx.t_or(
                     "fileBrowser.fileViewer.errorListArchive",
                     "Failed to list archive contents",
@@ -12575,7 +12645,7 @@ fn populate_file_viewer_body(
 }
 
 fn metadata_item_row(ctx: &AppCtx, key: &str, meta: &serde_json::Value) -> adw::ActionRow {
-    let row = adw::ActionRow::new();
+    let row = crate::ui::rows::action_row();
     row.set_title(key);
     let typ = meta
         .get("Type")
@@ -12623,7 +12693,7 @@ fn metadata_item_row(ctx: &AppCtx, key: &str, meta: &serde_json::Value) -> adw::
 }
 
 fn add_about_row(group: &adw::PreferencesGroup, title: &str, subtitle: &str) -> adw::ActionRow {
-    let row = adw::ActionRow::new();
+    let row = crate::ui::rows::action_row();
     row.set_title(title);
     if !subtitle.is_empty() {
         row.set_subtitle(subtitle);
@@ -12657,7 +12727,9 @@ pub fn remote_about(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, remote: &str) {
     dialog.set_content_height(640);
     let page = adw::PreferencesPage::new();
     let usage = adw::PreferencesGroup::new();
-    usage.set_title(&ctx.t_or("fileBrowser.remoteAbout.tabs.overview", "Overview"));
+    usage.set_title(&crate::ui::rows::escape(
+        ctx.t_or("fileBrowser.remoteAbout.tabs.overview", "Overview"),
+    ));
     let reload = gtk::Button::from_icon_name("view-refresh-symbolic");
     reload.add_css_class("flat");
     reload.set_valign(gtk::Align::Center);
@@ -12667,11 +12739,17 @@ pub fn remote_about(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, remote: &str) {
     usage.set_header_suffix(Some(&reload));
     let info_group = adw::PreferencesGroup::new();
     let features = adw::PreferencesGroup::new();
-    features.set_title(&ctx.t_or("fileBrowser.remoteAbout.tabs.features", "Features"));
+    features.set_title(&crate::ui::rows::escape(
+        ctx.t_or("fileBrowser.remoteAbout.tabs.features", "Features"),
+    ));
     let hashes = adw::PreferencesGroup::new();
-    hashes.set_title(&ctx.t_or("fileBrowser.remoteAbout.supportedHashes", "Hashes"));
+    hashes.set_title(&crate::ui::rows::escape(
+        ctx.t_or("fileBrowser.remoteAbout.supportedHashes", "Hashes"),
+    ));
     let metadata = adw::PreferencesGroup::new();
-    metadata.set_title(&ctx.t_or("fileBrowser.remoteAbout.tabs.metadata", "Metadata"));
+    metadata.set_title(&crate::ui::rows::escape(
+        ctx.t_or("fileBrowser.remoteAbout.tabs.metadata", "Metadata"),
+    ));
     let fs = remote_fs(remote, "");
     let group = format!(
         "gtk/remote-about/{remote}-{}",
@@ -13331,7 +13409,7 @@ fn fill_manage_template_list(
         .cloned()
         .collect();
     for template in templates {
-        let row = adw::ActionRow::new();
+        let row = crate::ui::rows::action_row();
         row.set_title(&template.name);
         row.set_subtitle(&template_row_subtitle(ctx, &template));
         row.set_activatable(true);
@@ -13387,7 +13465,7 @@ fn fill_manage_template_list(
         list.append(&row);
     }
     if list.first_child().is_none() {
-        let row = adw::ActionRow::new();
+        let row = crate::ui::rows::action_row();
         row.set_title(&ctx.t_or("templates.noUserTemplates", "No saved templates"));
         list.append(&row);
     }
@@ -13470,19 +13548,19 @@ pub fn archive_create(
     } else {
         "archive.zip".into()
     };
-    let name = adw::EntryRow::new();
+    let name = crate::ui::rows::entry_row();
     name.set_title(&ctx.t_or(
         "nautilus.modals.archiveCreate.filenameLabel",
         "Archive name",
     ));
     name.set_text(&default_name);
     let formats = ["zip", "tar", "tar.gz", "tar.bz2", "tar.xz", "tar.zst"];
-    let format = adw::ComboRow::new();
+    let format = crate::ui::rows::combo_row();
     format.set_title(&ctx.t_or("remoteConfig.archiveFormat", "Format"));
     format.set_model(Some(&gtk::StringList::new(&formats)));
-    let prefix = adw::EntryRow::new();
+    let prefix = crate::ui::rows::entry_row();
     prefix.set_title(&ctx.t_or("remoteConfig.archivePrefix", "Prefix"));
-    let full_path = adw::SwitchRow::new();
+    let full_path = crate::ui::rows::switch_row();
     full_path.set_title(&ctx.t_or(
         "remoteConfig.archiveFullPath",
         "Use full paths in the archive",
@@ -13594,10 +13672,10 @@ pub fn copy_url_into(
 ) {
     let dialog = adw::Dialog::new();
     dialog.set_title(&ctx.t_or("nautilus.modals.copyUrl.title", "Copy URL"));
-    let url = adw::EntryRow::new();
+    let url = crate::ui::rows::entry_row();
     url.set_title(&ctx.t_or("nautilus.modals.copyUrl.urlLabel", "URL"));
     url.set_text("https://");
-    let filename = adw::EntryRow::new();
+    let filename = crate::ui::rows::entry_row();
     filename.set_title(&ctx.t_or("nautilus.modals.copyUrl.fileLabel", "Filename (optional)"));
     filename.set_tooltip_text(Some(&ctx.t_or(
         "nautilus.modals.copyUrl.filePlaceholder",
@@ -13717,12 +13795,12 @@ pub fn helper_profiles(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, remote: &str
     ));
     dialog.set_content_width(560);
     dialog.set_content_height(520);
-    let kind = adw::ComboRow::new();
+    let kind = crate::ui::rows::combo_row();
     kind.set_title(&ctx.t_or("common.category", "Category"));
     kind.set_model(Some(&gtk::StringList::new(&[
         "vfs", "filter", "backend", "runtime",
     ])));
-    let name = adw::EntryRow::new();
+    let name = crate::ui::rows::entry_row();
     name.set_title(&ctx.t_or("wizards.cliImport.profileName", "Profile name"));
     name.set_text("default");
     let editor = super::json_editor::JsonEditor::new(&ctx);
@@ -13841,7 +13919,7 @@ pub fn item_order(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, on_done: Rc<dyn F
         }
         let current = names.borrow().clone();
         for (idx, name) in current.iter().enumerate() {
-            let row = adw::SwitchRow::new();
+            let row = crate::ui::rows::switch_row();
             row.set_title(name);
             row.set_subtitle(subtitle);
             row.set_active(!hidden.borrow().iter().any(|n| n == name));
@@ -14023,7 +14101,7 @@ pub fn configure_sidebar(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, on_done: R
         }
         let current = names.borrow().clone();
         for (idx, name) in current.iter().enumerate() {
-            let row = adw::SwitchRow::new();
+            let row = crate::ui::rows::switch_row();
             if let Some(title) = labels.get(name) {
                 row.set_title(title);
                 row.set_subtitle(name);
@@ -14216,7 +14294,7 @@ fn attach_cli_import(
             );
         });
     }
-    let cli_row = adw::ActionRow::new();
+    let cli_row = crate::ui::rows::action_row();
     cli_row.set_title(&ctx.t_or("wizards.cliImport.title", "CLI import"));
     cli_row.set_subtitle(&ctx.t_or(
         "wizards.cliImport.description",
@@ -14494,8 +14572,10 @@ fn fill_cli_preview(
     }
     selected.borrow_mut().clear();
     let detected = adw::PreferencesGroup::new();
-    detected.set_title(&ctx.t_or("wizards.cliImport.detectedTitle", "Detected Configuration"));
-    let op_row = adw::ActionRow::new();
+    detected.set_title(&crate::ui::rows::escape(
+        ctx.t_or("wizards.cliImport.detectedTitle", "Detected Configuration"),
+    ));
+    let op_row = crate::ui::rows::action_row();
     op_row.set_title(&ctx.t_or("wizards.cliImport.operation", "Operation"));
     op_row.set_subtitle(
         &result
@@ -14505,13 +14585,13 @@ fn fill_cli_preview(
     );
     detected.add(&op_row);
     if let Some(serve) = &result.serve_subtype {
-        let row = adw::ActionRow::new();
+        let row = crate::ui::rows::action_row();
         row.set_title(&ctx.t_or("wizards.cliImport.serveType", "Serve Type"));
         row.set_subtitle(serve);
         detected.add(&row);
     }
     if let Some(src) = &result.source_path {
-        let row = adw::ActionRow::new();
+        let row = crate::ui::rows::action_row();
         let mount_or_serve = matches!(result.verb.as_deref(), Some("mount") | Some("serve"));
         row.set_title(&if mount_or_serve {
             ctx.t_or("wizards.cliImport.remote", "Remote")
@@ -14523,7 +14603,7 @@ fn fill_cli_preview(
     }
     if let Some(dst) = &result.dest_path {
         if result.verb.as_deref() != Some("serve") {
-            let row = adw::ActionRow::new();
+            let row = crate::ui::rows::action_row();
             row.set_title(&if result.verb.as_deref() == Some("mount") {
                 ctx.t_or("wizards.cliImport.mountPoint", "Mount Point")
             } else {
@@ -14550,7 +14630,7 @@ fn fill_cli_preview(
         for item in mapped {
             let key = item.flag.key.clone();
             selected.borrow_mut().insert(key.clone());
-            let row = adw::SwitchRow::new();
+            let row = crate::ui::rows::switch_row();
             row.set_title(&format!("--{key}"));
             let field = item.field_name.clone().unwrap_or_default();
             let value = item
@@ -14616,13 +14696,15 @@ fn fill_cli_preview(
     };
     if !macros.is_empty() {
         let group = adw::PreferencesGroup::new();
-        group.set_title(&ctx.t_or("wizards.cliImport.macroDetected", "Shell Macros Detected"));
+        group.set_title(&crate::ui::rows::escape(
+            ctx.t_or("wizards.cliImport.macroDetected", "Shell Macros Detected"),
+        ));
         group.set_description(Some(&ctx.t_or(
             "wizards.cliImport.macroDesc",
             "The backend will resolve these values at runtime when starting the job.",
         )));
         for (source, value) in macros {
-            let row = adw::ActionRow::new();
+            let row = crate::ui::rows::action_row();
             row.set_title(&source);
             row.set_subtitle(&value);
             group.add(&row);
@@ -14642,7 +14724,7 @@ fn fill_cli_preview(
             "Unrecognized Flags (Ignored)",
         ));
         for item in unknown {
-            let row = adw::ActionRow::new();
+            let row = crate::ui::rows::action_row();
             row.set_title(&item.flag.raw);
             group.add(&row);
         }
@@ -14656,7 +14738,7 @@ fn fill_cli_preview(
         ctx.t_or("wizards.cliImport.applyConfig", "Apply to Profile")
     });
     if result.source_path.is_some() {
-        let row = adw::SwitchRow::new();
+        let row = crate::ui::rows::switch_row();
         row.set_title(&ctx.t_or("wizards.cliImport.importSourcePath", "Import Source Path"));
         row.set_active(true);
         import_source.set(true);
@@ -14667,7 +14749,7 @@ fn fill_cli_preview(
         apply_group.add(&row);
     }
     if result.dest_path.is_some() && result.verb.as_deref() != Some("serve") {
-        let row = adw::SwitchRow::new();
+        let row = crate::ui::rows::switch_row();
         row.set_title(&if result.verb.as_deref() == Some("mount") {
             ctx.t_or("wizards.cliImport.importMountPoint", "Import Mount Point")
         } else {
@@ -14685,7 +14767,7 @@ fn fill_cli_preview(
         apply_group.add(&row);
     }
     if !options.is_quick_run {
-        let mode_row = adw::ComboRow::new();
+        let mode_row = crate::ui::rows::combo_row();
         mode_row.set_title(&ctx.t_or("wizards.cliImport.applyToProfile", "Apply to Profile"));
         let labels = [
             ctx.t_or("wizards.cliImport.newProfile", "Create New Profile"),
@@ -14707,10 +14789,10 @@ fn fill_cli_preview(
         } else {
             ProfileMode::Patch
         });
-        let name_row = adw::EntryRow::new();
+        let name_row = crate::ui::rows::entry_row();
         name_row.set_title(&ctx.t_or("wizards.cliImport.profileName", "Profile Name"));
         name_row.set_visible(options.can_create_new);
-        let override_row = adw::ComboRow::new();
+        let override_row = crate::ui::rows::combo_row();
         override_row.set_title(&ctx.t_or("wizards.cliImport.selectProfile", "Select Profile"));
         let refs: Vec<&str> = options
             .existing_profiles
@@ -14902,7 +14984,7 @@ pub(super) fn check_result_row(
     parent: &impl IsA<gtk::Widget>,
 ) -> gtk::Box {
     let wrap = gtk::Box::new(gtk::Orientation::Vertical, 4);
-    let row = adw::ActionRow::new();
+    let row = crate::ui::rows::action_row();
     row.set_title(&item.name);
     row.set_activatable(true);
     {
@@ -15345,7 +15427,7 @@ fn populate_template_key_rows(
         grouped.entry(category).or_default().push((path, value));
     }
     for (category, entries) in grouped {
-        let expander = adw::ExpanderRow::new();
+        let expander = crate::ui::rows::expander_row();
         expander.set_title(&category);
         expander.set_subtitle(&template_keys_label(ctx, entries.len()));
         expander.set_expanded(true);
@@ -15373,8 +15455,10 @@ fn populate_template_key_rows(
         list.append(&expander);
     }
     if rows.borrow().is_empty() {
-        let empty = adw::ActionRow::new();
-        empty.set_title(&ctx.t_or("templates.noCatKeys", "No settings in this selection yet."));
+        let empty = crate::ui::rows::action_row();
+        empty.set_title(&crate::ui::rows::escape(
+            ctx.t_or("templates.noCatKeys", "No settings in this selection yet."),
+        ));
         empty.set_sensitive(false);
         list.append(&empty);
     }
@@ -15404,7 +15488,7 @@ fn edit_template(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, existing: Option<U
     });
     dialog.set_content_width(640);
     dialog.set_content_height(640);
-    let name = adw::EntryRow::new();
+    let name = crate::ui::rows::entry_row();
     name.set_title(&ctx.t_or("templates.templateName", "Name"));
     name.set_text(
         existing
@@ -15412,7 +15496,7 @@ fn edit_template(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, existing: Option<U
             .map(|item| item.name.as_str())
             .unwrap_or(""),
     );
-    let description = adw::EntryRow::new();
+    let description = crate::ui::rows::entry_row();
     description.set_title(&ctx.t_or("templates.templateDesc", "Description (optional)"));
     description.set_text(
         existing
@@ -15492,10 +15576,10 @@ fn edit_template(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, existing: Option<U
     keys_scroll.set_min_content_height(180);
     keys_scroll.set_vexpand(true);
     keys_scroll.set_child(Some(&keys_list));
-    let add_key = adw::EntryRow::new();
+    let add_key = crate::ui::rows::entry_row();
     add_key.set_title(&ctx.t_or("templates.key", "Key"));
     add_key.set_text("vfs.dir_cache_time");
-    let add_value = adw::EntryRow::new();
+    let add_value = crate::ui::rows::entry_row();
     add_value.set_title(&ctx.t_or("templates.value", "Value"));
     let add_btn = gtk::Button::with_label(&ctx.t_or("templates.addKey", "Add Key"));
     add_btn.set_valign(gtk::Align::Center);
@@ -15692,13 +15776,13 @@ fn build_capture_page(
     on_saved: Rc<dyn Fn()>,
     initial_remote: Option<&str>,
 ) -> gtk::Box {
-    let name = adw::EntryRow::new();
+    let name = crate::ui::rows::entry_row();
     name.set_title(&ctx.t_or("templates.templateName", "Name"));
     name.set_text(&format!(
         "Template {}",
         chrono::Local::now().format("%Y-%m-%d %H:%M")
     ));
-    let description = adw::EntryRow::new();
+    let description = crate::ui::rows::entry_row();
     description.set_title(&ctx.t_or("templates.templateDesc", "Description (optional)"));
     let remotes = ctx.store.borrow().remote_names();
     let mut remote_labels = vec![ctx.t_or(
@@ -15707,7 +15791,7 @@ fn build_capture_page(
     )];
     remote_labels.extend(remotes.iter().cloned());
     let remote_refs: Vec<&str> = remote_labels.iter().map(|s| s.as_str()).collect();
-    let remote = adw::ComboRow::new();
+    let remote = crate::ui::rows::combo_row();
     remote.set_title(&ctx.t_or("remote.profiles", "Source"));
     remote.set_model(Some(&gtk::StringList::new(&remote_refs)));
     if let Some(name) = initial_remote {
@@ -15755,14 +15839,16 @@ fn build_capture_page(
     let switches: Vec<(&'static str, adw::SwitchRow)> = categories
         .iter()
         .map(|(id, label)| {
-            let row = adw::SwitchRow::new();
+            let row = crate::ui::rows::switch_row();
             row.set_title(label);
             row.set_active(true);
             (*id, row)
         })
         .collect();
     let group = adw::PreferencesGroup::new();
-    group.set_title(&ctx.t_or("templates.selectAllKeys", "Categories to include"));
+    group.set_title(&crate::ui::rows::escape(
+        ctx.t_or("templates.selectAllKeys", "Categories to include"),
+    ));
     group.add(&name);
     group.add(&description);
     group.add(&remote);
@@ -15869,10 +15955,10 @@ fn build_capture_page(
     keys_scroll.set_max_content_height(260);
     keys_scroll.set_vexpand(true);
     keys_scroll.set_child(Some(&keys_list));
-    let add_key = adw::EntryRow::new();
+    let add_key = crate::ui::rows::entry_row();
     add_key.set_title(&ctx.t_or("templates.key", "Key"));
     add_key.set_text("vfs.dir_cache_time");
-    let add_value = adw::EntryRow::new();
+    let add_value = crate::ui::rows::entry_row();
     add_value.set_title(&ctx.t_or("templates.value", "Value"));
     let add_btn = gtk::Button::with_label(&ctx.t_or("templates.addKey", "Add Key"));
     add_btn.set_valign(gtk::Align::Center);
@@ -16160,7 +16246,7 @@ fn save_helper_from_rows(
 }
 
 pub(crate) fn helper_combo(title: &str, names: &[String], selected: &str) -> adw::ComboRow {
-    let row = adw::ComboRow::new();
+    let row = crate::ui::rows::combo_row();
     row.set_title(title);
     let refs: Vec<&str> = names.iter().map(|s| s.as_str()).collect();
     row.set_model(Some(&gtk::StringList::new(&refs)));
@@ -16179,7 +16265,7 @@ pub(crate) fn helper_selected(row: &adw::ComboRow, names: &[String]) -> String {
 }
 
 fn quick_run_filename_row(ctx: &AppCtx, value: &str) -> adw::EntryRow {
-    let row = adw::EntryRow::new();
+    let row = crate::ui::rows::entry_row();
     row.set_title(&ctx.t_or(
         "wizards.appOperation.copyUrlFilename",
         "Filename (optional)",
@@ -16448,7 +16534,7 @@ pub(crate) fn attach_path_kind(
     row: &adw::EntryRow,
     current_remote: &str,
 ) -> adw::ComboRow {
-    let combo = adw::ComboRow::new();
+    let combo = crate::ui::rows::combo_row();
     combo.set_title(&ctx.t_or("fileBrowser.pathKind.title", "Path type"));
     let local = ctx.t_or("fileBrowser.pathKind.local", "Local");
     let current = ctx.t_or("fileBrowser.pathKind.currentRemote", "Current remote");
@@ -16490,7 +16576,7 @@ pub(crate) fn attach_path_kind(
 }
 
 pub(crate) fn attach_cron_builder_row(cron: &adw::EntryRow, ctx: &AppCtx) -> adw::ExpanderRow {
-    let row = adw::ExpanderRow::new();
+    let row = crate::ui::rows::expander_row();
     row.set_title(&ctx.t_or("remoteConfig.cron", "Cron schedule"));
     row.set_expanded(true);
     let builder = attach_cron_builder(cron, ctx);
@@ -16840,7 +16926,7 @@ fn attach_remote_chooser(ctx: &AppCtx, row: &adw::EntryRow) {
     let list = gtk::ListBox::new();
     list.add_css_class("boxed-list");
     for name in names {
-        let item = adw::ActionRow::new();
+        let item = crate::ui::rows::action_row();
         item.set_title(&name);
         item.set_activatable(true);
         let row_c = row.clone();
@@ -17019,16 +17105,16 @@ pub(crate) fn attach_example_typeahead(
             }
             let hits = crate::config_search::filter_example_choices(&search.text(), &examples);
             if hits.is_empty() {
-                let empty = adw::ActionRow::new();
+                let empty = crate::ui::rows::action_row();
                 empty.set_activatable(false);
-                empty.set_title(&empty_label);
+                empty.set_title(&crate::ui::rows::escape(&empty_label));
                 list.append(&empty);
             }
             for idx in hits.into_iter().take(40) {
                 let Some((value, help)) = examples.get(idx) else {
                     continue;
                 };
-                let item = adw::ActionRow::new();
+                let item = crate::ui::rows::action_row();
                 let title = crate::config_search::example_choice_label(value, help);
                 item.set_title(&title);
                 if !help.is_empty() {
@@ -17135,7 +17221,7 @@ fn attach_path_autocomplete(
                 &ctx.engine_os(),
             );
             if query.can_go_up() {
-                let up = adw::ActionRow::new();
+                let up = crate::ui::rows::action_row();
                 up.set_title(&ctx.t_or("wizards.appOperation.upFolder", "Up Folder"));
                 up.set_activatable(true);
                 let parent = query.parent_path.clone();
@@ -17170,7 +17256,7 @@ fn attach_path_autocomplete(
                 Vec::new()
             };
             if entries.is_empty() && !query.can_go_up() {
-                let empty = adw::ActionRow::new();
+                let empty = crate::ui::rows::action_row();
                 empty.set_activatable(false);
                 empty.set_title(&ctx.t_or(
                     "wizards.appOperation.noItemsFound",
@@ -17179,7 +17265,7 @@ fn attach_path_autocomplete(
                 list.append(&empty);
             }
             for entry in entries {
-                let item = adw::ActionRow::new();
+                let item = crate::ui::rows::action_row();
                 item.set_title(&entry.name);
                 let subtitle = if entry.is_dir {
                     ctx.t_or("nautilus.selection.folder", "folder")
@@ -17363,7 +17449,7 @@ fn alert_rule_editor(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, existing_id: O
             .find(|r| &r.id == id)
             .cloned()
     });
-    let name = adw::EntryRow::new();
+    let name = crate::ui::rows::entry_row();
     name.set_title(&ctx.t_or("alerts.ruleName", "Name"));
     let default_rule_name = ctx.t_or("alerts.createRule", "New rule");
     name.set_text(
@@ -17372,10 +17458,10 @@ fn alert_rule_editor(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, existing_id: O
             .map(|r| r.name.as_str())
             .unwrap_or(&default_rule_name),
     );
-    let enabled = adw::SwitchRow::new();
+    let enabled = crate::ui::rows::switch_row();
     enabled.set_title(&ctx.t("alerts.enabled"));
     enabled.set_active(existing.as_ref().map(|r| r.enabled).unwrap_or(true));
-    let auto_ack = adw::SwitchRow::new();
+    let auto_ack = crate::ui::rows::switch_row();
     auto_ack.set_title(&ctx.t_or("alerts.rule.autoAcknowledge", "Auto-acknowledge"));
     auto_ack.set_active(
         existing
@@ -17383,7 +17469,7 @@ fn alert_rule_editor(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, existing_id: O
             .map(|r| r.auto_acknowledge)
             .unwrap_or(false),
     );
-    let severity = adw::ComboRow::new();
+    let severity = crate::ui::rows::combo_row();
     severity.set_title(&ctx.t_or("alerts.rule.severityMin", "Minimum severity"));
     let severity_labels: Vec<String> = SEVERITIES
         .iter()
@@ -17399,7 +17485,7 @@ fn alert_rule_editor(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, existing_id: O
             severity.set_selected(idx as u32);
         }
     }
-    let cooldown = adw::EntryRow::new();
+    let cooldown = crate::ui::rows::entry_row();
     cooldown.set_title(&ctx.t_or("alerts.rule.cooldown", "Cooldown (seconds)"));
     cooldown.set_text(
         &existing
@@ -17473,7 +17559,7 @@ fn alert_rule_editor(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, existing_id: O
     let event_switches: Vec<(AlertEventKind, adw::SwitchRow)> = EVENT_KINDS
         .iter()
         .map(|kind| {
-            let row = adw::SwitchRow::new();
+            let row = crate::ui::rows::switch_row();
             row.set_title(&ctx.t_or(&format!("alerts.events.{}", kind.as_str()), kind.as_str()));
             row.set_active(
                 existing
@@ -17490,7 +17576,7 @@ fn alert_rule_editor(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, existing_id: O
         .alert_actions
         .iter()
         .map(|action| {
-            let row = adw::SwitchRow::new();
+            let row = crate::ui::rows::switch_row();
             row.set_title(&action.name);
             row.set_subtitle(&action.kind);
             row.set_active(
@@ -17589,18 +17675,24 @@ fn alert_rule_editor(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, existing_id: O
 
     let page = adw::PreferencesPage::new();
     let general = adw::PreferencesGroup::new();
-    general.set_title(&ctx.t_or("alerts.action.basicInfo", "Basic Information"));
+    general.set_title(&crate::ui::rows::escape(
+        ctx.t_or("alerts.action.basicInfo", "Basic Information"),
+    ));
     general.add(&name);
     general.add(&enabled);
     general.add(&auto_ack);
     page.add(&general);
     let filters = adw::PreferencesGroup::new();
-    filters.set_title(&ctx.t_or("alerts.rule.filters", "Filters"));
+    filters.set_title(&crate::ui::rows::escape(
+        ctx.t_or("alerts.rule.filters", "Filters"),
+    ));
     filters.add(&severity);
     filters.add(&cooldown);
     page.add(&filters);
     let remotes_group = adw::PreferencesGroup::new();
-    remotes_group.set_title(&ctx.t_or("alerts.rule.remoteFilter", "Remotes"));
+    remotes_group.set_title(&crate::ui::rows::escape(
+        ctx.t_or("alerts.rule.remoteFilter", "Remotes"),
+    ));
     remotes_group.set_description(Some(&ctx.t_or(
         "alerts.rule.filtersEmptyHint",
         "Leave every switch on to match all remotes.",
@@ -17610,31 +17702,39 @@ fn alert_rule_editor(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, existing_id: O
     }
     page.add(&remotes_group);
     let backends_group = adw::PreferencesGroup::new();
-    backends_group.set_title(&ctx.t_or("alerts.rule.backendFilter", "Backends"));
+    backends_group.set_title(&crate::ui::rows::escape(
+        ctx.t_or("alerts.rule.backendFilter", "Backends"),
+    ));
     for (_, row) in &backend_switches {
         backends_group.add(row);
     }
     page.add(&backends_group);
     let profiles_group = adw::PreferencesGroup::new();
-    profiles_group.set_title(&ctx.t_or("alerts.rule.profileFilter", "Profiles"));
+    profiles_group.set_title(&crate::ui::rows::escape(
+        ctx.t_or("alerts.rule.profileFilter", "Profiles"),
+    ));
     for (_, row) in &profile_switches {
         profiles_group.add(row);
     }
     page.add(&profiles_group);
     let origins_group = adw::PreferencesGroup::new();
-    origins_group.set_title(&ctx.t_or("alerts.origins.title", "Origins"));
+    origins_group.set_title(&crate::ui::rows::escape(
+        ctx.t_or("alerts.origins.title", "Origins"),
+    ));
     for (_, row) in &origin_switches {
         origins_group.add(row);
     }
     page.add(&origins_group);
     let events = adw::PreferencesGroup::new();
-    events.set_title(&ctx.t_or("alerts.rule.eventFilter", "Events"));
+    events.set_title(&crate::ui::rows::escape(
+        ctx.t_or("alerts.rule.eventFilter", "Events"),
+    ));
     for (_, row) in &event_switches {
         events.add(row);
     }
     page.add(&events);
     let actions = adw::PreferencesGroup::new();
-    actions.set_title(&ctx.t("alerts.actions"));
+    actions.set_title(&crate::ui::rows::escape(ctx.t("alerts.actions")));
     for (_, row) in &action_switches {
         actions.add(row);
     }
@@ -17665,7 +17765,7 @@ fn alert_action_editor(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, existing_id:
             .find(|a| &a.id == id)
             .cloned()
     });
-    let name = adw::EntryRow::new();
+    let name = crate::ui::rows::entry_row();
     name.set_title(&ctx.t_or("alerts.action.placeholderName", "Name"));
     let default_action_name = ctx.t_or("alerts.createAction", "New action");
     name.set_text(
@@ -17674,10 +17774,10 @@ fn alert_action_editor(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, existing_id:
             .map(|a| a.name.as_str())
             .unwrap_or(&default_action_name),
     );
-    let enabled = adw::SwitchRow::new();
+    let enabled = crate::ui::rows::switch_row();
     enabled.set_title(&ctx.t("alerts.enabled"));
     enabled.set_active(existing.as_ref().map(|a| a.enabled).unwrap_or(true));
-    let kind = adw::ComboRow::new();
+    let kind = crate::ui::rows::combo_row();
     kind.set_title(&ctx.t_or("alerts.action.kind", "Kind"));
     let kind_labels: Vec<String> = ACTION_KINDS
         .iter()
@@ -17719,17 +17819,17 @@ fn alert_action_editor(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, existing_id:
         }
         kind_chips.append(&btn);
     }
-    let url = adw::EntryRow::new();
+    let url = crate::ui::rows::entry_row();
     url.set_title(&ctx.t_or("alerts.action.url", "URL"));
-    let method = adw::EntryRow::new();
+    let method = crate::ui::rows::entry_row();
     method.set_title(&ctx.t_or("alerts.action.method", "Method"));
-    let token = adw::PasswordEntryRow::new();
+    let token = crate::ui::rows::password_entry_row();
     token.set_title(&ctx.t_or("alerts.action.botToken", "Token"));
-    let extra = adw::EntryRow::new();
+    let extra = crate::ui::rows::entry_row();
     extra.set_title(&ctx.t_or("common.moreActions", "Extra"));
-    let extra2 = adw::EntryRow::new();
+    let extra2 = crate::ui::rows::entry_row();
     extra2.set_title(&ctx.t_or("alerts.action.from", "From"));
-    let headers = adw::EntryRow::new();
+    let headers = crate::ui::rows::entry_row();
     headers.set_title(&ctx.t_or("alerts.action.headers", "Headers (Key: Value)"));
     headers.set_visible(false);
     let header_list = gtk::Box::new(gtk::Orientation::Vertical, 4);
@@ -17740,10 +17840,10 @@ fn alert_action_editor(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, existing_id:
         let header_rows = header_rows.clone();
         let ctx = ctx.clone();
         Rc::new(move |key: String, value: String| {
-            let key_row = adw::EntryRow::new();
+            let key_row = crate::ui::rows::entry_row();
             key_row.set_title(&ctx.t_or("alerts.action.headerKey", "Header Name"));
             key_row.set_text(&key);
-            let value_row = adw::EntryRow::new();
+            let value_row = crate::ui::rows::entry_row();
             value_row.set_title(&ctx.t_or("alerts.action.headerValue", "Value"));
             value_row.set_text(&value);
             let remove = gtk::Button::from_icon_name("user-trash-symbolic");
@@ -17802,7 +17902,7 @@ fn alert_action_editor(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, existing_id:
             }
         }) as Rc<dyn Fn(String)>
     };
-    let telegram_mode = adw::ComboRow::new();
+    let telegram_mode = crate::ui::rows::combo_row();
     telegram_mode.set_title(&ctx.t_or("alerts.action.telegramMode", "Telegram mode"));
     let telegram_bot = ctx.t_or("alerts.action.telegram_bot", "Bot API");
     let telegram_botless = ctx.t_or("alerts.action.telegram_botless", "Bot-less (CallMeBot)");
@@ -17818,7 +17918,7 @@ fn alert_action_editor(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, existing_id:
     {
         telegram_mode.set_selected(1);
     }
-    let timeout = adw::SpinRow::with_range(1.0, 120.0, 1.0);
+    let timeout = crate::ui::rows::spin_row_with_range(1.0, 120.0, 1.0);
     timeout.set_title(&ctx.t_or("alerts.action.timeout", "Timeout (seconds)"));
     timeout.set_value(
         existing
@@ -17827,7 +17927,7 @@ fn alert_action_editor(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, existing_id:
             .and_then(|x| x.as_f64())
             .unwrap_or(8.0),
     );
-    let tls_verify = adw::SwitchRow::new();
+    let tls_verify = crate::ui::rows::switch_row();
     tls_verify.set_title(&ctx.t_or("alerts.action.tlsVerify", "Verify TLS"));
     tls_verify.set_active(
         existing
@@ -17836,7 +17936,7 @@ fn alert_action_editor(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, existing_id:
             .and_then(|x| x.as_bool())
             .unwrap_or(true),
     );
-    let subject = adw::EntryRow::new();
+    let subject = crate::ui::rows::entry_row();
     subject.set_title(&ctx.t_or("alerts.action.subjectTemplate", "Subject template"));
     subject.set_text(
         &existing
@@ -17845,7 +17945,7 @@ fn alert_action_editor(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, existing_id:
             .and_then(|x| x.as_str())
             .unwrap_or("{{title}}"),
     );
-    let qos = adw::SpinRow::with_range(0.0, 2.0, 1.0);
+    let qos = crate::ui::rows::spin_row_with_range(0.0, 2.0, 1.0);
     qos.set_title(&ctx.t_or("alerts.action.qos", "MQTT QoS"));
     qos.set_value(
         existing
@@ -17854,7 +17954,7 @@ fn alert_action_editor(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, existing_id:
             .and_then(|x| x.as_f64())
             .unwrap_or(0.0),
     );
-    let retain = adw::SwitchRow::new();
+    let retain = crate::ui::rows::switch_row();
     retain.set_title(&ctx.t_or("alerts.action.retain", "MQTT retain"));
     retain.set_active(
         existing
@@ -17863,7 +17963,7 @@ fn alert_action_editor(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, existing_id:
             .and_then(|x| x.as_bool())
             .unwrap_or(false),
     );
-    let encryption = adw::ComboRow::new();
+    let encryption = crate::ui::rows::combo_row();
     encryption.set_title(&ctx.t_or("alerts.action.encryption", "Encryption"));
     let enc_none = ctx.t_or("alerts.action.encryptionNone", "None");
     let enc_tls = ctx.t_or("alerts.action.encryptionTls", "TLS (Port 465)");
@@ -17884,11 +17984,11 @@ fn alert_action_editor(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, existing_id:
             _ => 2,
         },
     );
-    let env_vars = adw::EntryRow::new();
+    let env_vars = crate::ui::rows::entry_row();
     env_vars.set_title(&ctx.t_or("alerts.action.envVars", "Environment variables (KEY=value)"));
-    let username = adw::EntryRow::new();
+    let username = crate::ui::rows::entry_row();
     username.set_title(&ctx.t_or("common.username", "Username"));
-    let mqtt_tls = adw::SwitchRow::new();
+    let mqtt_tls = crate::ui::rows::switch_row();
     mqtt_tls.set_title(&ctx.t_or("alerts.action.useTls", "Use TLS"));
     mqtt_tls.set_active(
         existing
@@ -17934,7 +18034,7 @@ fn alert_action_editor(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, existing_id:
     presets.append(&presets_label);
     presets.append(&discord_btn);
     presets.append(&slack_btn);
-    let wa_provider = adw::ComboRow::new();
+    let wa_provider = crate::ui::rows::combo_row();
     wa_provider.set_title(&ctx.t_or("alerts.action.whatsappProvider", "WhatsApp provider"));
     let wa_call = ctx.t_or("alerts.action.callMeBot", "CallMeBot");
     let wa_custom = ctx.t_or("alerts.action.customGateway", "Custom gateway");
@@ -17951,7 +18051,9 @@ fn alert_action_editor(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, existing_id:
         wa_provider.set_selected(1);
     }
     let body_group = adw::PreferencesGroup::new();
-    body_group.set_title(&ctx.t_or("alerts.action.bodyTemplate", "Body template"));
+    body_group.set_title(&crate::ui::rows::escape(
+        ctx.t_or("alerts.action.bodyTemplate", "Body template"),
+    ));
     let body = gtk::TextView::new();
     body.set_wrap_mode(gtk::WrapMode::WordChar);
     body.set_hexpand(true);
@@ -17996,7 +18098,7 @@ fn alert_action_editor(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, existing_id:
     } else {
         text_view_set(&body, "{{title}}: {{body}}");
     }
-    let retries = adw::SpinRow::with_range(0.0, 5.0, 1.0);
+    let retries = crate::ui::rows::spin_row_with_range(0.0, 5.0, 1.0);
     retries.set_title(&ctx.t_or("alerts.action.retryCount", "Retry count"));
     retries.set_subtitle(&ctx.t_or(
         "alerts.action.bodyTemplateHint",
@@ -18008,7 +18110,7 @@ fn alert_action_editor(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, existing_id:
             .map(crate::store::alert_retry_count)
             .unwrap_or(0) as f64,
     );
-    let keys = adw::ComboRow::new();
+    let keys = crate::ui::rows::combo_row();
     keys.set_title(&ctx.t_or("alerts.templateKeys", "Insert template key"));
     keys.set_model(Some(&gtk::StringList::new(
         crate::store::ALERT_TEMPLATE_KEYS,
@@ -18358,7 +18460,9 @@ fn alert_action_editor(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, existing_id:
                     timeout.set_visible(true);
                     tls_verify.set_visible(false);
                     body_group.set_visible(true);
-                    body_group.set_title(&ctx.t_or("alerts.action.bodyTemplate", "Stdin template"));
+                    body_group.set_title(&crate::ui::rows::escape(
+                        ctx.t_or("alerts.action.bodyTemplate", "Stdin template"),
+                    ));
                 }
                 "email" => {
                     wa_provider.set_visible(false);
@@ -18378,7 +18482,9 @@ fn alert_action_editor(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, existing_id:
                     timeout.set_visible(true);
                     tls_verify.set_visible(false);
                     body_group.set_visible(true);
-                    body_group.set_title(&ctx.t_or("alerts.action.bodyTemplate", "Body template"));
+                    body_group.set_title(&crate::ui::rows::escape(
+                        ctx.t_or("alerts.action.bodyTemplate", "Body template"),
+                    ));
                 }
                 "mqtt" => {
                     wa_provider.set_visible(false);
@@ -18441,7 +18547,9 @@ fn alert_action_editor(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, existing_id:
         });
     }
     let basic = adw::PreferencesGroup::new();
-    basic.set_title(&ctx.t_or("alerts.action.basicInfo", "Basic Information"));
+    basic.set_title(&crate::ui::rows::escape(
+        ctx.t_or("alerts.action.basicInfo", "Basic Information"),
+    ));
     basic.add(&name);
     basic.add(&enabled);
     basic.add(&kind);
@@ -18457,7 +18565,9 @@ fn alert_action_editor(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, existing_id:
     kind_box.append(&kind_chips);
     basic.add(&kind_box);
     let config = adw::PreferencesGroup::new();
-    config.set_title(&ctx.t_or("alerts.action.configuration", "Configuration"));
+    config.set_title(&crate::ui::rows::escape(
+        ctx.t_or("alerts.action.configuration", "Configuration"),
+    ));
     config.add(&presets);
     config.add(&wa_provider);
     config.add(&telegram_mode);
@@ -18479,7 +18589,9 @@ fn alert_action_editor(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, existing_id:
     config.add(&retries);
     config.add(&keys);
     let headers_group = adw::PreferencesGroup::new();
-    headers_group.set_title(&ctx.t_or("alerts.action.headers", "Headers"));
+    headers_group.set_title(&crate::ui::rows::escape(
+        ctx.t_or("alerts.action.headers", "Headers"),
+    ));
     headers_group.add(&header_list);
     let buttons = gtk::Box::new(gtk::Orientation::Horizontal, 8);
     buttons.append(&test);
@@ -18535,7 +18647,7 @@ fn filter_switch_rows(
     options
         .iter()
         .map(|option| {
-            let row = adw::SwitchRow::new();
+            let row = crate::ui::rows::switch_row();
             row.set_title(option);
             row.set_active(match selected {
                 Some(list) if !list.is_empty() => list.iter().any(|s| s == option),
@@ -18653,7 +18765,7 @@ pub fn repair(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, toast: adw::ToastOver
         .iter()
         .any(|issue| issue.kind == crate::repair::RepairKind::PasswordRequired);
     if issues.is_empty() {
-        let row = adw::ActionRow::new();
+        let row = crate::ui::rows::action_row();
         row.set_title(&ctx.t_or("repair.noIssues", "No issues detected"));
         row.set_subtitle(&ctx.t_or(
             "repair.healthy",
@@ -18663,7 +18775,7 @@ pub fn repair(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, toast: adw::ToastOver
     }
     for issue in issues {
         let (title_key, detail_key, action_key) = crate::repair::issue_i18n_keys(issue.kind);
-        let row = adw::ActionRow::new();
+        let row = crate::ui::rows::action_row();
         row.set_title(&ctx.t_or(title_key, &issue.title));
         let subtitle = if issue.kind == crate::repair::RepairKind::VersionTooOld {
             ctx.tf(
@@ -18771,7 +18883,7 @@ pub fn repair(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, toast: adw::ToastOver
         list.append(&row);
     }
     if !needs_config {
-        let row = adw::ActionRow::new();
+        let row = crate::ui::rows::action_row();
         row.set_title(&ctx.t_or("shared.passwordManager.label", "Configuration Password"));
         row.set_subtitle(&ctx.t_or(
             "repair.passwordPrompt",
@@ -19087,7 +19199,9 @@ impl ObscureTool {
     pub fn panel(&self, ctx: &AppCtx) -> adw::PreferencesPage {
         let page = adw::PreferencesPage::new();
         let group = adw::PreferencesGroup::new();
-        group.set_title(&ctx.t_or("wizards.obscure.title", "Obscure Password"));
+        group.set_title(&crate::ui::rows::escape(
+            ctx.t_or("wizards.obscure.title", "Obscure Password"),
+        ));
         group.set_description(Some(&ctx.t_or(
             "wizards.obscure.description",
             "Obscures a clear string using rclone's standard obscuring algorithm so it can be safely saved to configuration files or parameters.",
@@ -19121,9 +19235,9 @@ pub(crate) fn obscure_tool(
     fields: Rc<RefCell<Vec<(String, String)>>>,
     on_apply: Rc<dyn Fn(&str, &str)>,
 ) -> ObscureTool {
-    let input = adw::PasswordEntryRow::new();
+    let input = crate::ui::rows::password_entry_row();
     input.set_title(&ctx.t_or("wizards.obscure.clearPlaceholder", "Obscure a secret"));
-    let result = adw::EntryRow::new();
+    let result = crate::ui::rows::entry_row();
     result.set_title(&ctx.t_or("wizards.obscure.resultTitle", "Obscured value"));
     result.set_editable(false);
     result.set_visible(false);
@@ -19139,14 +19253,16 @@ pub(crate) fn obscure_tool(
         });
     }
     result.add_suffix(&copy);
-    let target = adw::ComboRow::new();
+    let target = crate::ui::rows::combo_row();
     target.set_title(&ctx.t_or(
         "wizards.obscure.applyToField",
         "Apply obscured value to field",
     ));
     target.set_visible(false);
-    let actions = adw::ActionRow::new();
-    actions.set_title(&ctx.t_or("wizards.obscure.title", "Obscure"));
+    let actions = crate::ui::rows::action_row();
+    actions.set_title(&crate::ui::rows::escape(
+        ctx.t_or("wizards.obscure.title", "Obscure"),
+    ));
     let clear = gtk::Button::with_label(&ctx.t_or("common.clear", "Clear"));
     clear.set_valign(gtk::Align::Center);
     let obscure_btn = gtk::Button::with_label(&ctx.t_or("wizards.obscure.action", "Obscure"));
@@ -19246,7 +19362,7 @@ pub fn multi_rename(
     ));
     dialog.set_content_width(560);
     dialog.set_content_height(620);
-    let mode = adw::ComboRow::new();
+    let mode = crate::ui::rows::combo_row();
     mode.set_title(&ctx.t_or("nautilus.modals.multiRename.templateMode", "Mode"));
     let template_l = ctx.t_or("nautilus.modals.multiRename.templateMode", "Template");
     let replace_l = ctx.t_or(
@@ -19254,26 +19370,26 @@ pub fn multi_rename(
         "Find and replace",
     );
     mode.set_model(Some(&gtk::StringList::new(&[&template_l, &replace_l])));
-    let template = adw::EntryRow::new();
+    let template = crate::ui::rows::entry_row();
     template.set_title(&ctx.t_or("nautilus.modals.multiRename.templateInput", "Template"));
     template.set_text("[Original file name]");
-    let find = adw::EntryRow::new();
+    let find = crate::ui::rows::entry_row();
     find.set_title(&ctx.t_or("nautilus.modals.multiRename.findLabel", "Find"));
-    let replace = adw::EntryRow::new();
+    let replace = crate::ui::rows::entry_row();
     replace.set_title(&ctx.t_or("nautilus.modals.multiRename.replaceLabel", "Replace with"));
-    let start = adw::EntryRow::new();
+    let start = crate::ui::rows::entry_row();
     start.set_title(&ctx.t_or("nautilus.modals.multiRename.counterStart", "Counter start"));
     start.set_text("1");
-    let step = adw::EntryRow::new();
+    let step = crate::ui::rows::entry_row();
     step.set_title(&ctx.t_or("nautilus.modals.multiRename.counterStep", "Counter step"));
     step.set_text("1");
-    let pad = adw::EntryRow::new();
+    let pad = crate::ui::rows::entry_row();
     pad.set_title(&ctx.t_or(
         "nautilus.modals.multiRename.counterPadding",
         "Counter padding",
     ));
     pad.set_text("2");
-    let case_sensitive = adw::SwitchRow::new();
+    let case_sensitive = crate::ui::rows::switch_row();
     case_sensitive.set_title(&ctx.t_or(
         "nautilus.modals.multiRename.caseSensitive",
         "Case sensitive",
@@ -19302,7 +19418,7 @@ pub fn multi_rename(
             while let Some(child) = preview.first_child() {
                 preview.remove(&child);
             }
-            let header = adw::ActionRow::new();
+            let header = crate::ui::rows::action_row();
             header.set_title(&ctx.t_or("nautilus.modals.multiRename.original", "Original name"));
             header.set_subtitle(&ctx.t_or("nautilus.modals.multiRename.newName", "New name"));
             header.set_sensitive(false);
@@ -19332,7 +19448,7 @@ pub fn multi_rename(
                 "Duplicate or invalid name",
             );
             for row in rename_preview(&names, &plan, &date) {
-                let item = adw::ActionRow::new();
+                let item = crate::ui::rows::action_row();
                 item.set_title(&row.original);
                 item.set_subtitle(&crate::fileops::multi_rename_preview_subtitle(
                     &row.new_name,
@@ -19468,7 +19584,7 @@ pub fn multi_rename(
     let group = adw::PreferencesGroup::new();
     group.add(&mode);
     group.add(&template);
-    let token_row = adw::ActionRow::new();
+    let token_row = crate::ui::rows::action_row();
     token_row.set_title(&ctx.t_or(
         "nautilus.modals.multiRename.insertPlaceholder",
         "Insert placeholder",

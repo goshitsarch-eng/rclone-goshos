@@ -13,9 +13,13 @@ use serde_json::Value;
 
 pub fn job_info_group(ctx: &AppCtx, job: &JobInfo) -> adw::PreferencesGroup {
     let group = adw::PreferencesGroup::new();
-    group.set_title(&ctx.t_or("detailShared.jobInfo.title", "Job Information"));
+    group.set_title(&crate::ui::rows::escape(
+        ctx.t_or("detailShared.jobInfo.title", "Job Information"),
+    ));
     if job.dry_run {
-        group.set_description(Some(&ctx.t_or("dashboard.appDetail.dryRun", "Dry Run")));
+        group.set_description(Some(&crate::ui::rows::escape(
+            ctx.t_or("dashboard.appDetail.dryRun", "Dry Run"),
+        )));
     }
     let started = job
         .start_time
@@ -63,7 +67,7 @@ pub fn job_info_group(ctx: &AppCtx, job: &JobInfo) -> adw::PreferencesGroup {
         if value.is_empty() {
             continue;
         }
-        let row = adw::ActionRow::new();
+        let row = crate::ui::rows::action_row();
         row.set_title(&title);
         row.set_subtitle(&value);
         group.add(&row);
@@ -148,7 +152,7 @@ pub fn job_stats_group(ctx: &AppCtx, job: &JobInfo) -> gtk::Box {
             errors.to_string(),
         ),
     ] {
-        let row = adw::ActionRow::new();
+        let row = crate::ui::rows::action_row();
         row.set_title(&title);
         row.set_subtitle(&value);
         if title == ctx.t_or("dashboard.appDetail.errors", "Errors") && errors > 0 {
@@ -165,7 +169,9 @@ pub fn job_stats_group(ctx: &AppCtx, job: &JobInfo) -> gtk::Box {
 
 pub fn empty_stats_group(ctx: &AppCtx) -> adw::PreferencesGroup {
     let group = adw::PreferencesGroup::new();
-    group.set_title(&ctx.t_or("detailShared.stats.emptyTitle", "No statistics available"));
+    group.set_title(&crate::ui::rows::escape(
+        ctx.t_or("detailShared.stats.emptyTitle", "No statistics available"),
+    ));
     group.set_description(Some(&ctx.t_or(
         "detailShared.stats.emptyMessage",
         "Statistics will be shown when an operation is running",
@@ -266,7 +272,7 @@ pub fn overview_jobs_panel(
             false,
         ),
     ] {
-        let row = adw::ActionRow::new();
+        let row = crate::ui::rows::action_row();
         row.set_title(&title);
         row.set_subtitle(&value);
         if error {
@@ -275,7 +281,7 @@ pub fn overview_jobs_panel(
         grid.add(&row);
     }
     if !stats.last_error.is_empty() {
-        let row = adw::ActionRow::new();
+        let row = crate::ui::rows::action_row();
         row.set_title(&ctx.t_or("generalOverview.jobs.lastError", "Last Error"));
         row.set_subtitle(&stats.last_error);
         row.add_css_class("error");
@@ -291,7 +297,7 @@ pub fn overview_jobs_panel(
         .cloned()
         .collect();
     if running.is_empty() {
-        let row = adw::ActionRow::new();
+        let row = crate::ui::rows::action_row();
         row.set_title(&ctx.t_or(
             "generalOverview.jobs.noRunning",
             "No active jobs are currently running.",
@@ -305,7 +311,7 @@ pub fn overview_jobs_panel(
         heading.set_xalign(0.0);
         root.append(&heading);
         for job in &running {
-            let row = adw::ActionRow::new();
+            let row = crate::ui::rows::action_row();
             row.set_title(&format!("{} · {}", job.operation, job.remote));
             let origin = ctx.t_or(
                 crate::jobs::origin_label_key(&job.origin),
@@ -384,7 +390,7 @@ pub fn detail_jobs_panel(
     list.set_activate_on_single_click(true);
     list.set_selection_mode(gtk::SelectionMode::None);
     if jobs.is_empty() {
-        let row = adw::ActionRow::new();
+        let row = crate::ui::rows::action_row();
         row.set_title(&ctx.t_or("detailShared.jobs.empty", "No jobs found"));
         list.append(&row);
         root.append(&list);

@@ -2755,6 +2755,7 @@
     "empty": {
       "noStarred": "暂无收藏文件",
       "folderEmpty": "文件夹为空",
+      "folderHint": "将文件拖放到此处，或使用工具栏上传文件或新建文件夹。",
       "noFiles": "Archive is empty"
     },
     "selection": {

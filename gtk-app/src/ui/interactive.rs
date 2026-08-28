@@ -159,7 +159,7 @@ impl InteractivePanel {
         error.add_css_class("error");
         error.set_wrap(true);
         error.set_xalign(0.0);
-        let answer_row = adw::EntryRow::new();
+        let answer_row = crate::ui::rows::entry_row();
         answer_row.set_title(&ctx.t_or("wizards.remoteConfig.enterValue", "Answer"));
         let peek_btn = gtk::ToggleButton::new();
         peek_btn.set_icon_name("view-reveal-symbolic");
@@ -176,9 +176,9 @@ impl InteractivePanel {
             });
         }
         answer_row.add_suffix(&peek_btn);
-        let answer_switch = adw::SwitchRow::new();
+        let answer_switch = crate::ui::rows::switch_row();
         answer_switch.set_title(&ctx.t_or("wizards.remoteConfig.yes", "Yes"));
-        let example_row = adw::ComboRow::new();
+        let example_row = crate::ui::rows::combo_row();
         example_row.set_title(&ctx.t_or("wizards.remoteConfig.chooseOption", "Choose an option"));
         let custom_hint = gtk::Label::new(Some(&ctx.t_or(
             "wizards.remoteConfig.orEnterCustom",

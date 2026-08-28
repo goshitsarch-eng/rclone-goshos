@@ -2755,6 +2755,7 @@
     "empty": {
       "noStarred": "スター付きファイルはありません",
       "folderEmpty": "フォルダは空です",
+      "folderHint": "ここにファイルをドロップするか、ツールバーからアップロードまたはフォルダーを作成してください。",
       "noFiles": "Archive is empty"
     },
     "selection": {

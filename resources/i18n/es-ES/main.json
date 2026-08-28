@@ -2755,6 +2755,7 @@
     "empty": {
       "noStarred": "No hay archivos favoritos",
       "folderEmpty": "La carpeta está vacía",
+      "folderHint": "Suelta archivos aquí, o usa la barra de herramientas para subir o crear una carpeta.",
       "noFiles": "Archive is empty"
     },
     "selection": {
