@@ -1,6 +1,6 @@
 [package]
 name = "rclone-manager-gtk"
-version = "0.3.2"
+version = "0.3.3"
 description = "GTK 4 + libadwaita desktop client for Rclone Manager"
 authors = ["Hakan İSMAİL"]
 edition = "2021"

@@ -209,6 +209,72 @@ pub fn install_user_mime_package() -> Result<PathBuf, String> {
     Ok(path)
 }
 
+/// Icon sizes installed into the user's hicolor theme, largest last so a
+/// desktop that picks the final match still gets a crisp one.
+pub const APP_ICON_SIZES: &[(&str, &[u8])] = &[
+    ("32x32", include_bytes!("../../src-tauri/icons/32x32.png")),
+    ("64x64", include_bytes!("../../src-tauri/icons/64x64.png")),
+    (
+        "128x128",
+        include_bytes!("../../src-tauri/icons/128x128.png"),
+    ),
+    (
+        "256x256",
+        include_bytes!("../../src-tauri/icons/128x128@2x.png"),
+    ),
+    ("512x512", include_bytes!("../../src-tauri/icons/icon.png")),
+];
+
+/// The Send-to templates for Dolphin and Nemo ask for `rclone-manager`, so the
+/// icon is installed under that name as well as the application ID.
+pub const APP_ICON_NAMES: &[&str] = &[crate::APP_ID, "rclone-manager"];
+
+pub fn icons_dir() -> PathBuf {
+    std::env::var("XDG_DATA_HOME")
+        .map(PathBuf::from)
+        .unwrap_or_else(|_| home_dir().join(".local/share"))
+        .join("icons/hicolor")
+}
+
+pub fn app_icon_path(size: &str, name: &str) -> PathBuf {
+    icons_dir()
+        .join(size)
+        .join("apps")
+        .join(format!("{name}.png"))
+}
+
+/// Install the application icon into the user's hicolor theme.
+///
+/// Without this the desktop entry falls back to the generic `folder-remote`
+/// stock icon in the launcher, the dock, the window switcher and the Dolphin /
+/// Nemo Send-to entries.
+pub fn install_user_icons() -> Result<(), String> {
+    let mut wrote_any = false;
+    for (size, bytes) in APP_ICON_SIZES {
+        for name in APP_ICON_NAMES {
+            let path = app_icon_path(size, name);
+            if let Some(parent) = path.parent() {
+                std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+            }
+            if std::fs::read(&path).ok().as_deref() == Some(*bytes) {
+                continue;
+            }
+            std::fs::write(&path, bytes).map_err(|e| e.to_string())?;
+            wrote_any = true;
+        }
+    }
+    if wrote_any {
+        // Best effort: desktops that cache the theme index need a nudge.
+        let _ = std::process::Command::new("gtk-update-icon-cache")
+            .arg("-q")
+            .arg("-t")
+            .arg("-f")
+            .arg(icons_dir())
+            .status();
+    }
+    Ok(())
+}
+
 pub const METAINFO_ID: &str = "io.github.zarestia_dev.rclone-manager.metainfo.xml";
 
 pub fn metainfo_dir() -> PathBuf {
@@ -238,7 +304,7 @@ pub use crate::os_notify::{
 /// XDG autostart entry. `--tray` matches Tauri `tauri_plugin_autostart`.
 pub fn autostart_desktop_entry(exec: &str) -> String {
     format!(
-        "[Desktop Entry]\nType=Application\nName=Rclone Manager\nComment=Manage rclone remotes, mounts, and transfers\nExec={exec} --tray\nIcon=folder-remote\nTerminal=false\nCategories=Network;FileTransfer;\nX-GNOME-Autostart-enabled=true\n"
+        "[Desktop Entry]\nType=Application\nName=Rclone Manager\nComment=Manage rclone remotes, mounts, and transfers\nExec={exec} --tray\nIcon=io.github.zarestia_dev.rclone-manager\nTerminal=false\nCategories=Network;FileTransfer;\nX-GNOME-Autostart-enabled=true\n"
     )
 }
 
@@ -2055,6 +2121,60 @@ mod tests {
         assert_eq!(escape_python_string("a\\b"), "a\\\\b");
         assert_eq!(escape_python_string("a\nb"), "a\\nb");
         assert_eq!(escape_python_string("a\tb"), "a\\tb");
+    }
+
+    #[test]
+    fn app_icons_install_into_the_hicolor_theme() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        // SAFETY: single-threaded test run (`--test-threads=1`); restored below.
+        let previous = std::env::var("XDG_DATA_HOME").ok();
+        unsafe { std::env::set_var("XDG_DATA_HOME", dir.path()) };
+
+        let result = install_user_icons();
+        let installed: Vec<(bool, usize)> = APP_ICON_SIZES
+            .iter()
+            .map(|(size, bytes)| {
+                let path = app_icon_path(size, crate::APP_ID);
+                (path.exists(), bytes.len())
+            })
+            .collect();
+        let alias = app_icon_path("128x128", "rclone-manager");
+        let alias_exists = alias.exists();
+        let sample = app_icon_path("64x64", crate::APP_ID);
+        let sample_bytes = std::fs::read(&sample).ok();
+
+        match previous {
+            Some(value) => unsafe { std::env::set_var("XDG_DATA_HOME", value) },
+            None => unsafe { std::env::remove_var("XDG_DATA_HOME") },
+        }
+
+        assert!(result.is_ok(), "{result:?}");
+        assert!(installed.iter().all(|(exists, _)| *exists));
+        assert!(
+            installed.iter().all(|(_, len)| *len > 0),
+            "icons must not be empty"
+        );
+        // The Dolphin / Nemo Send-to templates reference `rclone-manager`.
+        assert!(alias_exists, "alias icon name must be installed too");
+        assert_eq!(
+            sample_bytes.as_deref(),
+            Some(include_bytes!("../../src-tauri/icons/64x64.png").as_slice())
+        );
+        assert!(sample
+            .to_string_lossy()
+            .contains("icons/hicolor/64x64/apps"));
+    }
+
+    #[test]
+    fn desktop_entries_reference_the_app_icon_not_a_stock_one() {
+        // `folder-remote` is a generic stock icon: the launcher, dock and
+        // window switcher all showed it instead of the application's own.
+        let desktop = include_str!("../data/io.github.zarestia_dev.rclone-manager.desktop");
+        assert!(desktop.contains("Icon=io.github.zarestia_dev.rclone-manager"));
+        assert!(!desktop.contains("folder-remote"));
+        let autostart = autostart_desktop_entry("/opt/rclone-manager-gtk");
+        assert!(autostart.contains("Icon=io.github.zarestia_dev.rclone-manager"));
+        assert!(!autostart.contains("folder-remote"));
     }
 
     #[test]

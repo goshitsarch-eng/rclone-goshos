@@ -97,6 +97,29 @@
     </screenshot>
   </screenshots>
   <releases>
+    <release version="0.3.3" date="2026-08-28">
+      <description>
+        <p>Security</p>
+        <ul>
+          <li>The headless web server now refuses to bind a non-loopback address without credentials; its API (command bridge, file streaming, uploads) was previously open to anyone who could reach the port.</li>
+          <li>Send-to file-manager entries escape the remote name and path, which could otherwise execute as shell code.</li>
+          <li>Fixed a path traversal in headless batch uploads.</li>
+          <li>settings.json and store.json, which hold passwords and tokens, are written owner-readable only.</li>
+          <li>Headless session tokens now expire server-side and credentials are compared in constant time.</li>
+        </ul>
+        <p>Fixed</p>
+        <ul>
+          <li>Split view: Delete, Rename, New folder and Archive acted on the other pane when the selection was in the secondary one.</li>
+          <li>The generated GNOME Files context-menu extension was invalid Python and never loaded.</li>
+          <li>Multi-rename crashed on non-ASCII file names; picking a config file in Repair crashed the app.</li>
+          <li>The Check Results panel was always empty.</li>
+          <li>Local folders whose names contain a colon were unreachable.</li>
+          <li>Settings and store files are written atomically, so a crash or serialization error can no longer lose them.</li>
+          <li>The webhook alert action honours its "Verify TLS" switch.</li>
+          <li>Headless single-file uploads no longer leave their temporary copy behind.</li>
+        </ul>
+      </description>
+    </release>
     <release version="0.3.2" date="2026-08-24">
       <description>
         <p>Added</p>

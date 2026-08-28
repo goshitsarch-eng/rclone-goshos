@@ -5,7 +5,7 @@
   <summary>GTK 4 + libadwaita client for rclone remotes, mounts, and transfers</summary>
   <metadata_license>MIT</metadata_license>
   <project_license>GPL-3.0-or-later</project_license>
-  <developer id="io.github.zarestia_dev.rclone-manager">
+  <developer id="io.github.zarestia_dev">
     <name>Zarestia Dev</name>
   </developer>
   <launchable type="desktop-id">io.github.zarestia_dev.rclone-manager.desktop</launchable>
@@ -43,7 +43,56 @@
     <keyword>sync</keyword>
     <keyword>mount</keyword>
   </keywords>
+  <screenshots>
+    <screenshot type="default">
+      <image>https://raw.githubusercontent.com/Zarestia-Dev/rclone-manager/refs/tags/v0.3.2/assets/desktop-ui.png</image>
+      <caption>Dashboard with remotes, mounts, serves, and running jobs</caption>
+    </screenshot>
+    <screenshot>
+      <image>https://raw.githubusercontent.com/Zarestia-Dev/rclone-manager/refs/tags/v0.3.2/assets/nautilus.png</image>
+      <caption>Browse, transfer, and organize remote files</caption>
+    </screenshot>
+    <screenshot>
+      <image>https://raw.githubusercontent.com/Zarestia-Dev/rclone-manager/refs/tags/v0.3.2/assets/mount-control.png</image>
+      <caption>Mount remotes as local folders</caption>
+    </screenshot>
+    <screenshot>
+      <image>https://raw.githubusercontent.com/Zarestia-Dev/rclone-manager/refs/tags/v0.3.2/assets/job-watcher.png</image>
+      <caption>Watch transfers with live progress and bandwidth control</caption>
+    </screenshot>
+    <screenshot>
+      <image>https://raw.githubusercontent.com/Zarestia-Dev/rclone-manager/refs/tags/v0.3.2/assets/file-viewer.png</image>
+      <caption>Preview images, PDFs, and text files</caption>
+    </screenshot>
+  </screenshots>
+  <releases>
+    <release version="0.3.3" date="2026-08-28">
+      <url type="details">https://github.com/Zarestia-Dev/rclone-manager/blob/master/CHANGELOG.md</url>
+      <description>
+        <p>Security and reliability release.</p>
+        <ul>
+          <li>Send-to file-manager entries escape the remote name and path, which could otherwise execute as shell code.</li>
+          <li>The generated GNOME Files context-menu extension was invalid Python and never loaded.</li>
+          <li>Split view no longer deletes or renames the matching file in the other pane.</li>
+          <li>Multi-rename no longer crashes on non-ASCII file names.</li>
+          <li>Settings and store files are written atomically and owner-readable only.</li>
+          <li>The Check Results panel shows results again, and folders whose names contain a colon are reachable.</li>
+          <li>The application now installs its own icon instead of falling back to a generic one.</li>
+        </ul>
+      </description>
+    </release>
+    <release version="0.3.2" date="2026-08-24">
+      <url type="details">https://github.com/Zarestia-Dev/rclone-manager/blob/master/CHANGELOG.md</url>
+      <description>
+        <p>Flow overlay, Quick Runs, modular dashboard panels, and a theme-aware tray icon.</p>
+      </description>
+    </release>
+  </releases>
   <url type="homepage">https://github.com/Zarestia-Dev/rclone-manager</url>
   <url type="bugtracker">https://github.com/Zarestia-Dev/rclone-manager/issues</url>
+  <url type="help">https://hakanismail.info/zarestia/rclone-manager/docs</url>
+  <url type="vcs-browser">https://github.com/Zarestia-Dev/rclone-manager</url>
+  <url type="translate">https://crowdin.com/project/rclone-manger</url>
+  <url type="contribute">https://github.com/Zarestia-Dev/rclone-manager/blob/master/CONTRIBUTING.md</url>
   <content_rating type="oars-1.1" />
 </component>
