@@ -111,16 +111,9 @@ pub fn parse_location(raw_input: &str, known_remotes: &[String]) -> Option<(Stri
         return Some(drive_location(remote, &rest));
     }
 
-    if let Some(colon) = normalized.find(':') {
-        if colon > 0 {
-            let r_name = &normalized[..colon];
-            if r_name != "/" && !r_name.is_empty() {
-                let r_path = normalized[colon + 1..].trim_start_matches('/').to_string();
-                return Some((r_name.to_string(), r_path));
-            }
-        }
-    }
-
+    // An absolute path is local, even when a directory name contains a colon —
+    // `/home/ada/2024:notes` is a folder, not the remote `/home/ada/2024`.
+    // rclone remote names cannot start with `/`, so this can never shadow one.
     if normalized.starts_with('/') {
         return Some((
             "local".into(),
@@ -130,6 +123,16 @@ pub fn parse_location(raw_input: &str, known_remotes: &[String]) -> Option<(Stri
                 normalized
             },
         ));
+    }
+
+    if let Some(colon) = normalized.find(':') {
+        if colon > 0 {
+            let r_name = &normalized[..colon];
+            if r_name != "/" && !r_name.is_empty() {
+                let r_path = normalized[colon + 1..].trim_start_matches('/').to_string();
+                return Some((r_name.to_string(), r_path));
+            }
+        }
     }
 
     if known_remotes
@@ -631,6 +634,31 @@ mod tests {
         assert_eq!(
             parse_location("C:\\Users\\ada", &["C:".into()]),
             Some(("C:".into(), "Users/ada".into()))
+        );
+    }
+
+    #[test]
+    fn parse_location_treats_absolute_paths_with_colons_as_local() {
+        let remotes = vec!["/".to_string(), "drive".to_string()];
+        // A folder name may legally contain ':'. Splitting on the first colon
+        // used to send the user to a remote named "/home/ada/2024".
+        assert_eq!(
+            parse_location("/home/ada/2024:notes/receipts", &remotes),
+            Some(("local".into(), "/home/ada/2024:notes/receipts".into()))
+        );
+        assert_eq!(
+            parse_location("/home/ada/notes:2024", &remotes),
+            Some(("local".into(), "/home/ada/notes:2024".into()))
+        );
+        // Real remotes still win.
+        assert_eq!(
+            parse_location("drive:Photos", &remotes),
+            Some(("drive".into(), "Photos".into()))
+        );
+        // A relative remote-looking path is still parsed as a remote.
+        assert_eq!(
+            parse_location("otherremote:sub/dir", &remotes),
+            Some(("otherremote".into(), "sub/dir".into()))
         );
     }
 

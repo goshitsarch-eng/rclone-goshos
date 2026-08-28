@@ -1481,7 +1481,7 @@ impl NautilusView {
             return;
         };
         let names = self.selected_names();
-        let listing = self.last_listing.borrow();
+        let (_, listing) = self.selection_tab();
         let is_dir_of = |name: &str| {
             listing
                 .iter()
@@ -2158,7 +2158,14 @@ impl NautilusView {
         if !primary {
             return vec![self.drag_item_from_entry(clicked, tab)];
         }
-        let selected = self.selected_names();
+        // Only the primary pane reaches here, so ignore a selection that
+        // belongs to the secondary one — dragging must not pick up items from
+        // the other side of the split.
+        let selected = if self.selection_from_secondary() {
+            Vec::new()
+        } else {
+            self.selected_names()
+        };
         let names = if selected.iter().any(|name| name == &clicked.name) {
             selected
         } else {
@@ -4310,7 +4317,7 @@ impl NautilusView {
                 let Some(client) = view.ctx.client() else {
                     return;
                 };
-                let current = view.current.borrow().clone();
+                let (current, _) = view.selection_tab();
                 let fs = if current.remote == "local" {
                     "/".into()
                 } else {
@@ -5414,7 +5421,7 @@ impl NautilusView {
             return;
         };
         if names.len() > 1 {
-            let current = self.current.borrow().clone();
+            let (current, _) = self.selection_tab();
             let view = self.clone();
             dialogs::multi_rename(
                 &win,
@@ -5445,7 +5452,7 @@ impl NautilusView {
                     return;
                 }
                 if let Some(client) = view.ctx.client() {
-                    let current = view.current.borrow().clone();
+                    let (current, _) = view.selection_tab();
                     let fs = if current.remote == "local" {
                         "/".into()
                     } else {
@@ -5542,8 +5549,7 @@ impl NautilusView {
         let Some(client) = self.ctx.client() else {
             return;
         };
-        let current = self.current.borrow().clone();
-        let listing = self.last_listing.borrow().clone();
+        let (current, listing) = self.selection_tab();
         let mut items = Vec::new();
         let mut undos = Vec::new();
         for name in names {
@@ -5697,6 +5703,27 @@ impl NautilusView {
             !self.grid_right.selected_children().is_empty()
         } else {
             !selected_list_names(&self.list_right).is_empty()
+        }
+    }
+
+    /// The pane the current selection actually lives in, with its listing.
+    ///
+    /// `selected_names` falls back to the secondary pane when the primary has
+    /// nothing selected, so any operation that resolves those names against a
+    /// location must use *this* pane. Using `self.current` unconditionally acts
+    /// on a same-named file in the other pane — the usual reason to open split
+    /// view is that both sides hold files with the same names.
+    fn selection_tab(&self) -> (TabState, Vec<DirEntry>) {
+        if self.selection_from_secondary() {
+            (
+                self.secondary.borrow().clone(),
+                self.last_listing_right.borrow().clone(),
+            )
+        } else {
+            (
+                self.current.borrow().clone(),
+                self.last_listing.borrow().clone(),
+            )
         }
     }
 
@@ -6366,7 +6393,7 @@ impl NautilusView {
             "cleanup" => self.cleanup_remote(),
             "archive" => {
                 if let Some(win) = self.root.root().and_downcast::<gtk::Window>() {
-                    let current = self.current.borrow().clone();
+                    let (current, _) = self.selection_tab();
                     let names = self.selected_names();
                     if names.is_empty() {
                         self.toast.add_toast(adw::Toast::new(

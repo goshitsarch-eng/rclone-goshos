@@ -139,24 +139,91 @@ fn replace_str(input: &str, find: &str, replace: &str, case_sensitive: bool) -> 
     if case_sensitive {
         return input.replace(find, replace);
     }
-    let hay = input.to_lowercase();
+
+    // `to_lowercase()` is not length-preserving — 'İ' (2 bytes) lowercases to
+    // 'i' + a combining dot (3 bytes), 'ẞ' (3) to 'ß' (2). Indexing the
+    // original string with an offset found in the lowercased one therefore
+    // panics on a non-ASCII name. Fold character by character instead and keep
+    // a map from every lowercased byte back to the original character it came
+    // from, so matches are always cut on real character boundaries.
     let needle = find.to_lowercase();
-    let mut out = String::new();
-    let mut rest = input;
-    let mut rest_lower = hay.as_str();
-    while let Some(idx) = rest_lower.find(&needle) {
-        out.push_str(&rest[..idx]);
-        out.push_str(replace);
-        rest = &rest[idx + find.len()..];
-        rest_lower = &rest_lower[idx + needle.len()..];
+    if needle.is_empty() {
+        return input.to_string();
     }
-    out.push_str(rest);
+
+    let mut hay = String::with_capacity(input.len());
+    // For each byte of `hay`: where the source character starts and ends in `input`.
+    let mut source_start = Vec::with_capacity(input.len());
+    let mut source_end = Vec::with_capacity(input.len());
+    for (offset, ch) in input.char_indices() {
+        let end = offset + ch.len_utf8();
+        let before = hay.len();
+        for lowered in ch.to_lowercase() {
+            hay.push(lowered);
+        }
+        for _ in before..hay.len() {
+            source_start.push(offset);
+            source_end.push(end);
+        }
+    }
+
+    let mut out = String::with_capacity(input.len());
+    let mut cursor = 0; // byte offset into `input`
+    let mut search_from = 0; // byte offset into `hay`
+    while let Some(found) = hay[search_from..].find(&needle) {
+        let start = search_from + found;
+        let end = start + needle.len();
+        let orig_start = source_start[start];
+        let orig_end = source_end[end - 1];
+        if orig_start < cursor || orig_end <= orig_start {
+            // The match landed inside a character already consumed (or made no
+            // progress); step past it rather than looping forever.
+            search_from = end;
+            continue;
+        }
+        out.push_str(&input[cursor..orig_start]);
+        out.push_str(replace);
+        cursor = orig_end;
+        search_from = end;
+    }
+    out.push_str(&input[cursor..]);
     out
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn case_insensitive_replace_handles_non_ascii_names() {
+        // These used to panic: `to_lowercase()` changes byte length for 'İ'
+        // (2 -> 3) and 'ẞ' (3 -> 2), so the lowercased offset did not point at
+        // a character boundary in the original.
+        assert_eq!(replace_str("İstanbul", "l", "L", false), "İstanbuL");
+        assert_eq!(replace_str("ẞa", "a", "b", false), "ẞb");
+        assert_eq!(replace_str("İİİ", "i", "x", false), "xxx");
+        assert_eq!(replace_str("Ünïcödé.txt", "TXT", "md", false), "Ünïcödé.md");
+        assert_eq!(
+            replace_str("日本語 file", "FILE", "ファイル", false),
+            "日本語 ファイル"
+        );
+    }
+
+    #[test]
+    fn case_insensitive_replace_matches_regardless_of_case() {
+        assert_eq!(replace_str("Photo.JPG", "jpg", "png", false), "Photo.png");
+        assert_eq!(replace_str("aAaA", "a", "-", false), "----");
+        assert_eq!(replace_str("report", "xyz", "!", false), "report");
+        assert_eq!(replace_str("report", "", "!", false), "report");
+        assert_eq!(replace_str("", "a", "b", false), "");
+    }
+
+    #[test]
+    fn case_sensitive_replace_is_unchanged() {
+        assert_eq!(replace_str("Photo.JPG", "jpg", "png", true), "Photo.JPG");
+        assert_eq!(replace_str("Photo.jpg", "jpg", "png", true), "Photo.png");
+        assert_eq!(replace_str("İstanbul", "l", "L", true), "İstanbuL");
+    }
 
     #[test]
     fn template_counter_and_date() {

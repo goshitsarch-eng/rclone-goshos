@@ -137,10 +137,17 @@ pub fn is_check_operation(op: &str) -> bool {
 }
 
 pub fn check_source_from_job(stats: &Value, output: &Value) -> Value {
+    // `core/stats.checks` is rclone's *counter* of completed checks, not a list
+    // of results — taking it verbatim handed `parse_check_items` a number, which
+    // it drops, so the Check Results panel was always empty. Only accept it when
+    // a backend genuinely put rows there.
+    let rows = |value: &Value| value.is_array() || value.is_object();
     stats
         .get("checks")
+        .filter(|value| rows(value))
         .or_else(|| output.get("results"))
         .or_else(|| output.get("cryptcheck").and_then(|v| v.get("results")))
+        .or_else(|| output.get("checks").filter(|value| rows(value)))
         .cloned()
         .unwrap_or_else(|| serde_json::json!([]))
 }
@@ -357,6 +364,29 @@ mod tests {
             &json!({}),
         );
         assert_eq!(from_stats[0]["name"], "b.bin");
+    }
+
+    #[test]
+    fn check_counter_in_stats_does_not_hide_the_results() {
+        // What rclone actually returns: `checks` is how many checks ran.
+        let stats = json!({ "bytes": 0, "checks": 3, "transfers": 0 });
+        let output = json!({
+            "results": [
+                { "name": "a.txt", "status": "differ" },
+                { "name": "b.txt", "status": "missing_dst" },
+            ]
+        });
+        let source = check_source_from_job(&stats, &output);
+        let items = parse_check_items(&source, "drive:", "/tmp/out");
+        assert_eq!(items.len(), 2, "counter must not shadow the result rows");
+        assert_eq!(items[0].name, "a.txt");
+        assert_eq!(items[1].status, "missing_dst");
+
+        // With no results anywhere, the counter still yields an empty list
+        // rather than a number parse_check_items would silently drop.
+        let empty = check_source_from_job(&stats, &json!({}));
+        assert!(empty.is_array());
+        assert!(parse_check_items(&empty, "drive:", "/tmp/out").is_empty());
     }
 
     #[test]

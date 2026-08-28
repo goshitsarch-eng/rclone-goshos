@@ -232,8 +232,7 @@ pub fn install_user_metainfo() -> Result<PathBuf, String> {
 }
 
 pub use crate::os_notify::{
-    drain_notification_clicks, show_os_notification, show_os_notification_target,
-    NotificationTarget,
+    drain_notification_clicks, show_os_notification_target, NotificationTarget,
 };
 
 /// XDG autostart entry. `--tray` matches Tauri `tauri_plugin_autostart`.

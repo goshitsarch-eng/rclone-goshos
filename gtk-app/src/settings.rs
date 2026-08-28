@@ -620,8 +620,6 @@ mod tests {
         assert!(!path.with_extension("json.tmp").exists());
     }
 
-    use super::*;
-
     #[test]
     fn set_and_get_nested_setting() {
         let mut settings = AppSettings::default();
