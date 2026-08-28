@@ -909,7 +909,10 @@ fn handle_sidebar_nav(
         return;
     }
     if name == "nav-back" {
-        if let Some(prev) = return_from_shared(&mut edit_stack.borrow_mut()) {
+        // The `RefMut` would live for the whole `if let`, and `rebuild()` reads
+        // `edit_stack` — end the mutable borrow at this statement instead.
+        let previous = return_from_shared(&mut edit_stack.borrow_mut());
+        if let Some(prev) = previous {
             *current.borrow_mut() = prev;
             preferred_profile.borrow_mut().take();
             rebuild();

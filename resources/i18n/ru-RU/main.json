@@ -3242,7 +3242,8 @@
       "startFailed": "Не удалось запустить движок автоматизаций: {{error}}",
       "stopFailed": "Не удалось остановить движок автоматизаций: {{error}}",
       "invalidCron": "Некорректное cron-выражение: {{error}}",
-      "automationNotFound": "Автоматизация не найдена"
+      "automationNotFound": "Автоматизация не найдена",
+      "unsupportedType": "Этот тип автоматизации ({{type}}) нельзя запланировать"
     },
     "system": {
       "unlockFailed": "Не удалось разблокировать: {{error}}"

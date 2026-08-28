@@ -318,7 +318,11 @@ fn split_rclone_timestamp(line: &str) -> Option<(String, &str)> {
     if bytes.len() < 19 {
         return None;
     }
-    let date = &line[..10];
+    // `&line[..10]` panics when byte 10 is not a character boundary, which any
+    // log line starting with multi-byte text can produce.
+    let Some(date) = line.get(..10) else {
+        return None;
+    };
     if date.as_bytes().get(4) != Some(&b'/') || date.as_bytes().get(7) != Some(&b'/') {
         return None;
     }
@@ -542,6 +546,25 @@ pub fn clear_log_file() {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn timestamp_split_survives_multibyte_lines() {
+        // `&line[..10]` used to panic here: byte 10 lands inside 'é'.
+        assert_eq!(split_rclone_timestamp("ééééééééé ERROR something"), None);
+        assert_eq!(
+            split_rclone_timestamp("→→→→ NOTICE mount failed to start"),
+            None
+        );
+        assert_eq!(
+            split_rclone_timestamp("日本語のログ行です、とても長い"),
+            None
+        );
+        // A real timestamp still parses.
+        let (stamp, rest) =
+            split_rclone_timestamp("2026/08/28 03:14:15 INFO  : copied").expect("parses");
+        assert_eq!(stamp, "2026/08/28 03:14:15");
+        assert!(rest.contains("INFO"));
+    }
+
     use super::*;
     use serde_json::json;
     use std::collections::HashMap;

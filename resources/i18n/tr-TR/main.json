@@ -3242,7 +3242,8 @@
       "startFailed": "Otomasyon motoru çalıştırılamadı: {{error}}",
       "stopFailed": "Otomasyon motoru durdurulamadı: {{error}}",
       "invalidCron": "Geçersiz cron ifadesi: {{error}}",
-      "automationNotFound": "Otomasyon bulunamadı"
+      "automationNotFound": "Otomasyon bulunamadı",
+      "unsupportedType": "Bu otomasyon türü ({{type}}) zamanlanamaz"
     },
     "system": {
       "unlockFailed": "Kilit açma başarısız: {{error}}"

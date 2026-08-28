@@ -3242,7 +3242,8 @@
       "startFailed": "Failed to start automation engine: {{error}}",
       "stopFailed": "Failed to stop automation engine: {{error}}",
       "invalidCron": "Invalid cron expression: {{error}}",
-      "automationNotFound": "Automation not found"
+      "automationNotFound": "Automation not found",
+      "unsupportedType": "This automation type ({{type}}) cannot be scheduled"
     },
     "system": {
       "unlockFailed": "Unlock failed: {{error}}"

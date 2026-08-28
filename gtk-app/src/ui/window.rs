@@ -398,42 +398,48 @@ fn present_main_with(app: &adw::Application, ctx: AppCtx, hidden: bool) {
         let toast = toast.clone();
         let banner_kind = banner_kind.clone();
         let banner_ref = banner.clone();
-        banner.connect_button_clicked(move |_| match *banner_kind.borrow() {
-            BannerKind::Repair => {
-                let version = ctx.client().and_then(|c| c.version().ok());
-                let issues = crate::repair::diagnose(
-                    &ctx.settings.borrow(),
-                    ctx.engine_ready(),
-                    ctx.client().as_ref(),
-                    version.as_deref(),
-                );
-                if crate::repair::banner_opens_password(&issues) {
-                    dialogs::password_prompt(&window, ctx.clone(), toast.clone());
-                } else {
-                    dialogs::repair(&window, ctx.clone(), toast.clone());
+        banner.connect_button_clicked(move |_| {
+            // Read the kind out before matching: the scrutinee's `Ref` would
+            // otherwise be held for the whole `match`, and the Flatpak arm
+            // calls `update_banner`, which takes `borrow_mut()` on it.
+            let kind = *banner_kind.borrow();
+            match kind {
+                BannerKind::Repair => {
+                    let version = ctx.client().and_then(|c| c.version().ok());
+                    let issues = crate::repair::diagnose(
+                        &ctx.settings.borrow(),
+                        ctx.engine_ready(),
+                        ctx.client().as_ref(),
+                        version.as_deref(),
+                    );
+                    if crate::repair::banner_opens_password(&issues) {
+                        dialogs::password_prompt(&window, ctx.clone(), toast.clone());
+                    } else {
+                        dialogs::repair(&window, ctx.clone(), toast.clone());
+                    }
                 }
-            }
-            BannerKind::Flatpak => {
-                ctx.settings.borrow_mut().runtime.flatpak_warn = false;
-                ctx.persist();
-                update_banner(&ctx, &banner_ref, &banner_kind);
-            }
-            BannerKind::Update => ctx.request_nav(NavTarget::Updates),
-            BannerKind::RcloneRestart => {
-                ctx.settings.borrow_mut().runtime.rclone_restart_required = false;
-                ctx.persist();
-                ctx.restart_engine();
-            }
-            BannerKind::AppRestart => {
-                ctx.settings.borrow_mut().runtime.app_restart_required = false;
-                ctx.persist();
-                if let Err(e) = crate::platform::relaunch() {
-                    ctx.toast_error(&toast, &e);
-                } else if let Some(app) = window.application() {
-                    app.quit();
+                BannerKind::Flatpak => {
+                    ctx.settings.borrow_mut().runtime.flatpak_warn = false;
+                    ctx.persist();
+                    update_banner(&ctx, &banner_ref, &banner_kind);
                 }
+                BannerKind::Update => ctx.request_nav(NavTarget::Updates),
+                BannerKind::RcloneRestart => {
+                    ctx.settings.borrow_mut().runtime.rclone_restart_required = false;
+                    ctx.persist();
+                    ctx.restart_engine();
+                }
+                BannerKind::AppRestart => {
+                    ctx.settings.borrow_mut().runtime.app_restart_required = false;
+                    ctx.persist();
+                    if let Err(e) = crate::platform::relaunch() {
+                        ctx.toast_error(&toast, &e);
+                    } else if let Some(app) = window.application() {
+                        app.quit();
+                    }
+                }
+                BannerKind::Metered | BannerKind::Development | BannerKind::None => {}
             }
-            BannerKind::Metered | BannerKind::Development | BannerKind::None => {}
         });
     }
     update_banner(&ctx, &banner, &banner_kind);

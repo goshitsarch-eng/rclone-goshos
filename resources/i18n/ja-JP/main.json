@@ -3242,7 +3242,8 @@
       "startFailed": "自動化エンジンの開始に失敗しました: {{error}}",
       "stopFailed": "自動化エンジンの停止に失敗しました: {{error}}",
       "invalidCron": "無効なCron式です: {{error}}",
-      "automationNotFound": "自動化が見つかりません"
+      "automationNotFound": "自動化が見つかりません",
+      "unsupportedType": "この自動化の種類 ({{type}}) はスケジュールできません"
     },
     "system": {
       "unlockFailed": "ロック解除に失敗しました: {{error}}"

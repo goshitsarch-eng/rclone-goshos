@@ -185,6 +185,14 @@ async fn finalize_batch_upload(
     origin: Option<Origin>,
     job_id: Option<u64>,
 ) -> Result<Json<ApiResponse<String>>, AppError> {
+    // `total_files` comes from the request. At 0, `total_files - 1` underflows
+    // to usize::MAX in release builds, so the batch is never finalized and its
+    // staging directory is left behind (and panics in debug).
+    if batch.total_files == 0 {
+        return Err(AppError::BadRequest(anyhow::Error::msg(
+            "totalFiles must be at least 1",
+        )));
+    }
     if batch.file_index < batch.total_files - 1 {
         return Ok(Json(ApiResponse::success("File buffered".into())));
     }

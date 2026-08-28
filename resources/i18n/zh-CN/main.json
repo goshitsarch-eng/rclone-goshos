@@ -3242,7 +3242,8 @@
       "startFailed": "启动自动化引擎失败：{{error}}",
       "stopFailed": "停止自动化引擎失败：{{error}}",
       "invalidCron": "Cron 表达式无效：{{error}}",
-      "automationNotFound": "未找到自动化"
+      "automationNotFound": "未找到自动化",
+      "unsupportedType": "此自动化类型 ({{type}}) 无法被排程"
     },
     "system": {
       "unlockFailed": "解锁失败：{{error}}"

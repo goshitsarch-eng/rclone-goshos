@@ -3242,7 +3242,8 @@
       "startFailed": "Не вдалося запустити рушій автоматизації: {{error}}",
       "stopFailed": "Не вдалося зупинити рушій автоматизації: {{error}}",
       "invalidCron": "Невірний cron-вираз: {{error}}",
-      "automationNotFound": "Автоматизацію не знайдено"
+      "automationNotFound": "Автоматизацію не знайдено",
+      "unsupportedType": "Цей тип автоматизації ({{type}}) не можна запланувати"
     },
     "system": {
       "unlockFailed": "Не вдалося розблокувати: {{error}}"

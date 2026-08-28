@@ -3242,7 +3242,8 @@
       "startFailed": "Falha ao iniciar o motor de automação: {{error}}",
       "stopFailed": "Falha ao parar o motor de automação: {{error}}",
       "invalidCron": "Expressão cron inválida: {{error}}",
-      "automationNotFound": "Automação não encontrada"
+      "automationNotFound": "Automação não encontrada",
+      "unsupportedType": "Este tipo de automação ({{type}}) não pode ser agendado"
     },
     "system": {
       "unlockFailed": "Falha ao desbloquear: {{error}}"

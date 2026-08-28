@@ -450,7 +450,10 @@ pub fn vfs_panel(ctx: AppCtx, remote: &str, toast: adw::ToastOverlay) -> gtk::Wi
                 return;
             }
             let idx = row.selected() as usize;
-            if let Some(name) = known_names.borrow().get(idx).cloned() {
+            // `refresh_ui` rebuilds the dropdown and takes
+            // `known_names.borrow_mut()`, so the read must end first.
+            let name = known_names.borrow().get(idx).cloned();
+            if let Some(name) = name {
                 *selected.borrow_mut() = name;
                 refresh_ui();
             }
@@ -519,7 +522,11 @@ pub fn vfs_panel(ctx: AppCtx, remote: &str, toast: adw::ToastOverlay) -> gtk::Wi
         let refresh_ui = refresh_ui.clone();
         refresh_meta.connect_clicked(move |_| {
             if let Some(client) = ctx.client() {
-                match client.vfs_refresh_ex(&selected.borrow(), None, true) {
+                // The `Ref` from a match scrutinee lives for the whole match,
+                // and `refresh_ui` reassigns `selected` when the VFS list
+                // changes — take an owned copy first.
+                let target = selected.borrow().clone();
+                match client.vfs_refresh_ex(&target, None, true) {
                     Ok(_) => {
                         toast.add_toast(adw::Toast::new(&ctx.t_or(
                             "shared.vfsControl.actions.messages.directoryRefreshed",
@@ -539,7 +546,8 @@ pub fn vfs_panel(ctx: AppCtx, remote: &str, toast: adw::ToastOverlay) -> gtk::Wi
         let refresh_ui = refresh_ui.clone();
         clear_cache.connect_clicked(move |_| {
             if let Some(client) = ctx.client() {
-                match client.vfs_forget(&selected.borrow()) {
+                let target = selected.borrow().clone();
+                match client.vfs_forget(&target) {
                     Ok(value) => {
                         let count = value
                             .get("forgotten")

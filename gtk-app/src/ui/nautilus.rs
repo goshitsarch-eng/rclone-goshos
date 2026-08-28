@@ -1655,7 +1655,15 @@ impl NautilusView {
     fn toggle_star_selected(&self) {
         if let Some(name) = self.selected_name() {
             if self.current.borrow().starred {
-                if let Some(entry) = self.last_listing.borrow().iter().find(|e| e.name == name) {
+                // Same trap: `toggle_star_path` reloads the Starred view, which
+                // ends in `last_listing.borrow_mut()`.
+                let entry = self
+                    .last_listing
+                    .borrow()
+                    .iter()
+                    .find(|e| e.name == name)
+                    .cloned();
+                if let Some(entry) = entry {
                     self.toggle_star_path(&entry.path, &entry.name);
                     return;
                 }
@@ -6103,7 +6111,11 @@ impl NautilusView {
             return;
         }
         self.persist_nav_stacks();
-        if let Some(tab) = self.tabs.borrow().iter().find(|t| t.id == id).cloned() {
+        // The `Ref` from a scrutinee lives until the end of the `if let` in
+        // edition 2021, and `reload()` -> `sync_current_tab()` takes
+        // `tabs.borrow_mut()`. Drop the borrow before calling out.
+        let found = self.tabs.borrow().iter().find(|t| t.id == id).cloned();
+        if let Some(tab) = found {
             self.adopt_tab(tab);
             self.reload();
         }

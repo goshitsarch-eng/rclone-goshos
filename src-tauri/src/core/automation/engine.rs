@@ -372,7 +372,15 @@ pub async fn execute_automation(
     let job_cache = &backend_manager.job_cache;
 
     let remote_name = automation.args.params.remote_name.clone();
-    let job_type = automation.automation_type.as_job_type().unwrap();
+    // `as_job_type` is `None` for `Serve`, which has no job-cache entry.
+    // Unwrapping panicked the scheduler task the moment such an automation
+    // fired, taking every other automation down with it.
+    let job_type = automation.automation_type.as_job_type().ok_or_else(|| {
+        crate::localized_error!(
+            "backendErrors.automation.unsupportedType",
+            "type" => automation.automation_type.to_string()
+        )
+    })?;
     let profile = Some(automation.args.params.profile_name.as_str());
 
     let is_running = automation.status == AutomationStatus::Running

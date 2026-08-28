@@ -395,7 +395,10 @@ async fn is_automation_running_or_in_cooldown(
 
     let job_cache = &backend_manager.job_cache;
     let remote_name = automation.args.params.remote_name.trim_end_matches(':');
-    let job_type = automation.automation_type.as_job_type().unwrap();
+    // `Serve` has no job type; unwrapping killed the watcher loop permanently.
+    let Some(job_type) = automation.automation_type.as_job_type() else {
+        return false;
+    };
     let profile = Some(automation.args.params.profile_name.as_str());
 
     let active_jobs = job_cache.get_active_jobs().await;
