@@ -81,6 +81,11 @@ jobs:
         run: cargo test --lib -- --test-threads=1
         working-directory: gtk-app
 
+      - name: Run Clippy (GTK)
+        if: matrix.os == 'ubuntu-22.04'
+        run: cargo clippy --lib -- -D warnings
+        working-directory: gtk-app
+
       - name: Run Clippy (Desktop)
         run: cargo clippy --features desktop --no-default-features -- -D warnings
         working-directory: src-tauri

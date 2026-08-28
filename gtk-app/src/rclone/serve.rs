@@ -153,6 +153,8 @@ pub fn resolve_listen_addr(addr: &str) -> String {
     let free = pick_free_port().unwrap_or(8080);
     if host.is_empty() {
         format!("127.0.0.1:{free}")
+    } else if host.contains(':') && !host.starts_with('[') {
+        format!("[{host}]:{free}")
     } else {
         format!("{host}:{free}")
     }
@@ -438,6 +440,9 @@ mod tests {
         let ephemeral = resolve_listen_addr(":0");
         assert!(ephemeral.starts_with("127.0.0.1:"));
         assert_eq!(split_host_port("[::1]:0"), Some(("::1", "0")));
+        let v6 = resolve_listen_addr("[::1]:0");
+        assert!(v6.starts_with("[::1]:"), "{v6}");
+        assert_ne!(v6, "[::1]:0");
         assert!(parse_fallback_job_id("cmd-12") == Some(12));
         assert!(parse_fallback_proc_id("proc-99") == Some(99));
         assert!(parse_fallback_job_id("http-abc").is_none());

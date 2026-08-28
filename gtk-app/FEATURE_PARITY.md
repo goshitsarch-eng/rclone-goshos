@@ -1225,3 +1225,15 @@ This client is the GTK 4 + libadwaita desktop UI. It talks to a local `rclone rc
 - Live GUI: `--browse testdrive:Photos` Ctrl+click **README.md** + **README.txt** then **F2** opens **Rename using a template** with Template `[Original file name]`, Original name / Counter / Date / Extension chips, Find text / Replace with, Case sensitive, preview **README.md** / **README.txt**; Escape cancels (files unchanged)
 - Live GUI: `--vfs testdrive` VFS Control shows Metadata / Upload Queue / Cache Information / Advanced Configuration plus **Refresh Metadata**, **Clear Metadata Cache**, and **Refresh All Data**; no `testdrive:[0]` instance so the indexed **VFS Controls Unavailable** banner was not shown
 - Live GUI: `--repair` **Configuration Password / Unlock** opens the password prompt; **Cancel** leaves `config_password` unset
+
+- After onboarding, Repair auto-opens once per session for missing binary, config password, or RC auth failure (version-too-old and FUSE stay banner-only)
+- Full-backup remote subset: empty selection exports no remotes; logs / job history / job meta are filtered with the store
+- Preparing jobs from a previous session complete only when transfer snapshots actually finished (percentage 100 or bytes >= size); start snapshots stay failed
+- UNC `\\server\share\path` and Windows `~\…` home paths keep the path suffix
+- Folder upload creates empty directories (mkdir) even when there are no files
+- Serve listen addresses re-bracket IPv6 hosts after binding an ephemeral port (`[::1]:<port>`)
+- Extra rclone flags in Preferences reject reserved engine flags (`--rc-addr`, `--config`, …) with `modals.preferences.validation.reserved`
+- Including secrets in a zip backup requires a password of 4+ characters (UI toast + create_backup guard)
+- Full backup can write persisted `backend.json`; `.rcman` restore maps and imports `backend.json`
+- Leftover i18n keys retargeted onto existing catalogs; added `common.options`, `common.dragToReorder`, `remoteConfig.defaultActionOrder`, `modals.about.engine`, `general.remoteConfig.saveProfile`, `home.options.aboutRemote`, `fileBrowser.fileViewer.wrapLines` / `remotePdfPreview`
+- CI runs GTK Clippy (`cargo clippy --lib -D warnings`) on Ubuntu after GTK tests

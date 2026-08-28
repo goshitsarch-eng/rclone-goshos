@@ -778,7 +778,7 @@ fn present_ex(
     mode_group.set_title(&ctx.t_or("wizards.remoteConfig.fields", "Fields"));
     let field_search = gtk::SearchEntry::new();
     field_search.set_placeholder_text(Some(
-        &ctx.t_or("wizards.remoteConfig.searchFields", "Search fields"),
+        &ctx.t_or("shared.search.placeholder", "Search fields"),
     ));
     field_search.set_hexpand(true);
     {
@@ -790,7 +790,7 @@ fn present_ex(
         });
     }
     let field_search_row = adw::ActionRow::new();
-    field_search_row.set_title(&ctx.t_or("wizards.remoteConfig.searchFields", "Search fields"));
+    field_search_row.set_title(&ctx.t_or("shared.search.placeholder", "Search fields"));
     field_search_row.add_suffix(&field_search);
     mode_group.add(&field_search_row);
     let adv_switch = adw::SwitchRow::new();
@@ -2843,7 +2843,7 @@ pub(super) fn inline_provider_editor(
         .filter(|s| !s.trim_end_matches('—').trim().is_empty())
         .unwrap_or_else(|| {
             if type_name.is_empty() {
-                ctx.t_or("common.unknown", "Unknown")
+                ctx.t_or("backup.restore.unknown", "Unknown")
             } else {
                 type_name.clone()
             }
@@ -2910,7 +2910,7 @@ pub(super) fn inline_provider_editor(
     mode_group.set_title(&ctx.t_or("wizards.remoteConfig.fields", "Fields"));
     let field_search = gtk::SearchEntry::new();
     field_search.set_placeholder_text(Some(
-        &ctx.t_or("wizards.remoteConfig.searchFields", "Search fields"),
+        &ctx.t_or("shared.search.placeholder", "Search fields"),
     ));
     field_search.set_hexpand(true);
     {
@@ -2922,7 +2922,7 @@ pub(super) fn inline_provider_editor(
         });
     }
     let field_search_row = adw::ActionRow::new();
-    field_search_row.set_title(&ctx.t_or("wizards.remoteConfig.searchFields", "Search fields"));
+    field_search_row.set_title(&ctx.t_or("shared.search.placeholder", "Search fields"));
     field_search_row.add_suffix(&field_search);
     mode_group.add(&field_search_row);
     let adv_switch = adw::SwitchRow::new();

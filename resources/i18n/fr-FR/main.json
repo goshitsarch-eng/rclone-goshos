@@ -50,7 +50,9 @@
     "other": "Other",
     "ready": "Ready",
     "configure": "Configure",
-    "engineOffline": "Moteur hors ligne"
+    "engineOffline": "Moteur hors ligne",
+    "options": "Options",
+    "dragToReorder": "Glisser pour réorganiser"
   },
   "cron": {
     "everyMinute": "Toutes les minutes",
@@ -174,6 +176,7 @@
     "dryRun": "Dry run",
     "flags": "Operation flags",
     "startFailed": "Start failed",
+    "defaultActionOrder": "Toutes les actions (ordre par défaut)",
     "addSource": "Add source",
     "multipleSources": "Multiple sources",
     "pathStatusTitle": "Path check",
@@ -1852,7 +1855,9 @@
       "remotePreview": "Aperçu distant via operations/cat",
       "largeRemotePreview": "Ce fichier distant fait {{size}}. Le télécharger entièrement pour l'aperçu peut prendre du temps.",
       "downloadPreview": "Télécharger l'aperçu",
-      "downloadedPreview": "Aperçu téléchargé vers {{path}}"
+      "downloadedPreview": "Aperçu téléchargé vers {{path}}",
+      "wrapLines": "Retour à la ligne",
+      "remotePdfPreview": "Aperçu PDF distant"
     },
     "pathKind": {
       "title": "Path type",
@@ -2167,6 +2172,7 @@
       "loadInfoFailed": "Échec du chargement des informations du dépôt distant.",
       "license": "Licence",
       "toolkit": "GTK 4 + libadwaita",
+      "engine": "Infrastructure backend",
       "copyVersion": "Rclone Manager {version} · rclone {rclone}",
       "licenseId": "GPL-3.0-or-later",
       "gnuGpl": "GNU GPL v3",
@@ -2948,7 +2954,8 @@
       "cloneNoSettings": "Aucun paramètre enregistré n’a été trouvé pour ce distant.",
       "exportConfig": "Exporter la configuration",
       "resetSettings": "Réinitialiser les paramètres",
-      "deleteRemote": "Supprimer le dépôt distant"
+      "deleteRemote": "Supprimer le dépôt distant",
+      "aboutRemote": "À propos du distant"
     },
     "deleteRemote": {
       "title": "Supprimer le dépôt distant",
@@ -3736,6 +3743,7 @@
       "title": {
         "add": "Remote Configuration"
       },
+      "saveProfile": "Enregistrer le profil",
       "advancedProfiles": {
         "title": "Helper profiles"
       },

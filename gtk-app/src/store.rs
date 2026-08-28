@@ -1009,21 +1009,46 @@ pub struct BackendUiState {
     pub serves: Vec<ServeItem>,
 }
 
+fn snapshot_row_completed(row: &Value) -> bool {
+    if row
+        .get("error")
+        .and_then(Value::as_str)
+        .is_some_and(|e| !e.is_empty())
+    {
+        return false;
+    }
+    if row.get("percentage").and_then(Value::as_u64) == Some(100) {
+        return true;
+    }
+    let size = row
+        .get("size")
+        .and_then(Value::as_u64)
+        .or_else(|| row.get("size").and_then(Value::as_i64).map(|n| n as u64))
+        .unwrap_or(0);
+    let bytes = row
+        .get("bytes")
+        .and_then(Value::as_u64)
+        .or_else(|| row.get("bytes").and_then(Value::as_i64).map(|n| n as u64))
+        .unwrap_or(0);
+    size > 0 && bytes >= size
+}
+
+fn transfer_list_completed(value: &Value) -> bool {
+    value
+        .as_array()
+        .is_some_and(|arr| !arr.is_empty() && arr.iter().any(snapshot_row_completed))
+}
+
 fn finalize_stale_jobs(jobs: &mut [JobInfo], meta: &HashMap<u64, JobMeta>) {
-    let has_snapshot = |id: u64| {
-        meta.get(&id).is_some_and(|entry| {
-            entry
-                .transfer_snapshot
-                .as_array()
-                .is_some_and(|arr| !arr.is_empty())
-        })
-    };
     for job in jobs {
         if job.status != "preparing" && job.status != "starting" {
             continue;
         }
-        let done =
-            !job.completed.as_array().is_some_and(|arr| arr.is_empty()) || has_snapshot(job.id);
+        let snapshot = meta
+            .get(&job.id)
+            .map(|entry| &entry.transfer_snapshot)
+            .unwrap_or(&Value::Null);
+        let done = transfer_list_completed(&job.completed) || transfer_list_completed(snapshot);
         job.status = if done { "completed" } else { "failed" }.into();
     }
 }
@@ -2717,7 +2742,7 @@ mod tests {
         store.job_meta.insert(
             4,
             JobMeta {
-                transfer_snapshot: json!([{ "name": "k.txt" }]),
+                transfer_snapshot: json!([{ "name": "k.txt", "bytes": 0, "size": 12 }]),
                 ..Default::default()
             },
         );
@@ -2764,8 +2789,13 @@ mod tests {
             parent_job_id: None,
         });
         store.finalize_stale_preparing();
-        assert_eq!(store.job_history[0].status, "completed");
+        assert_eq!(store.job_history[0].status, "failed");
         assert_eq!(store.job_history[1].status, "failed");
+
+        store.job_history[0].status = "preparing".into();
+        store.job_history[0].completed = json!([{ "name": "k.txt", "bytes": 12, "size": 12 }]);
+        store.finalize_stale_preparing();
+        assert_eq!(store.job_history[0].status, "completed");
     }
 
     #[test]

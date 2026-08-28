@@ -50,7 +50,9 @@
     "other": "Other",
     "ready": "Ready",
     "configure": "Configure",
-    "engineOffline": "Motor çevrimdışı"
+    "engineOffline": "Motor çevrimdışı",
+    "options": "Seçenekler",
+    "dragToReorder": "Sürükleyerek yeniden sıralayın"
   },
   "cron": {
     "everyMinute": "Her dakika",
@@ -174,6 +176,7 @@
     "dryRun": "Dry run",
     "flags": "Operation flags",
     "startFailed": "Start failed",
+    "defaultActionOrder": "Tüm eylemler (varsayılan sıra)",
     "addSource": "Add source",
     "multipleSources": "Multiple sources",
     "pathStatusTitle": "Path check",
@@ -1852,7 +1855,9 @@
       "remotePreview": "operations/cat ile uzak önizleme",
       "largeRemotePreview": "Bu uzak dosya {{size}}. Önizleme için dosyanın tamamını indirmek zaman alabilir.",
       "downloadPreview": "Önizlemeyi indir",
-      "downloadedPreview": "Önizleme {{path}} konumuna indirildi"
+      "downloadedPreview": "Önizleme {{path}} konumuna indirildi",
+      "wrapLines": "Satırları kaydır",
+      "remotePdfPreview": "Uzak PDF önizlemesi"
     },
     "pathKind": {
       "title": "Path type",
@@ -2167,6 +2172,7 @@
       "loadInfoFailed": "Rclone bilgisi yüklenemedi.",
       "license": "Lisans",
       "toolkit": "GTK 4 + libadwaita",
+      "engine": "Arka uç altyapısı",
       "copyVersion": "Rclone Manager {version} · rclone {rclone}",
       "licenseId": "GPL-3.0-or-later",
       "gnuGpl": "GNU GPL v3",
@@ -2948,7 +2954,8 @@
       "cloneNoSettings": "Bu uzak için kayıtlı ayar bulunamadı.",
       "exportConfig": "Yapılandırmayı Dışa Aktar",
       "resetSettings": "Ayarları Sıfırla",
-      "deleteRemote": "Uzak Sunucuyu Sil"
+      "deleteRemote": "Uzak Sunucuyu Sil",
+      "aboutRemote": "Uzak depolama hakkında"
     },
     "deleteRemote": {
       "title": "Uzak Sunucuyu Sil",
@@ -3736,6 +3743,7 @@
       "title": {
         "add": "Remote Configuration"
       },
+      "saveProfile": "Profili kaydet",
       "advancedProfiles": {
         "title": "Helper profiles"
       },

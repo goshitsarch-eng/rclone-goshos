@@ -53,7 +53,7 @@ pub fn export_category_label(id: &str, i18n: &crate::i18n::I18n) -> String {
         ),
         "alerts" | "store" => i18n.t_or("modals.export.categories.alerts.label", "Alerts"),
         "templates" => i18n.t_or("templates.title", "Templates"),
-        "quick_runs" => i18n.t_or("modals.export.categories.quickRuns.label", "Quick Runs"),
+        "quick_runs" => i18n.t_or("flow.quickRun.title", "Quick Runs"),
         "rclone" => i18n.t_or("modals.export.categories.remotes.label", "Remotes"),
         "connections" => i18n.t_or("modals.export.categories.connections.label", "Connections"),
         "nautilus" => i18n.t_or(
@@ -82,7 +82,7 @@ impl BackupAnalysis {
             rows.push(match self.manifest.export_type.as_str() {
                 "alerts" | "store" => ("modals.export.categories.alerts.label", "Alerts"),
                 "templates" => ("templates.title", "Templates"),
-                "quick_runs" => ("modals.export.categories.quickRuns.label", "Quick Runs"),
+                "quick_runs" => ("flow.quickRun.title", "Quick Runs"),
                 _ => ("backup.restore.profiles.title", "Profiles"),
             });
         }
@@ -314,9 +314,6 @@ pub fn rclone_create_params(cfg: &Value) -> Value {
 }
 
 pub fn filter_store_remotes(store: &AppStore, names: &[String]) -> AppStore {
-    if names.is_empty() {
-        return store.clone();
-    }
     let keep: std::collections::HashSet<&str> = names.iter().map(String::as_str).collect();
     let mut scoped = store.clone();
     scoped
@@ -329,14 +326,29 @@ pub fn filter_store_remotes(store: &AppStore, names: &[String]) -> AppStore {
         .alert_history
         .retain(|event| event.remote.is_empty() || keep.contains(event.remote.as_str()));
     scoped
+        .logs
+        .retain(|remote, _| remote.is_empty() || keep.contains(remote.as_str()));
+    scoped.job_history.retain(|job| {
+        job.remote.is_empty()
+            || keep.contains(job.remote.as_str())
+            || job
+                .src
+                .split_once(':')
+                .is_some_and(|(remote, _)| keep.contains(remote))
+    });
+    scoped
+        .job_meta
+        .retain(|_, meta| meta.remote.is_empty() || keep.contains(meta.remote.as_str()));
+    scoped
 }
 
 pub fn filter_rclone_names(dump: &Value, names: &[String]) -> Value {
-    if names.is_empty() {
-        return dump.clone();
-    }
     let Some(obj) = dump.as_object() else {
-        return dump.clone();
+        return if names.is_empty() {
+            serde_json::json!({})
+        } else {
+            dump.clone()
+        };
     };
     let mut out = serde_json::Map::new();
     for name in names {
@@ -368,10 +380,68 @@ pub fn create_backup(
     note: &str,
     password: Option<&str>,
 ) -> Result<PathBuf, String> {
+    create_backup_with(
+        dest,
+        settings,
+        store,
+        rclone_dump,
+        export_type,
+        note,
+        password,
+        None,
+    )
+}
+
+fn dump_contains_secrets(dump: &Value) -> bool {
+    const KEYS: &[&str] = &[
+        "token",
+        "secret",
+        "password",
+        "password2",
+        "pass",
+        "client_secret",
+        "key",
+    ];
+    dump.as_object().is_some_and(|remotes| {
+        remotes.values().any(|cfg| {
+            cfg.as_object().is_some_and(|map| {
+                KEYS.iter().any(|key| {
+                    map.get(*key).is_some_and(|value| match value {
+                        Value::Null => false,
+                        Value::String(s) => !s.is_empty(),
+                        other => !other.is_null(),
+                    })
+                })
+            })
+        })
+    })
+}
+
+#[allow(clippy::too_many_arguments)]
+pub fn create_backup_with(
+    dest: &Path,
+    settings: &AppSettings,
+    store: &AppStore,
+    rclone_dump: &Value,
+    export_type: &str,
+    note: &str,
+    password: Option<&str>,
+    backend: Option<&Value>,
+) -> Result<PathBuf, String> {
+    let settings = filter_settings_category(settings, export_type);
+    let store = filter_store_category(store, export_type);
+    let rclone_dump = filter_rclone_dump(rclone_dump, export_type);
+    let encrypted = password.is_some_and(|p| p.trim().len() >= 4);
+    if includes_file(export_type, "rclone.json")
+        && dump_contains_secrets(&rclone_dump)
+        && !encrypted
+    {
+        return Err("Including secrets requires a zip password of 4+ characters".into());
+    }
+
     std::fs::create_dir_all(dest.parent().unwrap_or(Path::new("."))).map_err(|e| e.to_string())?;
     let file = File::create(dest).map_err(|e| e.to_string())?;
     let mut zip = ZipWriter::new(file);
-    let encrypted = password.is_some_and(|p| p.trim().len() >= 4);
     let mut options = zip::write::SimpleFileOptions::default()
         .compression_method(zip::CompressionMethod::Deflated);
     if encrypted {
@@ -379,10 +449,6 @@ pub fn create_backup(
             options = options.with_aes_encryption(zip::AesMode::Aes256, pw);
         }
     }
-
-    let settings = filter_settings_category(settings, export_type);
-    let store = filter_store_category(store, export_type);
-    let rclone_dump = filter_rclone_dump(rclone_dump, export_type);
     let remotes = if includes_file(export_type, "rclone.json") {
         rclone_dump
             .as_object()
@@ -429,15 +495,18 @@ pub fn create_backup(
         .map_err(|e| e.to_string())?;
     }
 
-    if includes_file(export_type, "backend.json") && export_type == "backend" {
-        zip.start_file("backend.json", options)
-            .map_err(|e| e.to_string())?;
-        zip.write_all(
-            serde_json::to_string_pretty(&rclone_dump)
-                .unwrap()
-                .as_bytes(),
-        )
-        .map_err(|e| e.to_string())?;
+    let backend_payload = if export_type == "backend" {
+        Some(&rclone_dump)
+    } else {
+        backend
+    };
+    if includes_file(export_type, "backend.json") {
+        if let Some(payload) = backend_payload {
+            zip.start_file("backend.json", options)
+                .map_err(|e| e.to_string())?;
+            zip.write_all(serde_json::to_string_pretty(payload).unwrap().as_bytes())
+                .map_err(|e| e.to_string())?;
+        }
     }
 
     zip.finish().map_err(|e| e.to_string())?;
@@ -663,9 +732,8 @@ fn map_rcman_zip_entry(name: &str) -> Option<PathBuf> {
         return Some(PathBuf::from("remotes").join(file));
     }
     match file {
-        "quick_runs.json" | "connections.json" | "templates.json" | "rclone.conf" => {
-            Some(PathBuf::from(file))
-        }
+        "quick_runs.json" | "connections.json" | "templates.json" | "rclone.conf"
+        | "backend.json" => Some(PathBuf::from(file)),
         "rules.json" if name.contains("alerts") => Some(PathBuf::from("alerts").join("rules.json")),
         "actions.json" if name.contains("alerts") => {
             Some(PathBuf::from("alerts").join("actions.json"))
@@ -707,7 +775,16 @@ fn extract_rcman_layout(
 fn load_rcman_from_zip(
     path: &Path,
     password: Option<&str>,
-) -> Result<(AppSettings, AppStore, Option<Value>, Vec<String>), String> {
+) -> Result<
+    (
+        AppSettings,
+        AppStore,
+        Option<Value>,
+        Option<Value>,
+        Vec<String>,
+    ),
+    String,
+> {
     let dir = std::env::temp_dir().join(format!(
         "rclone-manager-rcman-{}-{}",
         std::process::id(),
@@ -725,7 +802,10 @@ fn load_rcman_from_zip(
         let rclone = std::fs::read_to_string(dir.join("rclone.conf"))
             .ok()
             .and_then(|text| crate::config_import::parse_rclone_conf(&text).ok());
-        Ok((settings, store, rclone, mapped))
+        let backend = std::fs::read_to_string(dir.join("backend.json"))
+            .ok()
+            .and_then(|text| serde_json::from_str(&text).ok());
+        Ok((settings, store, rclone, backend, mapped))
     })();
     let _ = std::fs::remove_dir_all(&dir);
     result
@@ -736,7 +816,7 @@ fn analyze_rcman_backup(
     password: Option<&str>,
     names: Vec<String>,
 ) -> Result<BackupAnalysis, String> {
-    let (settings, store, rclone, mapped) = load_rcman_from_zip(path, password)?;
+    let (settings, store, rclone, backend, mapped) = load_rcman_from_zip(path, password)?;
     let remotes = {
         let mut names = store_remote_names(&store);
         if names.is_empty() {
@@ -757,7 +837,7 @@ fn analyze_rcman_backup(
             || !store.alert_rules.is_empty()
             || !store.templates.is_empty(),
         has_rclone_config: rclone.is_some(),
-        has_backend: false,
+        has_backend: backend.is_some(),
         categories: names,
         manifest: BackupManifest {
             version: "rcman".into(),
@@ -776,13 +856,13 @@ fn restore_rcman_contents(
     profile: Option<&str>,
     restore_as: Option<&str>,
 ) -> Result<RestoredBackup, String> {
-    let (settings, store, rclone, _) = load_rcman_from_zip(path, password)?;
+    let (settings, store, rclone, backend, _) = load_rcman_from_zip(path, password)?;
     let has_settings = !settings.core.extra_backends.is_empty();
     Ok(RestoredBackup {
         settings: has_settings.then_some(settings),
         store: Some(scoped_store(store, profile, restore_as)),
         rclone: rclone.map(|d| scoped_rclone(d, profile, restore_as)),
-        backend: None,
+        backend,
     })
 }
 
@@ -1017,10 +1097,50 @@ mod tests {
         let filtered = filter_rclone_names(&dump, &["drive".into()]);
         assert!(filtered.get("drive").is_some());
         assert!(filtered.get("dropbox").is_none());
-        assert_eq!(
-            filter_store_remotes(&store, &[]).remotes.len(),
-            store.remotes.len()
+        store
+            .logs
+            .insert("dropbox".into(), vec!["dropbox copy failed".into()]);
+        store.job_history.push(crate::store::JobInfo {
+            id: 7,
+            operation: "copy".into(),
+            remote: "dropbox".into(),
+            profile: "default".into(),
+            status: "completed".into(),
+            origin: "dashboard".into(),
+            start_time: chrono::Utc::now(),
+            error: None,
+            dry_run: false,
+            src: "dropbox:a".into(),
+            dst: "/tmp/a".into(),
+            group: String::new(),
+            stats: serde_json::json!({}),
+            transferring: serde_json::json!([]),
+            duration: 0.0,
+            progress: 0.0,
+            output: serde_json::json!({}),
+            completed: serde_json::json!([]),
+            parent_job_id: None,
+        });
+        store.job_meta.insert(
+            7,
+            crate::store::JobMeta {
+                remote: "dropbox".into(),
+                ..Default::default()
+            },
         );
+        let empty = filter_store_remotes(&store, &[]);
+        assert!(empty.remotes.is_empty());
+        assert!(empty.quick_runs.is_empty());
+        assert!(empty.logs.is_empty());
+        assert!(empty.job_history.is_empty());
+        assert!(empty.job_meta.is_empty());
+        let scoped = filter_store_remotes(&store, &["drive".into()]);
+        assert!(!scoped.logs.contains_key("dropbox"));
+        assert!(scoped.job_history.iter().all(|job| job.remote != "dropbox"));
+        assert!(!scoped.job_meta.contains_key(&7));
+        assert!(filter_rclone_names(&dump, &[])
+            .as_object()
+            .is_some_and(|obj| obj.is_empty()));
     }
 
     #[test]
@@ -1180,6 +1300,74 @@ mod tests {
         assert!(!analysis.has_store);
         assert!(!analysis.has_rclone_config);
         assert_eq!(analysis.manifest.export_type, "settings");
+    }
+
+    #[test]
+    fn full_backup_writes_backend_json() {
+        let dir = tempfile::tempdir().unwrap();
+        let dest = dir.path().join("full.zip");
+        let backend = serde_json::json!({ "main": { "transfers": 4 } });
+        create_backup_with(
+            &dest,
+            &AppSettings::default(),
+            &AppStore::default(),
+            &serde_json::json!({ "drive": { "type": "drive" } }),
+            "FullBackup",
+            "full",
+            None,
+            Some(&backend),
+        )
+        .unwrap();
+        let analysis = analyze_backup(&dest).unwrap();
+        assert!(analysis.has_backend);
+        assert!(analysis.has_rclone_config);
+        assert!(analysis.has_settings);
+        let restored = restore_backup_contents(&dest, None, None, None).unwrap();
+        assert_eq!(restored.backend.unwrap()["main"]["transfers"], 4);
+        assert_eq!(restored.rclone.unwrap()["drive"]["type"], "drive");
+    }
+
+    #[test]
+    fn secrets_require_zip_password() {
+        let dir = tempfile::tempdir().unwrap();
+        let dest = dir.path().join("secrets.zip");
+        let dump = serde_json::json!({
+            "drive": { "type": "drive", "token": "secret-token" }
+        });
+        let err = create_backup(
+            &dest,
+            &AppSettings::default(),
+            &AppStore::default(),
+            &dump,
+            "FullBackup",
+            "",
+            None,
+        )
+        .unwrap_err();
+        assert!(err.to_lowercase().contains("password"), "{err}");
+        assert!(!dest.exists());
+        create_backup(
+            &dest,
+            &AppSettings::default(),
+            &AppStore::default(),
+            &dump,
+            "FullBackup",
+            "",
+            Some("correct-horse"),
+        )
+        .unwrap();
+        let restored = restore_backup_contents(&dest, Some("correct-horse"), None, None).unwrap();
+        assert_eq!(restored.rclone.unwrap()["drive"]["token"], "secret-token");
+        create_backup(
+            &dest,
+            &AppSettings::default(),
+            &AppStore::default(),
+            &dump,
+            "settings",
+            "",
+            None,
+        )
+        .unwrap();
     }
 
     #[test]

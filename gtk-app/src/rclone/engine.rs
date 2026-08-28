@@ -191,6 +191,18 @@ pub fn is_reserved_flag(flag: &str) -> bool {
         .any(|r| flag == *r || flag.starts_with(&format!("{r}=")))
 }
 
+pub fn validate_extra_flag(flag: &str) -> Result<(), String> {
+    let trimmed = flag.trim();
+    if trimmed.is_empty() {
+        return Ok(());
+    }
+    if is_reserved_flag(trimmed) {
+        Err("reserved".into())
+    } else {
+        Ok(())
+    }
+}
+
 pub fn validate_cron(expression: &str) -> Result<(), String> {
     if expression.trim().is_empty() {
         return Err("empty cron expression".into());
@@ -988,6 +1000,9 @@ mod tests {
         assert!(is_reserved_flag("--rc-serve"));
         assert!(!is_reserved_flag("--vfs-cache-mode"));
         assert!(!is_reserved_flag("--transfers"));
+        assert!(validate_extra_flag("--rc-addr").is_err());
+        assert!(validate_extra_flag("").is_ok());
+        assert!(validate_extra_flag("--vfs-cache-mode").is_ok());
     }
 
     #[test]

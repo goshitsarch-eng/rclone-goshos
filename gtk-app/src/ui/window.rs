@@ -11,6 +11,7 @@ use adw::prelude::*;
 use gtk::prelude::*;
 use gtk::{gio, glib};
 use std::cell::{Cell, RefCell};
+use std::collections::HashSet;
 use std::rc::Rc;
 
 thread_local! {
@@ -117,19 +118,22 @@ fn upload_send_to(ctx: &AppCtx, send: &crate::platform::SendToArgs) {
         return;
     };
     let dest_fs = crate::rclone::remote_fs(&send.remote, &send.path);
-    let items = match crate::fileops::collect_local_upload_items(&send.files, &dest_fs, &send.path)
-    {
-        Ok(items) => items,
-        Err(e) => {
-            log::error!("Send-to collect failed: {e}");
-            return;
-        }
-    };
-    if items.is_empty() {
+    let (items, dirs) =
+        match crate::fileops::collect_local_upload(&send.files, &dest_fs, &send.path) {
+            Ok(plan) => plan,
+            Err(e) => {
+                log::error!("Send-to collect failed: {e}");
+                return;
+            }
+        };
+    if items.is_empty() && dirs.is_empty() {
         return;
     }
-    for (fs, path) in crate::fileops::upload_dest_dirs(&items) {
+    for (fs, path) in dirs {
         let _ = client.mkdir(&fs, &path);
+    }
+    if items.is_empty() {
+        return;
     }
     match crate::fileops::start_grouped_transfers(&client, &items, "send-to") {
         Ok((group, ids)) => {
@@ -433,6 +437,8 @@ fn present_main_with(app: &adw::Application, ctx: AppCtx, hidden: bool) {
         });
     }
     update_banner(&ctx, &banner, &banner_kind);
+    let auto_prompted = Rc::new(RefCell::new(HashSet::<crate::repair::RepairKind>::new()));
+    maybe_auto_prompt_repair(&ctx, &window, &toast, &auto_prompted);
 
     toolbar.add_top_bar(&header);
     toolbar.add_top_bar(&banner);
@@ -547,12 +553,16 @@ fn present_main_with(app: &adw::Application, ctx: AppCtx, hidden: bool) {
         let ctx = ctx.clone();
         let banner = banner.clone();
         let banner_kind = banner_kind.clone();
+        let window = window.clone();
+        let toast = toast.clone();
+        let auto_prompted = auto_prompted.clone();
         glib::timeout_add_local(std::time::Duration::from_secs(4), move || {
             if ctx.ui_generation.get() != generation {
                 return glib::ControlFlow::Break;
             }
             ctx.refresh_updates();
             update_banner(&ctx, &banner, &banner_kind);
+            maybe_auto_prompt_repair(&ctx, &window, &toast, &auto_prompted);
             glib::ControlFlow::Break
         });
     }
@@ -682,6 +692,8 @@ fn present_main_with(app: &adw::Application, ctx: AppCtx, hidden: bool) {
     }
     let poll_tick = Rc::new(Cell::new(0u32));
     let poll_window = window.clone();
+    let poll_toast = toast.clone();
+    let poll_auto_prompted = auto_prompted.clone();
     let loading_poll = loading.clone();
     let first_refresh_done = Rc::new(Cell::new(false));
     glib::timeout_add_local(crate::refresh::BUSY_POLL, move || {
@@ -722,11 +734,13 @@ fn present_main_with(app: &adw::Application, ctx: AppCtx, hidden: bool) {
                 menu_btn_poll.set_menu_model(Some(&app_menu(&ctx_poll)));
             }
             update_banner(&ctx_poll, &banner_poll, &banner_kind_poll);
+            maybe_auto_prompt_repair(&ctx_poll, &poll_window, &poll_toast, &poll_auto_prompted);
         }
         poll_tick.set(tick.wrapping_add(1));
         if crate::platform::take_metered_change().is_some() {
             ctx_poll.apply_effective_bandwidth();
             update_banner(&ctx_poll, &banner_poll, &banner_kind_poll);
+            maybe_auto_prompt_repair(&ctx_poll, &poll_window, &poll_toast, &poll_auto_prompted);
         }
         if let Some(tray) = &tray {
             tray.drain(&ctx_poll);
@@ -2530,6 +2544,39 @@ enum BannerKind {
     RcloneRestart,
     AppRestart,
     Development,
+}
+
+fn maybe_auto_prompt_repair(
+    ctx: &AppCtx,
+    window: &impl IsA<gtk::Widget>,
+    toast: &adw::ToastOverlay,
+    shown: &Rc<RefCell<HashSet<crate::repair::RepairKind>>>,
+) {
+    let settings = ctx.settings.borrow().clone();
+    let version = ctx.client().and_then(|c| c.version().ok());
+    let issues = crate::repair::diagnose(
+        &settings,
+        ctx.engine_ready(),
+        ctx.client().as_ref(),
+        version.as_deref(),
+    );
+    {
+        let mut shown = shown.borrow_mut();
+        crate::repair::reset_auto_prompt_if_clear(&mut shown, &issues);
+        let Some(kind) =
+            crate::repair::auto_prompt_kind(settings.core.completed_onboarding, &issues)
+        else {
+            return;
+        };
+        if !shown.insert(kind) {
+            return;
+        }
+    }
+    if crate::repair::banner_opens_password(&issues) {
+        dialogs::password_prompt(window, ctx.clone(), toast.clone());
+    } else {
+        dialogs::repair(window, ctx.clone(), toast.clone());
+    }
 }
 
 fn update_banner(ctx: &AppCtx, banner: &adw::Banner, kind: &Rc<std::cell::RefCell<BannerKind>>) {
