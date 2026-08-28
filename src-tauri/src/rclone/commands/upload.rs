@@ -21,6 +21,29 @@ use crate::{
     },
 };
 
+/// Remove the temporary upload staging path.
+///
+/// A batch stages into a directory, but a single-file upload stages into a
+/// regular `.tmp` file — `remove_dir_all` returns `ENOTDIR` for that, so the
+/// copy used to be left behind forever and could fill the disk.
+async fn cleanup_staged_upload(path: Option<std::path::PathBuf>) {
+    let Some(path) = path else { return };
+    let is_dir = tokio::fs::metadata(&path)
+        .await
+        .map(|meta| meta.is_dir())
+        .unwrap_or(false);
+    let result = if is_dir {
+        tokio::fs::remove_dir_all(&path).await
+    } else {
+        tokio::fs::remove_file(&path).await
+    };
+    if let Err(err) = result
+        && err.kind() != std::io::ErrorKind::NotFound
+    {
+        log::warn!("Failed to clean up staged upload {}: {err}", path.display());
+    }
+}
+
 #[derive(Debug, Clone, Deserialize)]
 pub struct UploadBatchParams {
     pub remote: String,
@@ -28,6 +51,9 @@ pub struct UploadBatchParams {
     pub local_paths: Vec<String>,
     pub origin: Option<Origin>,
     pub group: Option<String>,
+    /// Temporary upload staging path to delete once the batch finishes. A
+    /// single-file upload stages a regular file here, a batch stages a
+    /// directory — `cleanup_staged_upload` handles both.
     pub cleanup_dir: Option<std::path::PathBuf>,
     pub existing_jobid: Option<u64>,
     pub no_cache: bool,
@@ -265,9 +291,7 @@ pub async fn execute_upload_batch(
 
     let file_entries = discovery.file_entries;
     if file_entries.is_empty() {
-        if let Some(dir) = cleanup_dir {
-            let _ = tokio::fs::remove_dir_all(dir).await;
-        }
+        cleanup_staged_upload(cleanup_dir).await;
         return Ok("0".to_string());
     }
 
@@ -542,9 +566,7 @@ pub async fn execute_upload_batch(
         .complete_job(jobid, success, error_msg.clone(), Some(&app))
         .await;
 
-    if let Some(dir) = cleanup_dir {
-        let _ = tokio::fs::remove_dir_all(dir).await;
-    }
+    cleanup_staged_upload(cleanup_dir).await;
 
     error_msg.map_or(Ok(jobid.to_string()), Err)
 }

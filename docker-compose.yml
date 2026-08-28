@@ -2,10 +2,16 @@
 # RClone Manager — Docker Compose
 # =============================================================================
 # Quick start:
-#   docker compose up -d
-#   Open http://localhost:8080
+#   1. Set RCLONE_MANAGER_USER / RCLONE_MANAGER_PASS below to your own values.
+#   2. docker compose up -d
+#   3. Open http://localhost:8080
 #
-# For advanced configuration (auth, TLS, host networking):
+# The API (command bridge, file streaming, uploads) is reachable by anyone who
+# can reach the published port, so the server refuses to bind a non-loopback
+# address without credentials. Publish to loopback only, or pass
+# RCLONE_MANAGER_INSECURE_NO_AUTH=true, if you deliberately want it open.
+#
+# For advanced configuration (TLS, host networking):
 #   https://hakanismail.info/zarestia/rclone-manager/docs/configuration-headless
 # =============================================================================
 
@@ -16,6 +22,8 @@ services:
     restart: unless-stopped
 
     ports:
+      # Publishes to every interface. Use '127.0.0.1:8080:8080' to keep it on
+      # this host only.
       - '8080:8080'
       # Uncomment below if you need OAuth authentication for cloud remotes
       # (Google Drive, OneDrive, Dropbox, etc.)
@@ -38,11 +46,17 @@ services:
       # - RCLONE_MANAGER_SECRET=MySuperSecretPassword123!
       # - RCLONE_MANAGER_SECRET_PATH=/data/.secret # Path to secret file (must exist before starting container)
 
-      # --- Optional: Basic Authentication ---
-      # Uncomment and fill in to password-protect the web UI.
-      # Most users behind a reverse proxy (NPM, Traefik) don't need this.
-      # - RCLONE_MANAGER_USER=admin
-      # - RCLONE_MANAGER_PASS=changeme
+      # --- Required: Basic Authentication ---
+      # Change these before the first start. Without them the server refuses to
+      # bind 0.0.0.0, because the API would otherwise be open to the network —
+      # including the command bridge, file streaming and uploads.
+      - RCLONE_MANAGER_USER=admin
+      - RCLONE_MANAGER_PASS=change-me-before-first-start
+      #
+      # Terminating auth at a reverse proxy instead? Publish to loopback
+      # ('127.0.0.1:8080:8080' above) and let the proxy do it, or opt out
+      # explicitly:
+      # - RCLONE_MANAGER_INSECURE_NO_AUTH=true
 
       # --- Optional: HTTPS/TLS ---
       # Mount your certs and uncomment these to enable HTTPS directly.
@@ -60,6 +74,7 @@ services:
     # network_mode: host
 
     healthcheck:
+      # /health sits outside the auth layer, so no credentials are needed here.
       test: ['CMD', 'curl', '-sf', 'http://localhost:8080/health']
       interval: 30s
       timeout: 5s

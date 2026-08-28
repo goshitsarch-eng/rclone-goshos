@@ -84,6 +84,30 @@ pub struct HeadlessArgs {
     /// Path to TLS key file (optional)
     #[arg(long, env = "RCLONE_MANAGER_TLS_KEY")]
     pub tls_key: Option<PathBuf>,
+
+    /// Serve without authentication on a non-loopback address.
+    ///
+    /// Without credentials the whole API — including the command bridge, file
+    /// streaming and uploads — is open to anyone who can reach the port, so
+    /// binding a non-loopback address without `--user`/`--pass` is refused
+    /// unless this is set explicitly.
+    #[arg(long, env = "RCLONE_MANAGER_INSECURE_NO_AUTH", default_value_t = false)]
+    pub insecure_no_auth: bool,
+}
+
+/// Whether a bind address only accepts connections from this machine.
+///
+/// `0.0.0.0` / `::` (and any routable address) reach the network; an empty host
+/// is treated as routable so an unset value fails closed.
+#[cfg(feature = "web-server")]
+pub fn host_is_loopback(host: &str) -> bool {
+    let host = host.trim().trim_start_matches('[').trim_end_matches(']');
+    if host.eq_ignore_ascii_case("localhost") {
+        return true;
+    }
+    host.parse::<std::net::IpAddr>()
+        .map(|ip| ip.is_loopback())
+        .unwrap_or(false)
 }
 
 impl CliArgs {
@@ -106,6 +130,20 @@ impl CliArgs {
                     );
                 }
                 _ => {}
+            }
+
+            // Refuse to expose an unauthenticated API beyond loopback.
+            if self.headless.user.is_none()
+                && !self.headless.insecure_no_auth
+                && !host_is_loopback(&self.headless.host)
+            {
+                return Err(format!(
+                    "Refusing to bind {} without authentication: the API (command bridge, \
+                     file streaming, uploads) would be open to anyone who can reach port {}. \
+                     Set --user/--pass (RCLONE_MANAGER_USER / RCLONE_MANAGER_PASS), bind \
+                     127.0.0.1 instead, or pass --insecure-no-auth to override.",
+                    self.headless.host, self.headless.port
+                ));
             }
 
             // TLS validation: both cert and key must be present or both absent
@@ -147,6 +185,31 @@ impl CliArgs {
 
 #[cfg(test)]
 mod tests {
+    #[cfg(feature = "web-server")]
+    mod bind_safety {
+        use super::super::host_is_loopback;
+
+        #[test]
+        fn loopback_hosts_are_recognized() {
+            assert!(host_is_loopback("127.0.0.1"));
+            assert!(host_is_loopback("127.0.0.53"));
+            assert!(host_is_loopback("::1"));
+            assert!(host_is_loopback("[::1]"));
+            assert!(host_is_loopback("localhost"));
+            assert!(host_is_loopback("LocalHost"));
+            assert!(host_is_loopback(" 127.0.0.1 "));
+        }
+
+        #[test]
+        fn routable_and_unparseable_hosts_fail_closed() {
+            assert!(!host_is_loopback("0.0.0.0"));
+            assert!(!host_is_loopback("::"));
+            assert!(!host_is_loopback("192.168.1.10"));
+            assert!(!host_is_loopback("example.com"));
+            assert!(!host_is_loopback(""));
+        }
+    }
+
     use super::*;
     use clap::Parser;
 
@@ -224,14 +287,30 @@ mod tests {
     #[cfg(feature = "web-server")]
     #[test]
     fn test_validate_headless_tls() {
-        let args = CliArgs::parse_from(["rclone-manager", "--tls-cert", "/path/to/cert"]);
-        assert!(args.validate().is_err());
-
-        let args = CliArgs::parse_from(["rclone-manager", "--tls-key", "/path/to/key"]);
+        // Bound to loopback so the non-loopback auth rule is not what decides
+        // these cases — this test is about the cert/key pairing.
+        let args = CliArgs::parse_from([
+            "rclone-manager",
+            "--host",
+            "127.0.0.1",
+            "--tls-cert",
+            "/path/to/cert",
+        ]);
         assert!(args.validate().is_err());
 
         let args = CliArgs::parse_from([
             "rclone-manager",
+            "--host",
+            "127.0.0.1",
+            "--tls-key",
+            "/path/to/key",
+        ]);
+        assert!(args.validate().is_err());
+
+        let args = CliArgs::parse_from([
+            "rclone-manager",
+            "--host",
+            "127.0.0.1",
             "--tls-cert",
             "/path/to/cert",
             "--tls-key",
@@ -240,34 +319,103 @@ mod tests {
         assert!(args.validate().is_ok());
     }
 
+    #[cfg(feature = "web-server")]
+    #[test]
+    fn test_validate_refuses_unauthenticated_non_loopback_bind() {
+        // The shipped default is 0.0.0.0:8080 with no credentials, which would
+        // publish the command bridge, file streaming and uploads to the network.
+        let args = CliArgs::parse_from(["rclone-manager"]);
+        let err = args.validate().expect_err("default bind must be refused");
+        assert!(err.contains("without authentication"), "{err}");
+
+        // Credentials make it fine.
+        let args = CliArgs::parse_from(["rclone-manager", "--user", "admin", "--pass", "s3cr3t"]);
+        assert!(args.validate().is_ok());
+
+        // So does staying on loopback.
+        let args = CliArgs::parse_from(["rclone-manager", "--host", "127.0.0.1"]);
+        assert!(args.validate().is_ok());
+
+        // And so does opting in explicitly.
+        let args = CliArgs::parse_from(["rclone-manager", "--insecure-no-auth"]);
+        assert!(args.validate().is_ok());
+
+        // A username without a password is still rejected first.
+        let args = CliArgs::parse_from(["rclone-manager", "--user", "admin"]);
+        assert!(args.validate().is_err());
+    }
+
+    #[cfg(feature = "web-server")]
+    #[test]
+    fn insecure_no_auth_can_be_set_from_the_environment() {
+        // docker-compose documents RCLONE_MANAGER_INSECURE_NO_AUTH, so the env
+        // form has to work, not just the flag.
+        // SAFETY: single-threaded test binary section; the var is removed again
+        // before returning.
+        unsafe { std::env::set_var("RCLONE_MANAGER_INSECURE_NO_AUTH", "true") };
+        let args = CliArgs::parse_from(["rclone-manager"]);
+        let opted_in = args.headless.insecure_no_auth;
+        let validated = args.validate();
+        unsafe { std::env::remove_var("RCLONE_MANAGER_INSECURE_NO_AUTH") };
+
+        assert!(opted_in, "env var must set the opt-out");
+        assert!(validated.is_ok(), "{validated:?}");
+    }
+
+    /// `--host` only exists on the web-server build. Pin it to loopback there so
+    /// the non-loopback auth rule does not decide unrelated validation tests.
+    fn loopback_args() -> Vec<&'static str> {
+        #[cfg(feature = "web-server")]
+        {
+            vec!["--host", "127.0.0.1"]
+        }
+        #[cfg(not(feature = "web-server"))]
+        {
+            Vec::new()
+        }
+    }
+
+    fn args_from(extra: &[&str]) -> CliArgs {
+        let mut argv = vec!["rclone-manager"];
+        argv.extend(loopback_args());
+        argv.extend_from_slice(extra);
+        CliArgs::parse_from(argv)
+    }
+
     #[test]
     fn test_validate_send_to() {
         // Failing: path without remote
-        let args = CliArgs::parse_from(["rclone-manager", "--send-to-path", "/Photos"]);
-        assert!(args.validate().is_err());
+        assert!(
+            args_from(&["--send-to-path", "/Photos"])
+                .validate()
+                .is_err()
+        );
 
         // Failing: remote without sources
-        let args = CliArgs::parse_from(["rclone-manager", "--send-to-remote", "Dropbox:"]);
-        assert!(args.validate().is_err());
+        assert!(
+            args_from(&["--send-to-remote", "Dropbox:"])
+                .validate()
+                .is_err()
+        );
 
         // Passing: remote with sources
-        let args = CliArgs::parse_from([
-            "rclone-manager",
-            "--send-to-remote",
-            "Dropbox:",
-            "/file.txt",
-        ]);
-        assert!(args.validate().is_ok());
+        assert!(
+            args_from(&["--send-to-remote", "Dropbox:", "/file.txt"])
+                .validate()
+                .is_ok()
+        );
 
         // Passing: remote, path, and sources
-        let args = CliArgs::parse_from([
-            "rclone-manager",
-            "--send-to-remote",
-            "Dropbox:",
-            "--send-to-path",
-            "/Photos",
-            "/file.txt",
-        ]);
-        assert!(args.validate().is_ok());
+        assert!(
+            args_from(&[
+                "--send-to-remote",
+                "Dropbox:",
+                "--send-to-path",
+                "/Photos",
+                "/file.txt",
+            ])
+            .validate()
+            .is_ok()
+        );
     }
 }

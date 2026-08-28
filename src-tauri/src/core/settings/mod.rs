@@ -16,17 +16,21 @@ mod tests {
     use super::*;
     use crate::core::alerts::{
         cache::AlertRuleCache,
-        types::{ActionCommon, AlertAction, OsToastAction},
+        types::{ActionCommon, AlertAction, WebhookAction},
     };
     use tempfile::TempDir;
 
+    // `Webhook` rather than `OsToast`: the latter only exists when the
+    // `tauri-plugin-notification` feature is on, so using it here broke
+    // `cargo test --features web-server --no-default-features`.
     fn test_action(id: &str, name: &str) -> AlertAction {
-        AlertAction::OsToast(OsToastAction {
+        AlertAction::Webhook(WebhookAction {
             common: ActionCommon {
                 id: id.to_string(),
                 name: name.to_string(),
                 enabled: true,
             },
+            ..Default::default()
         })
     }
 

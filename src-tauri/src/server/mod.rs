@@ -5,7 +5,7 @@ mod state;
 pub use routes::*;
 pub use state::*;
 
-use std::{collections::HashSet, sync::Arc};
+use std::{collections::HashMap, sync::Arc};
 
 use axum::{Router, http::Method, routing::get};
 use axum_server::tls_rustls::RustlsConfig;
@@ -46,11 +46,20 @@ pub async fn start_web_server(
         (username, encoded)
     });
 
+    if encoded_auth.is_none() {
+        log::warn!(
+            "⚠️  Web server is running WITHOUT authentication on {host}:{port}. \
+             Anyone who can reach this port has full API access. \
+             Set --user/--pass (RCLONE_MANAGER_USER / RCLONE_MANAGER_PASS)."
+        );
+    }
+
     let state = WebServerState {
         app_handle: app_handle.clone(),
         event_tx,
         auth_credentials: encoded_auth,
-        sessions: Arc::new(RwLock::new(HashSet::new())),
+        sessions: Arc::new(RwLock::new(HashMap::new())),
+        secure_cookies: tls_cert.is_some() && tls_key.is_some(),
     };
 
     let static_dir = find_static_dir(&app_handle);

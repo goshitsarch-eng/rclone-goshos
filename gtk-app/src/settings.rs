@@ -3,7 +3,8 @@
 use crate::operations::MainView;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use std::path::PathBuf;
+use std::io::Write;
+use std::path::{Path, PathBuf};
 use std::sync::RwLock;
 
 static DATA_DIR_OVERRIDE: RwLock<Option<PathBuf>> = RwLock::new(None);
@@ -374,8 +375,7 @@ impl AppSettings {
     pub fn save(&self) -> std::io::Result<()> {
         let dir = Self::config_dir();
         std::fs::create_dir_all(&dir)?;
-        let text = serde_json::to_string_pretty(self).unwrap_or_else(|_| "{}".into());
-        std::fs::write(Self::settings_path(), text)
+        write_config_atomic(&Self::settings_path(), self)
     }
 
     pub fn default_view(&self) -> MainView {
@@ -553,6 +553,73 @@ pub fn display_setting(value: &serde_json::Value, sep: &str) -> String {
 
 #[cfg(test)]
 mod tests {
+    use super::*;
+
+    #[test]
+    fn write_config_atomic_is_owner_only_and_leaves_no_temp_file() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("settings.json");
+        let value = serde_json::json!({ "core": { "config_password": "hunter2" } });
+
+        write_config_atomic(&path, &value).expect("write");
+
+        let text = std::fs::read_to_string(&path).expect("read back");
+        assert_eq!(
+            serde_json::from_str::<serde_json::Value>(&text).unwrap(),
+            value
+        );
+        assert!(!path.with_extension("json.tmp").exists());
+
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mode = std::fs::metadata(&path).unwrap().permissions().mode();
+            assert_eq!(
+                mode & 0o777,
+                0o600,
+                "config must not be group/world readable"
+            );
+        }
+    }
+
+    #[test]
+    fn write_config_atomic_replaces_previous_contents_whole() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("store.json");
+        write_config_atomic(&path, &serde_json::json!({ "a": "a-long-previous-value" })).unwrap();
+        write_config_atomic(&path, &serde_json::json!({ "b": 1 })).unwrap();
+
+        let text = std::fs::read_to_string(&path).unwrap();
+        // A truncating write could leave trailing bytes of the longer value.
+        assert_eq!(
+            serde_json::from_str::<serde_json::Value>(&text).unwrap(),
+            serde_json::json!({ "b": 1 })
+        );
+        assert!(!text.contains("a-long-previous-value"));
+    }
+
+    #[test]
+    fn write_config_atomic_keeps_the_old_file_when_serialization_fails() {
+        // A map with non-string keys cannot be serialized to JSON. The previous
+        // `unwrap_or_default()` turned that into an empty string and erased the
+        // config; the file must be left exactly as it was instead.
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("settings.json");
+        write_config_atomic(&path, &serde_json::json!({ "keep": true })).unwrap();
+
+        let mut bad = std::collections::HashMap::new();
+        bad.insert(vec![1u8, 2], "value");
+        let err = write_config_atomic(&path, &bad).expect_err("must refuse to write");
+        assert_eq!(err.kind(), std::io::ErrorKind::InvalidData);
+
+        let text = std::fs::read_to_string(&path).unwrap();
+        assert_eq!(
+            serde_json::from_str::<serde_json::Value>(&text).unwrap(),
+            serde_json::json!({ "keep": true })
+        );
+        assert!(!path.with_extension("json.tmp").exists());
+    }
+
     use super::*;
 
     #[test]
@@ -784,5 +851,44 @@ mod tests {
         assert_eq!(collection_path(&list[0]).as_deref(), Some("drive:Photos"));
         assert!(!toggle_collection(&mut list, "drive:Photos", "Photos"));
         assert!(!collection_contains(&list, "drive:Photos"));
+    }
+}
+
+/// Serialize `value` and replace `path` with it atomically, owner-readable only.
+///
+/// Three things matter here and none of them were true of a plain
+/// `fs::write(path, to_string_pretty(..).unwrap_or_default())`:
+///
+/// 1. A serialization failure must not touch the file. `unwrap_or_default()`
+///    yields an empty `String`, so a failure used to *erase* the config.
+/// 2. `fs::write` truncates first, so a crash or power loss mid-write leaves a
+///    half-written file — and `load()` silently falls back to defaults, losing
+///    every remote, quick run and alert rule. Write a temp file and `rename`
+///    over the target instead; rename is atomic within a filesystem.
+/// 3. These files hold the rclone config password, extra-backend passwords,
+///    SMTP credentials and bot tokens. Under the usual 022 umask `fs::write`
+///    creates them 0644 — readable by every local account.
+pub fn write_config_atomic<T: serde::Serialize>(path: &Path, value: &T) -> std::io::Result<()> {
+    let text = serde_json::to_string_pretty(value)
+        .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
+
+    let tmp = path.with_extension("json.tmp");
+    {
+        let mut file = std::fs::File::create(&tmp)?;
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            file.set_permissions(std::fs::Permissions::from_mode(0o600))?;
+        }
+        file.write_all(text.as_bytes())?;
+        file.sync_all()?;
+    }
+
+    match std::fs::rename(&tmp, path) {
+        Ok(()) => Ok(()),
+        Err(err) => {
+            let _ = std::fs::remove_file(&tmp);
+            Err(err)
+        }
     }
 }

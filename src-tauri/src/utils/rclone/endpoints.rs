@@ -20,39 +20,43 @@ pub mod core {
     ///
     /// Eg
     ///
-    ///     rclone rc core/bwlimit rate=off
-    ///     {
-    ///         "bytesPerSecond": -1,
-    ///         "bytesPerSecondTx": -1,
-    ///         "bytesPerSecondRx": -1,
-    ///         "rate": "off"
-    ///     }
-    ///     rclone rc core/bwlimit rate=1M
-    ///     {
-    ///         "bytesPerSecond": 1048576,
-    ///         "bytesPerSecondTx": 1048576,
-    ///         "bytesPerSecondRx": 1048576,
-    ///         "rate": "1M"
-    ///     }
-    ///     rclone rc core/bwlimit rate=1M:100k
-    ///     {
-    ///         "bytesPerSecond": 1048576,
-    ///         "bytesPerSecondTx": 1048576,
-    ///         "bytesPerSecondRx": 131072,
-    ///         "rate": "1M"
-    ///     }
+    /// ```text
+    /// rclone rc core/bwlimit rate=off
+    /// {
+    /// "bytesPerSecond": -1,
+    /// "bytesPerSecondTx": -1,
+    /// "bytesPerSecondRx": -1,
+    /// "rate": "off"
+    /// }
+    /// rclone rc core/bwlimit rate=1M
+    /// {
+    /// "bytesPerSecond": 1048576,
+    /// "bytesPerSecondTx": 1048576,
+    /// "bytesPerSecondRx": 1048576,
+    /// "rate": "1M"
+    /// }
+    /// rclone rc core/bwlimit rate=1M:100k
+    /// {
+    /// "bytesPerSecond": 1048576,
+    /// "bytesPerSecondTx": 1048576,
+    /// "bytesPerSecondRx": 131072,
+    /// "rate": "1M"
+    /// }
     ///
     ///
+    /// ```
     /// If the rate parameter is not supplied then the bandwidth is queried
     ///
-    ///     rclone rc core/bwlimit
-    ///     {
-    ///         "bytesPerSecond": 1048576,
-    ///         "bytesPerSecondTx": 1048576,
-    ///         "bytesPerSecondRx": 1048576,
-    ///         "rate": "1M"
-    ///     }
+    /// ```text
+    /// rclone rc core/bwlimit
+    /// {
+    /// "bytesPerSecond": 1048576,
+    /// "bytesPerSecondTx": 1048576,
+    /// "bytesPerSecondRx": 1048576,
+    /// "rate": "1M"
+    /// }
     ///
+    /// ```
     /// The format of the parameter is exactly the same as passed to --bwlimit
     /// except only one bandwidth may be specified.
     ///
@@ -81,12 +85,14 @@ pub mod core {
     ///
     /// Example:
     ///
-    ///     rclone rc core/command command=ls -a mydrive:/ -o max-depth=1
-    ///     rclone rc core/command -a ls -a mydrive:/ -o max-depth=1
-    ///
-    /// Returns:
+    /// ```text
+    /// rclone rc core/command command=ls -a mydrive:/ -o max-depth=1
+    /// rclone rc core/command -a ls -a mydrive:/ -o max-depth=1
     ///
     /// ```
+    /// Returns:
+    ///
+    /// ```text
     /// {
     ///     "error": false,
     ///     "result": "<Raw command line output>"
@@ -128,7 +134,7 @@ pub mod core {
     ///
     /// Returns:
     ///
-    /// ```
+    /// ```text
     /// {
     ///     "dir": "/",
     ///     "info": {
@@ -152,7 +158,7 @@ pub mod core {
     /// This returns list of stats groups currently in memory.
     ///
     /// Returns the following values:
-    /// ```
+    /// ```text
     /// {
     ///     "groups":  an array of group names:
     ///         [
@@ -202,8 +208,10 @@ pub mod core {
     ///
     /// This returns all available stats:
     ///
-    ///     rclone rc core/stats
+    /// ```text
+    /// rclone rc core/stats
     ///
+    /// ```
     /// If group is not provided then summed up stats for all groups will be
     /// returned.
     ///
@@ -214,7 +222,7 @@ pub mod core {
     ///
     /// Returns the following values:
     ///
-    /// ```
+    /// ```text
     /// {
     ///     "bytes": total transferred bytes since the start of the group,
     ///     "checks": number of files checked,
@@ -281,8 +289,10 @@ pub mod core {
     ///
     /// This returns stats about completed transfers:
     ///
-    ///     rclone rc core/transferred
+    /// ```text
+    /// rclone rc core/transferred
     ///
+    /// ```
     /// If group is not provided then completed transfers for all groups will be
     /// returned.
     ///
@@ -293,7 +303,7 @@ pub mod core {
     /// - group - name of the stats group (string)
     ///
     /// Returns the following values:
-    /// ```
+    /// ```text
     /// {
     ///     "transferred":  an array of completed transfers (including failed ones):
     ///         [
@@ -401,10 +411,12 @@ pub mod config {
     ///
     /// Eg
     ///
-    ///     {
-    ///         "status": "running",
-    ///         "authUrl": "http://127.0.0.1:53682/auth?state=..."
-    ///     }
+    /// ```text
+    /// {
+    /// "status": "running",
+    /// "authUrl": "http://127.0.0.1:53682/auth?state=..."
+    /// }
+    /// ```
     pub const OAUTHSTATUS: &str = "config/oauthstatus";
 
     /// Stop any running OAuth authentication server.
@@ -437,12 +449,14 @@ pub mod config {
     ///
     /// Eg
     ///
-    ///     {
-    ///         "cache": "/home/USER/.cache/rclone",
-    ///         "config": "/home/USER/.rclone.conf",
-    ///         "temp": "/tmp"
-    ///     }
+    /// ```text
+    /// {
+    /// "cache": "/home/USER/.cache/rclone",
+    /// "config": "/home/USER/.rclone.conf",
+    /// "temp": "/tmp"
+    /// }
     ///
+    /// ```
     /// See the [config paths](/commands/rclone_config_paths/) command for more information on the above.
     pub const PATHS: &str = "config/paths";
 
@@ -753,7 +767,7 @@ pub mod operations {
     ///
     /// This returns info about the remote passed in;
     ///
-    /// ```
+    /// ```text
     /// {
     ///         // optional features and whether they are available or not
     ///         "Features": {
@@ -857,7 +871,9 @@ pub mod operations {
     ///
     /// This command does not have a command line equivalent so use this instead:
     ///
-    ///     rclone rc --loopback operations/fsinfo fs=remote:
+    /// ```text
+    /// rclone rc --loopback operations/fsinfo fs=remote:
+    /// ```
     pub const FSINFO: &str = "operations/fsinfo";
 
     /// Produces a hashsum file for all the objects in the path.
@@ -890,16 +906,18 @@ pub mod operations {
     ///
     /// Example:
     ///
-    ///     $ rclone rc --loopback operations/hashsum fs=bin hashType=MD5 download=true base64=true
-    ///     {
-    ///         "hashType": "md5",
-    ///         "hashsum": [
-    ///             "WTSVLpuiXyJO_kGzJerRLg==  backend-versions.sh",
-    ///             "v1b_OlWCJO9LtNq3EIKkNQ==  bisect-go-rclone.sh",
-    ///             "VHbmHzHh4taXzgag8BAIKQ==  bisect-rclone.sh",
-    ///         ]
-    ///     }
+    /// ```text
+    /// $ rclone rc --loopback operations/hashsum fs=bin hashType=MD5 download=true base64=true
+    /// {
+    /// "hashType": "md5",
+    /// "hashsum": [
+    /// "WTSVLpuiXyJO_kGzJerRLg==  backend-versions.sh",
+    /// "v1b_OlWCJO9LtNq3EIKkNQ==  bisect-go-rclone.sh",
+    /// "VHbmHzHh4taXzgag8BAIKQ==  bisect-rclone.sh",
+    /// ]
+    /// }
     ///
+    /// ```
     /// See the [hashsum](/commands/rclone_hashsum/) command for more information on the above.
     pub const HASHSUM: &str = "operations/hashsum";
 
@@ -927,12 +945,14 @@ pub mod operations {
     ///
     /// Example:
     ///
-    ///     $ rclone rc --loopback operations/hashsumfile fs=/ remote=/bin/bash hashType=MD5 download=true base64=true
-    ///     {
-    ///         "hashType": "md5",
-    ///         "hash": "MDMw-fG2YXs7Uz5Nz-H68A=="
-    ///     }
+    /// ```text
+    /// $ rclone rc --loopback operations/hashsumfile fs=/ remote=/bin/bash hashType=MD5 download=true base64=true
+    /// {
+    /// "hashType": "md5",
+    /// "hash": "MDMw-fG2YXs7Uz5Nz-H68A=="
+    /// }
     ///
+    /// ```
     /// See the [hashsum](/commands/rclone_hashsum/) command for more information on the above.
     pub const HASHSUMFILE: &str = "operations/hashsumfile";
 
@@ -1206,14 +1226,18 @@ pub mod vfs {
     /// If no paths are passed in then it will forget all the paths in the
     /// directory cache.
     ///
-    ///     rclone rc vfs/forget
+    /// ```text
+    /// rclone rc vfs/forget
     ///
+    /// ```
     /// Otherwise pass files or dirs in as file=path or dir=path.  Any
     /// parameter key starting with file will forget that file and any
     /// starting with dir will forget that dir, e.g.
     ///
-    ///     rclone rc vfs/forget file=hello file2=goodbye dir=home/junk
+    /// ```text
+    /// rclone rc vfs/forget file=hello file2=goodbye dir=home/junk
     ///
+    /// ```
     /// This command takes an "fs" parameter. If this parameter is not
     /// supplied and if there is only one VFS in use then that VFS will be
     /// used. If there is more than one VFS in use then the "fs" parameter
@@ -1238,8 +1262,10 @@ pub mod vfs {
     /// is updated and the polling function is notified.
     /// Setting interval=0 disables poll-interval.
     ///
-    ///     rclone rc vfs/poll-interval interval=5m
+    /// ```text
+    /// rclone rc vfs/poll-interval interval=5m
     ///
+    /// ```
     /// The timeout=duration parameter can be used to specify a time to wait
     /// for the current poll function to apply the new value.
     /// If timeout is less or equal 0, which is the default, wait indefinitely.
@@ -1264,21 +1290,23 @@ pub mod vfs {
     /// This is only useful if `--vfs-cache-mode` > off. If you call it when
     /// the `--vfs-cache-mode` is off, it will return an empty result.
     ///
-    ///     {
-    ///         "queue": // an array of files queued for upload
-    ///         [
-    ///             {
-    ///                 "name":      "file",   // string: name (full path) of the file,
-    ///                 "id":        123,      // integer: id of this item in the queue,
-    ///                 "size":      79,       // integer: size of the file in bytes
-    ///                 "expiry":    1.5       // float: time until file is eligible for transfer, lowest goes first
-    ///                 "tries":     1,        // integer: number of times we have tried to upload
-    ///                 "delay":     5.0,      // float: seconds between upload attempts
-    ///                 "uploading": false,    // boolean: true if item is being uploaded
-    ///             },
-    ///        ],
-    ///     }
+    /// ```text
+    /// {
+    /// "queue": // an array of files queued for upload
+    /// [
+    /// {
+    /// "name":      "file",   // string: name (full path) of the file,
+    /// "id":        123,      // integer: id of this item in the queue,
+    /// "size":      79,       // integer: size of the file in bytes
+    /// "expiry":    1.5       // float: time until file is eligible for transfer, lowest goes first
+    /// "tries":     1,        // integer: number of times we have tried to upload
+    /// "delay":     5.0,      // float: seconds between upload attempts
+    /// "uploading": false,    // boolean: true if item is being uploaded
+    /// },
+    /// ],
+    /// }
     ///
+    /// ```
     /// The `expiry` time is the time until the file is eligible for being
     /// uploaded in floating point seconds. This may go negative. As rclone
     /// only transfers `--transfers` files at once, only the lowest
@@ -1334,13 +1362,17 @@ pub mod vfs {
     ///
     /// If no paths are passed in then it will refresh the root directory.
     ///
-    ///     rclone rc vfs/refresh
+    /// ```text
+    /// rclone rc vfs/refresh
     ///
+    /// ```
     /// Otherwise pass directories in as dir=path. Any parameter key
     /// starting with dir will refresh that directory, e.g.
     ///
-    ///     rclone rc vfs/refresh dir=home/junk dir2=data/misc
+    /// ```text
+    /// rclone rc vfs/refresh dir=home/junk dir2=data/misc
     ///
+    /// ```
     /// If the parameter recursive=true is given the whole directory tree
     /// will get refreshed. This refresh will use --fast-list if enabled.
     ///
@@ -1354,35 +1386,37 @@ pub mod vfs {
     ///
     /// This returns stats for the selected VFS.
     ///
-    ///     {
-    ///         // Status of the disk cache - only present if --vfs-cache-mode > off
-    ///         "diskCache": {
-    ///             "bytesUsed": 0,
-    ///             "erroredFiles": 0,
-    ///             "files": 0,
-    ///             "hashType": 1,
-    ///             "outOfSpace": false,
-    ///             "path": "/home/user/.cache/rclone/vfs/local/mnt/a",
-    ///             "pathMeta": "/home/user/.cache/rclone/vfsMeta/local/mnt/a",
-    ///             "uploadsInProgress": 0,
-    ///             "uploadsQueued": 0
-    ///         },
-    ///         "fs": "/mnt/a",
-    ///         "inUse": 1,
-    ///         // Status of the in memory metadata cache
-    ///         "metadataCache": {
-    ///             "dirs": 1,
-    ///             "files": 0
-    ///         },
-    ///         // Options as returned by options/get
-    ///         "opt": {
-    ///             "CacheMaxAge": 3600000000000,
-    ///             // ...
-    ///             "WriteWait": 1000000000
-    ///         }
-    ///     }
+    /// ```text
+    /// {
+    /// // Status of the disk cache - only present if --vfs-cache-mode > off
+    /// "diskCache": {
+    /// "bytesUsed": 0,
+    /// "erroredFiles": 0,
+    /// "files": 0,
+    /// "hashType": 1,
+    /// "outOfSpace": false,
+    /// "path": "/home/user/.cache/rclone/vfs/local/mnt/a",
+    /// "pathMeta": "/home/user/.cache/rclone/vfsMeta/local/mnt/a",
+    /// "uploadsInProgress": 0,
+    /// "uploadsQueued": 0
+    /// },
+    /// "fs": "/mnt/a",
+    /// "inUse": 1,
+    /// // Status of the in memory metadata cache
+    /// "metadataCache": {
+    /// "dirs": 1,
+    /// "files": 0
+    /// },
+    /// // Options as returned by options/get
+    /// "opt": {
+    /// "CacheMaxAge": 3600000000000,
+    /// // ...
+    /// "WriteWait": 1000000000
+    /// }
+    /// }
     ///
     ///
+    /// ```
     /// This command takes an "fs" parameter. If this parameter is not
     /// supplied and if there is only one VFS in use then that VFS will be
     /// used. If there is more than one VFS in use then the "fs" parameter
@@ -1403,7 +1437,9 @@ pub mod mount {
     ///
     /// Eg
     ///
-    ///     rclone rc mount/listmounts
+    /// ```text
+    /// rclone rc mount/listmounts
+    /// ```
     pub const LISTMOUNTS: &str = "mount/listmounts";
 
     /// Create a new mount point
@@ -1467,7 +1503,9 @@ pub mod mount {
     ///
     /// Eg
     ///
-    ///     rclone rc mount/types
+    /// ```text
+    /// rclone rc mount/types
+    /// ```
     pub const TYPES: &str = "mount/types";
 
     /// Unmount selected active mount
@@ -1482,7 +1520,9 @@ pub mod mount {
     ///
     /// Example:
     ///
-    ///     rclone rc mount/unmount mountPoint=/home/<user>/mountPoint
+    /// ```text
+    /// rclone rc mount/unmount mountPoint=/home/<user>/mountPoint
+    /// ```
     pub const UNMOUNT: &str = "mount/unmount";
 
     /// Unmount all active mounts
@@ -1495,7 +1535,9 @@ pub mod mount {
     ///
     /// Eg
     ///
-    ///     rclone rc mount/unmountall
+    /// ```text
+    /// rclone rc mount/unmountall
+    /// ```
     pub const UNMOUNTALL: &str = "mount/unmountall";
 }
 
@@ -1596,16 +1638,22 @@ pub mod options {
     ///
     /// This sets DEBUG level logs (-vv) (these can be set by number or string)
     ///
-    ///     rclone rc options/set --json '{"main": {"LogLevel": "DEBUG"}}'
-    ///     rclone rc options/set --json '{"main": {"LogLevel": 8}}'
+    /// ```text
+    /// rclone rc options/set --json '{"main": {"LogLevel": "DEBUG"}}'
+    /// rclone rc options/set --json '{"main": {"LogLevel": 8}}'
     ///
+    /// ```
     /// And this sets INFO level logs (-v)
     ///
-    ///     rclone rc options/set --json '{"main": {"LogLevel": "INFO"}}'
+    /// ```text
+    /// rclone rc options/set --json '{"main": {"LogLevel": "INFO"}}'
     ///
+    /// ```
     /// And this sets NOTICE level logs (normal without -v)
     ///
-    ///     rclone rc options/set --json '{"main": {"LogLevel": "NOTICE"}}'
+    /// ```text
+    /// rclone rc options/set --json '{"main": {"LogLevel": "NOTICE"}}'
+    /// ```
     pub const SET: &str = "options/set";
 }
 
@@ -1628,8 +1676,10 @@ pub mod serve {
     ///
     /// Eg
     ///
-    ///     rclone rc serve/list
+    /// ```text
+    /// rclone rc serve/list
     ///
+    /// ```
     /// Returns
     ///
     /// ```json
@@ -1674,10 +1724,12 @@ pub mod serve {
     ///
     /// Examples:
     ///
-    ///     rclone rc serve/start type=nfs fs=remote: addr=:4321 vfs_cache_mode=full
-    ///     rclone rc serve/start --json '{"type":"nfs","fs":"remote:","addr":":1234","vfs_cache_mode":"full"}'
-    ///     rclone rc serve/start type=webdav fs=remote: vfsOpt='{"CacheMode": 2}' proxyOpt='{"AuthProxy": "http://127.0.0.1:8080"}'
+    /// ```text
+    /// rclone rc serve/start type=nfs fs=remote: addr=:4321 vfs_cache_mode=full
+    /// rclone rc serve/start --json '{"type":"nfs","fs":"remote:","addr":":1234","vfs_cache_mode":"full"}'
+    /// rclone rc serve/start type=webdav fs=remote: vfsOpt='{"CacheMode": 2}' proxyOpt='{"AuthProxy": "http://127.0.0.1:8080"}'
     ///
+    /// ```
     /// This will give the reply
     ///
     /// ```json
@@ -1704,7 +1756,9 @@ pub mod serve {
     ///
     /// Example:
     ///
-    ///     rclone rc serve/stop id=12345
+    /// ```text
+    /// rclone rc serve/stop id=12345
+    /// ```
     pub const STOP: &str = "serve/stop";
 
     /// Stop all active servers
@@ -1713,7 +1767,9 @@ pub mod serve {
     ///
     /// This will stop all active servers.
     ///
-    ///     rclone rc serve/stopall
+    /// ```text
+    /// rclone rc serve/stopall
+    /// ```
     pub const STOPALL: &str = "serve/stopall";
 
     /// Show all possible serve types
@@ -1729,8 +1785,10 @@ pub mod serve {
     ///
     /// Eg
     ///
-    ///     rclone rc serve/types
+    /// ```text
+    /// rclone rc serve/types
     ///
+    /// ```
     /// Returns
     ///
     /// ```json
