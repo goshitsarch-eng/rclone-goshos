@@ -1692,6 +1692,7 @@
   "updates": {
     "cancelFailed": "アップデートのダウンロードのキャンセルに失敗しました。",
     "installSuccess": "アップデートがインストールされました。アプリを再起動してください。",
+    "manualInstallRequired": "ダウンロードしました。展開して手動でアプリを置き換えてください。",
     "checkFailed": "アップデートの確認に失敗しました: {{error}}",
     "installFailed": "アップデートのインストールに失敗しました: {{error}}",
     "restartFailed": "アプリケーションの再起動に失敗しました: {{error}}",

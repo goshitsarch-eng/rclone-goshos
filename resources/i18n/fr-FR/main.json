@@ -1692,6 +1692,7 @@
   "updates": {
     "cancelFailed": "Échec de l'annulation du téléchargement de la mise à jour de rclone.",
     "installSuccess": "Mise à jour installée. Veuillez redémarrer l'application.",
+    "manualInstallRequired": "Téléchargé. Extrayez l’archive et remplacez l’application manuellement.",
     "checkFailed": "Échec de la vérification des mises à jour: {{error}}",
     "installFailed": "Échec de l'installation de la mise à jour: {{error}}",
     "restartFailed": "Impossible de redémarrer l'application : {{error}}",

@@ -376,9 +376,16 @@ pub fn replace_executable(new_bin: &Path, current_exe: &Path) -> Result<(), Stri
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AppInstallKind {
+    /// The asset is the executable itself (an AppImage, or a bare binary).
     ReplaceBinary,
     WindowsInstaller,
     MacPackage,
+    /// A distro package: hand it to the system installer, which needs root.
+    LinuxPackage,
+    /// A compressed bundle. It is *not* an executable, so it can never be
+    /// renamed over the running binary — that replaced the app with a gzip
+    /// stream and left nothing runnable behind.
+    Archive,
 }
 
 pub fn app_install_kind(url: &str) -> AppInstallKind {
@@ -391,14 +398,28 @@ pub fn app_install_kind(url: &str) -> AppInstallKind {
         AppInstallKind::WindowsInstaller
     } else if path.ends_with(".dmg") || path.ends_with(".pkg") {
         AppInstallKind::MacPackage
+    } else if path.ends_with(".deb") || path.ends_with(".rpm") {
+        AppInstallKind::LinuxPackage
+    } else if path.ends_with(".tar.gz")
+        || path.ends_with(".tgz")
+        || path.ends_with(".tar.xz")
+        || path.ends_with(".tar.bz2")
+        || path.ends_with(".zip")
+    {
+        AppInstallKind::Archive
     } else {
         AppInstallKind::ReplaceBinary
     }
 }
 
+/// Whether [`install_app_update`] can put this asset in place by itself.
+pub fn app_install_is_automatic(kind: AppInstallKind) -> bool {
+    !matches!(kind, AppInstallKind::Archive)
+}
+
 pub fn installer_command(kind: AppInstallKind, path: &Path) -> Option<Vec<String>> {
     match kind {
-        AppInstallKind::ReplaceBinary => None,
+        AppInstallKind::ReplaceBinary | AppInstallKind::Archive => None,
         AppInstallKind::WindowsInstaller => Some(vec![
             "msiexec".into(),
             "/i".into(),
@@ -406,6 +427,11 @@ pub fn installer_command(kind: AppInstallKind, path: &Path) -> Option<Vec<String
         ]),
         AppInstallKind::MacPackage => {
             Some(vec!["open".into(), path.to_string_lossy().into_owned()])
+        }
+        // Installing a .deb/.rpm needs root; hand it to the desktop's package
+        // handler rather than pretending it is a drop-in binary.
+        AppInstallKind::LinuxPackage => {
+            Some(vec!["xdg-open".into(), path.to_string_lossy().into_owned()])
         }
     }
 }
@@ -431,6 +457,9 @@ pub fn install_app_update(
             AppInstallKind::WindowsInstaller => ".exe",
             AppInstallKind::MacPackage if url.to_ascii_lowercase().contains(".pkg") => ".pkg",
             AppInstallKind::MacPackage => ".dmg",
+            AppInstallKind::LinuxPackage if url.to_ascii_lowercase().contains(".rpm") => ".rpm",
+            AppInstallKind::LinuxPackage => ".deb",
+            AppInstallKind::Archive => archive_suffix(url),
             AppInstallKind::ReplaceBinary => "",
         }
     ));
@@ -445,8 +474,30 @@ pub fn install_app_update(
         }
         return Ok(tmp);
     }
+    if !app_install_is_automatic(kind) {
+        // Returning the download path (rather than `current_exe`) is how the
+        // caller tells that the running binary was left untouched.
+        return Ok(tmp);
+    }
     replace_executable(&tmp, current_exe)?;
     Ok(current_exe.to_path_buf())
+}
+
+/// Preserves the compound extension so the saved file is still recognisable.
+fn archive_suffix(url: &str) -> &'static str {
+    let lower = url.to_ascii_lowercase();
+    let path = lower.split(['?', '#']).next().unwrap_or(&lower);
+    if path.ends_with(".tar.gz") {
+        ".tar.gz"
+    } else if path.ends_with(".tgz") {
+        ".tgz"
+    } else if path.ends_with(".tar.xz") {
+        ".tar.xz"
+    } else if path.ends_with(".tar.bz2") {
+        ".tar.bz2"
+    } else {
+        ".zip"
+    }
 }
 
 pub fn install_rclone_binary(dest_dir: &Path) -> Result<PathBuf, String> {
@@ -798,6 +849,75 @@ mod tests {
         let dmg = installer_command(AppInstallKind::MacPackage, Path::new("/tmp/app.dmg")).unwrap();
         assert_eq!(dmg, vec!["open".to_string(), "/tmp/app.dmg".into()]);
         assert!(installer_command(AppInstallKind::ReplaceBinary, Path::new("/bin/app")).is_none());
+    }
+
+    #[test]
+    fn archives_and_packages_are_never_treated_as_a_binary() {
+        // Renaming any of these over the running executable bricks the install.
+        for url in [
+            "https://x/RClone.Manager_0.4.0_x86_64_linux_portable.tar.gz",
+            "https://x/app-linux.tgz",
+            "https://x/app.tar.xz",
+            "https://x/rclone-manager_0.4.0_amd64.deb",
+            "https://x/rclone-manager-0.4.0.x86_64.rpm",
+            "https://x/app-windows-portable.zip",
+        ] {
+            assert!(
+                !matches!(app_install_kind(url), AppInstallKind::ReplaceBinary),
+                "{url} must not be renamed over the executable"
+            );
+        }
+        // An AppImage genuinely is the executable.
+        assert!(matches!(
+            app_install_kind("https://x/RClone_Manager-0.4.0-x86_64.AppImage"),
+            AppInstallKind::ReplaceBinary
+        ));
+    }
+
+    #[test]
+    fn only_archives_need_a_manual_install() {
+        assert!(!app_install_is_automatic(AppInstallKind::Archive));
+        for kind in [
+            AppInstallKind::ReplaceBinary,
+            AppInstallKind::WindowsInstaller,
+            AppInstallKind::MacPackage,
+            AppInstallKind::LinuxPackage,
+        ] {
+            assert!(app_install_is_automatic(kind));
+        }
+    }
+
+    #[test]
+    fn linux_packages_are_handed_to_the_system_installer() {
+        let cmd = installer_command(AppInstallKind::LinuxPackage, Path::new("/tmp/a.deb"))
+            .expect("a package must be opened, not renamed over the binary");
+        assert_eq!(cmd[0], "xdg-open");
+        assert_eq!(cmd[1], "/tmp/a.deb");
+        // An archive has no installer to hand off to.
+        assert!(installer_command(AppInstallKind::Archive, Path::new("/tmp/a.tar.gz")).is_none());
+    }
+
+    #[test]
+    fn archive_downloads_keep_their_extension() {
+        assert_eq!(archive_suffix("https://x/a.tar.gz"), ".tar.gz");
+        assert_eq!(archive_suffix("https://x/a.tgz?token=1"), ".tgz");
+        assert_eq!(archive_suffix("https://x/a.tar.xz"), ".tar.xz");
+        assert_eq!(archive_suffix("https://x/a.zip"), ".zip");
+    }
+
+    #[test]
+    fn the_portable_tarball_this_repo_publishes_is_not_installable() {
+        // release-portable.yml uploads `*.tar.gz`, and linux_asset_url falls
+        // back to it whenever the AppImage is missing from a release.
+        let json = serde_json::json!({
+            "assets": [{
+                "name": "RClone.Manager_0.4.0_x86_64_linux_portable.tar.gz",
+                "browser_download_url":
+                    "https://x/RClone.Manager_0.4.0_x86_64_linux_portable.tar.gz"
+            }]
+        });
+        let url = linux_asset_url(&json).expect("the tarball is a candidate asset");
+        assert!(!app_install_is_automatic(app_install_kind(&url)));
     }
 
     #[test]

@@ -1692,6 +1692,7 @@
   "updates": {
     "cancelFailed": "取消更新下载失败。",
     "installSuccess": "更新已安装，请重启应用",
+    "manualInstallRequired": "已下载。请解压后手动替换应用程序。",
     "checkFailed": "检查更新失败：{{error}}",
     "installFailed": "安装更新失败：{{error}}",
     "restartFailed": "重启应用失败：{{error}}",

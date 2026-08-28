@@ -2261,17 +2261,29 @@ fn start_app_update(parent: &impl IsA<gtk::Widget>, ctx: AppCtx, toast: adw::Toa
         "updates.confirmApply.title",
         "Installing application update",
     );
+    let exe_for_result = exe.clone();
     run_download_job(
         parent,
         ctx,
         toast,
         &installing,
         move |cancel, progress| crate::updater::install_app_update(&url, &exe, cancel, progress),
-        |ctx, path, toast| {
+        move |ctx, path, toast| {
             toast.add_toast(adw::Toast::new(&ctx.tf(
                 "updates.installSuccess",
                 &[("path", &path.display().to_string())],
             )));
+            // An archive is downloaded but never installed, so promising a
+            // restart would just relaunch the old build (previously it
+            // relaunched the archive itself). `install_app_update` signals this
+            // by returning the download path rather than the executable's.
+            if path != exe_for_result {
+                toast.add_toast(adw::Toast::new(&ctx.t_or(
+                    "updates.manualInstallRequired",
+                    "Downloaded. Extract it and replace the app manually.",
+                )));
+                return;
+            }
             ctx.settings.borrow_mut().runtime.app_restart_required = true;
             ctx.persist();
             toast.add_toast(adw::Toast::new(
@@ -8353,22 +8365,7 @@ pub fn export_backup(
                                 ctx.store.borrow().clone()
                             };
                             if !include_secrets {
-                                if let Some(obj) = dump.as_object_mut() {
-                                    for cfg in obj.values_mut() {
-                                        if let Some(map) = cfg.as_object_mut() {
-                                            for key in [
-                                                "token",
-                                                "secret",
-                                                "password",
-                                                "pass",
-                                                "client_secret",
-                                                "key",
-                                            ] {
-                                                map.remove(key);
-                                            }
-                                        }
-                                    }
-                                }
+                                crate::backup::strip_secrets(&mut dump);
                             }
                             if as_conf {
                                 let dump = crate::backup::filter_rclone_dump(&dump, &export_type);

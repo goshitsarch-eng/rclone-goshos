@@ -392,26 +392,181 @@ pub fn create_backup(
     )
 }
 
-fn dump_contains_secrets(dump: &Value) -> bool {
-    const KEYS: &[&str] = &[
-        "token",
-        "secret",
-        "password",
-        "password2",
+/// Every option name rclone itself marks `Sensitive` or `IsPassword`, taken
+/// from `rclone config providers` (v1.75.0).
+///
+/// The hand-written list this replaced held six names and matched them exactly,
+/// so an export with "include secrets" turned off still carried
+/// `secret_access_key`, `access_key_id`, `session_token`, `refresh_token`,
+/// `service_account_credentials` and 86 others — and `password2`, which the
+/// detector below already knew was a secret but the stripper never removed.
+const SENSITIVE_OPTION_NAMES: &[&str] = &[
+    "access_grant",
+    "access_key_id",
+    "access_token",
+    "account",
+    "account_id",
+    "api_key",
+    "api_password",
+    "api_secret",
+    "api_url",
+    "app_id",
+    "app_token",
+    "apple_id",
+    "application_credential_id",
+    "application_credential_name",
+    "application_credential_secret",
+    "auth_token",
+    "authorization",
+    "base_folder_uuid",
+    "bearer_token",
+    "client_access_token",
+    "client_certificate_password",
+    "client_id",
+    "client_refresh_token",
+    "client_salted_key_pass",
+    "client_secret",
+    "client_uid",
+    "cloud_name",
+    "compartment",
+    "config_credentials",
+    "connection_string",
+    "cookies",
+    "deleted_id",
+    "device_id",
+    "domain",
+    "drive_id",
+    "email",
+    "file_password",
+    "folder_password",
+    "host",
+    "impersonate",
+    "impersonate_admin",
+    "key",
+    "key_file_pass",
+    "key_pem",
+    "library_key",
+    "link_password",
+    "mailbox_password",
+    "master_key",
+    "master_keys",
+    "mnemonic",
+    "msi_client_id",
+    "msi_mi_res_id",
+    "msi_object_id",
+    "namenode",
+    "namespace",
+    "otp_secret_key",
+    "pass",
+    "passphrase",
+    "password",
+    "password2",
+    "permanent_token",
+    "plex_password",
+    "plex_token",
+    "plex_username",
+    "private_access_key",
+    "private_key",
+    "project_number",
+    "public_key",
+    "refresh_token",
+    "resource_key",
+    "root_folder_id",
+    "root_folder_slug",
+    "root_id",
+    "sas_url",
+    "secret",
+    "secret_access_key",
+    "service_account_credentials",
+    "service_principal_name",
+    "session_id",
+    "session_token",
+    "spn",
+    "sse_customer_key",
+    "sse_customer_key_base64",
+    "sse_customer_key_md5",
+    "sse_kms_key_id",
+    "team_drive",
+    "tenant",
+    "tenant_domain",
+    "tenant_id",
+    "token",
+    "trust_token",
+    "url",
+    "user",
+    "user_id",
+    "user_project",
+    "username",
+    "workspace_id",
+];
+
+/// Whether an rclone config key holds credential material.
+///
+/// Matches rclone's own list first, then falls back to substring rules so that
+/// backends added after v1.75.0 are still redacted rather than leaked. Erring
+/// toward over-redaction is deliberate: this only runs when the user has asked
+/// for an export *without* secrets.
+pub fn is_secret_key(key: &str) -> bool {
+    let key = key.trim().to_ascii_lowercase();
+    if SENSITIVE_OPTION_NAMES.contains(&key.as_str()) {
+        return true;
+    }
+    const NEEDLES: &[&str] = &[
         "pass",
-        "client_secret",
-        "key",
+        "secret",
+        "token",
+        "credential",
+        "passphrase",
+        "private",
+        "mnemonic",
     ];
+    if NEEDLES.iter().any(|n| key.contains(n)) {
+        return true;
+    }
+    // `key` on its own, or as a word inside a compound name, but not
+    // `key_file`-style pointers to something on disk.
+    key == "key"
+        || key.ends_with("_key")
+        || (key.starts_with("key_") && !key.starts_with("key_file"))
+}
+
+fn value_is_present(value: &Value) -> bool {
+    match value {
+        Value::Null => false,
+        Value::String(s) => !s.is_empty(),
+        other => !other.is_null(),
+    }
+}
+
+/// Remove every credential-bearing key from an `rclone config dump`.
+pub fn strip_secrets(dump: &mut Value) {
+    let Some(remotes) = dump.as_object_mut() else {
+        return;
+    };
+    for cfg in remotes.values_mut() {
+        if let Some(map) = cfg.as_object_mut() {
+            map.retain(|key, _| !is_secret_key(key));
+        }
+    }
+}
+
+/// Credential material that lives in `settings.json` rather than the rclone
+/// config: each extra backend's RC login and the rclone config password.
+pub fn settings_contain_secrets(settings: &AppSettings) -> bool {
+    !settings.core.config_password.is_empty()
+        || settings
+            .core
+            .extra_backends
+            .iter()
+            .any(|b| !b.pass.is_empty() || !b.config_password.is_empty() || !b.user.is_empty())
+}
+
+fn dump_contains_secrets(dump: &Value) -> bool {
     dump.as_object().is_some_and(|remotes| {
         remotes.values().any(|cfg| {
             cfg.as_object().is_some_and(|map| {
-                KEYS.iter().any(|key| {
-                    map.get(*key).is_some_and(|value| match value {
-                        Value::Null => false,
-                        Value::String(s) => !s.is_empty(),
-                        other => !other.is_null(),
-                    })
-                })
+                map.iter()
+                    .any(|(key, value)| is_secret_key(key) && value_is_present(value))
             })
         })
     })
@@ -432,10 +587,14 @@ pub fn create_backup_with(
     let store = filter_store_category(store, export_type);
     let rclone_dump = filter_rclone_dump(rclone_dump, export_type);
     let encrypted = password.is_some_and(|p| p.trim().len() >= 4);
-    if includes_file(export_type, "rclone.json")
-        && dump_contains_secrets(&rclone_dump)
-        && !encrypted
-    {
+    let carries_secrets = (includes_file(export_type, "rclone.json")
+        && dump_contains_secrets(&rclone_dump))
+        // `settings.json` holds every extra backend's RC password and the
+        // rclone config master password. The "settings" and "backend" export
+        // types include it without including rclone.json, so checking only the
+        // dump let those out of the door in a plaintext zip.
+        || (includes_file(export_type, "settings.json") && settings_contain_secrets(&settings));
+    if carries_secrets && !encrypted {
         return Err("Including secrets requires a zip password of 4+ characters".into());
     }
 
@@ -1327,6 +1486,154 @@ mod tests {
         let restored = restore_backup_contents(&dest, None, None, None).unwrap();
         assert_eq!(restored.backend.unwrap()["main"]["transfers"], 4);
         assert_eq!(restored.rclone.unwrap()["drive"]["type"], "drive");
+    }
+
+    #[test]
+    fn strips_the_credentials_the_old_exact_match_list_missed() {
+        // Every one of these survived an export with "include secrets" off.
+        let mut dump = serde_json::json!({
+            "s3": {
+                "type": "s3",
+                "access_key_id": "AKIAIOSFODNN7EXAMPLE",
+                "secret_access_key": "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY",
+                "session_token": "FwoGZXIvYXdzEBYaDN",
+                "region": "eu-west-1"
+            },
+            "gcs": {
+                "type": "google cloud storage",
+                "service_account_credentials": "{\"private_key\":\"-----BEGIN\"}"
+            },
+            "crypt": { "type": "crypt", "password": "a", "password2": "b" },
+            "drive": { "type": "drive", "refresh_token": "1//0g", "root_folder_id": "abc" },
+            "azure": { "type": "azureblob", "sas_url": "https://x?sig=s3cret" }
+        });
+        strip_secrets(&mut dump);
+        let flat = serde_json::to_string(&dump).unwrap();
+        for leaked in [
+            "AKIAIOSFODNN7EXAMPLE",
+            "wJalrXUtnFEMI",
+            "FwoGZXIvYXdzEBYaDN",
+            "BEGIN",
+            "1//0g",
+            "sig=s3cret",
+        ] {
+            assert!(!flat.contains(leaked), "{leaked} still present in {flat}");
+        }
+        assert!(
+            !flat.contains("\"password2\""),
+            "password2 must be stripped"
+        );
+        // Non-secret settings must survive, or the export is useless.
+        assert!(flat.contains("eu-west-1"));
+        assert!(flat.contains("\"type\":\"s3\""));
+    }
+
+    #[test]
+    fn secret_predicate_covers_rclones_own_sensitive_names() {
+        for key in [
+            "access_key_id",
+            "secret_access_key",
+            "session_token",
+            "service_account_credentials",
+            "refresh_token",
+            "password2",
+            "sas_url",
+            "key_pem",
+            "key_file_pass",
+            "sse_customer_key",
+            "mnemonic",
+            "passphrase",
+            "private_key",
+            "api_key",
+            "client_secret",
+            "token",
+            "pass",
+            "key",
+        ] {
+            assert!(is_secret_key(key), "{key} must be treated as a secret");
+        }
+        // Plain settings must not be redacted away.
+        for key in [
+            "type",
+            "provider",
+            "region",
+            "endpoint",
+            "location_constraint",
+            "chunk_size",
+            "acl",
+            "storage_class",
+            "disable_checksum",
+            "upload_cutoff",
+        ] {
+            assert!(!is_secret_key(key), "{key} is not a secret");
+        }
+    }
+
+    #[test]
+    fn detector_and_stripper_agree() {
+        // They disagreed before: `password2` was detected but never stripped,
+        // so the app demanded a zip password and then wrote the secret anyway.
+        let mut dump = serde_json::json!({
+            "crypt": { "type": "crypt", "password2": "second-secret" }
+        });
+        assert!(dump_contains_secrets(&dump));
+        strip_secrets(&mut dump);
+        assert!(
+            !dump_contains_secrets(&dump),
+            "anything the detector flags must be removable by the stripper"
+        );
+    }
+
+    #[test]
+    fn backend_passwords_in_settings_also_require_encryption() {
+        let dir = tempfile::tempdir().unwrap();
+        let dest = dir.path().join("settings.zip");
+        let mut settings = AppSettings::default();
+        settings
+            .core
+            .extra_backends
+            .push(crate::settings::BackendEntry {
+                name: "nas".into(),
+                host: "10.0.0.5".into(),
+                port: 5572,
+                user: "admin".into(),
+                pass: "hunter2".into(),
+                ..Default::default()
+            });
+        // A "settings" export carries settings.json but not rclone.json, so the
+        // old dump-only check waved this straight through unencrypted.
+        let err = create_backup(
+            &dest,
+            &settings,
+            &AppStore::default(),
+            &serde_json::json!({}),
+            "settings",
+            "",
+            None,
+        )
+        .unwrap_err();
+        assert!(err.to_lowercase().contains("password"), "{err}");
+        assert!(!dest.exists());
+
+        create_backup(
+            &dest,
+            &settings,
+            &AppStore::default(),
+            &serde_json::json!({}),
+            "settings",
+            "",
+            Some("correct-horse"),
+        )
+        .unwrap();
+        assert!(dest.exists());
+    }
+
+    #[test]
+    fn config_master_password_counts_as_a_secret() {
+        let mut settings = AppSettings::default();
+        assert!(!settings_contain_secrets(&settings));
+        settings.core.config_password = "master".into();
+        assert!(settings_contain_secrets(&settings));
     }
 
     #[test]

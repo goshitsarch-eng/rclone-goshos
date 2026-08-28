@@ -28,7 +28,10 @@ Run:
 cargo run --release
 ```
 
-The app starts a local `rclone rcd` instance (no-auth, localhost only) and talks to rclone’s RC API.
+The app starts a local `rclone rcd` instance (localhost only) and talks to rclone’s RC API. The
+daemon is given a random username and password on every launch, passed through the environment so
+they stay out of the world-readable process arguments — the RC API can dump every remote’s
+credentials, so a loopback bind alone is not a boundary on a shared machine.
 
 ## Tests
 

@@ -22,7 +22,9 @@ impl RcloneEngine {
     pub fn start(settings: &AppSettings) -> Self {
         let binary = resolve_rclone_binary(&settings.core.rclone_binary);
         let port = pick_free_port().unwrap_or(5572);
-        let client = RcClient::new("127.0.0.1", port);
+        let (rc_user, rc_pass) = generate_rc_credentials();
+        let client = RcClient::new("127.0.0.1", port)
+            .with_auth(Some(rc_user.clone()), Some(rc_pass.clone()));
         let mut engine = Self {
             client,
             binary: binary.clone(),
@@ -58,8 +60,17 @@ impl RcloneEngine {
         }
         for env in &settings.core.rclone_env_vars {
             if let Some((k, v)) = env.split_once('=') {
+                if is_reserved_rc_env(k) {
+                    log::warn!("ignoring reserved rclone env var {k}");
+                    continue;
+                }
                 cmd.env(k, v);
             }
+        }
+        // Applied after the user's own env so that a stray `RCLONE_RC_*` cannot
+        // displace the generated credentials.
+        for (key, value) in rcd_auth_env(&rc_user, &rc_pass) {
+            cmd.env(key, value);
         }
         let password = crate::keyring::resolve_config_password(&settings.core.config_password);
         crate::security::apply_config_password_env(&mut cmd, &password);
@@ -160,13 +171,40 @@ fn pick_free_port() -> Option<u16> {
 
 /// Base `rclone rcd` arguments. `--rc-serve` enables HTTP Range streaming of
 /// remote files (same as the Tauri desktop engine).
+///
+/// Deliberately no `--rc-no-auth`: the RC API exposes `config/dump` (every
+/// remote's credentials in cleartext), `operations/*` and `core/command`, so an
+/// unauthenticated daemon hands all of that to any other process on the machine
+/// — the loopback bind is not a boundary. `start` generates a random
+/// credential pair per launch and passes it in the environment; see
+/// [`rcd_auth_env`].
 pub fn rcd_base_args(port: u16) -> Vec<String> {
     vec![
         "rcd".into(),
         format!("--rc-addr=127.0.0.1:{port}"),
-        "--rc-no-auth".into(),
         "--rc-web-gui=false".into(),
         "--rc-serve".into(),
+    ]
+}
+
+/// A fresh RC credential pair, valid only for the lifetime of one spawned
+/// daemon. Mirrors what the Tauri backend generates for its local backend.
+pub fn generate_rc_credentials() -> (String, String) {
+    let user = format!("rcman_{}", &uuid::Uuid::new_v4().to_string()[..8]);
+    let pass = uuid::Uuid::new_v4().simple().to_string();
+    (user, pass)
+}
+
+/// Environment carrying the RC credentials to the spawned daemon.
+///
+/// rclone maps `RCLONE_<FLAG>` onto `--flag`, so these are exactly
+/// `--rc-user`/`--rc-pass` without putting the password in the process
+/// arguments: `/proc/<pid>/cmdline` is world-readable (0444) while
+/// `/proc/<pid>/environ` is readable only by the owning user (0400).
+pub fn rcd_auth_env(user: &str, pass: &str) -> [(String, String); 2] {
+    [
+        ("RCLONE_RC_USER".to_string(), user.to_string()),
+        ("RCLONE_RC_PASS".to_string(), pass.to_string()),
     ]
 }
 
@@ -189,6 +227,23 @@ pub fn is_reserved_flag(flag: &str) -> bool {
     RESERVED
         .iter()
         .any(|r| flag == *r || flag.starts_with(&format!("{r}=")))
+}
+
+/// Env-var counterpart of [`is_reserved_flag`]: rclone reads `RCLONE_RC_USER`
+/// and friends as if they were flags, so the flag guard alone would leave a way
+/// to turn the RC daemon's authentication back off.
+pub fn is_reserved_rc_env(key: &str) -> bool {
+    const RESERVED: &[&str] = &[
+        "RCLONE_RC_USER",
+        "RCLONE_RC_PASS",
+        "RCLONE_RC_NO_AUTH",
+        "RCLONE_RC_ADDR",
+        "RCLONE_RC_SERVE",
+        "RCLONE_RC_HTPASSWD",
+        "RCLONE_RC_ALLOW_ORIGIN",
+    ];
+    let key = key.trim();
+    RESERVED.iter().any(|r| key.eq_ignore_ascii_case(r))
 }
 
 pub fn validate_extra_flag(flag: &str) -> Result<(), String> {
@@ -1010,9 +1065,59 @@ mod tests {
         let args = rcd_base_args(5572);
         assert_eq!(args[0], "rcd");
         assert!(args.iter().any(|a| a == "--rc-addr=127.0.0.1:5572"));
-        assert!(args.iter().any(|a| a == "--rc-no-auth"));
         assert!(args.iter().any(|a| a == "--rc-serve"));
         assert!(args.iter().any(|a| a == "--rc-web-gui=false"));
+    }
+
+    #[test]
+    fn rcd_args_never_disable_authentication() {
+        let args = rcd_base_args(5572);
+        assert!(
+            !args.iter().any(|a| a == "--rc-no-auth"),
+            "the RC API exposes config/dump; it must not be spawned unauthenticated"
+        );
+    }
+
+    #[test]
+    fn generated_rc_credentials_are_unique_and_long() {
+        let (user_a, pass_a) = generate_rc_credentials();
+        let (user_b, pass_b) = generate_rc_credentials();
+        assert_ne!(pass_a, pass_b, "credentials must be per-launch");
+        assert_ne!(user_a, user_b);
+        // A v4 UUID with the hyphens removed.
+        assert_eq!(pass_a.len(), 32);
+        assert!(pass_a.chars().all(|c| c.is_ascii_hexdigit()));
+        assert!(!pass_a.is_empty() && !user_a.is_empty());
+    }
+
+    #[test]
+    fn rc_credentials_travel_in_the_environment_not_the_arguments() {
+        // `/proc/<pid>/cmdline` is world-readable, `/proc/<pid>/environ` is not,
+        // so the password must never appear in the spawn arguments.
+        let (user, pass) = generate_rc_credentials();
+        let env = rcd_auth_env(&user, &pass);
+        assert_eq!(env[0].0, "RCLONE_RC_USER");
+        assert_eq!(env[0].1, user);
+        assert_eq!(env[1].0, "RCLONE_RC_PASS");
+        assert_eq!(env[1].1, pass);
+        let args = rcd_base_args(5572);
+        assert!(!args.iter().any(|a| a.contains(&pass)));
+        assert!(!args.iter().any(|a| a.contains(&user)));
+    }
+
+    #[test]
+    fn reserved_rc_env_cannot_reopen_the_api() {
+        for key in [
+            "RCLONE_RC_NO_AUTH",
+            "RCLONE_RC_USER",
+            "RCLONE_RC_PASS",
+            "RCLONE_RC_HTPASSWD",
+            "rclone_rc_no_auth",
+        ] {
+            assert!(is_reserved_rc_env(key), "{key} must be filtered");
+        }
+        assert!(!is_reserved_rc_env("RCLONE_CONFIG_PASS"));
+        assert!(!is_reserved_rc_env("RCLONE_VFS_CACHE_MODE"));
     }
 
     #[test]

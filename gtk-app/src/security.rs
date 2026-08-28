@@ -86,6 +86,18 @@ pub fn password_command(password: &str) -> String {
     format!("sh -c \"printf '{}'\"", octal_escape(password))
 }
 
+/// Hand the config password to rclone through the environment.
+///
+/// `--password-command=...` does the same job, but process arguments are
+/// world-readable on Linux (`/proc/<pid>/cmdline`, mode 0444) while the
+/// environment is not (`/proc/<pid>/environ`, mode 0400), so passing it as a
+/// flag published the master password — octal-escaping only encodes it, it
+/// stays trivially recoverable — to every other user on the machine.
+pub fn apply_password_command_env(cmd: &mut Command, password: &str) {
+    cmd.env("RCLONE_PASSWORD_COMMAND", password_command(password));
+    cmd.arg("--ask-password=false");
+}
+
 pub fn apply_config_password_env(cmd: &mut Command, password: &str) {
     if password.is_empty() {
         return;
@@ -187,8 +199,7 @@ pub fn encrypt_config(binary: &str, password: &str) -> Result<(), String> {
     }
     let mut cmd = rclone_cmd(binary);
     cmd.args(["config", "encryption", "set"]);
-    cmd.arg(format!("--password-command={}", password_command(password)));
-    cmd.arg("--ask-password=false");
+    apply_password_command_env(&mut cmd, password);
     let output = cmd.output().map_err(|e| e.to_string())?;
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
@@ -207,8 +218,7 @@ pub fn encrypt_config(binary: &str, password: &str) -> Result<(), String> {
 pub fn unencrypt_config(binary: &str, password: &str) -> Result<(), String> {
     let mut cmd = rclone_cmd(binary);
     cmd.args(["config", "encryption", "remove"]);
-    cmd.arg(format!("--password-command={}", password_command(password)));
-    cmd.arg("--ask-password=false");
+    apply_password_command_env(&mut cmd, password);
     let output = cmd.output().map_err(|e| e.to_string())?;
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
@@ -244,6 +254,47 @@ mod tests {
         let cmd = password_command("secret");
         assert!(cmd.starts_with("sh -c \"printf '"));
         assert!(cmd.contains("\\163"));
+    }
+
+    #[test]
+    fn config_password_never_reaches_the_process_arguments() {
+        // /proc/<pid>/cmdline is world-readable; /proc/<pid>/environ is not.
+        let mut cmd = Command::new("rclone");
+        cmd.args(["config", "encryption", "set"]);
+        apply_password_command_env(&mut cmd, "hunter2");
+
+        let args: Vec<String> = cmd
+            .get_args()
+            .map(|a| a.to_string_lossy().into_owned())
+            .collect();
+        let encoded = octal_escape("hunter2");
+        for arg in &args {
+            assert!(
+                !arg.contains("hunter2"),
+                "plaintext password in argv: {arg}"
+            );
+            assert!(!arg.contains(&encoded), "encoded password in argv: {arg}");
+            assert!(
+                !arg.starts_with("--password-command"),
+                "the password command must travel in the environment: {arg}"
+            );
+        }
+        assert!(args.iter().any(|a| a == "--ask-password=false"));
+
+        let env: Vec<(String, String)> = cmd
+            .get_envs()
+            .filter_map(|(k, v)| {
+                Some((
+                    k.to_string_lossy().into_owned(),
+                    v?.to_string_lossy().into_owned(),
+                ))
+            })
+            .collect();
+        let (_, value) = env
+            .iter()
+            .find(|(k, _)| k == "RCLONE_PASSWORD_COMMAND")
+            .expect("rclone reads RCLONE_PASSWORD_COMMAND as --password-command");
+        assert_eq!(value, &password_command("hunter2"));
     }
 
     #[test]

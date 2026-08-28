@@ -1692,6 +1692,7 @@
   "updates": {
     "cancelFailed": "Error al cancelar la descarga de actualización.",
     "installSuccess": "Actualización instalada. Reinicia la aplicación.",
+    "manualInstallRequired": "Descargado. Extráelo y reemplaza la aplicación manualmente.",
     "checkFailed": "Error al buscar actualizaciones: {{error}}",
     "installFailed": "Error al instalar la actualización: {{error}}",
     "restartFailed": "Error al reiniciar la aplicación: {{error}}",

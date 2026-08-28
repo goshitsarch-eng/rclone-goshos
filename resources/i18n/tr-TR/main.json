@@ -1692,6 +1692,7 @@
   "updates": {
     "cancelFailed": "Güncelleme indirmesi iptal edilemedi.",
     "installSuccess": "Güncelleme kuruldu. Lütfen uygulamayı yeniden başlatın.",
+    "manualInstallRequired": "İndirildi. Arşivi çıkarın ve uygulamayı elle değiştirin.",
     "checkFailed": "Güncellemeler kontrol edilemedi: {{error}}",
     "installFailed": "Güncelleme kurulamadı: {{error}}",
     "restartFailed": "Uygulama yeniden başlatılamadı: {{error}}",

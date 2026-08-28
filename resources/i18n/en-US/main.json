@@ -1692,6 +1692,7 @@
   "updates": {
     "cancelFailed": "Failed to cancel the update download.",
     "installSuccess": "Update installed. Please restart the app.",
+    "manualInstallRequired": "Downloaded. Extract it and replace the app manually.",
     "checkFailed": "Failed to check for updates: {{error}}",
     "installFailed": "Failed to install update: {{error}}",
     "restartFailed": "Failed to restart application: {{error}}",
