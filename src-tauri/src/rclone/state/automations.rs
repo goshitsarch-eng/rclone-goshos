@@ -114,6 +114,18 @@ impl AutomationsCache {
         }
     }
 
+    /// Whether an automation belongs to exactly this remote.
+    ///
+    /// Uses the automation's own fields. The id is a display/lookup key and its
+    /// `-` separators are ambiguous when a remote name itself contains one.
+    pub fn automation_belongs_to_remote(
+        automation: &Automation,
+        backend_name: &str,
+        remote_name: &str,
+    ) -> bool {
+        automation.backend_name == backend_name && automation.remote_name == remote_name
+    }
+
     pub fn generate_automation_id(
         backend_name: &str,
         remote_name: &str,
@@ -626,10 +638,15 @@ impl AutomationsCache {
     ) -> Result<CacheUpdateResult, String> {
         let automations =
             self.collect_automations_from_remote(backend_name, remote_name, remote_settings);
-        let prefix = format!("{backend_name}:{remote_name}-");
-
-        self.sync_automations(backend_name, automations, |t| t.id.starts_with(&prefix))
-            .await
+        // Match the remote by its own field, never by an id prefix: ids look
+        // like `{backend}:{remote}-{op}-{profile}`, so the prefix for `photos`
+        // also matched every automation of `photos-backup`, and saving one
+        // remote wiped the other's automations.
+        let owner = (backend_name.to_string(), remote_name.to_string());
+        self.sync_automations(backend_name, automations, move |t| {
+            Self::automation_belongs_to_remote(t, &owner.0, &owner.1)
+        })
+        .await
     }
 
     /// Remove all automations belonging to a remote and return them. The caller is
@@ -640,12 +657,11 @@ impl AutomationsCache {
         remote_name: &str,
         app: Option<&AppHandle>,
     ) -> Result<Vec<Automation>, String> {
-        let prefix = format!("{backend_name}:{remote_name}-");
         let to_remove: Vec<String> = self
             .get_all_automations()
             .await
             .into_iter()
-            .filter(|t| t.id.starts_with(&prefix))
+            .filter(|t| Self::automation_belongs_to_remote(t, backend_name, remote_name))
             .map(|t| t.id)
             .collect();
 
@@ -754,6 +770,72 @@ mod tests {
     use serde_json::json;
 
     // RemoteConfig deserialization
+
+    fn automation_for(backend: &str, remote: &str, profile: &str) -> Automation {
+        let id = AutomationsCache::generate_automation_id(
+            backend,
+            remote,
+            &OperationType::Sync,
+            profile,
+        );
+        serde_json::from_value(json!({
+            "id": id,
+            "automationType": "sync",
+            "remoteName": remote,
+            "profileName": profile,
+            "cronExpression": "0 0 * * *",
+            "status": "enabled",
+            "backendName": backend,
+            // ProfileParams is flattened into args.
+            "args": {
+                "remoteName": remote,
+                "profileName": profile,
+                "source": null,
+                "noCache": null,
+                "srcPaths": ["/src"],
+                "dstPaths": ["/dst"]
+            },
+            "createdAt": "2026-01-01T00:00:00Z",
+            "lastRun": null,
+            "nextRun": null,
+            "lastError": null,
+            "currentJobId": null,
+            "runCount": 0,
+            "successCount": 0,
+            "failureCount": 0,
+        }))
+        .expect("automation fixture")
+    }
+
+    #[test]
+    fn remote_scoping_does_not_capture_a_longer_named_sibling() {
+        let photos = automation_for("local", "photos", "daily");
+        let backup = automation_for("local", "photos-backup", "daily");
+
+        // The id prefix this used to match on is genuinely ambiguous...
+        assert!(
+            backup.id.starts_with("local:photos-"),
+            "the old predicate matched the sibling"
+        );
+
+        // ...so saving or deleting `photos` also swept `photos-backup` away.
+        assert!(AutomationsCache::automation_belongs_to_remote(
+            &photos, "local", "photos"
+        ));
+        assert!(
+            !AutomationsCache::automation_belongs_to_remote(&backup, "local", "photos"),
+            "photos-backup must not be scoped to photos"
+        );
+        assert!(AutomationsCache::automation_belongs_to_remote(
+            &backup,
+            "local",
+            "photos-backup"
+        ));
+        // The same remote name on another backend is a different automation.
+        assert!(!AutomationsCache::automation_belongs_to_remote(
+            &photos, "nas", "photos"
+        ));
+    }
 
     #[test]
     fn test_profile_config_deserialization() {

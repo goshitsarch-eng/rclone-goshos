@@ -467,26 +467,42 @@ pub async fn monitor_job(
             .rpc(job::BATCH, Some(&json!({ "inputs": &inputs })))
             .await;
 
+        // A poll only counts as healthy once it yields a usable status row.
+        // Resetting on any `Ok` meant a transport that kept answering with an
+        // error row, an empty batch or a non-array body never reached
+        // MAX_CONSECUTIVE_ERRORS, and the monitor spun for the life of the app.
+        let poll_result = poll_result.and_then(|batch_resp| {
+            let Some(results) = batch_resp["results"].as_array() else {
+                return Err(BackendError::Other(format!(
+                    "Job {jobid} batch response has no results array"
+                )));
+            };
+            let Some(status_result) = results.first() else {
+                return Err(BackendError::Other(format!(
+                    "Job {jobid} batch returned an empty results array"
+                )));
+            };
+            if status_result.is_null() {
+                return Err(BackendError::Other(format!(
+                    "Job {jobid} status result is null"
+                )));
+            }
+            // A batch row carrying `error` is a failed call, not a status; it
+            // has no `finished` field, so it used to read as "still running".
+            if let Some(err) = status_result.get("error").filter(|e| !e.is_null()) {
+                return Err(BackendError::Other(format!(
+                    "Job {jobid} status call failed: {err}"
+                )));
+            }
+            Ok(batch_resp)
+        });
+
         match poll_result {
             Ok(batch_resp) => {
                 consecutive_errors = 0;
 
                 if let Some(results) = batch_resp["results"].as_array() {
-                    if results.is_empty() {
-                        warn!("Job {jobid} batch returned empty results array");
-                        consecutive_errors += 1;
-                        sleep(Duration::from_millis(JOB_POLL_INTERVAL_MS)).await;
-                        continue;
-                    }
-
                     let status_result = &results[0];
-
-                    if status_result.is_null() {
-                        warn!("Job {jobid} status result is null");
-                        consecutive_errors += 1;
-                        sleep(Duration::from_millis(JOB_POLL_INTERVAL_MS)).await;
-                        continue;
-                    }
 
                     if !metadata.no_cache && results.len() >= 3 {
                         let stats_result = &results[1];

@@ -15,6 +15,34 @@ use tokio::sync::RwLock;
 
 pub struct WatchSession {
     _watcher: RecommendedWatcher,
+    /// What this session was started with. An automation keeps its id when it
+    /// is edited, so without this a changed source path, debounce or filter
+    /// left the old watcher running against the old settings until restart.
+    config: WatchConfigKey,
+}
+
+/// The parts of an automation that decide what a watcher watches and how.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WatchConfigKey {
+    paths: Vec<String>,
+    watch_delay: u64,
+    changed_only: bool,
+    automation_type: String,
+    profile_name: String,
+}
+
+impl WatchConfigKey {
+    pub fn from_automation(automation: &Automation) -> Self {
+        let mut paths = local_paths(automation);
+        paths.sort();
+        Self {
+            paths,
+            watch_delay: automation.watch_delay,
+            changed_only: automation.watch_changed_only,
+            automation_type: format!("{:?}", automation.automation_type),
+            profile_name: automation.profile_name.clone(),
+        }
+    }
 }
 
 pub struct WatcherManager {
@@ -54,8 +82,20 @@ impl WatcherManager {
             .collect();
 
         for automation in &automations {
-            if !active_ids.contains(&automation.id) || sessions.contains_key(&automation.id) {
+            if !active_ids.contains(&automation.id) {
                 continue;
+            }
+            let wanted = WatchConfigKey::from_automation(automation);
+            if let Some(existing) = sessions.get(&automation.id) {
+                if existing.config == wanted {
+                    continue;
+                }
+                // Edited: drop the stale watcher so the new config takes effect.
+                log::info!(
+                    "Restarting watcher for automation {} after a config change",
+                    automation.id
+                );
+                sessions.remove(&automation.id);
             }
             match self
                 .start_watch_session(automation, app_handle.clone())
@@ -275,7 +315,10 @@ impl WatcherManager {
             log::info!("Watch loop terminated for automation {automation_id}");
         });
 
-        Ok(WatchSession { _watcher: watcher })
+        Ok(WatchSession {
+            _watcher: watcher,
+            config: WatchConfigKey::from_automation(automation),
+        })
     }
 }
 
