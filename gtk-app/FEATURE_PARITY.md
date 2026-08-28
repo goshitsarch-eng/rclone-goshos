@@ -2,6 +2,8 @@
 
 This client is the GTK 4 + libadwaita desktop UI. It talks to a local `rclone rcd` instance (or a selected extra RC backend) and persists app state under `~/.config/rclone-manager/`. The Rust backend remains in `src-tauri/`.
 
+**Desktop target is Linux only.** Windows NotifyIcon, macOS NSStatusItem, and Android share-intent are out of scope for this rewrite. Linux StatusNotifier tray (`ksni`) and `notify-rust` notifications stay in.
+
 ## Implemented
 
 - Workspaces: Main menu, Nautilus file browser, Flow
@@ -1226,6 +1228,7 @@ This client is the GTK 4 + libadwaita desktop UI. It talks to a local `rclone rc
 - Live GUI: `--vfs testdrive` VFS Control shows Metadata / Upload Queue / Cache Information / Advanced Configuration plus **Refresh Metadata**, **Clear Metadata Cache**, and **Refresh All Data**; no `testdrive:[0]` instance so the indexed **VFS Controls Unavailable** banner was not shown
 - Live GUI: `--repair` **Configuration Password / Unlock** opens the password prompt; **Cancel** leaves `config_password` unset
 
+- Linux-only rewrite scope: no Windows / macOS / Android surfaces to implement or live-verify
 - After onboarding, Repair auto-opens once per session for missing binary, config password, or RC auth failure (version-too-old and FUSE stay banner-only)
 - Full-backup remote subset: empty selection exports no remotes; logs / job history / job meta are filtered with the store
 - Preparing jobs from a previous session complete only when transfer snapshots actually finished (percentage 100 or bytes >= size); start snapshots stay failed
